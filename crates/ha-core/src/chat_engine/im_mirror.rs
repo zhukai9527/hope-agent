@@ -21,6 +21,7 @@ use crate::channel::worker::pipeline::{
     await_stream_pipeline, deliver_rounds, spawn_stream_pipeline, DeliveryTarget, StreamPipeline,
 };
 use crate::channel::worker::send_text_chunks;
+use crate::chat_engine::im_error_message::{format_im_engine_error, ImErrorContext, CANCEL_NOTICE};
 use crate::chat_engine::quote::{build_user_quote_prefix, LastUserView};
 use crate::chat_engine::sink_registry::{sink_registry, SinkHandle};
 use crate::chat_engine::stream_seq::ChatSource;
@@ -163,15 +164,22 @@ pub(crate) async fn finalize_im_live_mirror(state: ImLiveMirrorState, response: 
 /// engine cancel / final-failure paths in place of `finalize_im_live_mirror`.
 ///
 /// If `attach_im_live_mirror` already emitted a user-quote message into
-/// the IM chat, follow up with a short "(answering interrupted)" notice
-/// so the thread doesn't show a dangling quote with no answer underneath.
+/// the IM chat, follow up with a short notice so the thread doesn't show
+/// a dangling quote with no answer underneath:
+/// - `error: None` ↔ user actively cancelled — emit [`CANCEL_NOTICE`].
+/// - `error: Some(ctx)` ↔ real failure — emit a per-class friendly
+///   error built by [`format_im_engine_error`].
+///
 /// If no quote was sent (no `LastUserSnapshot`, or `build_user_quote_prefix`
 /// returned `None`), there's nothing visible to orphan — drain the
 /// pipeline and bail without polluting the chat.
 ///
 /// Like `finalize`, drops the sink handle first so the stream task
 /// observes channel-close cleanly, then awaits the pipeline.
-pub(crate) async fn abort_im_live_mirror(state: ImLiveMirrorState) {
+pub(crate) async fn abort_im_live_mirror(
+    state: ImLiveMirrorState,
+    error: Option<ImErrorContext<'_>>,
+) {
     let ImLiveMirrorState {
         sink_handle,
         pipeline,
@@ -187,17 +195,21 @@ pub(crate) async fn abort_im_live_mirror(state: ImLiveMirrorState) {
         return;
     }
 
+    let body = match error {
+        None => CANCEL_NOTICE.to_string(),
+        Some(ctx) => format_im_engine_error(ctx),
+    };
     let target = DeliveryTarget {
         account_id: &attach.account_id,
         chat_id: &attach.chat_id,
         thread_id: attach.thread_id.as_deref(),
         reply_to_message_id: None,
     };
-    send_text_chunks(&plugin, &target, "_(answering interrupted)_", None).await;
+    send_text_chunks(&plugin, &target, &body, None).await;
     crate::app_info!(
         "channel",
         "mirror",
-        "[{}] Aborted GUI mirror to {} — followed up with interrupted notice",
+        "[{}] Aborted GUI mirror to {} — followed up with notice",
         attach.channel_id,
         attach.chat_id,
     );

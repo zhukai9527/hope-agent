@@ -9,6 +9,7 @@ use crate::provider::{ApiType, AuthProfile};
 use crate::session;
 
 use super::context::*;
+use super::im_error_message::ImErrorContext;
 use super::im_mirror::{abort_im_live_mirror, attach_im_live_mirror, finalize_im_live_mirror};
 use super::persister::StreamPersister;
 use super::sink_registry;
@@ -200,6 +201,20 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
 
     let total_models = model_chain.len();
     let mut last_error: Option<String> = None;
+    // Preserve the executor's typed verdict from `ExecutorError::Exhausted`
+    // so the IM mirror abort path can render a per-class friendly notice
+    // (`🔐 Authentication failed`, `⏱️ Rate limited`, …). Re-classifying
+    // `last_error` at the abort site is lossy — provider-specific
+    // wrapping can drop the original 4xx/5xx markers that
+    // `failover::classify_error` keys off.
+    let mut last_reason: Option<failover::FailoverReason> = None;
+    // Pinned to `true` only when the failing model's provider is Codex
+    // *and* its failure reason is Auth — drives the "re-authorize via
+    // desktop app" headline. Tracked per-failure rather than derived from
+    // primary-only because the failover chain may have rotated through
+    // multiple providers, and the user-facing hint depends on which one
+    // actually erred.
+    let mut last_is_codex_auth = false;
 
     // Build primary model display name for fallback events
     let primary_display = {
@@ -221,10 +236,12 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         let prov = match current_provider {
             Some(p) => p,
             None => {
-                last_error = Some(format!(
+                let msg = format!(
                     "Provider {} not found for model {}",
                     model_ref.provider_id, model_ref.model_id
-                ));
+                );
+                last_reason = Some(failover::classify_error(&msg));
+                last_error = Some(msg);
                 continue;
             }
         };
@@ -626,10 +643,12 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                             model_ref.provider_id,
                             model_ref.model_id
                         );
-                        last_error = Some(format!(
+                        let msg = format!(
                             "Context overflow on {}::{} after emergency compaction",
                             model_ref.provider_id, model_ref.model_id
-                        ));
+                        );
+                        last_reason = Some(failover::classify_error(&msg));
+                        last_error = Some(msg);
                         break;
                     }
                     compaction_attempts += 1;
@@ -657,10 +676,12 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     {
                         Ok(a) => a,
                         Err(e) => {
-                            last_error = Some(format!(
+                            let msg = format!(
                                 "Cannot build agent for emergency compaction on {}::{}: {}",
                                 model_ref.provider_id, model_ref.model_id, e
-                            ));
+                            );
+                            last_reason = Some(failover::classify_error(&msg));
+                            last_error = Some(msg);
                             break;
                         }
                     };
@@ -706,7 +727,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                 }
 
                 Err(ExecutorError::Exhausted {
-                    last_reason,
+                    last_reason: r,
                     last_error: err_str,
                 }) => {
                     app_warn!(
@@ -715,14 +736,14 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         "Giving up on {}::{} (reason {:?}), moving to next model in chain",
                         model_ref.provider_id,
                         model_ref.model_id,
-                        last_reason
+                        r
                     );
 
                     // Codex Auth → emit codex_auth_expired so frontend can
                     // prompt the user to re-authorize.
-                    if matches!(last_reason, failover::FailoverReason::Auth)
-                        && prov.api_type == ApiType::Codex
-                    {
+                    let is_codex_auth =
+                        matches!(r, failover::FailoverReason::Auth) && prov.api_type.is_codex();
+                    if is_codex_auth {
                         if let Ok(json_str) = serde_json::to_string(&serde_json::json!({
                             "type": "codex_auth_expired",
                             "error": &err_str,
@@ -731,6 +752,8 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         }
                     }
 
+                    last_is_codex_auth = is_codex_auth;
+                    last_reason = Some(r);
                     last_error = Some(err_str);
                     break;
                 }
@@ -743,10 +766,12 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         model_ref.provider_id,
                         model_ref.model_id
                     );
-                    last_error = Some(format!(
+                    let msg = format!(
                         "No auth profile available for {}::{}",
                         model_ref.provider_id, model_ref.model_id
-                    ));
+                    );
+                    last_reason = Some(failover::classify_error(&msg));
+                    last_error = Some(msg);
                     break;
                 }
             }
@@ -756,11 +781,30 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
     // All non-success paths (cancel, exhausted, no-profile, compaction
     // give-up) converge here. If the IM mirror is still attached, kick its
     // abort path so a pre-emitted user-quote message in the IM chat gets
-    // a "(interrupted)" follow-up instead of dangling alone. Spawn so a
-    // slow IM API doesn't hold the engine return open.
+    // a follow-up notice instead of dangling alone. Spawn so a slow IM API
+    // doesn't hold the engine return open.
+    //
+    // Cancel vs error: `abort_on_cancel && cancel.load()` is the only
+    // disambiguator — failures like `NoProfileAvailable` populate
+    // `last_error` but don't touch the cancel atomic. `cancel.load()`
+    // alone (without `abort_on_cancel`) would also fire on IM channel
+    // turns where cancel is registered for `/cancel` but doesn't gate the
+    // engine return.
     if let Some(state) = im_mirror.take() {
+        let is_user_cancel = abort_on_cancel && cancel.load(std::sync::atomic::Ordering::SeqCst);
+        let failure = if is_user_cancel {
+            None
+        } else {
+            last_error.clone().zip(last_reason.clone())
+        };
+        let is_codex_auth = last_is_codex_auth;
         tokio::spawn(async move {
-            abort_im_live_mirror(state).await;
+            let ctx = failure.as_ref().map(|(raw, reason)| ImErrorContext {
+                reason: reason.clone(),
+                raw: raw.as_str(),
+                is_codex_auth,
+            });
+            abort_im_live_mirror(state, ctx).await;
         });
     }
 

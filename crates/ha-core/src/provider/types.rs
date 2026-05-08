@@ -27,6 +27,13 @@ impl ApiType {
         }
     }
 
+    /// Whether this is the built-in Codex OAuth API type. Convenience for
+    /// the many call sites that branch on Codex-vs-other for auth flow,
+    /// failover policy, and re-authorization UX hints.
+    pub fn is_codex(&self) -> bool {
+        matches!(self, ApiType::Codex)
+    }
+
     /// Display name for UI
     #[allow(dead_code)]
     pub fn display_name(&self) -> &str {

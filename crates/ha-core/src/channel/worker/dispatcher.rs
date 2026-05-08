@@ -523,6 +523,26 @@ async fn handle_inbound_message(
         *cell.lock().await = effort.clone();
     }
 
+    // Snapshot whether the *entire* fallback chain is Codex before
+    // `model_chain` is moved into engine_params. Drives the `🔐 Codex
+    // session expired` headline in the error path below.
+    //
+    // Conservative `all` rather than `primary-only`: engine returns
+    // `Result<_, String>` and erases which model in the chain actually
+    // failed (see F-072). With a mixed chain (e.g. OpenAI primary +
+    // Codex fallback) we'd guess wrong either way — falling through to
+    // the generic Auth headline ("re-check the API key in settings") is
+    // strictly better than directing the user to re-auth Codex when the
+    // OpenAI primary actually 401'd.
+    let chain_is_all_codex = !model_chain.is_empty()
+        && model_chain.iter().all(|m| {
+            store
+                .providers
+                .iter()
+                .find(|p| p.id == m.provider_id)
+                .is_some_and(|p| p.api_type.is_codex())
+        });
+
     let engine_params = crate::chat_engine::ChatEngineParams {
         session_id: session_id.clone(),
         agent_id: agent_id.clone(),
@@ -593,10 +613,23 @@ async fn handle_inbound_message(
                 e
             );
 
-            let error_text =
-                "⚠️ Sorry, I encountered an error processing your message. Please try again.";
+            // Classify on the way out — engine erases the typed reason when
+            // it folds `ExecutorError` into `String`. IM-inbound has
+            // `abort_on_cancel=false`, so any error reaching here is a real
+            // failure (not a user cancel).
+            let raw = e.to_string();
+            let reason = crate::failover::classify_error(&raw);
+            let is_codex_auth =
+                matches!(reason, crate::failover::FailoverReason::Auth) && chain_is_all_codex;
+            let body = crate::chat_engine::im_error_message::format_im_engine_error(
+                crate::chat_engine::im_error_message::ImErrorContext {
+                    reason,
+                    raw: &raw,
+                    is_codex_auth,
+                },
+            );
             let payload = ReplyPayload {
-                text: Some(error_text.to_string()),
+                text: Some(body),
                 reply_to_message_id: Some(msg.message_id.clone()),
                 thread_id: msg.thread_id.clone(),
                 ..ReplyPayload::text("")
