@@ -5,8 +5,8 @@
 <h1 align="center">Hope Agent</h1>
 
 <p align="center">
-  <strong>A desktop-first AI assistant deeply integrated with your OS — also runs headless, on a NAS or in the cloud.</strong><br/>
-  Remembers you · Grows over time · Reachable from every chat app you use
+  <strong>A desktop AI assistant that hands off across your devices and gets to know you better the more you use it — also runs headless, on a NAS or in the cloud.</strong><br/>
+  Remembers you · Grows over time · Deeply OS-integrated · Reachable from every chat app you use
 </p>
 
 <p align="center">
@@ -27,13 +27,13 @@
 
 ---
 
-**Hope Agent** is an AI assistant built for ordinary people — we put the weight on **a first-class desktop GUI deeply integrated with the OS**, while it also runs as a background service that lives happily on a NAS, home server, or cloud VM, and stays reachable through your IM apps. One native installer, GUI templates for the major model providers baked in, paste an API key and you're chatting. It remembers you across sessions, quietly organizes its own memory while idle, and turns completed tasks into reusable skills.
+**Hope Agent** is an AI assistant built for ordinary people. The same conversation hands off seamlessly between your devices and chat apps, and gets better the more you use it — cross-session memory accumulates, idle time gets spent organizing what mattered, and the things you've done crystallize into reusable skills. One native installer, GUI templates for the major model providers baked in, paste an API key and you're chatting; it also runs as a background service on a NAS, home server, or cloud VM, staying reachable through your IM apps wherever it lives.
 
 ## Why Hope Agent
 
-Ordinary people deserve an AI assistant that just **opens and works** — download an installer, double-click, no runtimes to install, no CLI to learn first, no cryptic config to decipher, no service quietly crashing at 3am with no one to fix it. Hope Agent isn't only a desktop app — it also runs as an HTTP/WS service you can park on a NAS, home server, or cloud VM and leave running 24/7, while it hooks into IM channels and talks to IDEs over ACP — but we believe the door most people walk through is still the desktop, so that's where we put the most effort: **a first-class desktop GUI deeply integrated with the OS**, polished together with performance, stability, and the small interaction details.
+Ordinary people deserve an AI assistant that just **opens and works** — download an installer, double-click, no runtimes to install, no CLI to learn first, no cryptic config to decipher, no service quietly crashing at 3am with no one to fix it. Hope Agent isn't only a desktop app — it also runs as an HTTP/WS service you can park on a NAS, home server, or cloud VM and leave running 24/7, while it hooks into IM channels and talks to IDEs over ACP — but we believe the door most people walk through is still the desktop, so that's where we put the most effort: **a first-class desktop GUI deeply integrated with the OS**, polished together with performance, stability, and the small interaction details. And we want it to grow with you over the long run — one conversation that hands off across your devices and chats, with memory and skills quietly accruing along the way.
 
-Hope Agent was influenced in its early days by [openclaw](https://github.com/openclaw/openclaw) — credit to them for their pioneering work on local AI assistants. We took a different implementation path.
+> Hope Agent was influenced in its early days by [openclaw](https://github.com/openclaw/openclaw) — credit to them for their pioneering work on local AI assistants. We took a different implementation path.
 
 ## Highlights
 
@@ -44,6 +44,7 @@ Hope Agent was influenced in its early days by [openclaw](https://github.com/ope
 <tr><td><b>🧙 Zero-config providers</b></td><td>36 built-in provider templates covering 166 preset models. Anthropic, OpenAI, Gemini, Codex, OpenRouter, DeepSeek, Kimi, Qwen, Doubao, GLM, MiniMax, xAI, Mistral, Ollama — all in. Each provider supports multi-key rotation, so rate limits and quota exhaustion fail over seamlessly to the next key.</td></tr>
 <tr><td><b>🦙 One-click local models</b></td><td><b>No account, no API key, no terminal</b> — Settings → Model picks a Qwen3.6 / Gemma 4 size that fits your hardware, then handles <a href="https://ollama.com">Ollama</a> install, model pull, provider registration, and active-model switch in one click. Same flow covers local embedding models too.</td></tr>
 <tr><td><b>💬 One app, every chat</b></td><td>12 IM channels: Telegram, Discord, Slack, Feishu, Google Chat, LINE, QQ Bot, Signal, iMessage, IRC, WeChat, WhatsApp. Inbound images / voice / files become multimodal context automatically; tool approvals are one tap in the chat window; every group / account can bind a distinct Agent with its own policies.</td></tr>
+<tr><td><b>🤝 Hand off across devices, never miss a beat</b></td><td>The same conversation hands off seamlessly between your desktop, browser, and IM — leave a thread half-finished on your laptop, pick it up on Telegram on the metro, come home and the desktop already has the IM portion folded in. The same memory, tool state, Plan, and working directory follow along — no need to re-explain context. <code>/handover</code> pushes the current desktop session to a specific IM chat; <code>/session &lt;id&gt;</code> takes over from inside IM. The desktop conversation also <b>live-mirrors into IM</b>, typing into Telegram / Feishu / Slack as the model writes.</td></tr>
 <tr><td><b>🌐 Standalone service · browser is the client</b></td><td><b>Not just a desktop app</b> — Hope Agent can run fully headless as a service. One command <code>hope-agent server start</code> launches an HTTP/WS daemon; <code>server install</code> registers it as a launchd / systemd auto-start unit so it lives 24/7 on your NAS, cloud VM, or spare laptop. <b>The server ships an embedded Web GUI</b> (the React frontend is baked into the binary via <code>rust-embed</code>) — <b>point any browser on your phone, tablet, or another computer at <code>http://&lt;server&gt;:port</code> and you get the full React UI</b>, no client install, no separate frontend deployment. Bearer token auth and three-tier SSRF policies keep public exposure controlled. Sessions, memories, cron jobs, and IM channels all run server-side — the client is just a window.</td></tr>
 <tr><td><b>🔁 Three run modes, one core</b></td><td>Desktop GUI (default), HTTP/WS daemon with embedded Web GUI (browser-direct), and ACP stdio (as an agent backend for any ACP-capable IDE). All three share a pure-Rust <code>ha-core</code> library with zero Tauri dependencies — the same code is a desktop app, a server, and an IDE backend.</td></tr>
 </table>
