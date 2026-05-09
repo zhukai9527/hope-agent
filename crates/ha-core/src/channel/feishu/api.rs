@@ -350,6 +350,52 @@ impl FeishuApi {
         Ok(data.file_key)
     }
 
+    /// GET /open-apis/im/v1/messages/{message_id}/resources/{key}?type={image|file}
+    ///
+    /// Download the binary content of a resource referenced by an inbound
+    /// message. `resource_type` must be `"image"` for `image_key` references
+    /// (image messages) and `"file"` for `file_key` references (file / audio
+    /// / video / sticker messages).
+    pub async fn download_resource(
+        &self,
+        message_id: &str,
+        key: &str,
+        resource_type: &str,
+    ) -> Result<Vec<u8>> {
+        let url = format!(
+            "{}/open-apis/im/v1/messages/{}/resources/{}?type={}",
+            self.base_url, message_id, key, resource_type
+        );
+        let resp = self
+            .authorized_request(reqwest::Method::GET, &url)
+            .await?
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to download Feishu resource '{}': {}", key, e))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| anyhow!("Failed to read Feishu resource error body: {}", e))?;
+            return Err(anyhow!(
+                "Feishu resource download HTTP {} (key='{}', type='{}'): {}",
+                status,
+                key,
+                resource_type,
+                crate::truncate_utf8(&body, 512)
+            ));
+        }
+        let bytes = resp.bytes().await.map_err(|e| {
+            anyhow!(
+                "Failed to read Feishu resource bytes (key='{}'): {}",
+                key,
+                e
+            )
+        })?;
+        Ok(bytes.to_vec())
+    }
+
     /// Generic multipart POST: send `form`, decode `{code, msg, data}`, return `data`.
     /// `label` only appears in error messages to disambiguate image vs file uploads.
     async fn upload_multipart<T: serde::de::DeserializeOwned>(

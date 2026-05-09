@@ -14,6 +14,7 @@ use crate::channel::ws;
 
 use super::api::FeishuApi;
 use super::data_cache::DataCache;
+use super::inbound_media;
 use super::proto::{Frame, Header};
 use super::HOPE_CALLBACK_KEY;
 
@@ -76,7 +77,6 @@ struct MessageInfo {
     chat_id: Option<String>,
     chat_type: Option<String>,
     content: Option<String>,
-    #[allow(dead_code)]
     message_type: Option<String>,
     #[serde(default)]
     mentions: Option<Vec<MentionInfo>>,
@@ -280,6 +280,7 @@ pub async fn run_feishu_gateway(
                         &bytes,
                         &mut conn,
                         &cache,
+                        api.as_ref(),
                         &account_id,
                         &bot_open_id,
                         &inbound_tx,
@@ -423,6 +424,7 @@ async fn handle_frame(
     bytes: &[u8],
     conn: &mut ws::WsConnection,
     cache: &DataCache,
+    api: &FeishuApi,
     account_id: &str,
     bot_open_id: &str,
     inbound_tx: &mpsc::Sender<MsgContext>,
@@ -433,7 +435,8 @@ async fn handle_frame(
     match frame.method {
         METHOD_CONTROL => Ok(handle_control_frame(&frame)),
         METHOD_DATA => {
-            handle_data_frame(frame, conn, cache, account_id, bot_open_id, inbound_tx).await?;
+            handle_data_frame(frame, conn, cache, api, account_id, bot_open_id, inbound_tx)
+                .await?;
             Ok(None)
         }
         other => {
@@ -521,6 +524,7 @@ async fn handle_data_frame(
     mut frame: Frame,
     conn: &mut ws::WsConnection,
     cache: &DataCache,
+    api: &FeishuApi,
     account_id: &str,
     bot_open_id: &str,
     inbound_tx: &mpsc::Sender<MsgContext>,
@@ -565,7 +569,7 @@ async fn handle_data_frame(
     let dispatch_result: anyhow::Result<()> = match event_type {
         "im.message.receive_v1" => {
             if let Some(event_data) = parsed.event {
-                handle_message_event(event_data, account_id, bot_open_id, inbound_tx).await
+                handle_message_event(event_data, api, account_id, bot_open_id, inbound_tx).await
             } else {
                 Ok(())
             }
@@ -636,6 +640,7 @@ async fn send_ack(conn: &mut ws::WsConnection, src: Frame, code: i32) -> anyhow:
 /// Process an `im.message.receive_v1` event and forward as MsgContext.
 async fn handle_message_event(
     event_data: serde_json::Value,
+    api: &FeishuApi,
     account_id: &str,
     bot_open_id: &str,
     inbound_tx: &mpsc::Sender<MsgContext>,
@@ -670,6 +675,25 @@ async fn handle_message_event(
             .map(|t| clean_mention_tags(&t))
     });
 
+    // Parse + materialize media (image / file / audio / media / sticker).
+    // Failures are logged and skipped per-item — the surrounding text + raw
+    // event still reach the dispatcher so the agent can fall back gracefully.
+    let media = match (message.message_type.as_deref(), message.content.as_deref()) {
+        (Some(msg_type), Some(content_str)) if !message_id.is_empty() => {
+            let parsed = inbound_media::parse_message_media(msg_type, content_str, account_id);
+            let mut out = Vec::with_capacity(parsed.len());
+            for p in &parsed {
+                if let Some(m) =
+                    inbound_media::materialize_inbound(api, &message_id, p, account_id).await
+                {
+                    out.push(m);
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    };
+
     // Check if the bot was mentioned in this message
     let was_mentioned = message
         .mentions
@@ -696,7 +720,7 @@ async fn handle_message_event(
         thread_id: None,
         message_id,
         text,
-        media: Vec::new(),
+        media,
         reply_to_message_id: None,
         timestamp: chrono::Utc::now(),
         was_mentioned,

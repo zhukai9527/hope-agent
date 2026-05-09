@@ -12,6 +12,7 @@ pub mod api;
 pub mod auth;
 pub mod data_cache;
 pub mod format;
+pub mod inbound_media;
 pub mod media;
 pub mod proto;
 pub mod ws_event;
@@ -162,7 +163,9 @@ impl ChannelPlugin for FeishuPlugin {
                 MediaType::Photo,
                 MediaType::Video,
                 MediaType::Audio,
+                MediaType::Voice,
                 MediaType::Document,
+                MediaType::Sticker,
             ],
             supports_typing: false,
             supports_buttons: true,
