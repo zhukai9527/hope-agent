@@ -647,7 +647,9 @@ pub async fn execute_tool_with_context(
             super::TOOL_SKILL => skill::tool_skill(args, ctx).await,
             super::TOOL_MCP_RESOURCE => crate::mcp::resources::tool_mcp_resource(args).await,
             super::TOOL_MCP_PROMPT => crate::mcp::prompts::tool_mcp_prompt(args).await,
-            super::feishu::docx::TOOL_DOCX_CREATE => super::feishu::docx::execute_create(args).await,
+            super::feishu::docx::TOOL_DOCX_CREATE => {
+                super::feishu::docx::execute_create(args).await
+            }
             super::feishu::docx::TOOL_DOCX_GET_BLOCKS => {
                 super::feishu::docx::execute_get_blocks(args).await
             }

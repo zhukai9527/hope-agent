@@ -1047,6 +1047,10 @@ pub(super) mod test_support {
             .mount(server)
             .await;
         let domain = server.uri();
-        FeishuApi::new(Arc::new(FeishuAuth::new("cli_test", "secret_test", &domain)))
+        FeishuApi::new(Arc::new(FeishuAuth::new(
+            "cli_test",
+            "secret_test",
+            &domain,
+        )))
     }
 }

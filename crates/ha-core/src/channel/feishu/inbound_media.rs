@@ -101,11 +101,7 @@ struct StickerContent {
 /// Parse a Feishu message's `msg_type` + `content` JSON string into media
 /// references. Unsupported types (`text`, `post`, `share_chat`, etc.) and
 /// malformed content both yield an empty vec; malformed cases log a warning.
-pub fn parse_message_media(
-    msg_type: &str,
-    content: &str,
-    account_id: &str,
-) -> Vec<ParsedMediaRef> {
+pub fn parse_message_media(msg_type: &str, content: &str, account_id: &str) -> Vec<ParsedMediaRef> {
     match msg_type {
         "image" => match serde_json::from_str::<ImageContent>(content) {
             Ok(ImageContent {
@@ -310,7 +306,12 @@ pub async fn materialize_inbound(
     let path = dir.join(format!("{}-{}.{}", ts, safe_key, ext));
 
     let on_disk_size = match api
-        .download_resource_to_file(message_id, &parsed.key, parsed.resource_type.as_str(), &path)
+        .download_resource_to_file(
+            message_id,
+            &parsed.key,
+            parsed.resource_type.as_str(),
+            &path,
+        )
         .await
     {
         Ok(n) => n,
@@ -346,10 +347,7 @@ fn ext_for(parsed: &ParsedMediaRef) -> String {
             .extension()
             .and_then(|e| e.to_str())
         {
-            if !ext.is_empty()
-                && ext.len() <= 8
-                && ext.chars().all(|c| c.is_ascii_alphanumeric())
-            {
+            if !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
                 return ext.to_ascii_lowercase();
             }
         }
@@ -453,11 +451,7 @@ mod tests {
 
     #[test]
     fn parse_file_missing_size_still_works() {
-        let refs = parse_message_media(
-            "file",
-            r#"{"file_key":"f","file_name":"x.txt"}"#,
-            "test",
-        );
+        let refs = parse_message_media("file", r#"{"file_key":"f","file_name":"x.txt"}"#, "test");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].file_size, None);
     }

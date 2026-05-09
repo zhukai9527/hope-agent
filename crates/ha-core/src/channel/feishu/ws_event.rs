@@ -584,10 +584,7 @@ async fn handle_data_frame(
             // the debug log so unknown events stay diagnosable.
             if let Some(event_data) = parsed.event {
                 let recognized = inbound_events::try_dispatch_non_message(
-                    event_type,
-                    event_data,
-                    account_id,
-                    inbound_tx,
+                    event_type, event_data, account_id, inbound_tx,
                 )
                 .await;
                 if !recognized {
