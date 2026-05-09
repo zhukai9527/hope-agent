@@ -1201,6 +1201,10 @@ v0.2.0 起把飞书除 IM 之外的核心业务 API（云文档 / 多维表格 /
 | C1 | `feishu_docx_get_blocks` | 列文档全部 block（分页） |
 | C1 | `feishu_docx_append_block` | 在指定 parent 下追加 block |
 | C1 | `feishu_docx_update_block_text` | 覆盖式改 block 文本 |
+| C2 | `feishu_bitable_list_records` | 列多维表格记录（view + filter expression + 分页） |
+| C2 | `feishu_bitable_search_records` | 结构化查询（field projection + sort + filter object DSL） |
+| C2 | `feishu_bitable_create_record` | 单条新增记录 |
+| C2 | `feishu_bitable_batch_update_records` | 批量更新记录（≤1000/请求） |
 
 C2-C9 PR 各自往 [`tools::feishu::get_feishu_tools`](../../crates/ha-core/src/tools/feishu/mod.rs) 追加自己的 tool 定义，本表持续 grow。
 

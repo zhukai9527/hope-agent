@@ -653,6 +653,19 @@ pub async fn execute_tool_with_context(
             super::feishu::docx::TOOL_DOCX_UPDATE_BLOCK_TEXT => {
                 super::feishu::docx::execute_update_block_text(args).await
             }
+            // Feishu bitable (PR C2).
+            super::feishu::bitable::TOOL_BITABLE_LIST_RECORDS => {
+                super::feishu::bitable::execute_list_records(args).await
+            }
+            super::feishu::bitable::TOOL_BITABLE_SEARCH_RECORDS => {
+                super::feishu::bitable::execute_search_records(args).await
+            }
+            super::feishu::bitable::TOOL_BITABLE_CREATE_RECORD => {
+                super::feishu::bitable::execute_create_record(args).await
+            }
+            super::feishu::bitable::TOOL_BITABLE_BATCH_UPDATE_RECORDS => {
+                super::feishu::bitable::execute_batch_update_records(args).await
+            }
             // MCP-sourced tools all share the `mcp__<server>__<tool>`
             // prefix; dispatch them through the dedicated subsystem.
             n if crate::mcp::catalog::is_mcp_tool_name(n) => {

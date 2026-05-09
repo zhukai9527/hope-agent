@@ -23,6 +23,7 @@
 //! [`tools::dispatch::ALL_DISPATCHABLE_TOOLS`]. PR C1 onwards each append
 //! their `feishu_<module>_*` tools to the returned vec.
 
+pub mod bitable;
 pub mod docx;
 
 use anyhow::{anyhow, Result};
@@ -182,10 +183,16 @@ pub async fn resolve_feishu_api(account: Option<&str>) -> Result<Arc<FeishuApi>>
 /// → C9 hire).
 pub fn get_feishu_tools() -> Vec<ToolDefinition> {
     vec![
+        // C1 — docx
         docx::create_tool(),
         docx::get_blocks_tool(),
         docx::append_block_tool(),
         docx::update_block_text_tool(),
+        // C2 — bitable
+        bitable::list_records_tool(),
+        bitable::search_records_tool(),
+        bitable::create_record_tool(),
+        bitable::batch_update_records_tool(),
     ]
 }
 
