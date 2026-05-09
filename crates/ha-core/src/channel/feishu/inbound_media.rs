@@ -20,14 +20,27 @@
 //! and yield `None` — the surrounding text + raw event still reach the
 //! dispatcher so the agent can fall back gracefully.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::channel::types::{InboundMedia, MediaType};
+use crate::channel::types::{InboundMedia, MediaType, MsgContext};
 
 use super::api::FeishuApi;
 
+/// Hard ceiling on per-resource downloads from `download_resource`. Feishu
+/// does not advertise per-message attachment size limits in the long-poll
+/// gateway, so we apply a defensive cap to keep a single attachment from
+/// pinning the gateway's memory or filling disk. 64 MiB covers normal
+/// images/files/short videos; larger files surface a warn log + skip and
+/// the model can still respond to the surrounding text.
+pub const INBOUND_DOWNLOAD_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// JSON key used to smuggle deferred-download media refs through
+/// `MsgContext.raw` from the WS event handler to the dispatcher. Picked to
+/// be obviously app-internal so a future Feishu schema change can't collide.
+pub const PENDING_MEDIA_KEY: &str = "_hopePendingMedia";
+
 /// Result of parsing a message's content JSON for media references — pre-download form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedMediaRef {
     pub media_type: MediaType,
     /// `image_key` for image, `file_key` otherwise.
@@ -39,14 +52,15 @@ pub struct ParsedMediaRef {
 }
 
 /// Maps to the `?type=` query parameter on the resource download endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ResourceType {
     Image,
     File,
 }
 
 impl ResourceType {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Image => "image",
             Self::File => "file",
@@ -198,6 +212,39 @@ fn warn_parse_failed(account_id: &str, msg_type: &str, err: &serde_json::Error, 
     );
 }
 
+/// Embed deferred-download refs into an event payload that becomes
+/// `MsgContext.raw`. The dispatcher pulls them back out via
+/// [`take_pending_refs`] only after access + mention gating passes,
+/// keeping the WS handler's per-event hot path I/O-free so the gateway
+/// ack lands within its expected window.
+pub fn embed_pending_refs(raw: &mut serde_json::Value, refs: Vec<ParsedMediaRef>) {
+    if refs.is_empty() {
+        return;
+    }
+    if !raw.is_object() {
+        *raw = serde_json::json!({});
+    }
+    if let serde_json::Value::Object(map) = raw {
+        if let Ok(value) = serde_json::to_value(refs) {
+            map.insert(PENDING_MEDIA_KEY.to_string(), value);
+        }
+    }
+}
+
+/// Take and remove deferred-download refs from `msg.raw`. Returns an empty
+/// vec when no refs were embedded or the payload is malformed (we
+/// silently drop bad payloads rather than fail the message — the
+/// surrounding text still reaches the agent).
+pub fn take_pending_refs(msg: &mut MsgContext) -> Vec<ParsedMediaRef> {
+    let serde_json::Value::Object(ref mut map) = msg.raw else {
+        return Vec::new();
+    };
+    let Some(value) = map.remove(PENDING_MEDIA_KEY) else {
+        return Vec::new();
+    };
+    serde_json::from_value(value).unwrap_or_default()
+}
+
 /// Download a parsed media ref to local disk and return an [`InboundMedia`]
 /// pointing at the on-disk path. Returns `None` (with warn log) on download
 /// or persistence failure — the caller should keep the surrounding message
@@ -208,6 +255,20 @@ pub async fn materialize_inbound(
     parsed: &ParsedMediaRef,
     account_id: &str,
 ) -> Option<InboundMedia> {
+    if let Some(declared) = parsed.file_size {
+        if declared > INBOUND_DOWNLOAD_MAX_BYTES {
+            app_warn!(
+                "channel",
+                "feishu:inbound",
+                "[{}] Skipping inbound resource key='{}' — declared size {} bytes exceeds {} cap",
+                account_id,
+                parsed.key,
+                declared,
+                INBOUND_DOWNLOAD_MAX_BYTES
+            );
+            return None;
+        }
+    }
     let bytes = match api
         .download_resource(message_id, &parsed.key, parsed.resource_type.as_str())
         .await
@@ -444,5 +505,75 @@ mod tests {
             file_size: None,
         };
         assert_eq!(ext_for(&parsed), "opus");
+    }
+
+    fn sample_msg() -> MsgContext {
+        MsgContext {
+            channel_id: crate::channel::types::ChannelId::Feishu,
+            account_id: "acc".into(),
+            sender_id: "u1".into(),
+            sender_name: None,
+            sender_username: None,
+            chat_id: "c1".into(),
+            chat_type: crate::channel::types::ChatType::Dm,
+            chat_title: None,
+            thread_id: None,
+            message_id: "m1".into(),
+            text: None,
+            media: Vec::new(),
+            reply_to_message_id: None,
+            timestamp: chrono::Utc::now(),
+            was_mentioned: true,
+            raw: serde_json::json!({"existing": 1}),
+        }
+    }
+
+    #[test]
+    fn embed_pending_refs_round_trips_through_msgcontext() {
+        let parsed = vec![ParsedMediaRef {
+            media_type: MediaType::Photo,
+            key: "img_v2_abc".into(),
+            resource_type: ResourceType::Image,
+            mime_type: Some("image/jpeg".into()),
+            file_name: None,
+            file_size: None,
+        }];
+        let mut msg = sample_msg();
+        embed_pending_refs(&mut msg.raw, parsed.clone());
+        assert!(msg.raw.get(PENDING_MEDIA_KEY).is_some());
+
+        let took = take_pending_refs(&mut msg);
+        assert_eq!(took, parsed);
+        // After take, the key is gone — second call yields empty.
+        assert!(msg.raw.get(PENDING_MEDIA_KEY).is_none());
+        assert!(take_pending_refs(&mut msg).is_empty());
+        // Surrounding fields preserved.
+        assert_eq!(msg.raw.get("existing"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn embed_pending_refs_skips_when_empty() {
+        let mut msg = sample_msg();
+        embed_pending_refs(&mut msg.raw, Vec::new());
+        assert!(msg.raw.get(PENDING_MEDIA_KEY).is_none());
+    }
+
+    #[test]
+    fn take_pending_refs_yields_empty_for_non_object_raw() {
+        let mut msg = sample_msg();
+        msg.raw = serde_json::Value::Null;
+        assert!(take_pending_refs(&mut msg).is_empty());
+    }
+
+    #[test]
+    fn take_pending_refs_yields_empty_when_payload_malformed() {
+        let mut msg = sample_msg();
+        if let serde_json::Value::Object(ref mut map) = msg.raw {
+            map.insert(PENDING_MEDIA_KEY.into(), serde_json::json!("not-an-array"));
+        }
+        assert!(take_pending_refs(&mut msg).is_empty());
+        // Even on parse failure we strip the key so the dispatcher doesn't
+        // re-attempt on a follow-up call.
+        assert!(msg.raw.get(PENDING_MEDIA_KEY).is_none());
     }
 }

@@ -373,6 +373,8 @@ impl FeishuApi {
         key: &str,
         resource_type: &str,
     ) -> Result<Vec<u8>> {
+        use futures_util::StreamExt;
+
         let url = format!(
             "{}/open-apis/im/v1/messages/{}/resources/{}?type={}",
             self.base_url, message_id, key, resource_type
@@ -397,14 +399,43 @@ impl FeishuApi {
                 crate::truncate_utf8(&body, 512)
             ));
         }
-        let bytes = resp.bytes().await.map_err(|e| {
-            anyhow!(
-                "Failed to read Feishu resource bytes (key='{}'): {}",
-                key,
-                e
-            )
-        })?;
-        Ok(bytes.to_vec())
+
+        // Reject early if the server advertises a body that exceeds the cap
+        // — saves us reading even one chunk for clearly oversize files.
+        if let Some(len) = resp.content_length() {
+            if len > super::inbound_media::INBOUND_DOWNLOAD_MAX_BYTES {
+                return Err(anyhow!(
+                    "Feishu resource '{}' size {} bytes exceeds {} cap",
+                    key,
+                    len,
+                    super::inbound_media::INBOUND_DOWNLOAD_MAX_BYTES
+                ));
+            }
+        }
+
+        // Stream chunks and bail mid-flight if the running total trips the
+        // cap (covers chunked-encoding responses without Content-Length).
+        let cap = super::inbound_media::INBOUND_DOWNLOAD_MAX_BYTES as usize;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                anyhow!(
+                    "Failed to read Feishu resource bytes (key='{}'): {}",
+                    key,
+                    e
+                )
+            })?;
+            if buf.len().saturating_add(chunk.len()) > cap {
+                return Err(anyhow!(
+                    "Feishu resource '{}' exceeds {} byte cap mid-stream",
+                    key,
+                    super::inbound_media::INBOUND_DOWNLOAD_MAX_BYTES
+                ));
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
     }
 
     /// Generic multipart POST: send `form`, decode `{code, msg, data}`, return `data`.
