@@ -26,13 +26,14 @@ use crate::channel::types::{InboundMedia, MediaType, MsgContext};
 
 use super::api::FeishuApi;
 
-/// Hard ceiling on per-resource downloads from `download_resource`. Feishu
-/// does not advertise per-message attachment size limits in the long-poll
-/// gateway, so we apply a defensive cap to keep a single attachment from
-/// pinning the gateway's memory or filling disk. 64 MiB covers normal
-/// images/files/short videos; larger files surface a warn log + skip and
-/// the model can still respond to the surrounding text.
-pub const INBOUND_DOWNLOAD_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Sanity tripwire on `download_resource_to_file` — generous enough to
+/// cover Feishu's documented platform limits with headroom (image ≤ 30 MB,
+/// file ≤ 100 MB, video ≤ 200 MB) so legitimate user uploads always fit,
+/// strict enough to catch a misconfigured-proxy or attack scenario where
+/// the gateway returns a multi-GB body. RAM is not a factor: downloads
+/// stream chunk-by-chunk straight to disk, so the cap is really about
+/// disk-fill / latency containment for anomalous responses, not memory.
+pub const INBOUND_DOWNLOAD_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 /// JSON key used to smuggle deferred-download media refs through
 /// `MsgContext.raw` from the WS event handler to the dispatcher. Picked to
