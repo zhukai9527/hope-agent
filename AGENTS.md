@@ -53,6 +53,22 @@ pnpm test                                                                    # C
 - **长任务收尾例外**：跨多文件多模块 / 完整 plan / 跨 crate 重构这类阶段性收尾时，可主动跑必要项，跑前说一句"改动较大，跑一下 X 收尾"
 - **commit / push 前 / 用户明确要求**：直接按指示跑
 
+## 分支与发布
+
+`main` 承载下一个 minor 版本的开发，已发布的 minor 版本对应一条 `release/X.Y` 维护分支用于 patch 修复。两条分支之间**只允许 cherry-pick，不允许 merge**——`merge main → release/X.Y` 会把未发布功能拖入维护分支。
+
+### 工作流
+
+- **修 bug**：从 `release/X.Y` 切 `fix/X.Y-<topic>`，PR base 选 `release/X.Y`；合并并发版后 cherry-pick 回 `main` 再单独发 PR
+- **新功能**：从 `main` 切 `feat/<topic>`，PR base 选 `main`
+- **新 minor 发版**：`main` 上 `pnpm version X.Y.0` 打 tag，再 `git branch release/X.Y vX.Y.0 && git push -u origin release/X.Y`，CI 与 protection 通过 ruleset 通配符自动覆盖
+
+### CI 与 branch protection
+
+- [`.github/workflows/lint.yml`](.github/workflows/lint.yml) 与 [`rust.yml`](.github/workflows/rust.yml) 触发条件包含 `[main, "release/**"]`
+- GitHub ruleset `main-branch-protection` 的 `conditions.ref_name.include` 覆盖 `~DEFAULT_BRANCH` + `refs/heads/release/**`：必须 PR、必跑 8 项 status check、禁 force push、禁删分支、`enforce_admins: true`
+- 修改 workflow 的 job 名或 matrix 时需同步通过 `gh api` 更新 ruleset 的 `required_status_checks` context 列表
+
 ## 项目结构
 
 ```
