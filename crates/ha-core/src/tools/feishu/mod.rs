@@ -25,6 +25,7 @@
 
 pub mod approval;
 pub mod bitable;
+pub mod calendar;
 pub mod docx;
 pub mod drive;
 pub mod wiki;
@@ -212,6 +213,13 @@ pub fn get_feishu_tools() -> Vec<ToolDefinition> {
         approval::cancel_instance_tool(),
         approval::list_instances_tool(),
         approval::subscribe_tool(),
+        // C7 — calendar
+        calendar::list_tool(),
+        calendar::create_event_tool(),
+        calendar::list_events_tool(),
+        calendar::update_event_tool(),
+        calendar::delete_event_tool(),
+        calendar::attendees_create_tool(),
     ]
 }
 

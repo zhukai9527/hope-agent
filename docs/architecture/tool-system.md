@@ -1217,6 +1217,12 @@ v0.2.0 起把飞书除 IM 之外的核心业务 API（云文档 / 多维表格 /
 | C6 | `feishu_approval_cancel_instance` | **HIGH** 撤销实例 |
 | C6 | `feishu_approval_list_instances` | 按 approval_code + 时间区间列实例码 |
 | C6 | `feishu_approval_subscribe` | 启用审批事件推送（v0.2.0 仅 log；行为留 v0.3+ B.2） |
+| C7 | `feishu_calendar_list` | 列日历 |
+| C7 | `feishu_calendar_create_event` | 建会议 / 事件 |
+| C7 | `feishu_calendar_list_events` | 列事件（time range） |
+| C7 | `feishu_calendar_update_event` | 改会议（patch） |
+| C7 | `feishu_calendar_delete_event` | 删会议 |
+| C7 | `feishu_calendar_attendees_create` | 邀人（user / chat / resource / third_party） |
 
 C2-C9 PR 各自往 [`tools::feishu::get_feishu_tools`](../../crates/ha-core/src/tools/feishu/mod.rs) 追加自己的 tool 定义，本表持续 grow。
 

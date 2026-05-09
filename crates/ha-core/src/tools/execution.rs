@@ -706,6 +706,25 @@ pub async fn execute_tool_with_context(
             super::feishu::approval::TOOL_APPROVAL_SUBSCRIBE => {
                 super::feishu::approval::execute_subscribe(args).await
             }
+            // Feishu calendar (PR C7).
+            super::feishu::calendar::TOOL_CALENDAR_LIST => {
+                super::feishu::calendar::execute_list(args).await
+            }
+            super::feishu::calendar::TOOL_CALENDAR_CREATE_EVENT => {
+                super::feishu::calendar::execute_create_event(args).await
+            }
+            super::feishu::calendar::TOOL_CALENDAR_LIST_EVENTS => {
+                super::feishu::calendar::execute_list_events(args).await
+            }
+            super::feishu::calendar::TOOL_CALENDAR_UPDATE_EVENT => {
+                super::feishu::calendar::execute_update_event(args).await
+            }
+            super::feishu::calendar::TOOL_CALENDAR_DELETE_EVENT => {
+                super::feishu::calendar::execute_delete_event(args).await
+            }
+            super::feishu::calendar::TOOL_CALENDAR_ATTENDEES_CREATE => {
+                super::feishu::calendar::execute_attendees_create(args).await
+            }
             // MCP-sourced tools all share the `mcp__<server>__<tool>`
             // prefix; dispatch them through the dedicated subsystem.
             n if crate::mcp::catalog::is_mcp_tool_name(n) => {

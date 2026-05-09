@@ -11,6 +11,7 @@
 pub mod api;
 pub mod api_approval;
 pub mod api_bitable;
+pub mod api_calendar;
 pub mod api_docx;
 pub mod api_drive;
 pub mod api_wiki;
