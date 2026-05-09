@@ -306,8 +306,10 @@ mod tests {
 
     #[tokio::test]
     async fn upload_rejects_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does-not-exist.bin");
         let err = execute_upload_media(&json!({
-            "path": "/nonexistent/path/should-not-exist.bin",
+            "path": path.to_string_lossy(),
             "folder_token": "f1"
         }))
         .await
