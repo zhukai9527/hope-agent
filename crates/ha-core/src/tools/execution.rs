@@ -725,6 +725,19 @@ pub async fn execute_tool_with_context(
             super::feishu::calendar::TOOL_CALENDAR_ATTENDEES_CREATE => {
                 super::feishu::calendar::execute_attendees_create(args).await
             }
+            // Feishu contact (PR C8).
+            super::feishu::contact::TOOL_CONTACT_GET_USER => {
+                super::feishu::contact::execute_get_user(args).await
+            }
+            super::feishu::contact::TOOL_CONTACT_BATCH_GET_USERS => {
+                super::feishu::contact::execute_batch_get_users(args).await
+            }
+            super::feishu::contact::TOOL_CONTACT_GET_DEPARTMENT => {
+                super::feishu::contact::execute_get_department(args).await
+            }
+            super::feishu::contact::TOOL_CONTACT_SEARCH_USERS_BY_DEPARTMENT => {
+                super::feishu::contact::execute_search_users_by_department(args).await
+            }
             // MCP-sourced tools all share the `mcp__<server>__<tool>`
             // prefix; dispatch them through the dedicated subsystem.
             n if crate::mcp::catalog::is_mcp_tool_name(n) => {

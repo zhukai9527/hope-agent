@@ -26,6 +26,7 @@
 pub mod approval;
 pub mod bitable;
 pub mod calendar;
+pub mod contact;
 pub mod docx;
 pub mod drive;
 pub mod wiki;
@@ -220,6 +221,11 @@ pub fn get_feishu_tools() -> Vec<ToolDefinition> {
         calendar::update_event_tool(),
         calendar::delete_event_tool(),
         calendar::attendees_create_tool(),
+        // C8 — contact
+        contact::get_user_tool(),
+        contact::batch_get_users_tool(),
+        contact::get_department_tool(),
+        contact::search_users_by_department_tool(),
     ]
 }
 

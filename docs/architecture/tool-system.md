@@ -1223,6 +1223,10 @@ v0.2.0 起把飞书除 IM 之外的核心业务 API（云文档 / 多维表格 /
 | C7 | `feishu_calendar_update_event` | 改会议（patch） |
 | C7 | `feishu_calendar_delete_event` | 删会议 |
 | C7 | `feishu_calendar_attendees_create` | 邀人（user / chat / resource / third_party） |
+| C8 | `feishu_contact_get_user` | 查用户 profile（敏感数据） |
+| C8 | `feishu_contact_batch_get_users` | 批量查用户（≤50；敏感） |
+| C8 | `feishu_contact_get_department` | 查部门 info |
+| C8 | `feishu_contact_search_users_by_department` | 列部门下用户（敏感） |
 
 C2-C9 PR 各自往 [`tools::feishu::get_feishu_tools`](../../crates/ha-core/src/tools/feishu/mod.rs) 追加自己的 tool 定义，本表持续 grow。
 
