@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 新增「导出对话」功能：Sidebar 右键菜单 + 标题栏按钮均可触发，支持 Markdown / JSON / HTML 三种格式，可选包含工具调用与思考过程；桌面端走原生保存对话框，浏览器端走 Blob 下载。`/export` 斜杠命令同步升级为 `[md|json|html] [full|tools|thinking]` 位置参数（无参等价旧行为）。
 - **飞书完整对齐 v0.2.0 / Phase A 收尾 + Phase B + Phase C**（roadmap 见 `docs/plans/`）：
   - **PR A1**：飞书入站消息解析图 / 文件 / 语音 / 视频 / 贴纸——之前 `ws_event.rs` 硬编码 `media: Vec::new()`，用户发的所有非文本内容全部丢弃。新增 [`channel/feishu/inbound_media.rs`](crates/ha-core/src/channel/feishu/inbound_media.rs) 按 `msg_type` 解析 `content` JSON 提取 `image_key` / `file_key`，调 `GET /im/v1/messages/{id}/resources/{key}?type=` 下载到 `~/.hope-agent/channels/feishu/inbound-temp/`，`InboundMedia.file_url` 指本地路径。`capabilities.supports_media` 同步补 `Voice` / `Sticker`。
   - **PR B0**：`InboundEvent` 跨 12 channel 入站事件枚举基建。`ChannelPlugin::start_account` 签名 `mpsc::Sender<MsgContext>` → `mpsc::Sender<InboundEvent>`；6 variants（Message / Reaction / MessageEdited / MessageRecalled / Membership / ReadReceipt）；非 Message 全 dispatcher log-only，业务行为延后 v0.3+ Phase B.2。`app_init` mpsc buffer 256 → 1024。
