@@ -47,9 +47,10 @@ pub async fn clear_crash_history() -> Result<(), CmdError> {
 }
 
 #[tauri::command]
-pub async fn request_app_restart(app: tauri::AppHandle) -> Result<(), CmdError> {
-    app.exit(42);
-    Ok(())
+pub async fn request_app_restart(_app: tauri::AppHandle) -> Result<(), CmdError> {
+    ha_core::lifecycle::restart()
+        .map(|_| ())
+        .map_err(|e| CmdError::msg(e.to_string()))
 }
 
 #[tauri::command]
