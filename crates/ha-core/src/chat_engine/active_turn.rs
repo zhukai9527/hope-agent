@@ -181,16 +181,16 @@ pub fn set_stream_id(session_id: &str, turn_id: &str, stream_id: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("active turn test lock poisoned")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("active turn test lock poisoned")
-    }
 
     #[test]
     fn rejects_second_turn_until_guard_drops() {
