@@ -522,14 +522,26 @@ export async function reloadAndMergeSessionMessages(params: {
   }
 }
 
-function transientMessageKey(msg: Message): string {
-  if (typeof msg.dbId === "number") return `db:${msg.dbId}`
-  if (msg._clientId) return `client:${msg._clientId}`
-  return `local:${msg.role}:${msg.timestamp ?? ""}:${msg.content}`
+function hasStableMessageIdentity(msg: Message): boolean {
+  return typeof msg.dbId === "number" || !!msg._clientId
+}
+
+function stableMessageIdentityMatches(a: Message, b: Message): boolean {
+  if (
+    typeof a.dbId === "number" &&
+    typeof b.dbId === "number" &&
+    a.dbId === b.dbId
+  ) {
+    return true
+  }
+  return !!a._clientId && !!b._clientId && a._clientId === b._clientId
 }
 
 function sameTransientMessage(a: Message, b: Message): boolean {
-  return transientMessageKey(a) === transientMessageKey(b)
+  if (a === b) return true
+  if (stableMessageIdentityMatches(a, b)) return true
+  if (hasStableMessageIdentity(a) || hasStableMessageIdentity(b)) return false
+  return a.role === b.role && a.timestamp === b.timestamp && a.content === b.content
 }
 
 function messagesAppendedAfterSnapshot(
@@ -551,8 +563,13 @@ function preserveMessagesAppendedDuringReload(
   const appended = messagesAppendedAfterSnapshot(snapshotAtRequestStart, latestExisting)
   if (appended.length === 0) return merged
 
-  const mergedKeys = new Set(merged.map(transientMessageKey))
-  const missing = appended.filter((msg) => !mergedKeys.has(transientMessageKey(msg)))
+  const missing = appended.filter(
+    (msg) =>
+      !merged.some(
+        (mergedMsg) =>
+          mergedMsg === msg || stableMessageIdentityMatches(mergedMsg, msg),
+      ),
+  )
   return missing.length > 0 ? [...merged, ...missing] : merged
 }
 
