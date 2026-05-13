@@ -102,16 +102,16 @@ COPY src/assets ./src/assets
 # permanently.
 COPY --from=web /work/dist ./dist
 
-# Build only the headless `hope-agent` binary shipped from the
-# `ha-server` crate. The Tauri-built homonymous binary lives in
-# `src-tauri` and is intentionally skipped — building it would pull in
-# WebKit / Cocoa / WinRT.
+# Build only the headless `hope-agent-server` binary shipped from the
+# `ha-server` crate. The Tauri-built `hope-agent` binary in `src-tauri`
+# is intentionally skipped — it would pull in WebKit / Cocoa / WinRT.
+# The bin is named `hope-agent-server` upstream to avoid colliding with
+# src-tauri's `hope-agent` in `target/release/`; we rename it back to
+# `hope-agent` on the copy so the in-container command stays unchanged.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/target \
-    cargo build --release --locked -p ha-server --bin hope-agent && \
-    # Copy the binary out of the cache mount so it survives into the
-    # final runtime stage.
-    cp /work/target/release/hope-agent /usr/local/bin/hope-agent
+    cargo build --release --locked -p ha-server --bin hope-agent-server && \
+    cp /work/target/release/hope-agent-server /usr/local/bin/hope-agent
 
 # -------------------------------------------------------------------
 # Stage 3: minimal runtime
