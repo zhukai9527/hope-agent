@@ -16,6 +16,7 @@ import type {
   ExportSessionResult,
 } from "@/lib/transport";
 import type { MediaItem } from "@/types/chat";
+import { dispatchAuthRequired, setStoredApiKey } from "@/lib/api-key-storage";
 
 // ---------------------------------------------------------------------------
 // Command → REST endpoint mapping
@@ -820,6 +821,15 @@ export class HttpTransport implements Transport {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
+      // 401 means the server is enforcing HA_API_KEY and either we sent
+      // no token or the one in localStorage was rejected. Clear the
+      // stale token and notify the app so it can pop the entry dialog;
+      // we still throw so the caller's error path runs normally.
+      if (response.status === 401) {
+        setStoredApiKey(null);
+        this.apiKey = null;
+        dispatchAuthRequired();
+      }
       throw new Error(
         `[HttpTransport] ${def.method} ${url} returned ${response.status}: ${text}`,
       );

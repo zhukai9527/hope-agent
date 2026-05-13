@@ -10,14 +10,15 @@
 #   docker compose --profile with-ollama up -d
 #
 # Expose to the LAN / public internet:
-#   The browser onboarding wizard (and the Web GUI in general) cannot
-#   currently bootstrap an API key into the page. Setting HA_API_KEY here
-#   would block the wizard with 401 on first load. The recommended path
-#   is to put a reverse proxy (Caddy / Nginx / Traefik) in front with
-#   network-level auth (TLS client certs, basic auth, OIDC), or restrict
-#   the listener to a VPN / tailnet. Direct LAN exposure with HA_API_KEY
-#   set is tracked as a follow-up (browser token entry UX needs work).
-#   See docs/deployment/docker.md.
+#   1. Set HA_API_KEY (random string, e.g. `openssl rand -hex 24`).
+#   2. Change the port mapping to "8420:8420" (drop the 127.0.0.1: prefix).
+#   3. First visit will pop a "Server authentication required" dialog —
+#      paste the token. Or share `http://host:8420/?token=XXX` and the
+#      frontend will capture it into localStorage and rewrite the URL.
+#   For production prefer a TLS-terminating reverse proxy (Caddy / Nginx
+#   / Traefik) that injects `Authorization: Bearer ${HA_API_KEY}` on the
+#   upstream — the browser never sees the token then. See
+#   docs/deployment/docker.md for full examples.
 
 services:
   hope-agent:
@@ -32,12 +33,12 @@ services:
       - "127.0.0.1:8420:8420"
     environment:
       # HA_API_KEY: gate every /api/* and WS upgrade behind a Bearer
-      # token. Leave unset for the default loopback deployment — the Web
-      # GUI does not yet support entering the key from the browser, so a
-      # set key without a reverse proxy that adds it for you will make
-      # the onboarding wizard 401. Recommended deployment with this set:
-      # nginx/caddy in front, `proxy_set_header Authorization "Bearer
-      # ${HA_API_KEY}"` on the upstream so browsers never see the token.
+      # token. Leave unset for the default loopback deployment. When set,
+      # browsers visiting the page get a "Server authentication required"
+      # dialog asking them to paste the token; you can also share a
+      # `?token=XXX` URL for one-shot bootstrap. For production prefer a
+      # reverse proxy that adds `Authorization: Bearer ${HA_API_KEY}` on
+      # the upstream so the token never reaches the browser.
       HA_API_KEY: ${HA_API_KEY:-}
       TZ: ${TZ:-UTC}
     volumes:

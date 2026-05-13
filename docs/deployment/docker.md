@@ -46,7 +46,7 @@ docker compose logs -f hope-agent
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `HA_BIND` | `0.0.0.0:8420` | server 监听地址。容器内必须是 `0.0.0.0`（loopback 会拒绝外部连接）。entrypoint 自动翻译为 `--bind` |
-| `HA_API_KEY` | _未设置_ | HTTP/WS Bearer Token。**注意：当前 Web GUI 没有浏览器侧 token 输入界面**，直接 `set` 后从浏览器打开会让 onboarding 401。仅在前置反代会注入 `Authorization: Bearer …` 时设置（见下节）。entrypoint 自动翻译为 `--api-key` |
+| `HA_API_KEY` | _未设置_ | HTTP/WS Bearer Token。设了之后从浏览器打开会弹「需要服务器鉴权」对话框，粘贴 token 即可继续；也支持 `https://host:8420/?token=XXX` 一次性传 token —— 前端会自动捕获到 localStorage 并把 URL 清掉。entrypoint 自动翻译为 `--api-key` |
 | `HA_DATA_DIR` | `/data` | 数据根目录，所有持久化文件（`config.json` / `sessions.db` / `memory.db` / 凭据 / 项目 / 附件等）都在此目录下 |
 | `HA_DEPLOYMENT` | `docker` | 给 updater 的部署形态提示。**不要改**，否则 `app_update install` 会尝试在容器内做 binary swap |
 | `TZ` | `UTC` | 时区。影响 cron 调度与时间戳格式 |
@@ -57,12 +57,13 @@ docker compose logs -f hope-agent
 
 #### LAN / 公网暴露
 
-由于 Web GUI 目前不支持在浏览器里粘 token，**不要**直接 `HA_API_KEY=xxx` + `0.0.0.0:8420` 暴露 —— 浏览器无法把 token 加进请求，onboarding 第一步就会 401。推荐做法二选一：
+要让 LAN 或公网访问，**先设 `HA_API_KEY`**，再把端口映射改成 `8420:8420`（去掉 `127.0.0.1:` 前缀），最后强烈建议前置反代做 TLS 终止。
 
-1. **反向代理注入 Authorization**（推荐）：Caddy / Nginx / Traefik 前置 TLS 终止 + 在 upstream 加 `Authorization: Bearer ${HA_API_KEY}` 头，hope-agent 配 `HA_API_KEY` 强制鉴权。反代层做网络级访问控制（client cert / OIDC / basic auth）。
-2. **VPN / tailnet 内网**：tailscale / WireGuard / Zerotier 把容器拉进私网，不开 `HA_API_KEY`，靠网络层隔离。
+三种典型部署：
 
-浏览器侧 token 输入 UX 是已知 followup（[review-followups F-088](../plans/review-followups.md)），完成后该限制会取消。
+1. **直接暴露 + 浏览器输 token**：`HA_API_KEY=...` + `0.0.0.0:8420` —— 用户首次访问，前端弹「需要服务器鉴权」对话框，粘 token 即继续；token 存 localStorage，之后访问无感。也可以分享 `https://host:8420/?token=XXX` 一次性预填 token 的链接（前端自动捕获并把 URL 清掉，不进历史 / referer / bookmark）。**风险**：token 在浏览器 localStorage 里，浏览器侧 XSS 会泄露；适合内网 / 小团队。
+2. **反向代理注入 Authorization**（推荐生产）：Caddy / Nginx / Traefik 前置 TLS 终止，在 upstream 加 `Authorization: Bearer ${HA_API_KEY}` 头；hope-agent 强制 `HA_API_KEY`，浏览器无需感知 token。用户层访问控制在反代做（client cert / OIDC / basic auth）。
+3. **VPN / tailnet 内网**：Tailscale / WireGuard / Zerotier 把容器拉进私网，不开 `HA_API_KEY`，靠网络层隔离。
 
 ### 数据持久化
 

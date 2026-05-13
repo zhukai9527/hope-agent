@@ -24,6 +24,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { LightboxProvider } from "@/components/common/ImageLightbox"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import MarkdownRenderer from "@/components/common/MarkdownRenderer"
+import { AuthRequiredDialog } from "@/components/AuthRequiredDialog"
 import ProviderSetup from "@/components/settings/ProviderSetup"
 import SettingsView from "@/components/settings/SettingsView"
 import type { SettingsSection } from "@/components/settings/types"
@@ -407,6 +408,7 @@ export default function App() {
             <Toaster />
             <DangerousModeBanner />
             <MissingModelDialog />
+            <AuthRequiredDialog />
             <div className="flex flex-1 min-h-0 overflow-hidden">
               <IconSidebar
                 view={view}

@@ -46,7 +46,7 @@ docker compose logs -f hope-agent
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HA_BIND` | `0.0.0.0:8420` | Server listen address. Must be `0.0.0.0` inside a container — loopback rejects external connections. Translated to `--bind` by the entrypoint |
-| `HA_API_KEY` | _unset_ | HTTP/WS Bearer token. **The Web GUI has no in-browser token entry today**, so setting this and then opening the page directly will 401 the onboarding wizard. Only set when a reverse proxy in front injects `Authorization: Bearer …` on the upstream (see below). Translated to `--api-key` by the entrypoint |
+| `HA_API_KEY` | _unset_ | HTTP/WS Bearer token. With this set, opening the page in a browser shows a "Server authentication required" dialog — paste the token to continue, then it's saved to localStorage and reused on subsequent visits. You can also share a one-shot link `https://host:8420/?token=XXX`; the frontend captures the value into localStorage and rewrites the URL so the token never lands in history / referer / bookmarks. Translated to `--api-key` by the entrypoint |
 | `HA_DATA_DIR` | `/data` | Data root. All persistent state (`config.json` / `sessions.db` / `memory.db` / credentials / projects / attachments) lives here |
 | `HA_DEPLOYMENT` | `docker` | Hint to the self-updater. **Do not change** — without it `app_update install` would attempt an in-container binary swap |
 | `TZ` | `UTC` | Timezone. Affects cron scheduling and timestamp formatting |
@@ -57,12 +57,13 @@ The image `EXPOSE`s `8420`. `docker-compose.yml` binds host `127.0.0.1:8420` to 
 
 #### LAN / public exposure
 
-The browser-side Web GUI cannot enter a Bearer token today, so do **not** combine `HA_API_KEY=xxx` with `0.0.0.0:8420` — the browser can't attach the token and the onboarding wizard 401s on the first request. Pick one:
+To make Hope Agent reachable on the LAN or public internet, **set `HA_API_KEY`**, change the port mapping to `8420:8420` (drop the `127.0.0.1:` prefix), and strongly consider a TLS-terminating reverse proxy.
 
-1. **Reverse proxy injects Authorization (recommended)**: Caddy / Nginx / Traefik terminates TLS, adds `Authorization: Bearer ${HA_API_KEY}` to upstream requests, and lets hope-agent enforce `HA_API_KEY`. Do user-facing access control at the proxy layer (mTLS / OIDC / basic auth).
-2. **VPN / tailnet only**: Tailscale / WireGuard / Zerotier brings the container onto a private network, no `HA_API_KEY` needed — network-layer isolation does the work.
+Three typical patterns:
 
-In-browser token entry UX is a known follow-up ([review-followups F-088](../plans/review-followups.md)); the limitation goes away once it lands.
+1. **Direct exposure with in-browser token entry**: `HA_API_KEY=...` + `0.0.0.0:8420`. First visit pops a "Server authentication required" dialog — paste the token and it gets cached in localStorage for subsequent loads. You can also share a one-shot link `https://host:8420/?token=XXX`; the frontend captures the token and rewrites the URL so it never reaches browser history / `Referer` / bookmarks. **Risk**: the token lives in `localStorage` and is reachable from any XSS on the page; best for trusted networks / small teams.
+2. **Reverse proxy injects `Authorization` (recommended for production)**: Caddy / Nginx / Traefik terminates TLS and adds `Authorization: Bearer ${HA_API_KEY}` to upstream requests. Hope Agent enforces `HA_API_KEY`; the browser never sees the token. Do user-facing access control at the proxy layer (mTLS / OIDC / basic auth).
+3. **VPN / tailnet only**: Tailscale / WireGuard / Zerotier brings the container onto a private network — no `HA_API_KEY` needed, network-layer isolation does the work.
 
 ### Persistent data
 

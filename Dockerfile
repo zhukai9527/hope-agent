@@ -64,24 +64,18 @@ FROM rust:1.95.0-trixie AS rust
 # protobuf-compiler is required by `prost-build` at compile time.
 # pkg-config is needed by several -sys crates even though OpenSSL is
 # vendored.
+# libclang-dev is required by bindgen (pulled in by `libspa-sys`-style
+# crates that may still appear transitively; harmless when unused).
 #
-# wayland / pipewire / gbm / egl / gtk-3 are pulled in transitively by
-# `xcap` and `arboard`, which ha-core uses for the screen-capture and
-# clipboard tools (see crates/ha-core/src/tools/image.rs). These tools
-# can't actually run in a container — there is no display — but they
-# are compiled in unconditionally today, so the headers have to be
-# present at build time. Follow-up: gate xcap/arboard behind a
-# `desktop-tools` Cargo feature so server builds stop linking them.
+# Desktop-only image tools (`xcap` for screen capture, `arboard` for
+# clipboard) are gated behind ha-core's `desktop-tools` Cargo feature,
+# which we do NOT enable here — keeping wayland / pipewire / gtk-3 out
+# of both the build deps and the runtime libs.
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update && \
     apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y --no-install-recommends \
         pkg-config \
         protobuf-compiler \
         libclang-dev \
-        libwayland-dev \
-        libpipewire-0.3-dev \
-        libgbm-dev \
-        libegl-dev \
-        libgtk-3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
@@ -129,22 +123,17 @@ FROM debian:trixie-slim AS runtime
 # wget: used by HEALTHCHECK below.
 # tini: PID 1 with proper signal forwarding so `docker stop` shuts the
 #       hope-agent server down cleanly.
-# libwayland-client0 / libpipewire-0.3-0 / libgbm1 / libegl1 / libgtk-3-0:
-#       runtime shared libraries for xcap / arboard (screen-capture and
-#       clipboard tools). Required for the binary to LOAD even when those
-#       tools are never invoked. See the note in the rust stage above
-#       for the planned feature-flag follow-up.
+#
+# No wayland / pipewire / gtk-3 / egl libs here — the desktop-tools
+# Cargo feature is disabled when ha-server builds `hope-agent`, so xcap /
+# arboard never get linked in and their runtime dependencies aren't
+# needed. See `crates/ha-core/Cargo.toml` `[features]` for the gate.
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update && \
     apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y --no-install-recommends \
         ca-certificates \
         tzdata \
         wget \
         tini \
-        libwayland-client0 \
-        libpipewire-0.3-0 \
-        libgbm1 \
-        libegl1 \
-        libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user. /data is the persisted HA_DATA_DIR (mount this as a volume).

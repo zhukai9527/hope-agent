@@ -17,6 +17,7 @@ import { isTauriMode } from "@/lib/transport";
 import type { Transport } from "@/lib/transport";
 import { TauriTransport } from "@/lib/transport-tauri";
 import { HttpTransport } from "@/lib/transport-http";
+import { getStoredApiKey } from "@/lib/api-key-storage";
 
 /**
  * Default server URL for standalone web mode.
@@ -50,9 +51,12 @@ export function getTransport(): Transport {
     instance = new TauriTransport();
   } else {
     // In standalone web mode, read the server URL from a Vite env variable
-    // or fall back to the page's origin.
+    // or fall back to the page's origin. The Bearer token (when the
+    // server enforces auth) is read from localStorage — populated either
+    // by a one-shot `?token=` URL capture or by the 401 retry modal.
     const baseUrl = import.meta.env?.VITE_SERVER_URL || defaultHttpBase();
-    instance = new HttpTransport(baseUrl);
+    const apiKey = getStoredApiKey();
+    instance = new HttpTransport(baseUrl, apiKey);
   }
 
   return instance;
