@@ -16,6 +16,7 @@ import type {
   ExportSessionResult,
 } from "@/lib/transport";
 import type { MediaItem } from "@/types/chat";
+import { dispatchAuthRequired, setStoredApiKey } from "@/lib/api-key-storage";
 
 // ---------------------------------------------------------------------------
 // Command → REST endpoint mapping
@@ -758,6 +759,22 @@ export class HttpTransport implements Transport {
     this.apiKey = key;
   }
 
+  /**
+   * Centralized 401 handler. Every fetch site in this class funnels its
+   * non-ok response status through here before throwing — without this
+   * (e.g. the multipart upload / list-dir / export / search-files
+   * paths), a token rejected mid-session would surface a generic error
+   * but never re-trigger the AuthRequired dialog. Clears local state
+   * and dispatches the event; the caller still throws so the UI's
+   * own error path runs normally.
+   */
+  private handleAuthFailure(status: number): void {
+    if (status !== 401) return;
+    setStoredApiKey(null);
+    this.apiKey = null;
+    dispatchAuthRequired();
+  }
+
   /** Build a WebSocket URL with token query param if API key is set. */
   private wsUrl(path: string): string {
     const wsBase = this.baseUrl.replace(/^http/, "ws");
@@ -827,6 +844,7 @@ export class HttpTransport implements Transport {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
+      this.handleAuthFailure(response.status);
       throw new Error(
         `[HttpTransport] ${def.method} ${url} returned ${response.status}: ${text}`,
       );
@@ -886,6 +904,7 @@ export class HttpTransport implements Transport {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
+      this.handleAuthFailure(response.status);
       throw new Error(`[HttpTransport] POST ${url} returned ${response.status}: ${text}`);
     }
 
@@ -1084,6 +1103,7 @@ export class HttpTransport implements Transport {
     const res = await fetch(url.toString(), { method: "GET", headers });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      this.handleAuthFailure(res.status);
       let message = text || `list-dir failed: ${res.status}`;
       try {
         const parsed = JSON.parse(text) as { error?: string };
@@ -1110,6 +1130,7 @@ export class HttpTransport implements Transport {
     const res = await fetch(url.toString(), { method: "GET", headers });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      this.handleAuthFailure(res.status);
       throw new Error(text || `export failed: ${res.status}`);
     }
     const disposition = res.headers.get("content-disposition") ?? "";
@@ -1131,6 +1152,7 @@ export class HttpTransport implements Transport {
     const res = await fetch(url.toString(), { method: "GET", headers });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      this.handleAuthFailure(res.status);
       let message = text || `search-files failed: ${res.status}`;
       try {
         const parsed = JSON.parse(text) as { error?: string };
