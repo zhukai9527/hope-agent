@@ -85,6 +85,10 @@ export function switchToEmbedded(): void {
   if (isTauriMode()) {
     instance = new TauriTransport();
   } else {
-    instance = new HttpTransport(defaultHttpBase());
+    // Keep the stored Bearer token alive on the embedded fallback —
+    // without it, a user who had switched to a remote auth-enabled
+    // server and switches back would 401 on every subsequent request
+    // (and ping-pong the AuthRequiredDialog until reload).
+    instance = new HttpTransport(defaultHttpBase(), getStoredApiKey());
   }
 }

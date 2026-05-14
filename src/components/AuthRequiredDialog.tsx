@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { isTauriMode } from "@/lib/transport"
 import {
   AUTH_REQUIRED_EVENT,
@@ -86,9 +87,7 @@ export function AuthRequiredDialog() {
           <DialogDescription>{t("auth.tokenRequiredBody")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2 py-2">
-          <label htmlFor="ha-auth-token" className="text-sm font-medium">
-            {t("auth.tokenLabel")}
-          </label>
+          <Label htmlFor="ha-auth-token">{t("auth.tokenLabel")}</Label>
           <Input
             id="ha-auth-token"
             type="password"

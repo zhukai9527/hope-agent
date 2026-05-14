@@ -222,7 +222,8 @@ fn parse_server_args(args: &[String]) -> Option<(String, Option<String>)> {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        match arg {
             "--bind" | "-b" => {
                 i += 1;
                 if i < args.len() {
@@ -235,6 +236,16 @@ fn parse_server_args(args: &[String]) -> Option<(String, Option<String>)> {
                     api_key = Some(args[i].clone());
                 }
             }
+            // Also honor `--bind=ADDR` / `--api-key=VALUE` so a user
+            // dropping into `docker run ... hope-agent server start
+            // --api-key=KEY` doesn't fall into the unknown-arg branch
+            // (which would echo the full token to stderr → docker logs).
+            s if s.starts_with("--bind=") => {
+                bind_addr = s["--bind=".len()..].to_string();
+            }
+            s if s.starts_with("--api-key=") => {
+                api_key = Some(s["--api-key=".len()..].to_string());
+            }
             "--dangerously-skip-all-approvals" => {}
             "--version" => {
                 println!("hope-agent {}", env!("CARGO_PKG_VERSION"));
@@ -242,10 +253,64 @@ fn parse_server_args(args: &[String]) -> Option<(String, Option<String>)> {
             }
             "--help" | "-h" => return None,
             _ => {
-                eprintln!("[server] Unknown argument: {}", args[i]);
+                // Last-resort redaction: anything that even *looks*
+                // like a secret-bearing arg is logged with the value
+                // stripped, so a misspelled `--apikey=...` / typo in a
+                // future flag can't leak the token via stderr.
+                eprintln!("[server] Unknown argument: {}", redact_arg_for_log(arg));
             }
         }
         i += 1;
     }
     Some((bind_addr, api_key))
+}
+
+/// Mask the value portion of any `--…key…=value` / `--token=value` /
+/// `--secret=value` style argument before it hits stderr. Plain flags
+/// without `=` are returned unchanged.
+fn redact_arg_for_log(arg: &str) -> String {
+    if let Some((flag, _value)) = arg.split_once('=') {
+        let lower = flag.to_ascii_lowercase();
+        if lower.contains("key")
+            || lower.contains("token")
+            || lower.contains("secret")
+            || lower.contains("pass")
+        {
+            return format!("{}=[REDACTED]", flag);
+        }
+    }
+    arg.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_strips_value_after_secret_flag() {
+        assert_eq!(
+            redact_arg_for_log("--api-key=abc123"),
+            "--api-key=[REDACTED]"
+        );
+        assert_eq!(redact_arg_for_log("--apikey=xxx"), "--apikey=[REDACTED]");
+        assert_eq!(
+            redact_arg_for_log("--auth-token=yyy"),
+            "--auth-token=[REDACTED]"
+        );
+        assert_eq!(
+            redact_arg_for_log("--Some-Secret=zzz"),
+            "--Some-Secret=[REDACTED]"
+        );
+        assert_eq!(redact_arg_for_log("--password=p"), "--password=[REDACTED]");
+    }
+
+    #[test]
+    fn redact_passes_through_non_secret_args() {
+        assert_eq!(
+            redact_arg_for_log("--bind=0.0.0.0:8420"),
+            "--bind=0.0.0.0:8420"
+        );
+        assert_eq!(redact_arg_for_log("--unknown-flag"), "--unknown-flag");
+        assert_eq!(redact_arg_for_log("plain"), "plain");
+    }
 }
