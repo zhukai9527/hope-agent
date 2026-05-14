@@ -4,7 +4,9 @@
 //! `instructions` + `input` fields), HTTP send, SSE event decoding (with
 //! `response.output_text.delta` / `response.function_call_arguments.delta` /
 //! reasoning summary events), and history persistence as Responses native
-//! items (`function_call` + `function_call_output` + raw `reasoning` items).
+//! items (`function_call` + `function_call_output`). Reasoning items are
+//! intentionally dropped from history — Hope Agent runs with `store: false`,
+//! where any `rs_*` id replayed in a follow-up request 404s.
 //!
 //! The SSE parser ([`parse_openai_sse`]) is shared with the Codex adapter
 //! since they speak the same protocol — only auth header and endpoint differ.
@@ -784,7 +786,13 @@ pub(in crate::agent) async fn parse_openai_sse(
     request_start: std::time::Instant,
     cancel: &AtomicBool,
     on_delta: &(dyn for<'s> Fn(&'s str) + Send + Sync),
-) -> Result<(String, Vec<FunctionCallItem>, ChatUsage, String, Option<u64>)> {
+) -> Result<(
+    String,
+    Vec<FunctionCallItem>,
+    ChatUsage,
+    String,
+    Option<u64>,
+)> {
     use futures_util::StreamExt;
 
     let request_id = sse_request_id(&resp);
