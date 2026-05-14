@@ -5,16 +5,27 @@ All notable changes to Hope Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-05-14
 
 ### Added
 
-- **官方 Docker 镜像 + docker-compose 部署**：新增多架构容器镜像 `ghcr.io/shiwenwen/hope-agent`（覆盖 `linux/amd64` / `linux/arm64`），随每次 Release Tag 自动构建发布；浏览器访问容器暴露端口即得完整 Web GUI 与桌面端等价。默认 loopback + 浏览器 token 输入对话框 + `?token=` URL 一次性 bootstrap；`app_update` 工具在容器内检测后引导 `docker pull` 升级而非 binary swap。 (#171)
+- 官方 Docker 多架构镜像 `ghcr.io/shiwenwen/hope-agent`（`linux/amd64` + `linux/arm64`） + `docker-compose.yml` 一键自托管；浏览器侧 401 自动弹窗输入 Bearer token，容器内 `app_update` 工具引导 `docker pull` 而非 binary swap。 (#171)
+- 消息列表新增可选「时间线」显示模式，按时间排列并合并相邻 narration / 工具调用片段，偏好持久化到本地存储。 (#193)
 
 ### Fixed
 
-- **切回流式输出中的会话不再从头重放打字机动画**：MarkdownRenderer 在 mount 时把当前 content 长度记为基线，已经看过的内容直接整段显示，仅对 mount 之后新到达的 delta 继续走 typewriter + blurIn 动画。修复切到别的会话再切回时整段内容"咵地从头一字一字 / 模糊变清晰重放一遍"的视觉问题。
-- **会话内切换模型不再污染全局默认 & 不再闪回**：聊天界面 ModelPicker、桌面斜杠 `/model` 卡片、IM `/model` 命令现在都只把模型固定到**当前会话**（写入 `sessions.provider_id/model_id`），不再改 `config.active_model`。下次发消息时 chat_engine 解析顺序变为 **session > agent.primary > config.active_model**。同一会话切模型 UI 由 `manualModelOverrideRef` 兜底，不会再因 `config:changed` 广播被回退成旧值。全局默认模型现在仅由「设置 → 模型」面板修改。
+- 「发现新版」弹窗与「关于」面板的更新说明从纯文本两行截断升级为完整 Markdown 渲染，与对话气泡同一 renderer。 (#176)
+- 切回正在流式输出的会话不再从头重放打字机动画，已渲染内容立即显示，仅 mount 后到达的新增片段动画。 (#192)
+- 多会话并发流式时，背景静默刷新不再丢失正在 streaming 的 assistant 气泡。 (#185)
+- 桌面端失败回合「重试」不再丢失刚保存的用户输入，加回归测试守住不变量；Responses 模式下 `store: false` 不再回放 reasoning 项，消除 "Item with id 'rs_...' not found" 404。 (#191)
+- 会话内切换模型（ChatInput ModelPicker / 桌面 `/model` 卡片 / IM `/model`）只影响当前会话，写入 `sessions.provider_id / model_id`，不再污染 `config.active_model`；全局默认仅由「设置 → 模型」面板修改。 (#190)
+- 新建会话时清空旧 session 未答完的 ask_user 问题框，不再泄漏到空白页面。 (#181)
+- Provider 模板配置页与引导 wizard 第 3 步容器从 512 px 放宽到 1024 px，模型卡片底部「输入 / 输出成本」字段不再被裁切；修补 wizard 模型步骤标题缺失的 i18n key。 (#186, #189)
+
+### Changed
+
+- macOS Intel 原生 DMG 与 bare binary 改由独立的 best-effort backfill workflow 在 release publish 后异步构建，遇到 macos-13 runner 排队不再阻塞主发版；Homebrew tap 模板加双架构容错，Intel 包暂时缺失时自动降级为 arm-only cask。 (#175, #177, #188)
+- 新增 release.yml 改动的 PR 阶段静态校验（路径一致性 / 工件契约 / dry-run 模式），降低发版工作流回归概率。 (#174)
 
 ## [0.2.0] - 2026-05-13
 
