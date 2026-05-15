@@ -196,10 +196,11 @@ pub fn executable_for(brand: ChromeBrand) -> Option<PathBuf> {
 }
 
 pub fn user_data_dir_for(brand: ChromeBrand) -> Option<PathBuf> {
-    let home = dirs::home_dir()?;
     #[cfg(target_os = "macos")]
     {
-        let app_support = home.join("Library").join("Application Support");
+        let app_support = dirs::home_dir()?
+            .join("Library")
+            .join("Application Support");
         Some(match brand {
             ChromeBrand::Chrome => app_support.join("Google/Chrome"),
             ChromeBrand::Edge => app_support.join("Microsoft Edge"),
@@ -209,7 +210,7 @@ pub fn user_data_dir_for(brand: ChromeBrand) -> Option<PathBuf> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let config = home.join(".config");
+        let config = dirs::home_dir()?.join(".config");
         Some(match brand {
             ChromeBrand::Chrome => config.join("google-chrome"),
             ChromeBrand::Edge => config.join("microsoft-edge"),
