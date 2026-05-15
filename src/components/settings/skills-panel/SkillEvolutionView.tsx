@@ -65,6 +65,23 @@ interface RecentReject {
   fireReason?: string | null
 }
 
+interface ClusterMember {
+  skillId: string
+  description: string
+  similarityToSeed: number
+}
+
+interface MergeProposal {
+  id: string
+  minSimilarity: number
+  members: ClusterMember[]
+}
+
+interface CuratorReport {
+  proposals: MergeProposal[]
+  draftsScanned: number
+}
+
 interface SkillEvolutionViewProps {
   autoReviewEnabled: boolean
   autoReviewPromotion: boolean
@@ -83,6 +100,10 @@ export default function SkillEvolutionView({
   const { t } = useTranslation()
   const [cfg, setCfg] = useState<AutoReviewConfig | null>(null)
   const [rejects, setRejects] = useState<RecentReject[]>([])
+  const [curator, setCurator] = useState<CuratorReport | null>(null)
+  const [curatorBusy, setCuratorBusy] = useState(false)
+  const [merging, setMerging] = useState<Record<string, boolean>>({})
+  const [keepSelections, setKeepSelections] = useState<Record<string, string>>({})
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
     trigger: false,
     quality: false,
@@ -206,6 +227,64 @@ export default function SkillEvolutionView({
       )
     }
   }, [])
+
+  const runCurator = useCallback(async () => {
+    setCuratorBusy(true)
+    try {
+      const next = await getTransport().call<CuratorReport>(
+        "run_skills_curator_now",
+      )
+      setCurator(next)
+      // seed `keepSelections` with the cluster's first member as default
+      const defaults: Record<string, string> = {}
+      for (const p of next.proposals) {
+        if (p.members.length > 0) defaults[p.id] = p.members[0].skillId
+      }
+      setKeepSelections((s) => ({ ...defaults, ...s }))
+    } catch (e) {
+      logger.error(
+        "settings",
+        "SkillEvolutionView::runCurator",
+        "Failed to run curator",
+        e,
+      )
+    } finally {
+      setCuratorBusy(false)
+    }
+  }, [])
+
+  const applyMerge = useCallback(
+    async (proposal: MergeProposal) => {
+      const keep = keepSelections[proposal.id] ?? proposal.members[0]?.skillId
+      if (!keep) return
+      setMerging((m) => ({ ...m, [proposal.id]: true }))
+      try {
+        await getTransport().call("apply_skills_curator_merge", {
+          keepId: keep,
+          memberIds: proposal.members.map((m) => m.skillId),
+        })
+        // Drop the applied proposal locally; user can re-run scan to refresh.
+        setCurator((c) =>
+          c
+            ? {
+                ...c,
+                proposals: c.proposals.filter((p) => p.id !== proposal.id),
+              }
+            : c,
+        )
+      } catch (e) {
+        logger.error(
+          "settings",
+          "SkillEvolutionView::applyMerge",
+          "Failed to apply merge",
+          e,
+        )
+      } finally {
+        setMerging((m) => ({ ...m, [proposal.id]: false }))
+      }
+    },
+    [keepSelections],
+  )
 
   const runReviewNow = useCallback(async () => {
     // Cheap manual fire — uses current chat session if available; otherwise
@@ -381,6 +460,123 @@ export default function SkillEvolutionView({
               ))}
             </div>
           </>
+        )}
+      </div>
+
+      {/* ── Curator (draft consolidation) ───────────────────────────── */}
+      <div
+        className={cn(
+          "rounded-xl border border-border bg-card/50 p-4",
+          !autoReviewEnabled && "opacity-50",
+        )}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">
+              {t("settings.skillsEvolution.curator.title")}
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              {t("settings.skillsEvolution.curator.help")}
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs shrink-0"
+            onClick={runCurator}
+            disabled={!autoReviewEnabled || curatorBusy}
+          >
+            {curatorBusy ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : (
+              <Sparkles className="h-3 w-3 mr-1" />
+            )}
+            {t("settings.skillsEvolution.curator.run")}
+          </Button>
+        </div>
+        {curator == null ? (
+          <div className="text-xs text-muted-foreground py-2">
+            {t("settings.skillsEvolution.curator.idle")}
+          </div>
+        ) : curator.proposals.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-2">
+            {t("settings.skillsEvolution.curator.noClusters", {
+              count: curator.draftsScanned,
+            })}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-[11px] text-muted-foreground">
+              {t("settings.skillsEvolution.curator.foundN", {
+                proposals: curator.proposals.length,
+                scanned: curator.draftsScanned,
+              })}
+            </div>
+            {curator.proposals.map((p) => {
+              const keep = keepSelections[p.id] ?? p.members[0]?.skillId
+              return (
+                <div
+                  key={p.id}
+                  className="rounded-md border border-border/60 bg-background/40 p-3"
+                >
+                  <div className="text-[11px] text-muted-foreground mb-2">
+                    {t("settings.skillsEvolution.curator.clusterMeta", {
+                      members: p.members.length,
+                      similarity: p.minSimilarity.toFixed(2),
+                    })}
+                  </div>
+                  <div className="space-y-1.5">
+                    {p.members.map((m) => (
+                      <label
+                        key={m.skillId}
+                        className={cn(
+                          "flex items-start gap-2 p-1.5 rounded-md text-xs cursor-pointer hover:bg-muted/50",
+                          keep === m.skillId && "bg-emerald-500/10",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={`keep-${p.id}`}
+                          checked={keep === m.skillId}
+                          onChange={() =>
+                            setKeepSelections((s) => ({
+                              ...s,
+                              [p.id]: m.skillId,
+                            }))
+                          }
+                          className="mt-0.5 shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-foreground truncate">
+                            {m.skillId}
+                          </div>
+                          <div className="text-muted-foreground truncate">
+                            {m.description}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-7 px-3 text-xs"
+                      onClick={() => applyMerge(p)}
+                      disabled={!keep || merging[p.id]}
+                    >
+                      {merging[p.id] ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : null}
+                      {t("settings.skillsEvolution.curator.apply", {
+                        n: p.members.length - 1,
+                      })}
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
 

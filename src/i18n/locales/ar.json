@@ -3591,6 +3591,16 @@
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
         }
+      },
+      "curator": {
+        "title": "Draft consolidation",
+        "help": "Find clusters of draft skills that overlap topically and merge them in one click — keep one, discard the rest. Read-only scan, no LLM call.",
+        "run": "Scan",
+        "idle": "Not scanned yet. Click \"Scan\" to look for overlapping drafts.",
+        "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
+        "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
+        "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
+        "apply": "Keep this, discard the other {{n}}"
       }
     },
     "skillsEvolutionHero": {

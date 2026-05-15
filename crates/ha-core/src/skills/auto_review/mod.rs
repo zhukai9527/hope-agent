@@ -9,6 +9,7 @@
 //!   gate 5 — `heuristics::post_lint` (deterministic body lint)
 
 mod config;
+pub mod curator;
 pub mod heuristics;
 mod pipeline;
 mod prompts;

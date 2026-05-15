@@ -3487,6 +3487,16 @@
         "title": "Recent reject reasons",
         "empty": "No rejections recorded yet. Whenever any gate stops a review from producing a draft, the reason lands here."
       },
+      "curator": {
+        "title": "Draft consolidation",
+        "help": "Find clusters of draft skills that overlap topically and merge them in one click — keep one, discard the rest. Read-only scan, no LLM call.",
+        "run": "Scan",
+        "idle": "Not scanned yet. Click \"Scan\" to look for overlapping drafts.",
+        "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
+        "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
+        "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
+        "apply": "Keep this, discard the other {{n}}"
+      },
       "resetAll": {
         "label": "Reset everything",
         "confirm": "Reset every custom field to defaults?",

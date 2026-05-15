@@ -1044,6 +1044,14 @@ fn build_router_with_cors(
             get(routes::skills::get_auto_review_recent_rejects),
         )
         .route(
+            "/skills/curator/run",
+            post(routes::skills::run_skills_curator_now),
+        )
+        .route(
+            "/skills/curator/apply",
+            post(routes::skills::apply_skills_curator_merge),
+        )
+        .route(
             "/skills/extra-dirs",
             get(routes::skills::get_extra_skills_dirs),
         )

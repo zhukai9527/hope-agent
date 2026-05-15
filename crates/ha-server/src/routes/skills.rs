@@ -298,3 +298,31 @@ pub async fn get_auto_review_recent_rejects(
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
     Ok(Json(Value::Array(core::recent_auto_review_skips(limit))))
 }
+
+/// `POST /api/skills/curator/run` — synchronous draft-consolidation
+/// scan. Returns merge proposals; UI shows them and the user picks
+/// which to apply via `apply_skills_curator_merge`.
+pub async fn run_skills_curator_now() -> Result<Json<Value>, AppError> {
+    let report = core::run_curator_pass_sync().map_err(|e| AppError::internal(e.to_string()))?;
+    serde_json::to_value(report)
+        .map(Json)
+        .map_err(|e| AppError::internal(e.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyMergeBody {
+    pub keep_id: String,
+    pub member_ids: Vec<String>,
+}
+
+/// `POST /api/skills/curator/apply` — apply a single merge proposal.
+/// Returns `{ "discarded": N }` indicating how many drafts were
+/// actually deleted.
+pub async fn apply_skills_curator_merge(
+    Json(body): Json<ApplyMergeBody>,
+) -> Result<Json<Value>, AppError> {
+    let n = core::apply_curator_merge(&body.keep_id, &body.member_ids)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({ "discarded": n })))
+}

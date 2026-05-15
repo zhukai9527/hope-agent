@@ -354,6 +354,21 @@ fn merge_json(dst: &mut serde_json::Value, src: &serde_json::Value) {
     }
 }
 
+// ── Curator (draft consolidation) ───────────────────────────────────
+
+/// Synchronous scan that surfaces merge proposals for clusters of
+/// near-duplicate draft skills. Safe to call from a Tauri command or
+/// HTTP route directly — no LLM, no disk writes.
+pub fn run_curator_pass_sync() -> Result<auto_review::curator::CuratorReport> {
+    auto_review::curator::run_curator_pass()
+}
+
+/// Apply a curator merge proposal: keep `keep_id`, delete the rest.
+/// Returns the number of drafts actually discarded.
+pub fn apply_curator_merge(keep_id: &str, member_ids: &[String]) -> Result<usize> {
+    auto_review::curator::apply_merge_keep_id(keep_id, member_ids)
+}
+
 // ── Install dependency ────────────────────────────────────────────
 //
 // Spawns a package-manager process (`brew install …`, `npm install -g …`,

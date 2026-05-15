@@ -438,6 +438,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   set_skills_auto_review_config:   { method: "PATCH",  path: "/api/skills/auto-review/config" },
   reset_skills_auto_review_config: { method: "POST",   path: "/api/skills/auto-review/config/reset" },
   get_skills_auto_review_recent_rejects:{ method: "GET", path: "/api/skills/auto-review/recent-rejects" },
+  run_skills_curator_now:          { method: "POST",   path: "/api/skills/curator/run" },
+  apply_skills_curator_merge:      { method: "POST",   path: "/api/skills/curator/apply" },
   dashboard_learning_overview:     { method: "POST",   path: "/api/dashboard/learning/overview" },
   dashboard_learning_timeline:     { method: "POST",   path: "/api/dashboard/learning/timeline" },
   dashboard_top_skills:            { method: "POST",   path: "/api/dashboard/learning/top-skills" },

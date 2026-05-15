@@ -219,3 +219,19 @@ pub async fn get_skills_auto_review_recent_rejects(
 ) -> Result<Vec<serde_json::Value>, CmdError> {
     Ok(core::recent_auto_review_skips(limit.unwrap_or(20)))
 }
+
+#[tauri::command]
+pub async fn run_skills_curator_now(
+    _state: State<'_, AppState>,
+) -> Result<ha_core::skills::auto_review::curator::CuratorReport, CmdError> {
+    core::run_curator_pass_sync().map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn apply_skills_curator_merge(
+    keep_id: String,
+    member_ids: Vec<String>,
+    _state: State<'_, AppState>,
+) -> Result<usize, CmdError> {
+    core::apply_curator_merge(&keep_id, &member_ids).map_err(Into::into)
+}
