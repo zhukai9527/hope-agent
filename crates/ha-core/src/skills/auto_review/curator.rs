@@ -163,15 +163,30 @@ pub fn apply_merge_keep_id(keep_id: &str, member_ids: &[String]) -> Result<usize
     let config = crate::config::cached_config();
     let entries = load_all_skills_with_extra(&config.extra_skills_dirs);
 
+    let is_managed_draft = |id: &str| -> bool {
+        entries
+            .iter()
+            .any(|e| e.name == id && e.source == "managed" && e.status == SkillStatus::Draft)
+    };
+
+    // Refuse to apply the merge if the user already activated or
+    // hand-deleted `keep_id` between scan and apply — otherwise we'd
+    // happily delete the other members and end the merge with nothing
+    // retained. The UI should re-run the scan and let the user pick a
+    // new winner.
+    if !is_managed_draft(keep_id) {
+        return Err(anyhow!(
+            "keep_id `{}` is no longer a managed draft; aborting merge — please re-run the scan",
+            keep_id
+        ));
+    }
+
     let mut discarded = 0usize;
     for id in member_ids {
         if id == keep_id {
             continue;
         }
-        let still_draft = entries
-            .iter()
-            .any(|e| &e.name == id && e.source == "managed" && e.status == SkillStatus::Draft);
-        if !still_draft {
+        if !is_managed_draft(id) {
             app_warn!(
                 "skills",
                 "curator",

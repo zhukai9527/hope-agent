@@ -625,6 +625,44 @@ impl SessionDB {
         }
     }
 
+    /// Raw timeline of `learning_events` matching `kind` with
+    /// `ts >= since_ts`, most recent first. **Does not** deduplicate by
+    /// `ref_id` and **does not** filter rows with NULL `ref_id` —
+    /// callers like `skill_review_skipped` need every individual event
+    /// (most skip events carry no `ref_id` at all because no skill was
+    /// created), not a per-skill latest snapshot.
+    pub fn recent_learning_events_timeline(
+        &self,
+        kind: &str,
+        since_ts: i64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(i64, Option<String>, Option<String>, Option<String>)>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT ts, ref_id, session_id, meta_json
+             FROM learning_events
+             WHERE kind = ?1 AND ts >= ?2
+             ORDER BY ts DESC, id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![kind, since_ts, limit as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for r in rows.flatten() {
+            out.push(r);
+        }
+        Ok(out)
+    }
+
     /// Most recent `learning_events` matching `kind` with `ts >= since_ts`,
     /// deduplicated by `ref_id`. Returns `(ref_id, meta_json)` pairs, most
     /// recent first. Rows with empty `ref_id` are filtered out; `meta_json`

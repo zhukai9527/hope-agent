@@ -292,6 +292,11 @@ pub fn reset_auto_review_config(
 /// can render a "why didn't this run produce a draft?" timeline.
 /// Returns JSON tuples `{ ts, sessionId, skillId?, rejectReason?,
 /// rationale?, fireReason? }`, most recent first.
+///
+/// Reads the raw event timeline (no dedup, no `ref_id IS NOT NULL`
+/// filter) — most skip events carry no `skill_id` at all because the
+/// gate fired before a candidate had an id, so a deduped view would
+/// drop the most common cases.
 pub fn recent_auto_review_skips(limit: usize) -> Vec<serde_json::Value> {
     let Some(db) = crate::get_session_db() else {
         return Vec::new();
@@ -305,22 +310,28 @@ pub fn recent_auto_review_skips(limit: usize) -> Vec<serde_json::Value> {
         .unwrap_or(0);
     let since = now.saturating_sub(7 * 86_400);
     let rows = db
-        .recent_learning_event_rows(auto_review::EVT_SKILL_REVIEW_SKIPPED, since, limit.max(1))
+        .recent_learning_events_timeline(auto_review::EVT_SKILL_REVIEW_SKIPPED, since, limit.max(1))
         .unwrap_or_default();
     rows.into_iter()
-        .map(|(ref_id, meta_json)| {
+        .map(|(ts, ref_id, session_id, meta_json)| {
             let parsed = meta_json
                 .as_deref()
                 .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok());
             let mut out = serde_json::Map::new();
-            out.insert("ts".into(), serde_json::Value::Null);
+            out.insert("ts".into(), serde_json::Value::Number(ts.into()));
             out.insert(
                 "skillId".into(),
-                if ref_id.is_empty() {
-                    serde_json::Value::Null
-                } else {
-                    serde_json::Value::String(ref_id)
-                },
+                ref_id
+                    .filter(|s| !s.is_empty())
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            out.insert(
+                "sessionId".into(),
+                session_id
+                    .filter(|s| !s.is_empty())
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
             );
             if let Some(serde_json::Value::Object(m)) = parsed {
                 if let Some(v) = m.get("reject_reason") {
@@ -332,8 +343,13 @@ pub fn recent_auto_review_skips(limit: usize) -> Vec<serde_json::Value> {
                 if let Some(v) = m.get("fire_reason") {
                     out.insert("fireReason".into(), v.clone());
                 }
-                if let Some(v) = m.get("session_id") {
-                    out.insert("sessionId".into(), v.clone());
+                // Prefer the column-level `session_id` written by
+                // `record_learning_event` over a duplicate inside
+                // `meta_json`, but fall back to it when present.
+                if !out.contains_key("sessionId") || out["sessionId"].is_null() {
+                    if let Some(v) = m.get("session_id") {
+                        out.insert("sessionId".into(), v.clone());
+                    }
                 }
             }
             serde_json::Value::Object(out)
