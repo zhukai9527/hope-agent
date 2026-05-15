@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Result};
 use futures_util::StreamExt;
 use std::path::{Path, PathBuf};
 
-use crate::paths::{self, CHROMIUM_PINNED_REVISION};
+use crate::paths;
 
 /// Per-platform descriptor for fetching + unpacking the Chromium archive.
 #[derive(Debug, Clone)]
@@ -26,14 +26,30 @@ pub struct RuntimeSpec {
     pub binary_relpath: &'static str,
 }
 
+// Pinned revisions per platform. Chromium snapshots build each platform
+// independently, so the same revision number isn't guaranteed to exist
+// across all four — we pin per-platform like Playwright / Puppeteer.
+//
+// Bump procedure:
+// 1. `curl https://commondatastorage.googleapis.com/chromium-browser-snapshots/<platform>/LAST_CHANGE`
+//    for each platform; subtract a small buffer (e.g. -50) so the
+//    revision is unlikely to be pruned in the next few months.
+// 2. HEAD-test each `<archive>.zip` returns 200.
+// 3. Run `ensure_chromium` on each platform to confirm `--version` works.
+//
+// Last verified: 2026-05 (Mac_Arm 1631021, Mac 1631012, Linux_x64 1631027, Win_x64 1631012).
+pub const CHROMIUM_REVISION_MAC_ARM: u32 = 1631021;
+pub const CHROMIUM_REVISION_MAC: u32 = 1631012;
+pub const CHROMIUM_REVISION_LINUX_X64: u32 = 1631027;
+pub const CHROMIUM_REVISION_WIN_X64: u32 = 1631012;
+
 /// Resolve the `RuntimeSpec` for the current host. Returns `None` when
 /// Chromium snapshots don't ship for this OS/arch combo.
 pub fn spec_for_current_platform() -> Option<RuntimeSpec> {
-    let revision = CHROMIUM_PINNED_REVISION;
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         return Some(RuntimeSpec {
-            revision,
+            revision: CHROMIUM_REVISION_MAC_ARM,
             platform_key: "Mac_Arm",
             archive_name: "chrome-mac.zip",
             binary_relpath: "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
@@ -42,7 +58,7 @@ pub fn spec_for_current_platform() -> Option<RuntimeSpec> {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
         return Some(RuntimeSpec {
-            revision,
+            revision: CHROMIUM_REVISION_MAC,
             platform_key: "Mac",
             archive_name: "chrome-mac.zip",
             binary_relpath: "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
@@ -51,7 +67,7 @@ pub fn spec_for_current_platform() -> Option<RuntimeSpec> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         return Some(RuntimeSpec {
-            revision,
+            revision: CHROMIUM_REVISION_LINUX_X64,
             platform_key: "Linux_x64",
             archive_name: "chrome-linux.zip",
             binary_relpath: "chrome-linux/chrome",
@@ -60,7 +76,7 @@ pub fn spec_for_current_platform() -> Option<RuntimeSpec> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         return Some(RuntimeSpec {
-            revision,
+            revision: CHROMIUM_REVISION_WIN_X64,
             platform_key: "Win_x64",
             archive_name: "chrome-win.zip",
             binary_relpath: "chrome-win/chrome.exe",
@@ -273,9 +289,16 @@ mod tests {
     }
 
     #[test]
-    fn spec_revision_matches_pinned_constant() {
+    fn spec_revision_matches_per_platform_pin() {
         if let Some(spec) = spec_for_current_platform() {
-            assert_eq!(spec.revision, CHROMIUM_PINNED_REVISION);
+            let expected = match spec.platform_key {
+                "Mac_Arm" => CHROMIUM_REVISION_MAC_ARM,
+                "Mac" => CHROMIUM_REVISION_MAC,
+                "Linux_x64" => CHROMIUM_REVISION_LINUX_X64,
+                "Win_x64" => CHROMIUM_REVISION_WIN_X64,
+                other => panic!("unexpected platform_key {other}"),
+            };
+            assert_eq!(spec.revision, expected);
         }
     }
 

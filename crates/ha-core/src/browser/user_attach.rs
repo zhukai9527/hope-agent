@@ -120,14 +120,13 @@ pub async fn browser_doctor() -> BrowserDoctorReport {
             executable: inst.executable.display().to_string(),
             user_data_dir: inst.user_data_dir.display().to_string(),
         });
-    let runtime_chromium = crate::browser::runtime::cached_binary_path().map(|p| {
-        let revision = crate::browser::runtime::spec_for_current_platform()
-            .map(|s| s.revision)
-            .unwrap_or(crate::paths::CHROMIUM_PINNED_REVISION);
-        RuntimeChromiumReport {
-            revision,
+    let runtime_chromium = crate::browser::runtime::cached_binary_path().and_then(|p| {
+        // `cached_binary_path` already filtered by `spec_for_current_platform`,
+        // so the spec exists when `Some(p)` is returned.
+        crate::browser::runtime::spec_for_current_platform().map(|spec| RuntimeChromiumReport {
+            revision: spec.revision,
             binary_path: p.display().to_string(),
-        }
+        })
     });
     BrowserDoctorReport {
         node_available,
