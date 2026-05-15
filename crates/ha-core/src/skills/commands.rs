@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -236,6 +236,122 @@ pub fn set_auto_review_enabled(enabled: bool, source: &str) -> Result<()> {
         Ok(())
     })?;
     Ok(())
+}
+
+// ── Full-config read / patch / reset (Settings panel) ─────────────────
+
+/// Snapshot of the sanitized auto-review config as a JSON-ready value.
+/// Used by the Settings panel; UI binds to camelCase keys directly.
+pub fn get_auto_review_config_snapshot() -> auto_review::SkillsAutoReviewConfig {
+    crate::config::cached_config()
+        .skills
+        .auto_review
+        .clone()
+        .sanitize()
+}
+
+/// Deep-merge a JSON `patch` object into the live auto-review config,
+/// re-sanitize, and persist. Unknown keys in the patch are ignored
+/// by the serde round-trip (no strict-mode), letting the API stay
+/// forward-compatible with future fields.
+pub fn set_auto_review_config_patch(
+    patch: serde_json::Value,
+    source: &str,
+) -> Result<auto_review::SkillsAutoReviewConfig> {
+    if !patch.is_object() {
+        anyhow::bail!("auto_review patch must be a JSON object");
+    }
+    crate::config::mutate_config(("skills.auto_review", source), |store| {
+        let mut current = serde_json::to_value(&store.skills.auto_review)
+            .context("serialize current auto_review config")?;
+        merge_json(&mut current, &patch);
+        let next: auto_review::SkillsAutoReviewConfig =
+            serde_json::from_value(current).context("deserialize merged auto_review config")?;
+        store.skills.auto_review = next.sanitize();
+        Ok(())
+    })?;
+    Ok(get_auto_review_config_snapshot())
+}
+
+/// Reset specific snake_case fields to their built-in defaults (or every
+/// field when `fields` is `None`). Unknown field names are silently
+/// ignored — the API layer can validate up front if it cares.
+pub fn reset_auto_review_config(
+    fields: Option<Vec<String>>,
+    source: &str,
+) -> Result<auto_review::SkillsAutoReviewConfig> {
+    crate::config::mutate_config(("skills.auto_review", source), |store| {
+        store.skills.auto_review.reset_fields(fields.as_deref());
+        store.skills.auto_review = store.skills.auto_review.clone().sanitize();
+        Ok(())
+    })?;
+    Ok(get_auto_review_config_snapshot())
+}
+
+/// Pull the most recent `skill_review_skipped` rows so the Settings UI
+/// can render a "why didn't this run produce a draft?" timeline.
+/// Returns JSON tuples `{ ts, sessionId, skillId?, rejectReason?,
+/// rationale?, fireReason? }`, most recent first.
+pub fn recent_auto_review_skips(limit: usize) -> Vec<serde_json::Value> {
+    let Some(db) = crate::get_session_db() else {
+        return Vec::new();
+    };
+    // 7-day window matches what we surface in the dashboard; users
+    // configuring a longer retention can still see further back via
+    // direct DB inspection.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since = now.saturating_sub(7 * 86_400);
+    let rows = db
+        .recent_learning_event_rows(auto_review::EVT_SKILL_REVIEW_SKIPPED, since, limit.max(1))
+        .unwrap_or_default();
+    rows.into_iter()
+        .map(|(ref_id, meta_json)| {
+            let parsed = meta_json
+                .as_deref()
+                .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok());
+            let mut out = serde_json::Map::new();
+            out.insert("ts".into(), serde_json::Value::Null);
+            out.insert(
+                "skillId".into(),
+                if ref_id.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(ref_id)
+                },
+            );
+            if let Some(serde_json::Value::Object(m)) = parsed {
+                if let Some(v) = m.get("reject_reason") {
+                    out.insert("rejectReason".into(), v.clone());
+                }
+                if let Some(v) = m.get("rationale") {
+                    out.insert("rationale".into(), v.clone());
+                }
+                if let Some(v) = m.get("fire_reason") {
+                    out.insert("fireReason".into(), v.clone());
+                }
+                if let Some(v) = m.get("session_id") {
+                    out.insert("sessionId".into(), v.clone());
+                }
+            }
+            serde_json::Value::Object(out)
+        })
+        .collect()
+}
+
+fn merge_json(dst: &mut serde_json::Value, src: &serde_json::Value) {
+    match (dst, src) {
+        (serde_json::Value::Object(d), serde_json::Value::Object(s)) => {
+            for (k, v) in s {
+                merge_json(d.entry(k.clone()).or_insert(serde_json::Value::Null), v);
+            }
+        }
+        (slot, v) => {
+            *slot = v.clone();
+        }
+    }
 }
 
 // ── Install dependency ────────────────────────────────────────────
