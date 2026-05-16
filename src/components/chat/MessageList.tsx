@@ -877,11 +877,11 @@ export default function MessageList({
       </div>
 
       {compactUserAnchor && compactUserAnchorVisible && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-30">
+        <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-end px-5 sm:px-6">
           <button
             type="button"
             onClick={handleCompactUserAnchorClick}
-            className="pointer-events-auto flex h-10 w-full cursor-pointer items-center border-b border-border/70 bg-background/95 px-5 text-right text-sm font-medium text-foreground backdrop-blur transition-colors hover:bg-muted supports-[backdrop-filter]:bg-background/85 sm:px-6"
+            className="pointer-events-auto flex h-9 max-w-[min(720px,85%)] cursor-pointer items-center rounded-full border border-border-soft bg-surface-floating/95 px-3.5 text-right text-sm font-medium text-foreground shadow-panel backdrop-blur transition-colors hover:bg-surface-subtle supports-[backdrop-filter]:bg-surface-floating/85"
           >
             <span className="min-w-0 flex-1 truncate">
               {compactUserAnchor.text}

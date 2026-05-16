@@ -21,7 +21,7 @@ import {
   Search,
   Send,
   Ghost,
-  Download,
+  Share2,
   PanelLeftOpen,
 } from "lucide-react"
 import { ExportSessionDialog } from "@/components/chat/export/ExportSessionDialog"
@@ -766,7 +766,7 @@ export default function ChatTitleBar({
               className="pb-1.5 text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setExportOpen(true)}
             >
-              <Download className="h-4 w-4" />
+              <Share2 className="h-4 w-4" />
             </button>
           </IconTip>
         )}
