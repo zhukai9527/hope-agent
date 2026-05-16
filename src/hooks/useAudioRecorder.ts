@@ -28,6 +28,10 @@ export interface UseAudioRecorderResult {
   cancel: () => void
 }
 
+/** Auto-stop after 5 minutes — guards against forgotten / runaway recordings
+ * accumulating chunks in memory indefinitely. */
+const MAX_RECORD_MS = 5 * 60 * 1000
+
 /** Preferred MediaRecorder MIME types in order of compatibility. */
 function pickMimeType(): string {
   if (typeof window === "undefined" || typeof MediaRecorder === "undefined") return ""
@@ -56,8 +60,18 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const rafRef = useRef<number | null>(null)
+  const lastEmittedLevelRef = useRef<number>(0)
   const startedAtRef = useRef<number>(0)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelledRef = useRef<boolean>(false)
+  /** Final recording result, populated by `onstop` whether the stop was
+   * user-triggered or watchdog-triggered. `stop()` returns it on the
+   * already-stopped path so an auto-stop never silently discards audio. */
+  const lastResultRef = useRef<{
+    blob: Blob
+    mimeType: string
+    durationMs: number
+  } | null>(null)
   const stopPromiseRef = useRef<{
     resolve: (v: { blob: Blob; mimeType: string; durationMs: number }) => void
     reject: (e: Error) => void
@@ -96,7 +110,13 @@ export function useAudioRecorder(): UseAudioRecorderResult {
         sum += v * v
       }
       const rms = Math.sqrt(sum / buf.length)
-      setAudioLevel(Math.min(1, rms * 2.5))
+      const next = Math.min(1, rms * 2.5)
+      // Skip near-no-op updates: at 60Hz a tiny delta would render the
+      // consuming tree every frame for ~0 visible change.
+      if (Math.abs(next - lastEmittedLevelRef.current) >= 0.02) {
+        lastEmittedLevelRef.current = next
+        setAudioLevel(next)
+      }
       rafRef.current = requestAnimationFrame(loop)
     }
     loop()
@@ -117,23 +137,34 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       recorderRef.current = recorder
       chunksRef.current = []
 
+      cancelledRef.current = false
+      lastResultRef.current = null
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
       }
       recorder.onstop = () => {
+        if (cancelledRef.current) {
+          chunksRef.current = []
+          cleanup()
+          setState("idle")
+          return
+        }
         const finalMime =
           recorder.mimeType || mimeType || (chunksRef.current[0]?.type ?? "audio/webm")
         const blob = new Blob(chunksRef.current, { type: finalMime })
         const finalDuration = Date.now() - startedAtRef.current
         chunksRef.current = []
+        const result = { blob, mimeType: finalMime, durationMs: finalDuration }
         cleanup()
         setState("stopped")
-        stopPromiseRef.current?.resolve({
-          blob,
-          mimeType: finalMime,
-          durationMs: finalDuration,
-        })
-        stopPromiseRef.current = null
+        if (stopPromiseRef.current) {
+          stopPromiseRef.current.resolve(result)
+          stopPromiseRef.current = null
+        } else {
+          // Watchdog-initiated stop (no awaiting caller) — cache so the
+          // next stop() call can drain it.
+          lastResultRef.current = result
+        }
       }
       recorder.onerror = (e) => {
         const err = (e as ErrorEvent).error ?? new Error("MediaRecorder error")
@@ -162,7 +193,11 @@ export function useAudioRecorder(): UseAudioRecorderResult {
       startedAtRef.current = Date.now()
       setDurationMs(0)
       intervalRef.current = setInterval(() => {
-        setDurationMs(Date.now() - startedAtRef.current)
+        const elapsed = Date.now() - startedAtRef.current
+        setDurationMs(elapsed)
+        if (elapsed >= MAX_RECORD_MS && recorderRef.current?.state === "recording") {
+          recorderRef.current.stop()
+        }
       }, 100)
       setState("recording")
     } catch (e) {
@@ -175,6 +210,14 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   const stop = useCallback(() => {
     return new Promise<{ blob: Blob; mimeType: string; durationMs: number }>(
       (resolve, reject) => {
+        // Watchdog (MAX_RECORD_MS) may have already stopped the recorder
+        // and cached its result. Drain that first so the audio isn't lost.
+        if (lastResultRef.current) {
+          const cached = lastResultRef.current
+          lastResultRef.current = null
+          resolve(cached)
+          return
+        }
         const recorder = recorderRef.current
         if (!recorder || recorder.state === "inactive") {
           reject(new Error("Not recording"))
@@ -187,14 +230,11 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   }, [])
 
   const cancel = useCallback(() => {
+    lastResultRef.current = null
     const recorder = recorderRef.current
     if (recorder && recorder.state !== "inactive") {
-      // Suppress onstop resolution by clearing the promise before stop fires.
+      cancelledRef.current = true
       stopPromiseRef.current = null
-      recorder.onstop = () => {
-        cleanup()
-        setState("idle")
-      }
       recorder.stop()
     } else {
       cleanup()
@@ -206,6 +246,7 @@ export function useAudioRecorder(): UseAudioRecorderResult {
   useEffect(() => {
     return () => {
       stopPromiseRef.current = null
+      lastResultRef.current = null
       cleanup()
     }
   }, [cleanup])

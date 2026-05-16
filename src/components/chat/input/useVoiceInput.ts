@@ -102,8 +102,11 @@ export function useVoiceInput(): UseVoiceInputResult {
     } catch (e) {
       setTranscribing(false)
       const msg = e instanceof Error ? e.message : String(e)
-      // Match server-side error codes to localized strings.
-      if (msg.includes("no_active_model") || msg.includes("No STT model")) {
+      // Backend `SttError::Display` always emits `stt:<code>: <body>`.
+      // HTTP transport may wrap that inside `[HttpTransport] POST ... 400:
+      // {"error":"stt:..."}` so scan anywhere in the message, not anchored.
+      const code = msg.match(/stt:([a-z_]+):/)?.[1]
+      if (code === "no_active_model") {
         setErrorMessage(t("voice.noProvider"))
       } else if (msg.toLowerCase().includes("permission")) {
         setErrorMessage(t("voice.permissionDenied"))

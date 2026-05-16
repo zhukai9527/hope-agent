@@ -27,6 +27,11 @@ use super::types::{
 /// front-end crashed / lost connection without calling `finalize`).
 const SESSION_IDLE_TIMEOUT_SECS: u64 = 300;
 
+/// `push_chunk` refreshes `last_active` once every N chunks. At 100ms
+/// chunks this is ~3s of resolution — far finer than the 5min GC window
+/// while sparing ~95% of mutex writes vs touching it every call.
+const LAST_ACTIVE_COALESCE: u32 = 32;
+
 /// EventBus event names. See `docs/architecture/stt.md`.
 pub const EVENT_TRANSCRIPT_PARTIAL: &str = "stt:transcript_partial";
 pub const EVENT_TRANSCRIPT_FINAL: &str = "stt:transcript_final";
@@ -41,6 +46,9 @@ struct SttSessionHandle {
     /// background tasks notice and exit.
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_active: Instant,
+    /// Coalesced counter for `push_chunk` so we don't write `last_active`
+    /// on every chunk. See `LAST_ACTIVE_COALESCE`.
+    chunks_since_touch: u32,
     provider_id: String,
     model_id: String,
 }
@@ -127,6 +135,7 @@ impl SttSessionManager {
             final_rx: Some(final_rx),
             cancel,
             last_active: Instant::now(),
+            chunks_since_touch: 0,
             provider_id: provider.id.clone(),
             model_id: model.id.clone(),
         };
@@ -141,13 +150,20 @@ impl SttSessionManager {
     /// Forward a raw audio chunk into the upstream WS. Returns
     /// `NotFound` when the session has already been finalised / cancelled
     /// (a common late-chunk race after `finalize` is fired by the UI).
+    /// `last_active` only refreshes every `LAST_ACTIVE_COALESCE` chunks so
+    /// the GC sweeper's 60s resolution doesn't pay 60 lock-writes/sec under
+    /// realtime streaming.
     pub async fn push_chunk(&self, session_id: &str, chunk: Vec<u8>) -> SttResult<()> {
         let tx_clone = {
             let mut guard = self.sessions.lock().unwrap();
             let handle = guard
                 .get_mut(session_id)
                 .ok_or_else(|| SttError::NotFound(session_id.to_string()))?;
-            handle.last_active = Instant::now();
+            handle.chunks_since_touch = handle.chunks_since_touch.wrapping_add(1);
+            if handle.chunks_since_touch >= LAST_ACTIVE_COALESCE {
+                handle.last_active = Instant::now();
+                handle.chunks_since_touch = 0;
+            }
             handle.audio_tx.clone()
         };
         tx_clone
@@ -157,30 +173,28 @@ impl SttSessionManager {
     }
 
     /// Drop the audio channel and wait for the engine's final transcript.
-    /// After this returns the session is removed from the map.
+    /// After this returns the session is removed from the map. Removal +
+    /// `audio_tx` drop happen under the same lock to keep the close-WS
+    /// signal atomic with respect to concurrent `push_chunk` racers.
     pub async fn finalize(&self, session_id: &str) -> SttResult<Transcript> {
         let final_rx = {
             let mut guard = self.sessions.lock().unwrap();
-            let handle = guard
-                .get_mut(session_id)
-                .ok_or_else(|| SttError::NotFound(session_id.to_string()))?;
-            handle.last_active = Instant::now();
-            handle.final_rx.take()
+            let Some(handle) = guard.get_mut(session_id) else {
+                return Err(SttError::NotFound(session_id.to_string()));
+            };
+            let Some(rx) = handle.final_rx.take() else {
+                return Err(SttError::Other(format!(
+                    "Session {session_id} already finalised"
+                )));
+            };
+            // Removing the entry drops `audio_tx`, signalling the engine
+            // to close the upstream WS. final_rx is owned outside the lock
+            // so we can await it freely.
+            let _ = guard.remove(session_id);
+            rx
         };
-        let Some(rx) = final_rx else {
-            return Err(SttError::Other(format!(
-                "Session {session_id} already finalised"
-            )));
-        };
-        // Drop audio_tx so the engine's upstream task can close the WS.
-        {
-            let mut guard = self.sessions.lock().unwrap();
-            if let Some(handle) = guard.remove(session_id) {
-                drop(handle.audio_tx);
-            }
-        }
 
-        let transcript = match tokio::time::timeout(Duration::from_secs(30), rx).await {
+        let transcript = match tokio::time::timeout(Duration::from_secs(30), final_rx).await {
             Ok(Ok(result)) => result?,
             Ok(Err(_)) => return Err(SttError::Other("Final transcript channel closed".into())),
             Err(_) => {
@@ -348,6 +362,7 @@ mod tests {
                 final_rx: Some(frx_old),
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_active: Instant::now() - Duration::from_secs(SESSION_IDLE_TIMEOUT_SECS + 60),
+                chunks_since_touch: 0,
                 provider_id: "p1".into(),
                 model_id: "m1".into(),
             },
@@ -359,6 +374,7 @@ mod tests {
                 final_rx: Some(frx_new),
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_active: Instant::now(),
+                chunks_since_touch: 0,
                 provider_id: "p2".into(),
                 model_id: "m2".into(),
             },
@@ -384,6 +400,7 @@ mod tests {
                 final_rx: Some(frx),
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_active: Instant::now(),
+                chunks_since_touch: 0,
                 provider_id: "p".into(),
                 model_id: "m".into(),
             },

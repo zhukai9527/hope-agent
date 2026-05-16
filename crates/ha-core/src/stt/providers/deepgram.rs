@@ -13,15 +13,20 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
 use crate::provider::AuthProfile;
 use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
 use crate::stt::types::{
-    ActiveSttModel, SttModelConfig, SttProviderConfig, Transcript, TranscriptDelta,
-    TranscriptOptions,
+    SttModelConfig, SttProviderConfig, Transcript, TranscriptDelta, TranscriptOptions,
 };
+
+/// Cap incoming WS frame / message size so a misbehaving server can't OOM
+/// us. Matches the limits the MCP WS client uses.
+const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
 
 /// Open a Deepgram streaming session. Returns `(audio_tx, delta_rx)`:
 /// callers push raw audio bytes into `audio_tx` and drain transcript
@@ -42,7 +47,7 @@ pub async fn open_stream(
     let mut url = format!("{}/v1/listen?model={}&interim_results=true", base, model.id);
     if let Some(lang) = &options.language {
         if !lang.is_empty() {
-            url.push_str(&format!("&language={}", urlencoding_encode(lang)));
+            url.push_str(&format!("&language={}", urlencoding::encode(lang)));
         }
     }
     if options.punctuation.unwrap_or(true) {
@@ -58,12 +63,24 @@ pub async fn open_stream(
         url.push_str(&format!("&sample_rate={}", sr));
     }
 
-    // SSRF check against the http(s) form of the URL — `check_url` rejects
-    // ws/wss schemes today. We re-derive an https:// twin for policy only;
-    // the actual WS connect still uses the original wss:// URL.
-    let https_twin = url
-        .replacen("wss://", "https://", 1)
-        .replacen("ws://", "http://", 1);
+    // `check_url` rejects ws/wss schemes, so derive an http(s) twin by
+    // swapping the scheme via `url::Url` (handles query / userinfo / port
+    // correctly). The actual WS connect still uses the original wss:// URL.
+    let https_twin = {
+        let mut parsed = url::Url::parse(&url)
+            .map_err(|e| SttError::Other(format!("Invalid Deepgram URL: {e}")))?;
+        let new_scheme = match parsed.scheme() {
+            "wss" => Some("https"),
+            "ws" => Some("http"),
+            _ => None,
+        };
+        if let Some(scheme) = new_scheme {
+            parsed
+                .set_scheme(scheme)
+                .map_err(|_| SttError::Other("Failed to derive SSRF twin URL".into()))?;
+        }
+        parsed.to_string()
+    };
     let cfg = crate::config::cached_config();
     let policy = if provider.allow_private_network {
         SsrfPolicy::AllowPrivate
@@ -85,7 +102,10 @@ pub async fn open_stream(
             .map_err(|e| SttError::Other(format!("Bad auth header: {e}")))?,
     );
 
-    let (ws, _resp) = tokio_tungstenite::connect_async(request)
+    let ws_config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
+    let (ws, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
         .await
         .map_err(|e| SttError::Network(format!("Deepgram WS connect failed: {e}")))?;
     let (mut ws_sink, mut ws_stream) = ws.split();
@@ -183,23 +203,9 @@ fn parse_message(session_id: &str, raw: &str) -> Option<TranscriptDelta> {
     })
 }
 
-fn urlencoding_encode(s: &str) -> String {
-    // tiny inline encoder — `url::form_urlencoded` would pull a Serializer
-    // for one field, this is enough for the BCP-47 language hints we pass.
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{:02X}", b),
-        })
-        .collect()
-}
-
-/// Batch path for Deepgram — collect the full payload, post once, take
-/// the final transcript. Phase 2 stubs this out so the failover chain
-/// stays uniform; full HTTP /v1/listen batch will land alongside the
-/// Phase 6 cleanup.
+/// Batch path for Deepgram — placeholder so the failover chain stays
+/// uniform across providers. Real `/v1/listen` HTTP batch can be wired in
+/// when needed.
 #[allow(dead_code)]
 pub async fn transcribe_batch(
     _provider: &SttProviderConfig,
@@ -209,13 +215,8 @@ pub async fn transcribe_batch(
     _options: &TranscriptOptions,
 ) -> SttResult<Transcript> {
     Err(SttError::Other(
-        "Deepgram batch transcription is not implemented yet (Phase 6)".to_string(),
+        "Deepgram batch transcription is not implemented; use the streaming session instead".into(),
     ))
-}
-
-#[allow(dead_code)]
-pub(crate) fn classify_active(_active: &ActiveSttModel) {
-    // placeholder to keep ActiveSttModel imported when only batch stub is used
 }
 
 #[cfg(test)]
@@ -257,12 +258,5 @@ mod tests {
     fn parse_skips_empty_transcripts() {
         let raw = r#"{"channel":{"alternatives":[{"transcript":""}]},"is_final":false}"#;
         assert!(parse_message("s", raw).is_none());
-    }
-
-    #[test]
-    fn urlencode_passes_through_alphanumeric() {
-        assert_eq!(urlencoding_encode("en-US"), "en-US");
-        assert_eq!(urlencoding_encode("zh-Hans"), "zh-Hans");
-        assert_eq!(urlencoding_encode("a b"), "a%20b");
     }
 }

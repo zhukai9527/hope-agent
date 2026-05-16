@@ -211,26 +211,24 @@ fn persist_channel_media_to_session(
 
 /// Transcribe any voice / audio attachments via the STT subsystem and
 /// return the prefix string that should be prepended to the chat-engine
-/// message. Empty string when no audio attachments are present or when
-/// no STT model is configured. Caller keeps `attachments` unchanged so
-/// the LLM still sees the original audio alongside the transcript.
+/// message. `None` when no audio attachments are present or no STT model
+/// is configured; the caller keeps `attachments` unchanged so the LLM
+/// still sees the original audio alongside the transcript.
 ///
 /// Failure semantics: per-attachment errors are logged (`app_warn!`) and
-/// skipped — the IM message dispatch is never blocked. When the entire
-/// failover chain is unconfigured, we log once and return an empty prefix
-/// so the user just sees raw audio.
+/// skipped — the IM message dispatch is never blocked. Multiple audio
+/// attachments are transcribed concurrently so a voice album doesn't
+/// serialize provider round-trips.
 pub(super) async fn transcribe_inbound_voice_attachments(
     attachments: &[crate::agent::Attachment],
     cfg_language: &str,
-) -> String {
-    // Filter to audio attachments that landed on disk. `data` (base64) is
-    // reserved for images; voice / audio always go through `file_path`.
+) -> Option<String> {
     let audio_atts: Vec<&crate::agent::Attachment> = attachments
         .iter()
         .filter(|a| a.mime_type.starts_with("audio/") && a.file_path.is_some())
         .collect();
     if audio_atts.is_empty() {
-        return String::new();
+        return None;
     }
 
     let (primary, fallback) = crate::stt::current_im_chain();
@@ -241,35 +239,35 @@ pub(super) async fn transcribe_inbound_voice_attachments(
             "autoTranscribeVoice on but no STT model configured (set stt.activeModel or stt.imFallbackModel); {} audio attachments forwarded without transcript",
             audio_atts.len()
         );
-        return String::new();
+        return None;
     }
 
+    let started = std::time::Instant::now();
+    let total = audio_atts.len();
+    let futures = audio_atts.into_iter().map(|att| {
+        let primary = primary.clone();
+        let fallback = fallback.clone();
+        let path = std::path::PathBuf::from(att.file_path.as_ref().expect("filtered above"));
+        let mime_type = att.mime_type.clone();
+        let name = att.name.clone();
+        async move {
+            let payload = crate::stt::AudioPayload::File { path, mime_type };
+            let result = crate::stt::failover_transcribe_batch(
+                primary,
+                fallback,
+                payload,
+                &crate::stt::TranscriptOptions::default(),
+            )
+            .await;
+            (name, result)
+        }
+    });
+    let results = futures_util::future::join_all(futures).await;
+
     let mut prefix = String::new();
-    for att in audio_atts {
-        // `is_some()` already checked above.
-        let path = std::path::PathBuf::from(att.file_path.as_ref().unwrap());
-        let payload = crate::stt::AudioPayload::File {
-            path,
-            mime_type: att.mime_type.clone(),
-        };
-        match crate::stt::failover_transcribe_batch(
-            primary.clone(),
-            fallback.clone(),
-            payload,
-            &crate::stt::TranscriptOptions::default(),
-        )
-        .await
-        {
-            Ok(transcript) => {
-                if transcript.text.trim().is_empty() {
-                    app_warn!(
-                        "channel",
-                        "stt",
-                        "transcription returned empty text for {}",
-                        att.name
-                    );
-                    continue;
-                }
+    for (name, result) in results {
+        match result {
+            Ok(transcript) if !transcript.text.trim().is_empty() => {
                 prefix.push_str(&crate::stt::voice_prefix_for_locale(
                     cfg_language,
                     &transcript.text,
@@ -278,9 +276,17 @@ pub(super) async fn transcribe_inbound_voice_attachments(
                     "channel",
                     "stt",
                     "transcribed inbound voice attachment '{}' via {} ({} chars)",
-                    att.name,
+                    name,
                     transcript.model_id,
                     transcript.text.chars().count()
+                );
+            }
+            Ok(_) => {
+                app_warn!(
+                    "channel",
+                    "stt",
+                    "transcription returned empty text for {}",
+                    name
                 );
             }
             Err(err) => {
@@ -288,13 +294,24 @@ pub(super) async fn transcribe_inbound_voice_attachments(
                     "channel",
                     "stt",
                     "transcription failed for '{}': {}",
-                    att.name,
+                    name,
                     err
                 );
             }
         }
     }
-    prefix
+    app_info!(
+        "channel",
+        "stt",
+        "transcribed {} inbound audio attachments in {}ms",
+        total,
+        started.elapsed().as_millis()
+    );
+    if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    }
 }
 
 #[cfg(test)]
@@ -367,7 +384,7 @@ mod tests {
             },
         ];
         let prefix = transcribe_inbound_voice_attachments(&attachments, "en").await;
-        assert_eq!(prefix, "");
+        assert!(prefix.is_none());
     }
 
     // Note: a test that exercises the "audio attachments present + no STT

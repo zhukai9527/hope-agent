@@ -120,10 +120,6 @@ const KIND_OPTIONS: { value: SttProviderKind; label: string }[] = [
   { value: "openai-transcriptions", label: "OpenAI Audio Transcriptions" },
   { value: "openai-compatible", label: "OpenAI-compatible" },
   { value: "deepgram-ws", label: "Deepgram (WS)" },
-  { value: "assemblyai-ws", label: "AssemblyAI (WS, Phase 6)" },
-  { value: "azure-ws", label: "Azure Speech (WS, Phase 6)" },
-  { value: "volcengine-ws", label: "Volcengine (WS, Phase 6)" },
-  { value: "xunfei-ws", label: "iFlytek IAT (WS, Phase 6)" },
 ]
 
 const blankProvider = (): SttProviderConfig => ({

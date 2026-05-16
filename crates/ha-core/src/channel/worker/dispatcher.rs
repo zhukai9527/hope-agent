@@ -638,11 +638,9 @@ async fn handle_inbound_message(
     // can still fall back to listening. Failure is non-blocking — logged
     // and dropped.
     let engine_message = if account.auto_transcribe_voice() {
-        let prefix = transcribe_inbound_voice_attachments(&attachments, &store.language).await;
-        if prefix.is_empty() {
-            engine_message
-        } else {
-            format!("{}{}", prefix, engine_message)
+        match transcribe_inbound_voice_attachments(&attachments, &store.language).await {
+            Some(prefix) => format!("{}{}", prefix, engine_message),
+            None => engine_message,
         }
     } else {
         engine_message

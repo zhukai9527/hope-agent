@@ -59,19 +59,25 @@ impl SttError {
 }
 
 impl fmt::Display for SttError {
+    /// Renders as `stt:<code>: <message>` so callers across the Tauri /
+    /// HTTP boundary (where the typed enum collapses into a string) can
+    /// still recover the stable `code()` via a `stt:<code>:` prefix split.
+    /// Keeps `code()` as the source of truth — `Display` derives from it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotFound(id) => write!(f, "STT provider/model not found: {id}"),
-            Self::NoActiveModel => write!(f, "No STT model configured"),
-            Self::Auth(msg) => write!(f, "STT auth failure: {msg}"),
-            Self::RateLimit(msg) => write!(f, "STT rate-limited: {msg}"),
-            Self::Network(msg) => write!(f, "STT network error: {msg}"),
-            Self::UnsupportedAudio(msg) => write!(f, "Unsupported audio: {msg}"),
-            Self::ProviderUnavailable(msg) => write!(f, "STT provider unavailable: {msg}"),
-            Self::SsrfBlocked(msg) => write!(f, "Destination blocked by SSRF policy: {msg}"),
-            Self::Io(msg) => write!(f, "STT I/O error: {msg}"),
-            Self::Other(msg) => write!(f, "STT error: {msg}"),
-        }
+        let code = self.code();
+        let body = match self {
+            Self::NotFound(id) => format!("STT provider/model not found: {id}"),
+            Self::NoActiveModel => "No STT model configured".into(),
+            Self::Auth(msg) => format!("STT auth failure: {msg}"),
+            Self::RateLimit(msg) => format!("STT rate-limited: {msg}"),
+            Self::Network(msg) => format!("STT network error: {msg}"),
+            Self::UnsupportedAudio(msg) => format!("Unsupported audio: {msg}"),
+            Self::ProviderUnavailable(msg) => format!("STT provider unavailable: {msg}"),
+            Self::SsrfBlocked(msg) => format!("Destination blocked by SSRF policy: {msg}"),
+            Self::Io(msg) => format!("STT I/O error: {msg}"),
+            Self::Other(msg) => format!("STT error: {msg}"),
+        };
+        write!(f, "stt:{code}: {body}")
     }
 }
 

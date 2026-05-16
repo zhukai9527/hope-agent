@@ -36,7 +36,7 @@ pub async fn transcribe_with(
         | SttProviderKind::AzureWs
         | SttProviderKind::VolcengineWs
         | SttProviderKind::XunfeiWs => Err(SttError::Other(format!(
-            "STT provider kind {:?} not yet implemented (Phase 2+)",
+            "Batch transcription is not supported for provider kind {:?}; use the streaming session instead",
             provider.kind
         ))),
     }
@@ -89,9 +89,10 @@ pub async fn failover_transcribe_batch(
     let cfg = cached_config();
     let mut attempts = Vec::new();
     let mut last_error: Option<SttError> = None;
-    let mut last_audio = Some(audio);
+    let last_idx = chain.len() - 1;
+    let mut audio = Some(audio);
 
-    for active in &chain {
+    for (idx, active) in chain.iter().enumerate() {
         let Some((provider, model, profile)) = resolve_active(&cfg, active) else {
             let err = SttError::NotFound(active.to_string());
             attempts.push(AttemptedModel {
@@ -104,11 +105,14 @@ pub async fn failover_transcribe_batch(
             continue;
         };
 
-        // Clone the audio for each attempt; one-shot batch payloads are
-        // typically small (a few MB) so the extra copy is cheap and lets
-        // us reuse the same enum across attempts. Last attempt consumes
-        // the original.
-        let audio_for_attempt = last_audio.clone().expect("audio still owned");
+        // Final attempt consumes the original payload; earlier attempts
+        // clone so retries can reuse it. Audio payloads are typically a
+        // few MB so the saved allocation is worth the bookkeeping.
+        let audio_for_attempt = if idx == last_idx {
+            audio.take().expect("audio still owned on last attempt")
+        } else {
+            audio.as_ref().expect("audio still owned").clone()
+        };
         match transcribe_with(&provider, &model, &profile, audio_for_attempt, options).await {
             Ok(transcript) => return Ok(transcript),
             Err(err) => {
@@ -129,8 +133,6 @@ pub async fn failover_transcribe_batch(
             }
         }
     }
-    // Drop the no-longer-needed original payload.
-    drop(last_audio.take());
 
     Err(FailoverError {
         attempts,
@@ -172,18 +174,26 @@ pub fn current_desktop_chain() -> (Option<ActiveSttModel>, Vec<ActiveSttModel>) 
     snapshot_chain(&cfg)
 }
 
-/// Snapshot the IM chain: prefer `im_fallback_model` over `active_model`, then
-/// append the global `fallback_models`. Mirrors the dispatcher's intent —
-/// IM-side rules have their own primary but should still share the recovery
-/// list.
+/// Snapshot the IM chain: prefer `im_fallback_model` over `active_model`.
+/// When both are set, the desktop `active_model` is folded into the recovery
+/// list (after `fallback_models`) so an IM-specific primary doesn't strand the
+/// user's main model out of the chain. Duplicates are removed in order.
 pub fn current_im_chain() -> (Option<ActiveSttModel>, Vec<ActiveSttModel>) {
     let cfg = cached_config();
-    let primary = cfg
-        .stt
-        .im_fallback_model
-        .clone()
-        .or_else(|| cfg.stt.active_model.clone());
-    (primary, cfg.stt.fallback_models.clone())
+    let im = cfg.stt.im_fallback_model.clone();
+    let active = cfg.stt.active_model.clone();
+    let (primary, extra_recovery) = match (im, active) {
+        (Some(im_primary), Some(desktop_active)) => (Some(im_primary), Some(desktop_active)),
+        (Some(im_primary), None) => (Some(im_primary), None),
+        (None, active) => (active, None),
+    };
+    let mut recovery: Vec<ActiveSttModel> = cfg.stt.fallback_models.clone();
+    if let Some(extra) = extra_recovery {
+        if Some(&extra) != primary.as_ref() && !recovery.contains(&extra) {
+            recovery.push(extra);
+        }
+    }
+    (primary, recovery)
 }
 
 fn snapshot_chain(

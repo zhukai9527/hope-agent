@@ -179,10 +179,10 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
     }
 }
 
-/// Redact API keys + auth_profiles[*].apiKey + entire `extra` map from a
-/// `SttConfig.providers` JSON tree. Mirrors `redact_channels_value` /
-/// `redact_mcp_servers_value`: per-provider write path is the safer
-/// configuration channel for secrets.
+/// Redact API keys + `auth_profiles[*].apiKey` + each `extra` value from a
+/// `SttConfig.providers` JSON tree. `extra` keys (e.g. `app_id`, `region`) are
+/// preserved so the model can still describe what's configured; only the
+/// per-key value gets masked via `redact_string_field`.
 fn redact_stt_providers_value(mut value: Value) -> Value {
     let Some(providers) = value.as_array_mut() else {
         return value;
@@ -199,12 +199,11 @@ fn redact_stt_providers_value(mut value: Value) -> Value {
                 }
             }
         }
-        if obj
-            .get("extra")
-            .map(|v| v.as_object().is_some_and(|o| !o.is_empty()))
-            .unwrap_or(false)
-        {
-            obj.insert("extra".into(), json!("[REDACTED]"));
+        if let Some(extra) = obj.get_mut("extra").and_then(|v| v.as_object_mut()) {
+            let keys: Vec<String> = extra.keys().cloned().collect();
+            for k in keys {
+                redact_string_field(extra, &k);
+            }
         }
     }
     value
