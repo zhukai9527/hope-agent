@@ -77,7 +77,8 @@ fn risk_level(category: &str) -> &'static str {
         | "skills_auto_review"
         | "recall_summary"
         | "tool_call_narration"
-        | "teams" => "medium",
+        | "teams"
+        | "im_auto_transcribe" => "medium",
 
         // ── HIGH ───────────────────────────────────────────────
         "proxy" | "embedding" | "shortcuts" | "skills" | "server" | "acp_control" | "skill_env"
@@ -164,6 +165,15 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "stt_fallback_models" => Some(
             "Read-only via this tool. STT failover chain — change it in Settings → Speech-to-Text."
+        ),
+        "im_auto_transcribe" => Some(
+            "Aggregate view + writer for IM-channel voice auto-transcribe. \
+             Read returns `{ imFallbackModel, accounts: [{ id, label, channelId, autoTranscribeVoice }] }`. \
+             Write accepts `{ imFallbackModel?: { providerId, modelId } | null, accounts?: [{ id, autoTranscribeVoice }] }`: \
+             every field is independently optional, so the model can toggle a single account without restating the fallback or vice versa. \
+             Enabling auto-transcribe consumes STT API quota for every inbound voice message; \
+             without `imFallbackModel` (or `stt.activeModel` as fallback), the dispatcher logs a warning per message and forwards the original audio unchanged. \
+             Original audio is always kept as an attachment alongside the transcript prefix."
         ),
         _ => None,
     }
@@ -437,6 +447,25 @@ fn read_category(category: &str) -> Result<Value> {
         )?)),
         "active_stt_model" => Ok(json!({ "activeSttModel": cfg.stt.active_model })),
         "stt_fallback_models" => Ok(json!({ "fallbackModels": cfg.stt.fallback_models })),
+        "im_auto_transcribe" => {
+            let accounts: Vec<Value> = cfg
+                .channels
+                .accounts
+                .iter()
+                .map(|a| {
+                    json!({
+                        "id": a.id,
+                        "label": a.label,
+                        "channelId": a.channel_id.to_string(),
+                        "autoTranscribeVoice": a.auto_transcribe_voice(),
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "imFallbackModel": cfg.stt.im_fallback_model,
+                "accounts": accounts,
+            }))
+        }
         _ => bail!("Unknown settings category: '{category}'"),
     }
 }
@@ -517,6 +546,8 @@ fn get_all_overview() -> Result<String> {
             "activeModel": cfg.stt.active_model,
             "fallbackCount": cfg.stt.fallback_models.len(),
             "imFallbackConfigured": cfg.stt.im_fallback_model.is_some(),
+            "imAutoTranscribeAccountCount":
+                cfg.channels.accounts.iter().filter(|a| a.auto_transcribe_voice()).count(),
         },
     });
 
@@ -534,7 +565,7 @@ fn get_all_overview() -> Result<String> {
             "deferred_tools", "async_tools", "approval",
             "tool_result_disk_threshold", "ask_user_question_timeout", "plan",
             "skills_auto_review", "recall_summary", "tool_call_narration",
-            "teams"
+            "teams", "im_auto_transcribe"
         ],
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
@@ -590,7 +621,52 @@ pub(crate) async fn tool_update_settings(args: &Value) -> Result<String> {
         return update_session_title_config(values);
     }
 
+    if category == "im_auto_transcribe" {
+        return update_im_auto_transcribe(values);
+    }
+
     update_app_config(category, values)
+}
+
+/// Update STT IM auto-transcribe config: the global fallback model and any
+/// number of per-account `autoTranscribeVoice` toggles. Both top-level keys
+/// are optional and processed independently.
+fn update_im_auto_transcribe(values: &Value) -> Result<String> {
+    use crate::stt::ActiveSttModel;
+
+    // imFallbackModel can be missing (skip), `null` (clear), or `{providerId, modelId}` (set).
+    if let Some(fallback) = values.get("imFallbackModel") {
+        if fallback.is_null() {
+            crate::stt::set_im_fallback_stt_model(None, "skill")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+        } else {
+            let sel: ActiveSttModel = serde_json::from_value(fallback.clone())
+                .map_err(|e| anyhow::anyhow!("imFallbackModel: {}", e))?;
+            crate::stt::set_im_fallback_stt_model(Some(sel), "skill")
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+        }
+    }
+
+    if let Some(accounts) = values.get("accounts").and_then(|v| v.as_array()) {
+        for entry in accounts {
+            let id = entry
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("accounts entry missing `id`"))?;
+            let Some(on) = entry.get("autoTranscribeVoice").and_then(|v| v.as_bool()) else {
+                continue;
+            };
+            crate::channel::accounts::set_account_auto_transcribe_voice(id, on, "skill")?;
+        }
+    }
+
+    let updated_value = read_category("im_auto_transcribe")?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "category": "im_auto_transcribe",
+        "riskLevel": risk_level("im_auto_transcribe"),
+        "updated": true,
+        "settings": updated_value,
+    }))?)
 }
 
 fn update_user_config(values: &Value) -> Result<String> {

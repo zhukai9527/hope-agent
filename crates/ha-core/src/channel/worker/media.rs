@@ -209,6 +209,94 @@ fn persist_channel_media_to_session(
     }
 }
 
+/// Transcribe any voice / audio attachments via the STT subsystem and
+/// return the prefix string that should be prepended to the chat-engine
+/// message. Empty string when no audio attachments are present or when
+/// no STT model is configured. Caller keeps `attachments` unchanged so
+/// the LLM still sees the original audio alongside the transcript.
+///
+/// Failure semantics: per-attachment errors are logged (`app_warn!`) and
+/// skipped — the IM message dispatch is never blocked. When the entire
+/// failover chain is unconfigured, we log once and return an empty prefix
+/// so the user just sees raw audio.
+pub(super) async fn transcribe_inbound_voice_attachments(
+    attachments: &[crate::agent::Attachment],
+    cfg_language: &str,
+) -> String {
+    // Filter to audio attachments that landed on disk. `data` (base64) is
+    // reserved for images; voice / audio always go through `file_path`.
+    let audio_atts: Vec<&crate::agent::Attachment> = attachments
+        .iter()
+        .filter(|a| a.mime_type.starts_with("audio/") && a.file_path.is_some())
+        .collect();
+    if audio_atts.is_empty() {
+        return String::new();
+    }
+
+    let (primary, fallback) = crate::stt::current_im_chain();
+    if primary.is_none() {
+        app_warn!(
+            "channel",
+            "stt",
+            "autoTranscribeVoice on but no STT model configured (set stt.activeModel or stt.imFallbackModel); {} audio attachments forwarded without transcript",
+            audio_atts.len()
+        );
+        return String::new();
+    }
+
+    let mut prefix = String::new();
+    for att in audio_atts {
+        // `is_some()` already checked above.
+        let path = std::path::PathBuf::from(att.file_path.as_ref().unwrap());
+        let payload = crate::stt::AudioPayload::File {
+            path,
+            mime_type: att.mime_type.clone(),
+        };
+        match crate::stt::failover_transcribe_batch(
+            primary.clone(),
+            fallback.clone(),
+            payload,
+            &crate::stt::TranscriptOptions::default(),
+        )
+        .await
+        {
+            Ok(transcript) => {
+                if transcript.text.trim().is_empty() {
+                    app_warn!(
+                        "channel",
+                        "stt",
+                        "transcription returned empty text for {}",
+                        att.name
+                    );
+                    continue;
+                }
+                prefix.push_str(&crate::stt::voice_prefix_for_locale(
+                    cfg_language,
+                    &transcript.text,
+                ));
+                app_info!(
+                    "channel",
+                    "stt",
+                    "transcribed inbound voice attachment '{}' via {} ({} chars)",
+                    att.name,
+                    transcript.model_id,
+                    transcript.text.chars().count()
+                );
+            }
+            Err(err) => {
+                app_warn!(
+                    "channel",
+                    "stt",
+                    "transcription failed for '{}': {}",
+                    att.name,
+                    err
+                );
+            }
+        }
+    }
+    prefix
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,4 +346,33 @@ mod tests {
             assert_eq!(content, b"hello world");
         });
     }
+
+    /// transcribe helper returns "" for empty audio attachment list — no
+    /// STT call attempted, no warning logged.
+    #[tokio::test]
+    async fn transcribe_returns_empty_when_no_audio_attachments() {
+        // Image-only attachments (base64) should be ignored.
+        let attachments = vec![
+            crate::agent::Attachment {
+                name: "img".into(),
+                mime_type: "image/png".into(),
+                data: Some("base64data".into()),
+                file_path: None,
+            },
+            crate::agent::Attachment {
+                name: "doc".into(),
+                mime_type: "application/pdf".into(),
+                data: None,
+                file_path: Some("/tmp/doc.pdf".into()),
+            },
+        ];
+        let prefix = transcribe_inbound_voice_attachments(&attachments, "en").await;
+        assert_eq!(prefix, "");
+    }
+
+    // Note: a test that exercises the "audio attachments present + no STT
+    // model configured" branch would have to mutate global `cached_config`
+    // and is therefore order-dependent under cargo test. The empty-prefix
+    // / non-blocking semantic is exercised end-to-end by the dispatcher
+    // smoke path instead.
 }

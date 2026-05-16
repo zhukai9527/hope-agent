@@ -661,6 +661,7 @@ pub fn run() {
             commands::channel::channel_add_account,
             commands::channel::channel_update_account,
             commands::channel::channel_remove_account,
+            commands::channel::channel_set_auto_transcribe_voice,
             commands::channel::channel_start_account,
             commands::channel::channel_stop_account,
             commands::channel::channel_sync_commands,

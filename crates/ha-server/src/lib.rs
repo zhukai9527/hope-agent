@@ -1110,6 +1110,10 @@ fn build_router_with_cors(
             "/channel/accounts/{id}/test-message",
             post(routes::channel::send_test_message),
         )
+        .route(
+            "/channel/accounts/{id}/auto-transcribe",
+            put(routes::channel::set_auto_transcribe_voice),
+        )
         .route("/channel/health", get(routes::channel::health_all))
         .route(
             "/channel/sync-commands",

@@ -476,6 +476,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   channel_add_account:             { method: "POST",   path: "/api/channel/accounts" },
   channel_update_account:          { method: "PUT",    path: "/api/channel/accounts/{accountId}" },
   channel_remove_account:          { method: "DELETE", path: "/api/channel/accounts/{accountId}" },
+  channel_set_auto_transcribe_voice:{ method: "PUT",  path: "/api/channel/accounts/{accountId}/auto-transcribe" },
   channel_start_account:           { method: "POST",   path: "/api/channel/accounts/{accountId}/start" },
   channel_stop_account:            { method: "POST",   path: "/api/channel/accounts/{accountId}/stop" },
   channel_sync_commands:           { method: "POST",   path: "/api/channel/sync-commands" },
