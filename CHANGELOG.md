@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent 工具开关语义收敛**：`capabilities.tools.allow/deny` 现在只表示非 Core 内置工具的显式开 / 关覆盖；Core 工具始终可用，Standard / Configured 工具缺省走代码里的 tier 默认值，deferred 只决定已开启工具的 schema 加载方式。移除独立 `capabilityToggles` / `toolOverrides` 分支，OpenClaw 导入不再映射两边语义不同的工具权限；飞书业务工具仍默认关闭，需在 Agent 设置里显式开启，UI 列表补充中文语义化名称与说明。
 - **浏览器工具 27 → 8 action 收敛**：原来散乱的 `connect / launch / navigate / take_snapshot / click / fill / fill_form / hover / drag / press_key / upload_file / evaluate / wait_for / handle_dialog / resize / scroll / list_profiles / save_pdf` 等 27 个 action 全部下沉到 8 个高层 action（`status / profile / tabs / navigate / snapshot / act / observe / control`）。工具默认进 deferred 池（`tool_search` 按需暴露），常态不占 system prompt。配套新 [`ha-browser` bundled skill](skills/ha-browser/SKILL.md) 教模型标准 `status → tabs → snapshot → act` loop、stale-ref 自恢复、登录/2FA/captcha 阻塞情形清单。
 
 ### Added
@@ -40,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP 工具开关热更新一致性**：`mcpGlobal.enabled` / `deniedServers` / server `enabled` 现在会同步更新 live registry、schema cache、`tool_search` 与执行反查表；修改 server `allowedTools` / `deniedTools` 不再把已 Ready 的 MCP 工具清空到必须手动 Reconnect。server `autoApprove` 现在只在 `trustLevel=Trusted` 时真正跳过普通工具审批，且不会绕过 Plan Mode ask。
 - **切回流式输出中的会话不再从头重放打字机动画**：MarkdownRenderer 在 mount 时把当前 content 长度记为基线，已经看过的内容直接整段显示，仅对 mount 之后新到达的 delta 继续走 typewriter + blurIn 动画。修复切到别的会话再切回时整段内容"咵地从头一字一字 / 模糊变清晰重放一遍"的视觉问题。
 - **会话内切换模型不再污染全局默认 & 不再闪回**：聊天界面 ModelPicker、桌面斜杠 `/model` 卡片、IM `/model` 命令现在都只把模型固定到**当前会话**（写入 `sessions.provider_id/model_id`），不再改 `config.active_model`。下次发消息时 chat_engine 解析顺序变为 **session > agent.primary > config.active_model**。同一会话切模型 UI 由 `manualModelOverrideRef` 兜底，不会再因 `config:changed` 广播被回退成旧值。全局默认模型现在仅由「设置 → 模型」面板修改。
 
