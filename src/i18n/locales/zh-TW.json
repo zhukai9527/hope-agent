@@ -234,7 +234,9 @@
     "wechatScannedHint": "已掃碼，請在微信中確認授權。",
     "whatsappBaseUrl": "橋接服務地址",
     "whatsappBridgeToken": "認證令牌（可選）",
-    "whatsappHint": "需要運行 WhatsApp 橋接服務，填寫其 HTTP API 地址"
+    "whatsappHint": "需要運行 WhatsApp 橋接服務，填寫其 HTTP API 地址",
+    "autoTranscribeVoice": "自動轉錄語音訊息",
+    "autoTranscribeVoiceHint": "透過 STT 子系統轉錄收到的語音 / 音訊；每則訊息會消耗 STT API 額度。"
   },
   "chat": {
     "addWorkingDirectory": "添加工作目錄",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "兼容 /v1/chat/completions 的服務",
     "openaiResponsesDesc": "兼容 /v1/responses 的服務",
     "selectApiType": "選擇 API 類型"
+  },
+  "voice": {
+    "record": "錄音",
+    "stop": "停止",
+    "cancel": "取消",
+    "processing": "辨識中…",
+    "permissionDenied": "麥克風權限被拒絕",
+    "noProvider": "未設定語音辨識模型",
+    "failed": "語音辨識失敗",
+    "empty": "未偵測到語音"
   }
 }

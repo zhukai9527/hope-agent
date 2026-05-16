@@ -234,7 +234,9 @@
     "wechatScannedHint": "تم المسح. أكّد تسجيل الدخول في WeChat.",
     "whatsappBaseUrl": "URL خدمة Bridge",
     "whatsappBridgeToken": "رمز المصادقة (اختياري)",
-    "whatsappHint": "يتطلب خدمة WhatsApp bridge قيد التشغيل. وجّه إلى URL HTTP API الخاص بها."
+    "whatsappHint": "يتطلب خدمة WhatsApp bridge قيد التشغيل. وجّه إلى URL HTTP API الخاص بها.",
+    "autoTranscribeVoice": "تفريغ الرسائل الصوتية تلقائياً",
+    "autoTranscribeVoiceHint": "يفرّغ الصوت الوارد عبر النظام الفرعي للتعرّف على الكلام؛ تستهلك كل رسالة حصة من واجهة برمجة التطبيقات."
   },
   "chat": {
     "addWorkingDirectory": "إضافة دليل العمل",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "خدمات متوافقة مع /v1/chat/completions",
     "openaiResponsesDesc": "خدمات متوافقة مع /v1/responses",
     "selectApiType": "اختر نوع API"
+  },
+  "voice": {
+    "record": "تسجيل صوتي",
+    "stop": "إيقاف",
+    "cancel": "إلغاء",
+    "processing": "جارٍ التفريغ…",
+    "permissionDenied": "تم رفض إذن الميكروفون",
+    "noProvider": "لم يتم ضبط نموذج تحويل الصوت إلى نص",
+    "failed": "فشل تفريغ الصوت",
+    "empty": "لم يتم اكتشاف كلام"
   }
 }

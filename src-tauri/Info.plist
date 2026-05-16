@@ -6,5 +6,7 @@
     <string>Hope Agent needs your location to provide local weather information.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Hope Agent needs your location to provide local weather information.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Hope Agent uses the microphone to transcribe what you say into chat input. Audio is sent to the speech-to-text provider you configure in Settings → Speech-to-Text; nothing is recorded without an active recording session.</string>
 </dict>
 </plist>

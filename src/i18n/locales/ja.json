@@ -234,7 +234,9 @@
     "wechatScannedHint": "スキャン済み。WeChat で承認してください。",
     "whatsappBaseUrl": "ブリッジサービス URL",
     "whatsappBridgeToken": "認証トークン（任意）",
-    "whatsappHint": "WhatsApp ブリッジサービスの実行が必要です。HTTP API URL を指定してください。"
+    "whatsappHint": "WhatsApp ブリッジサービスの実行が必要です。HTTP API URL を指定してください。",
+    "autoTranscribeVoice": "音声メッセージを自動文字起こし",
+    "autoTranscribeVoiceHint": "受信した音声 / オーディオを STT サブシステムで文字起こし。1 件ごとに STT API クォータを消費します。"
   },
   "chat": {
     "addWorkingDirectory": "作業ディレクトリを追加",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "/v1/chat/completions 互換サービス",
     "openaiResponsesDesc": "/v1/responses 互換サービス",
     "selectApiType": "API タイプを選択"
+  },
+  "voice": {
+    "record": "音声録音",
+    "stop": "停止",
+    "cancel": "キャンセル",
+    "processing": "文字起こし中…",
+    "permissionDenied": "マイクのアクセス権限が拒否されました",
+    "noProvider": "音声認識モデルが未設定です",
+    "failed": "音声認識に失敗しました",
+    "empty": "音声が検出されませんでした"
   }
 }

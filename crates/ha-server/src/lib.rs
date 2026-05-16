@@ -1490,7 +1490,20 @@ fn build_router_with_cors(
             "/stt/local-backends/{key}/upsert",
             post(routes::stt::upsert_local_stt_provider),
         )
-        .route("/stt/transcribe", post(routes::stt::stt_transcribe_blob));
+        .route("/stt/transcribe", post(routes::stt::stt_transcribe_blob))
+        .route("/stt/sessions", post(routes::stt::stt_start_session))
+        .route(
+            "/stt/sessions/{id}/chunk",
+            post(routes::stt::stt_push_chunk),
+        )
+        .route(
+            "/stt/sessions/{id}/finalize",
+            post(routes::stt::stt_finalize_session),
+        )
+        .route(
+            "/stt/sessions/{id}",
+            delete(routes::stt::stt_cancel_session),
+        );
 
     let ws_routes = Router::new().route("/events", get(ws::events::events_ws));
 

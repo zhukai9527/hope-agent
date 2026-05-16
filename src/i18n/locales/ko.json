@@ -234,7 +234,9 @@
     "wechatScannedHint": "스캔 완료. WeChat 에서 로그인을 확인하세요.",
     "whatsappBaseUrl": "브리지 서비스 URL",
     "whatsappBridgeToken": "인증 토큰 (선택)",
-    "whatsappHint": "WhatsApp 브리지 서비스가 실행 중이어야 합니다. HTTP API URL 을 지정하세요."
+    "whatsappHint": "WhatsApp 브리지 서비스가 실행 중이어야 합니다. HTTP API URL 을 지정하세요.",
+    "autoTranscribeVoice": "음성 메시지 자동 전사",
+    "autoTranscribeVoiceHint": "수신 음성/오디오를 STT 서브시스템으로 전사합니다. 메시지당 STT API 할당량을 사용합니다."
   },
   "chat": {
     "addWorkingDirectory": "작업 디렉터리 추가",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "/v1/chat/completions 호환 서비스",
     "openaiResponsesDesc": "/v1/responses 호환 서비스",
     "selectApiType": "API 유형 선택"
+  },
+  "voice": {
+    "record": "음성 녹음",
+    "stop": "중지",
+    "cancel": "취소",
+    "processing": "변환 중…",
+    "permissionDenied": "마이크 권한이 거부되었습니다",
+    "noProvider": "STT 모델이 설정되지 않았습니다",
+    "failed": "음성 인식 실패",
+    "empty": "음성이 감지되지 않았습니다"
   }
 }

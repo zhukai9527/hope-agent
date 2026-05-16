@@ -234,7 +234,9 @@
     "wechatScannedHint": "Kod QR diimbas. Sahkan log masuk dalam WeChat.",
     "whatsappBaseUrl": "URL perkhidmatan Bridge",
     "whatsappBridgeToken": "Token pengesahan (pilihan)",
-    "whatsappHint": "Memerlukan perkhidmatan bridge WhatsApp berjalan. Tunjuk ke URL HTTP API-nya."
+    "whatsappHint": "Memerlukan perkhidmatan bridge WhatsApp berjalan. Tunjuk ke URL HTTP API-nya.",
+    "autoTranscribeVoice": "Transkripsi mesej suara secara automatik",
+    "autoTranscribeVoiceHint": "Mentranskripsi suara / audio masuk melalui subsistem STT yang dikonfigurasi. Setiap mesej menggunakan kuota API STT."
   },
   "chat": {
     "addWorkingDirectory": "Tambah direktori kerja",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "Perkhidmatan serasi dengan /v1/chat/completions",
     "openaiResponsesDesc": "Perkhidmatan serasi dengan /v1/responses",
     "selectApiType": "Pilih Jenis API"
+  },
+  "voice": {
+    "record": "Rakam suara",
+    "stop": "Henti",
+    "cancel": "Batal",
+    "processing": "Mentranskripsi…",
+    "permissionDenied": "Kebenaran mikrofon ditolak",
+    "noProvider": "Tiada model pertuturan-ke-teks yang dikonfigurasi",
+    "failed": "Transkripsi suara gagal",
+    "empty": "Tiada pertuturan dikesan"
   }
 }

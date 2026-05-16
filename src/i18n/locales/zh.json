@@ -234,7 +234,9 @@
     "wechatScannedHint": "已扫码，请在微信中确认授权。",
     "whatsappBaseUrl": "桥接服务地址",
     "whatsappBridgeToken": "认证令牌（可选）",
-    "whatsappHint": "需要运行 WhatsApp 桥接服务，填写其 HTTP API 地址"
+    "whatsappHint": "需要运行 WhatsApp 桥接服务，填写其 HTTP API 地址",
+    "autoTranscribeVoice": "自动转录语音消息",
+    "autoTranscribeVoiceHint": "通过 STT 子系统转录入站语音/音频消息；每条消耗 STT API 配额。"
   },
   "chat": {
     "addWorkingDirectory": "添加工作目录",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "兼容 /v1/chat/completions 的服务",
     "openaiResponsesDesc": "兼容 /v1/responses 的服务",
     "selectApiType": "选择 API 类型"
+  },
+  "voice": {
+    "record": "录音",
+    "stop": "停止",
+    "cancel": "取消",
+    "processing": "识别中…",
+    "permissionDenied": "麦克风权限被拒绝",
+    "noProvider": "未配置语音识别模型",
+    "failed": "语音识别失败",
+    "empty": "未检测到语音"
   }
 }

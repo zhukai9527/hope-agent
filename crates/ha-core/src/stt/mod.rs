@@ -13,6 +13,7 @@ pub mod engine;
 pub mod errors;
 pub mod local;
 pub mod providers;
+pub mod session;
 pub mod types;
 
 // ── i18n helpers ─────────────────────────────────────────────────
@@ -59,6 +60,9 @@ pub use local::{
     known_local_stt_backend, known_local_stt_backend_matches, known_local_stt_backends,
     probe_local_backend_alive, KnownLocalSttBackend, FASTER_WHISPER_KEY, FUNASR_KEY,
     SHERPA_ONNX_KEY, WHISPER_CPP_KEY,
+};
+pub use session::{
+    SttSessionManager, EVENT_SESSION_ERROR, EVENT_TRANSCRIPT_FINAL, EVENT_TRANSCRIPT_PARTIAL,
 };
 pub use types::{
     ActiveSttModel, AudioPayload, SttConfig, SttModelConfig, SttProviderConfig, SttProviderKind,

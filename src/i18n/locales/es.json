@@ -234,7 +234,9 @@
     "wechatScannedHint": "QR escaneado. Confirma el inicio de sesión en WeChat.",
     "whatsappBaseUrl": "URL del servicio puente",
     "whatsappBridgeToken": "Token de autenticación (opcional)",
-    "whatsappHint": "Requiere un servicio puente de WhatsApp en ejecución. Apunta a su URL de API HTTP."
+    "whatsappHint": "Requiere un servicio puente de WhatsApp en ejecución. Apunta a su URL de API HTTP.",
+    "autoTranscribeVoice": "Transcribir mensajes de voz automáticamente",
+    "autoTranscribeVoiceHint": "Transcribe el audio / voz entrante mediante el subsistema STT configurado. Cada mensaje consume cuota de la API STT."
   },
   "chat": {
     "addWorkingDirectory": "Agregar directorio de trabajo",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "Servicios compatibles con /v1/chat/completions",
     "openaiResponsesDesc": "Servicios compatibles con /v1/responses",
     "selectApiType": "Seleccione Tipo de API"
+  },
+  "voice": {
+    "record": "Grabar voz",
+    "stop": "Detener",
+    "cancel": "Cancelar",
+    "processing": "Transcribiendo…",
+    "permissionDenied": "Permiso de micrófono denegado",
+    "noProvider": "No hay modelo de voz a texto configurado",
+    "failed": "La transcripción de voz falló",
+    "empty": "No se detectó voz"
   }
 }

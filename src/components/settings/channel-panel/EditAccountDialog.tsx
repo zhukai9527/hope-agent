@@ -77,6 +77,7 @@ export default function EditAccountDialog({
   const [notifyStartup, setNotifyStartup] = useState(true)
   const [imReplyMode, setImReplyMode] = useState<ImReplyMode>(IM_REPLY_MODE_DEFAULT)
   const [showThinking, setShowThinking] = useState<boolean>(SHOW_THINKING_DEFAULT)
+  const [autoTranscribeVoice, setAutoTranscribeVoice] = useState<boolean>(false)
   const [groups, setGroups] = useState<Record<string, TelegramGroupConfig>>({})
   const [channels, setChannels] = useState<Record<string, TelegramChannelConfig>>({})
   const [saving, setSaving] = useState(false)
@@ -108,6 +109,11 @@ export default function EditAccountDialog({
       setNotifyStartup(account.notifyStartup ?? true)
       setImReplyMode(readImReplyMode(account))
       setShowThinking(readShowThinking(account))
+      setAutoTranscribeVoice(
+        Boolean(
+          (account.settings as Record<string, unknown> | null | undefined)?.autoTranscribeVoice,
+        ),
+      )
       setValidationResult(null)
       setValidationError(null)
       setSaveError(null)
@@ -163,6 +169,7 @@ export default function EditAccountDialog({
         ...((account.settings as Record<string, unknown> | null | undefined) ?? {}),
         imReplyMode,
         showThinking,
+        autoTranscribeVoice,
       }
       if (account.channelId === "wechat") {
         if (wechatConnection) {
@@ -395,6 +402,22 @@ export default function EditAccountDialog({
             <Switch
               checked={notifyStartup}
               onCheckedChange={setNotifyStartup}
+            />
+          </div>
+
+          {/* Auto-transcribe inbound voice / audio messages via the STT
+              subsystem. Cost opt-in — every voice consumes STT quota
+              from `stt.imFallbackModel` (or `stt.activeModel`). */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>{t("channels.autoTranscribeVoice")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("channels.autoTranscribeVoiceHint")}
+              </p>
+            </div>
+            <Switch
+              checked={autoTranscribeVoice}
+              onCheckedChange={setAutoTranscribeVoice}
             />
           </div>
 

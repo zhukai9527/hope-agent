@@ -427,6 +427,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   probe_local_stt_backend:           { method: "GET",    path: "/api/stt/local-backends/{key}/probe" },
   upsert_known_local_stt_provider_cmd:{method: "POST",  path: "/api/stt/local-backends/{backendKey}/upsert" },
   stt_transcribe_blob:               { method: "POST",   path: "/api/stt/transcribe" },
+  stt_start_session:                 { method: "POST",   path: "/api/stt/sessions" },
+  stt_push_chunk:                    { method: "POST",   path: "/api/stt/sessions/{sessionId}/chunk" },
+  stt_finalize_session:              { method: "POST",   path: "/api/stt/sessions/{sessionId}/finalize" },
+  stt_cancel_session:                { method: "DELETE", path: "/api/stt/sessions/{sessionId}" },
 
   // -- Skills --
   get_skills:                      { method: "GET",    path: "/api/skills" },

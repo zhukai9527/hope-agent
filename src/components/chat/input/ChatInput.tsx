@@ -42,6 +42,8 @@ import TemperatureSlider from "./TemperatureSlider"
 import AwarenessToggle from "./AwarenessToggle"
 import IncognitoToggle, { type IncognitoDisabledReason } from "./IncognitoToggle"
 import WorkingDirectoryButton from "./WorkingDirectoryButton"
+import { VoiceRecordButton } from "./VoiceRecordButton"
+import { useVoiceInput } from "./useVoiceInput"
 import TaskProgressPanel from "@/components/chat/tasks/TaskProgressPanel"
 import {
   shouldShowTaskProgressPanel,
@@ -158,6 +160,16 @@ export default function ChatInput({
     agentId: currentAgentId,
   }
   const slash = useSlashCommands(input, onInputChange, slashActions)
+  const voice = useVoiceInput()
+  const handleVoiceStop = useCallback(async () => {
+    const text = await voice.stopAndTranscribe()
+    if (text) {
+      // Append (with a separator when the textarea already has content) so a
+      // half-typed message is preserved.
+      const sep = input.length > 0 && !input.endsWith(" ") ? " " : ""
+      onInputChange(input + sep + text)
+    }
+  }, [voice, input, onInputChange])
 
   // File mention `@` popper — only meaningful when a working dir is set.
   const mention = useFileMention(input, onInputChange, textareaRef, workingDir ?? null)
@@ -647,6 +659,24 @@ export default function ChatInput({
           {/* Send & Stop — kept in its own column so toolbar wrapping never
               orphans the send button onto a half-empty row. */}
           <div className="flex items-center gap-1 shrink-0">
+            <VoiceRecordButton
+              state={voice.state}
+              durationMs={voice.durationMs}
+              audioLevel={voice.audioLevel}
+              disabled={loading && !!pendingMessage}
+              onStart={() => void voice.start()}
+              onStop={() => void handleVoiceStop()}
+              onCancel={voice.cancel}
+            />
+            {voice.errorMessage && (
+              <span
+                className="text-xs text-destructive truncate max-w-[180px]"
+                role="status"
+                onAnimationEnd={voice.clearError}
+              >
+                {voice.errorMessage}
+              </span>
+            )}
             {loading && (
               <div className="animate-in fade-in-0 zoom-in-90 duration-150">
                 <IconTip label={t("chat.stopReply")}>

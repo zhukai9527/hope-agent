@@ -234,7 +234,9 @@
     "wechatScannedHint": "QR tarandı. WeChat'te girişi onaylayın.",
     "whatsappBaseUrl": "Bridge servis URL'si",
     "whatsappBridgeToken": "Kimlik doğrulama tokenı (isteğe bağlı)",
-    "whatsappHint": "Çalışan bir WhatsApp bridge servisi gerektirir. HTTP API URL'sini gösterin."
+    "whatsappHint": "Çalışan bir WhatsApp bridge servisi gerektirir. HTTP API URL'sini gösterin.",
+    "autoTranscribeVoice": "Sesli mesajları otomatik yazıya dök",
+    "autoTranscribeVoiceHint": "Gelen ses / sesli mesajları yapılandırılmış STT alt sistemiyle yazıya döker. Her mesaj STT API kotanızdan tüketir."
   },
   "chat": {
     "addWorkingDirectory": "Çalışma dizini ekle",
@@ -4250,5 +4252,15 @@
     "openaiChatDesc": "/v1/chat/completions uyumlu servisler",
     "openaiResponsesDesc": "/v1/responses uyumlu servisler",
     "selectApiType": "API Türü Seçin"
+  },
+  "voice": {
+    "record": "Ses kaydet",
+    "stop": "Durdur",
+    "cancel": "İptal",
+    "processing": "Yazıya dökülüyor…",
+    "permissionDenied": "Mikrofon izni reddedildi",
+    "noProvider": "Konuşma tanıma modeli ayarlı değil",
+    "failed": "Ses yazıya dökme başarısız",
+    "empty": "Konuşma algılanmadı"
   }
 }

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use ha_core::stt::{
     self, ActiveSttModel, AudioPayload, KnownLocalSttBackend, SttModelConfig, SttProviderConfig,
-    SttWriteError, Transcript, TranscriptOptions,
+    SttSessionManager, SttWriteError, Transcript, TranscriptOptions,
 };
 
 use crate::error::AppError;
@@ -242,4 +242,74 @@ pub async fn stt_transcribe_blob(
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(transcript))
+}
+
+// ── Streaming session ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSessionBody {
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub options: TranscriptOptions,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartSessionResponse {
+    pub session_id: String,
+}
+
+/// `POST /api/stt/sessions`
+pub async fn stt_start_session(
+    Json(body): Json<StartSessionBody>,
+) -> Result<Json<StartSessionResponse>, AppError> {
+    let session_id = SttSessionManager::global()
+        .start(body.provider_id, body.model_id, body.options)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(StartSessionResponse { session_id }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushChunkBody {
+    pub base64: String,
+}
+
+/// `POST /api/stt/sessions/{id}/chunk`
+pub async fn stt_push_chunk(
+    Path(session_id): Path<String>,
+    Json(body): Json<PushChunkBody>,
+) -> Result<Json<Value>, AppError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&body.base64)
+        .map_err(|e| AppError::bad_request(format!("Invalid base64 chunk: {e}")))?;
+    SttSessionManager::global()
+        .push_chunk(&session_id, bytes)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({ "pushed": true })))
+}
+
+/// `POST /api/stt/sessions/{id}/finalize`
+pub async fn stt_finalize_session(
+    Path(session_id): Path<String>,
+) -> Result<Json<Transcript>, AppError> {
+    let transcript = SttSessionManager::global()
+        .finalize(&session_id)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(transcript))
+}
+
+/// `DELETE /api/stt/sessions/{id}`
+pub async fn stt_cancel_session(Path(session_id): Path<String>) -> Result<Json<Value>, AppError> {
+    SttSessionManager::global()
+        .cancel(&session_id)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(json!({ "cancelled": true })))
 }

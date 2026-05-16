@@ -17,7 +17,7 @@ use base64::Engine;
 use ha_core::stt::{
     failover_transcribe_batch, known_local_stt_backends, probe_local_backend_alive,
     upsert_known_local_stt_provider, ActiveSttModel, AudioPayload, KnownLocalSttBackend,
-    SttModelConfig, SttProviderConfig, Transcript, TranscriptOptions,
+    SttModelConfig, SttProviderConfig, SttSessionManager, Transcript, TranscriptOptions,
 };
 use tauri::State;
 
@@ -201,5 +201,56 @@ pub async fn stt_transcribe_blob(
 
     failover_transcribe_batch(primary, fallback, payload, &options)
         .await
+        .map_err(|e| CmdError::msg(e.to_string()))
+}
+
+// ── Streaming session ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn stt_start_session(
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    options: TranscriptOptions,
+    _state: State<'_, AppState>,
+) -> Result<String, CmdError> {
+    SttSessionManager::global()
+        .start(provider_id, model_id, options)
+        .await
+        .map_err(|e| CmdError::msg(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn stt_push_chunk(
+    session_id: String,
+    base64: String,
+    _state: State<'_, AppState>,
+) -> Result<(), CmdError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&base64)
+        .map_err(|e| CmdError::msg(format!("Invalid base64 chunk: {e}")))?;
+    SttSessionManager::global()
+        .push_chunk(&session_id, bytes)
+        .await
+        .map_err(|e| CmdError::msg(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn stt_finalize_session(
+    session_id: String,
+    _state: State<'_, AppState>,
+) -> Result<Transcript, CmdError> {
+    SttSessionManager::global()
+        .finalize(&session_id)
+        .await
+        .map_err(|e| CmdError::msg(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn stt_cancel_session(
+    session_id: String,
+    _state: State<'_, AppState>,
+) -> Result<(), CmdError> {
+    SttSessionManager::global()
+        .cancel(&session_id)
         .map_err(|e| CmdError::msg(e.to_string()))
 }

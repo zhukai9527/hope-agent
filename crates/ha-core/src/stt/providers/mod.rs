@@ -7,4 +7,5 @@
 //! providers (Deepgram, AssemblyAI, Azure, Volcengine, iFlytek) ship in
 //! Phase 2 / Phase 6.
 
+pub mod deepgram;
 pub mod openai;
