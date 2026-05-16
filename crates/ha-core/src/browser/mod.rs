@@ -87,9 +87,7 @@ pub fn authorise_pdf_output_path(raw: &str) -> anyhow::Result<std::path::PathBuf
     let target = std::path::PathBuf::from(crate::tools::expand_tilde(trimmed));
     let lexical_target = crate::permission::rules::normalize_lexical(&target);
     let patterns = crate::permission::protected_paths::current_patterns();
-    if let Some(matched) =
-        crate::permission::protected_paths::matches(&lexical_target, &patterns)
-    {
+    if let Some(matched) = crate::permission::protected_paths::matches(&lexical_target, &patterns) {
         return Err(anyhow!(
             "snapshot.pdf: refusing to write to protected path {} (matches pattern '{}'). \
              Adjust `permission.protected_paths` in settings if this is intentional.",
@@ -284,7 +282,8 @@ pub struct BrowserProfileConfig {
     /// Chrome / Chromium binary override. None = platform auto-probe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable_path: Option<String>,
-    /// Launch headless. None = false.
+    /// Launch headless. None = environment default (headed on desktop,
+    /// headless for Docker / no-display Linux).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless: Option<bool>,
     /// Verbatim extra Chrome args (e.g. `["--proxy-server=..."]`).

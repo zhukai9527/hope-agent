@@ -715,7 +715,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "headless": {
                         "type": "boolean",
-                        "description": "Launch headless (default: false) for `profile.op=launch`."
+                        "description": "Launch headless override for `profile.op=launch`. Omit to inherit the profile/environment default (headed on desktop, headless for Docker / no-display Linux)."
                     },
                     "profile": {
                         "type": "string",

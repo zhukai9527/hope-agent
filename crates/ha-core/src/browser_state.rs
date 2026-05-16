@@ -166,9 +166,8 @@ impl BrowserState {
         // the IO driver, the WebSocket, and the handler loop all live on
         // the same long-lived runtime.
         let ws_url_for_connect = ws_url.clone();
-        let connect_handle = browser_runtime().spawn(async move {
-            Browser::connect(&ws_url_for_connect).await
-        });
+        let connect_handle =
+            browser_runtime().spawn(async move { Browser::connect(&ws_url_for_connect).await });
         let (browser, mut handler) = connect_handle
             .await
             .map_err(|e| anyhow::anyhow!("Failed to join Browser::connect task: {}", e))?
@@ -289,9 +288,7 @@ impl BrowserState {
         // keep the fixed `managed-runner/` location and wipe its contents
         // before each spawn. `user_attach` and user-defined profiles are
         // persistent by design and are left alone.
-        if spec.profile == crate::browser::profile::BUILTIN_MANAGED
-            && spec.user_data_dir.exists()
-        {
+        if spec.profile == crate::browser::profile::BUILTIN_MANAGED && spec.user_data_dir.exists() {
             if let Err(e) = wipe_dir_contents(spec.user_data_dir) {
                 app_warn!(
                     "browser",
@@ -559,12 +556,18 @@ pub async fn refresh_pages_unlocked() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Auto-connect to Chrome if not already connected (tries 127.0.0.1:9222)
+/// Ensure an existing explicit connection is alive.
+///
+/// This no longer probes `127.0.0.1:9222` implicitly. A random Chrome on the
+/// default debug port may belong to the user or another tool; Hope Agent should
+/// only attach to it after an explicit `profile.op=connect` / user_attach flow.
 pub async fn ensure_connected() -> anyhow::Result<()> {
     let mut state = get_browser_state().lock().await;
     if state.is_connected() {
         return Ok(());
     }
+
+    let reconnect_url = state.connection_url.clone();
 
     // Preserve the active page selection across an implicit reconnect.
     // chromiumoxide's `handler.next()` returning `None` (idle ws close
@@ -583,12 +586,21 @@ pub async fn ensure_connected() -> anyhow::Result<()> {
         state.disconnect().await;
     }
 
-    state.connect("http://127.0.0.1:9222").await.map_err(|_| {
+    let reconnect_url = reconnect_url.ok_or_else(|| {
         anyhow::anyhow!(
             "Browser not connected. Please either:\n\
-             1. Launch Chrome with: chrome --remote-debugging-port=9222\n\
-             2. Use action=\"launch\" to start a managed Chrome instance\n\
-             3. Use action=\"connect\" with a custom URL"
+             1. Use action=\"launch\" to start a managed Chrome instance\n\
+             2. Use action=\"connect\" with a Chrome DevTools URL\n\
+             3. Use profile.op=\"launch\" profile=\"user_attach\" for the persistent port-9222 profile"
+        )
+    })?;
+
+    state.connect(&reconnect_url).await.map_err(|e| {
+        anyhow::anyhow!(
+            "Browser connection was lost and reconnecting to {} failed: {}. \
+             Use action=\"launch\" for a managed Chrome or action=\"connect\" with a fresh URL.",
+            reconnect_url,
+            e
         )
     })?;
 
@@ -608,6 +620,8 @@ pub async fn ensure_connected_or_launch_managed() -> anyhow::Result<BrowserReady
         return Ok(BrowserReadyMode::ExistingConnection);
     }
 
+    let reconnect_url = state.connection_url.clone();
+
     // Same as `ensure_connected`: preserve the active page selection so a
     // silent reconnect (handler died after idle) restores user-visible state.
     let preserved_active_id = state.active_page_id.clone();
@@ -621,46 +635,53 @@ pub async fn ensure_connected_or_launch_managed() -> anyhow::Result<BrowserReady
         state.disconnect().await;
     }
 
-    match state.connect("http://127.0.0.1:9222").await {
-        Ok(()) => {
-            app_info!(
-                "browser",
-                "cdp",
-                "Connected to existing Chrome at default debug port for browser action"
-            );
-            if let Some(id) = preserved_active_id {
-                if state.pages.contains_key(&id) {
-                    state.active_page_id = Some(id);
+    if let Some(url) = reconnect_url {
+        match state.connect(&url).await {
+            Ok(()) => {
+                app_info!(
+                    "browser",
+                    "cdp",
+                    "Reconnected to previous Chrome debug URL for browser action"
+                );
+                if let Some(id) = preserved_active_id {
+                    if state.pages.contains_key(&id) {
+                        state.active_page_id = Some(id);
+                    }
                 }
+                return Ok(BrowserReadyMode::ExistingConnection);
             }
-            Ok(BrowserReadyMode::ExistingConnection)
-        }
-        Err(err) => {
-            app_info!(
-                "browser",
-                "cdp",
-                "Default debug port unavailable ({}); launching managed Chrome",
-                err
-            );
-            // Route lazy auto-launch through the same fixed user-data-dir
-            // as `profile=managed`. `spawn_chrome_and_connect` does the
-            // SingletonLock check + cleanup + circuit-breaker bookkeeping
-            // internally.
-            let udd = crate::paths::browser_managed_runner_dir()?;
-            let port = crate::browser::spawn::pick_managed_port().await?;
-            let extra: Vec<String> = Vec::new();
-            let spec = LaunchSpec {
-                profile: crate::browser::profile::BUILTIN_MANAGED,
-                executable: None,
-                user_data_dir: &udd,
-                port,
-                headless: false,
-                extra_args: &extra,
-            };
-            state.spawn_chrome_and_connect(spec).await?;
-            Ok(BrowserReadyMode::ManagedLaunch)
+            Err(err) => {
+                app_info!(
+                    "browser",
+                    "cdp",
+                    "Previous Chrome debug URL unavailable ({}); launching managed Chrome",
+                    err
+                );
+            }
         }
     }
+
+    // Route lazy auto-launch through the same resolved `managed` profile as
+    // explicit `profile.op=launch`: config overrides, environment headless
+    // defaults, extra args, and custom executables all apply consistently.
+    let resolved =
+        crate::browser::profile::resolve_profile(crate::browser::profile::BUILTIN_MANAGED)?;
+    let port = match resolved.port {
+        Some(p) => p,
+        None => crate::browser::spawn::pick_managed_port().await?,
+    };
+    let exec = resolved.executable.clone();
+    let extra = resolved.extra_args.clone();
+    let spec = LaunchSpec {
+        profile: &resolved.name,
+        executable: exec.as_deref(),
+        user_data_dir: &resolved.user_data_dir,
+        port,
+        headless: resolved.headless,
+        extra_args: &extra,
+    };
+    state.spawn_chrome_and_connect(spec).await?;
+    Ok(BrowserReadyMode::ManagedLaunch)
 }
 
 // ── Helper: Discover WebSocket URL ───────────────────────────────

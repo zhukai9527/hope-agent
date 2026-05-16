@@ -39,6 +39,30 @@ pub struct ResolvedProfile {
 pub const BUILTIN_MANAGED: &str = "managed";
 pub const BUILTIN_USER_ATTACH: &str = "user_attach";
 
+/// Environment-level default for profiles whose config omits `headless`.
+///
+/// Desktop users need headed Chrome by default for login flows. Headless
+/// server/container deployments need the opposite: a no-display host should
+/// launch successfully without every caller remembering `headless=true`.
+pub fn default_headless_for_environment() -> bool {
+    deployment_is_docker() || {
+        #[cfg(target_os = "linux")]
+        {
+            std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+}
+
+pub fn deployment_is_docker() -> bool {
+    std::env::var("HA_DEPLOYMENT")
+        .ok()
+        .is_some_and(|v| v.eq_ignore_ascii_case("docker"))
+}
+
 /// Resolve a profile name to concrete launch parameters.
 ///
 /// Steps:
@@ -65,7 +89,9 @@ pub fn resolve_profile(name: &str) -> Result<ResolvedProfile> {
     };
 
     let port = cfg_entry.port.or(default_port);
-    let headless = cfg_entry.headless.unwrap_or(false);
+    let headless = cfg_entry
+        .headless
+        .unwrap_or_else(default_headless_for_environment);
 
     Ok(ResolvedProfile {
         name: name.to_string(),
@@ -79,7 +105,8 @@ pub fn resolve_profile(name: &str) -> Result<ResolvedProfile> {
     })
 }
 
-/// List all known profiles: union of built-in names + configured names.
+/// List all known profiles: union of built-in names, configured names, and
+/// settings-created profile directories.
 /// Each entry is a fully resolved [`ResolvedProfile`].
 pub fn list_profiles() -> Vec<ResolvedProfile> {
     let mut names: Vec<String> = vec![BUILTIN_MANAGED.into(), BUILTIN_USER_ATTACH.into()];
@@ -90,10 +117,37 @@ pub fn list_profiles() -> Vec<ResolvedProfile> {
             }
         }
     }
+    if let Ok(root) = crate::paths::browser_profiles_dir() {
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                    continue;
+                }
+                let file_name = entry.file_name();
+                let Some(name) = file_name.to_str().map(str::to_string) else {
+                    continue;
+                };
+                if looks_like_profile_name(&name) && !names.iter().any(|n| n == &name) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names.sort_by_key(|name| name.to_lowercase());
     names
         .iter()
         .filter_map(|n| resolve_profile(n).ok())
         .collect()
+}
+
+fn looks_like_profile_name(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name.trim() == name
+        && name.len() <= 64
+        && !name.starts_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 /// The default profile name to use when `profile.op=launch` is called with
@@ -119,7 +173,7 @@ mod tests {
         assert!(s.contains("managed-runner"), "got: {}", s);
         assert!(!p.persistent);
         assert_eq!(p.port, None);
-        assert!(!p.headless);
+        assert_eq!(p.headless, default_headless_for_environment());
     }
 
     #[test]

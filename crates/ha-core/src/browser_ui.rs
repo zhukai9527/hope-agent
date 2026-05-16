@@ -21,6 +21,15 @@ use crate::paths::{browser_profile_dir, browser_profiles_dir};
 pub struct BrowserProfileInfo {
     pub name: String,
     pub path: String,
+    /// True for built-in profiles (`managed`, `user_attach`).
+    pub is_builtin: bool,
+    /// True when this profile data directory is managed by the settings panel
+    /// and can be removed from there.
+    pub can_delete: bool,
+    /// Resolved profile default after config + environment fallback.
+    pub headless: bool,
+    /// True when cookies / logins are meant to survive disconnect.
+    pub persistent: bool,
     /// Disk size (bytes) of the profile directory, best-effort.
     pub size_bytes: u64,
     /// Last modified timestamp of the profile directory (unix secs), if known.
@@ -57,7 +66,7 @@ pub struct LaunchOptions {
     pub profile: Option<String>,
     pub executable_path: Option<String>,
     /// `None` = inherit the profile's configured default (per-profile
-    /// `headless` in settings, falling back to false). `Some(_)` is a
+    /// `headless` in settings, then the environment default). `Some(_)` is a
     /// one-shot override from this specific call. Previously a bare
     /// `bool` with `#[serde(default)]`, which silently degraded every
     /// browser-launch coming in over HTTP/UI without an explicit headless
@@ -136,36 +145,54 @@ pub async fn list_profiles() -> Result<Vec<BrowserProfileInfo>> {
         }
     };
 
+    let mut names: std::collections::BTreeSet<String> = crate::browser::profile::list_profiles()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if validate_profile_name(&name).is_ok() {
+                names.insert(name);
+            }
+        }
+    }
+
     let mut out = Vec::new();
-    let entries = match std::fs::read_dir(&root) {
-        Ok(e) => e,
-        Err(_) => return Ok(out),
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
+    for name in names {
         if validate_profile_name(&name).is_err() {
-            // Skip anything that doesn't look like a profile we manage
+            // Skip config leftovers that do not look like a profile we manage.
             continue;
         }
+        let resolved = crate::browser::profile::resolve_profile(&name)?;
+        let path = resolved.user_data_dir.clone();
+        let default_dir = browser_profile_dir(&name)?;
+        let is_builtin = name == crate::browser::profile::BUILTIN_MANAGED
+            || name == crate::browser::profile::BUILTIN_USER_ATTACH;
+        let can_delete = !is_builtin && default_dir.exists();
         let size = dir_size_bytes(&path);
         let last = last_modified_secs(&path);
         let is_active = active_profile.as_deref() == Some(name.as_str());
         out.push(BrowserProfileInfo {
             name,
             path: path.to_string_lossy().to_string(),
+            is_builtin,
+            can_delete,
+            headless: resolved.headless,
+            persistent: resolved.persistent,
             size_bytes: size,
             last_used_at: last,
             is_active,
         });
     }
-    out.sort_by_key(|p| p.name.to_lowercase());
     Ok(out)
 }
 
@@ -180,6 +207,10 @@ pub async fn create_profile(name: &str) -> Result<BrowserProfileInfo> {
     Ok(BrowserProfileInfo {
         name: name.to_string(),
         path: dir.to_string_lossy().to_string(),
+        is_builtin: false,
+        can_delete: true,
+        headless: crate::browser::profile::default_headless_for_environment(),
+        persistent: true,
         size_bytes: 0,
         last_used_at: last_modified_secs(&dir),
         is_active: false,
@@ -188,6 +219,11 @@ pub async fn create_profile(name: &str) -> Result<BrowserProfileInfo> {
 
 pub async fn delete_profile(name: &str) -> Result<()> {
     validate_profile_name(name)?;
+    if name == crate::browser::profile::BUILTIN_MANAGED
+        || name == crate::browser::profile::BUILTIN_USER_ATTACH
+    {
+        return Err(anyhow!("Built-in profile '{}' cannot be deleted", name));
+    }
 
     // Reject if this profile is currently connected — user must disconnect first.
     {

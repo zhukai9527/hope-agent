@@ -85,6 +85,7 @@ pub fn resolve_chrome_executable(override_path: Option<&str>) -> Result<String> 
 pub fn build_chrome_argv(spec: &LaunchSpec<'_>, exec: &str) -> Command {
     let mut cmd = Command::new(exec);
     cmd.arg(format!("--remote-debugging-port={}", spec.port));
+    cmd.arg("--remote-debugging-address=127.0.0.1");
 
     let mut udd_arg = OsString::from("--user-data-dir=");
     udd_arg.push(spec.user_data_dir);
@@ -126,12 +127,28 @@ pub fn build_chrome_argv(spec: &LaunchSpec<'_>, exec: &str) -> Command {
         cmd.arg("--headless=new");
     }
 
+    // Debian Chromium inside the official Docker image may fail before opening
+    // CDP when the host disables user namespaces. Keep the weaker sandbox only
+    // for the container build we control; desktop launches retain Chrome's
+    // normal sandbox unless the user adds their own extra arg.
+    if crate::browser::profile::deployment_is_docker()
+        && !has_chrome_flag(spec.extra_args, "--no-sandbox")
+    {
+        cmd.arg("--no-sandbox");
+    }
+
     for extra in spec.extra_args {
         cmd.arg(extra);
     }
 
     cmd.arg("about:blank");
     cmd
+}
+
+fn has_chrome_flag(args: &[String], flag: &str) -> bool {
+    let flag_with_value = format!("{flag}=");
+    args.iter()
+        .any(|arg| arg == flag || arg.starts_with(&flag_with_value))
 }
 
 /// Pick a free TCP port on 127.0.0.1 for managed-launch Chrome. The OS picks,

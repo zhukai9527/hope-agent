@@ -49,6 +49,10 @@ import {
 interface BrowserProfileInfo {
   name: string
   path: string
+  isBuiltin: boolean
+  canDelete: boolean
+  headless: boolean
+  persistent: boolean
   sizeBytes: number
   lastUsedAt: number | null
   isActive: boolean
@@ -202,7 +206,13 @@ export default function BrowserPanel() {
     }
     if (doc.status === "fulfilled") setDoctor(doc.value)
     if (pf.status === "fulfilled" && !selectedProfile && pf.value.length > 0) {
-      setSelectedProfile(pf.value[0].name)
+      const configuredDefault =
+        cfg.status === "fulfilled" && typeof cfg.value.defaultProfile === "string"
+          ? cfg.value.defaultProfile
+          : "managed"
+      const initialProfile = pf.value.find((p) => p.name === configuredDefault) ?? pf.value[0]
+      setSelectedProfile(initialProfile.name)
+      setHeadless(initialProfile.headless)
     }
     if (firstError) {
       logger.error("settings", "BrowserPanel", `Partial refresh failure: ${firstError.reason}`)
@@ -320,10 +330,11 @@ export default function BrowserPanel() {
     setCreating(true)
     setError(null)
     try {
-      await getTransport().call("browser_create_profile", { name })
+      const created = await getTransport().call<BrowserProfileInfo>("browser_create_profile", { name })
       setNewProfileName("")
       await refresh()
       setSelectedProfile(name)
+      setHeadless(created.headless)
     } catch (e) {
       logger.error("settings", "BrowserPanel", `Create profile failed: ${e}`)
       setError(String(e))
@@ -542,7 +553,12 @@ export default function BrowserPanel() {
                 <label className="text-sm font-medium">{t("settings.browser.profileLabel")}</label>
                 <Select
                   value={selectedProfile || "__none__"}
-                  onValueChange={(v) => setSelectedProfile(v === "__none__" ? "" : v)}
+                  onValueChange={(v) => {
+                    const next = v === "__none__" ? "" : v
+                    setSelectedProfile(next)
+                    const profile = profiles.find((p) => p.name === next)
+                    if (profile) setHeadless(profile.headless)
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={t("settings.browser.profilePlaceholder")} />
@@ -667,7 +683,7 @@ export default function BrowserPanel() {
                     </div>
                     <IconTip
                       label={
-                        p.isActive
+                        !p.canDelete || p.isActive
                           ? t("settings.browser.deleteDisabledActive")
                           : t("settings.browser.delete")
                       }
@@ -678,7 +694,7 @@ export default function BrowserPanel() {
                           variant="ghost"
                           className="text-destructive hover:text-destructive"
                           onClick={() => setPendingDelete(p)}
-                          disabled={p.isActive}
+                          disabled={p.isActive || !p.canDelete}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

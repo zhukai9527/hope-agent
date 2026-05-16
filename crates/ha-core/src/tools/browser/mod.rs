@@ -169,36 +169,28 @@ async fn action_profile(args: &Value, session_id: Option<&str>) -> Result<String
 }
 
 async fn profile_list() -> Result<String> {
-    let profiles_dir = crate::paths::browser_profiles_dir()?;
-    if !profiles_dir.exists() {
-        return Ok(
-            "No browser profiles found. Use `profile.op=launch` with `profile=<name>` to create one."
-                .to_string(),
-        );
-    }
-    let mut profiles = Vec::new();
-    for entry in std::fs::read_dir(&profiles_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            profiles.push(entry.file_name().to_string_lossy().to_string());
-        }
-    }
+    let profiles = crate::browser::profile::list_profiles();
     if profiles.is_empty() {
         return Ok("No browser profiles found.".to_string());
     }
-    profiles.sort();
     let active_profile = {
         let state = crate::browser_state::get_browser_state().lock().await;
         state.profile.clone()
     };
     let mut lines = vec![format!("Browser profiles ({}):", profiles.len())];
-    for name in &profiles {
-        let marker = if active_profile.as_deref() == Some(name.as_str()) {
+    for profile in &profiles {
+        let marker = if active_profile.as_deref() == Some(profile.name.as_str()) {
             " [active]"
         } else {
             ""
         };
-        lines.push(format!("  - {}{}", name, marker));
+        let kind = if profile.persistent {
+            "persistent"
+        } else {
+            "ephemeral"
+        };
+        let headless = if profile.headless { ", headless" } else { "" };
+        lines.push(format!("  - {} ({kind}{headless}){}", profile.name, marker));
     }
     Ok(lines.join("\n"))
 }
