@@ -580,7 +580,12 @@ function ProviderDialog({
       if (isNew) {
         await getTransport().call("add_stt_provider", { provider: payload })
       } else {
-        await getTransport().call("update_stt_provider", { provider: payload })
+        // `providerId` is consumed by HTTP path templating; Tauri command
+        // takes only `provider` and ignores the extra arg.
+        await getTransport().call("update_stt_provider", {
+          providerId: payload.id,
+          provider: payload,
+        })
       }
       onSaved()
     } catch (e) {

@@ -13,6 +13,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::AuthProfile;
 
+/// Hard cap on a single batch transcription audio payload. Matches the
+/// OpenAI Whisper `/v1/audio/transcriptions` limit (25 MiB) and is enforced
+/// at every entry point (Tauri command + HTTP route body limit) so an
+/// over-sized base64 payload can't allocate gigabytes before failing.
+pub const MAX_BATCH_AUDIO_BYTES: usize = 25 * 1024 * 1024;
+
 // ── Provider kind ─────────────────────────────────────────────────
 
 /// Wire protocol used to talk to an STT provider.

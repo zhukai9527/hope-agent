@@ -1487,14 +1487,25 @@ fn build_router_with_cors(
             get(routes::stt::probe_local_stt_backend),
         )
         .route(
-            "/stt/local-backends/{key}/upsert",
+            "/stt/local-backends/{backendKey}/upsert",
             post(routes::stt::upsert_local_stt_provider),
         )
-        .route("/stt/transcribe", post(routes::stt::stt_transcribe_blob))
+        .route(
+            "/stt/transcribe",
+            post(routes::stt::stt_transcribe_blob)
+                // base64-encoded audio is ~4/3 of the decoded byte cap;
+                // round up to leave slop for JSON metadata + envelope.
+                .layer(DefaultBodyLimit::max(
+                    (ha_core::stt::MAX_BATCH_AUDIO_BYTES * 4 / 3) + 1024 * 1024,
+                )),
+        )
         .route("/stt/sessions", post(routes::stt::stt_start_session))
         .route(
             "/stt/sessions/{id}/chunk",
-            post(routes::stt::stt_push_chunk),
+            post(routes::stt::stt_push_chunk)
+                // Per-chunk uplink — match the in-memory `MAX_WS_FRAME_BYTES`
+                // (1 MiB) deepgram is willing to accept.
+                .layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
         )
         .route(
             "/stt/sessions/{id}/finalize",

@@ -178,9 +178,23 @@ pub async fn stt_transcribe_blob(
     options: TranscriptOptions,
     _state: State<'_, AppState>,
 ) -> Result<Transcript, CmdError> {
+    let max_base64_len =
+        (ha_core::stt::MAX_BATCH_AUDIO_BYTES.saturating_mul(4) / 3).saturating_add(4);
+    if base64.len() > max_base64_len {
+        return Err(CmdError::msg(format!(
+            "Audio payload exceeds {} MB cap",
+            ha_core::stt::MAX_BATCH_AUDIO_BYTES / (1024 * 1024)
+        )));
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&base64)
         .map_err(|e| CmdError::msg(format!("Invalid base64 audio payload: {e}")))?;
+    if bytes.len() > ha_core::stt::MAX_BATCH_AUDIO_BYTES {
+        return Err(CmdError::msg(format!(
+            "Decoded audio payload exceeds {} MB cap",
+            ha_core::stt::MAX_BATCH_AUDIO_BYTES / (1024 * 1024)
+        )));
+    }
 
     let (primary, fallback) = match (provider_id, model_id) {
         (Some(p), Some(m)) => (

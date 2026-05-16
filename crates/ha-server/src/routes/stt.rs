@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use ha_core::stt::{
     self, ActiveSttModel, AudioPayload, KnownLocalSttBackend, SttModelConfig, SttProviderConfig,
-    SttSessionManager, SttWriteError, Transcript, TranscriptOptions,
+    SttSessionManager, SttWriteError, Transcript, TranscriptOptions, MAX_BATCH_AUDIO_BYTES,
 };
 
 use crate::error::AppError;
@@ -36,21 +36,29 @@ pub async fn list_stt_providers() -> Result<Json<Vec<SttProviderConfig>>, AppErr
     Ok(Json(cfg.stt.providers.iter().map(|p| p.masked()).collect()))
 }
 
-/// `POST /api/stt/providers`
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderBody {
+    pub provider: SttProviderConfig,
+}
+
+/// `POST /api/stt/providers` — body `{ "provider": { ... } }` to match the
+/// Tauri command shape (HTTP transport sends the same args object verbatim).
 pub async fn add_stt_provider(
-    Json(provider): Json<SttProviderConfig>,
+    Json(body): Json<ProviderBody>,
 ) -> Result<Json<SttProviderConfig>, AppError> {
-    let masked = stt::add_stt_provider(provider, "http").map_err(stt_write_error)?;
+    let masked = stt::add_stt_provider(body.provider, "http").map_err(stt_write_error)?;
     Ok(Json(masked))
 }
 
-/// `PUT /api/stt/providers/{id}`
+/// `PUT /api/stt/providers/{providerId}` — body wrapped in `{ provider }`.
+/// Path id wins on mismatch (defensive against stale body ids).
 pub async fn update_stt_provider(
-    Path(id): Path<String>,
-    Json(mut provider): Json<SttProviderConfig>,
+    Path(provider_id): Path<String>,
+    Json(mut body): Json<ProviderBody>,
 ) -> Result<Json<Value>, AppError> {
-    provider.id = id;
-    stt::update_stt_provider(provider, "http").map_err(stt_write_error)?;
+    body.provider.id = provider_id;
+    stt::update_stt_provider(body.provider, "http").map_err(stt_write_error)?;
     Ok(Json(json!({ "updated": true })))
 }
 
@@ -177,13 +185,13 @@ pub struct UpsertLocalSttResponse {
     pub model_id: String,
 }
 
-/// `POST /api/stt/local-backends/{key}/upsert`
+/// `POST /api/stt/local-backends/{backendKey}/upsert`
 pub async fn upsert_local_stt_provider(
-    Path(key): Path<String>,
+    Path(backend_key): Path<String>,
     Json(body): Json<UpsertLocalSttBody>,
 ) -> Result<Json<UpsertLocalSttResponse>, AppError> {
     let (provider_id, model_id) = stt::upsert_known_local_stt_provider(
-        &key,
+        &backend_key,
         body.provider,
         body.model,
         body.activate,
@@ -217,9 +225,25 @@ pub struct TranscribeBlobBody {
 pub async fn stt_transcribe_blob(
     Json(body): Json<TranscribeBlobBody>,
 ) -> Result<Json<Transcript>, AppError> {
+    // Pre-flight cap on base64 length (~4/3 of the decoded bytes) so a
+    // hostile or runaway client can't allocate a 100MB Vec just to be
+    // rejected after the fact. Hard cap == OpenAI's whisper-1 limit.
+    let max_base64_len = (MAX_BATCH_AUDIO_BYTES.saturating_mul(4) / 3).saturating_add(4);
+    if body.base64.len() > max_base64_len {
+        return Err(AppError::bad_request(format!(
+            "Audio payload exceeds {} MB cap",
+            MAX_BATCH_AUDIO_BYTES / (1024 * 1024)
+        )));
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&body.base64)
         .map_err(|e| AppError::bad_request(format!("Invalid base64 audio payload: {e}")))?;
+    if bytes.len() > MAX_BATCH_AUDIO_BYTES {
+        return Err(AppError::bad_request(format!(
+            "Decoded audio payload exceeds {} MB cap",
+            MAX_BATCH_AUDIO_BYTES / (1024 * 1024)
+        )));
+    }
 
     let (primary, fallback) = match (body.provider_id, body.model_id) {
         (Some(p), Some(m)) => (
@@ -280,14 +304,32 @@ pub struct PushChunkBody {
     pub base64: String,
 }
 
+/// Cap on a single streaming chunk so a misbehaving client can't push
+/// arbitrary blobs through the realtime path. Matches the Deepgram WS
+/// frame size cap (1 MiB) the upstream protocol expects.
+const MAX_PUSH_CHUNK_BYTES: usize = 1024 * 1024;
+
 /// `POST /api/stt/sessions/{id}/chunk`
 pub async fn stt_push_chunk(
     Path(session_id): Path<String>,
     Json(body): Json<PushChunkBody>,
 ) -> Result<Json<Value>, AppError> {
+    let max_base64_len = (MAX_PUSH_CHUNK_BYTES.saturating_mul(4) / 3).saturating_add(4);
+    if body.base64.len() > max_base64_len {
+        return Err(AppError::bad_request(format!(
+            "Audio chunk exceeds {} KB cap",
+            MAX_PUSH_CHUNK_BYTES / 1024
+        )));
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&body.base64)
         .map_err(|e| AppError::bad_request(format!("Invalid base64 chunk: {e}")))?;
+    if bytes.len() > MAX_PUSH_CHUNK_BYTES {
+        return Err(AppError::bad_request(format!(
+            "Decoded audio chunk exceeds {} KB cap",
+            MAX_PUSH_CHUNK_BYTES / 1024
+        )));
+    }
     SttSessionManager::global()
         .push_chunk(&session_id, bytes)
         .await

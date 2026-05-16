@@ -61,10 +61,16 @@ pub async fn transcribe_batch(
         .await
         .map_err(|e| SttError::SsrfBlocked(e.to_string()))?;
 
+    // Disable auto-redirect: the SSRF check above only validated the
+    // initial URL. With default reqwest behavior a public STT endpoint
+    // could 3xx the multipart audio upload to an internal or metadata
+    // address. We surface any 3xx as an explicit SSRF block instead of
+    // silently following.
     let client = apply_proxy(
         reqwest::Client::builder()
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .user_agent("hope-agent/stt"),
+            .user_agent("hope-agent/stt")
+            .redirect(reqwest::redirect::Policy::none()),
     )
     .build()
     .map_err(|e| SttError::Network(format!("HTTP client build failed: {e}")))?;
@@ -87,6 +93,17 @@ pub async fn transcribe_batch(
         .await
         .map_err(|e| classify_request_error(&e))?;
     let status = response.status();
+    if status.is_redirection() {
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("<unknown>")
+            .to_string();
+        return Err(SttError::SsrfBlocked(format!(
+            "STT provider redirected ({status}) to {location}; redirects are disabled to prevent SSRF bypass"
+        )));
+    }
     let body = response
         .text()
         .await

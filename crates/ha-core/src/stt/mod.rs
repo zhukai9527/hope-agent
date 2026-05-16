@@ -66,7 +66,7 @@ pub use session::{
 };
 pub use types::{
     ActiveSttModel, AudioPayload, SttConfig, SttModelConfig, SttProviderConfig, SttProviderKind,
-    Transcript, TranscriptDelta, TranscriptOptions, TranscriptSegment,
+    Transcript, TranscriptDelta, TranscriptOptions, TranscriptSegment, MAX_BATCH_AUDIO_BYTES,
 };
 
 #[cfg(test)]

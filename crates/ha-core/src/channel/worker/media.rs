@@ -209,16 +209,24 @@ fn persist_channel_media_to_session(
     }
 }
 
+/// Wall-clock budget for the whole transcription step before the
+/// dispatcher gives up and forwards the original audio unchanged. Picked
+/// to be shorter than the inbound semaphore slot's worst-case so a long
+/// voice-album won't starve the channel worker.
+const TRANSCRIBE_BUDGET_SECS: u64 = 12;
+
 /// Transcribe any voice / audio attachments via the STT subsystem and
 /// return the prefix string that should be prepended to the chat-engine
-/// message. `None` when no audio attachments are present or no STT model
-/// is configured; the caller keeps `attachments` unchanged so the LLM
-/// still sees the original audio alongside the transcript.
+/// message. `None` when no audio attachments are present, no STT model is
+/// configured, or the wall-clock budget elapsed; the caller keeps
+/// `attachments` unchanged so the LLM still sees the original audio
+/// alongside (and any further "transcribe by ear" tools can still fire).
 ///
 /// Failure semantics: per-attachment errors are logged (`app_warn!`) and
 /// skipped — the IM message dispatch is never blocked. Multiple audio
 /// attachments are transcribed concurrently so a voice album doesn't
-/// serialize provider round-trips.
+/// serialize provider round-trips, and the entire step is bounded by
+/// `TRANSCRIBE_BUDGET_SECS`.
 pub(super) async fn transcribe_inbound_voice_attachments(
     attachments: &[crate::agent::Attachment],
     cfg_language: &str,
@@ -262,7 +270,24 @@ pub(super) async fn transcribe_inbound_voice_attachments(
             (name, result)
         }
     });
-    let results = futures_util::future::join_all(futures).await;
+    let results = match tokio::time::timeout(
+        std::time::Duration::from_secs(TRANSCRIBE_BUDGET_SECS),
+        futures_util::future::join_all(futures),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            app_warn!(
+                "channel",
+                "stt",
+                "transcription budget ({}s) exceeded for {} attachments; forwarding original audio without transcript",
+                TRANSCRIBE_BUDGET_SECS,
+                total
+            );
+            return None;
+        }
+    };
 
     let mut prefix = String::new();
     for (name, result) in results {
