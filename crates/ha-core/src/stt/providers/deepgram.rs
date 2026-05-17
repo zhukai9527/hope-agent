@@ -13,20 +13,13 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
 use crate::provider::AuthProfile;
-use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
 use crate::stt::types::{
     SttModelConfig, SttProviderConfig, Transcript, TranscriptDelta, TranscriptOptions,
 };
-
-/// Cap incoming WS frame / message size so a misbehaving server can't OOM
-/// us. Matches the limits the MCP WS client uses.
-const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
 
 /// Open a Deepgram streaming session. Returns `(audio_tx, delta_rx)`:
 /// callers push raw audio bytes into `audio_tx` and drain transcript
@@ -63,33 +56,8 @@ pub async fn open_stream(
         url.push_str(&format!("&sample_rate={}", sr));
     }
 
-    // `check_url` rejects ws/wss schemes, so derive an http(s) twin by
-    // swapping the scheme via `url::Url` (handles query / userinfo / port
-    // correctly). The actual WS connect still uses the original wss:// URL.
-    let https_twin = {
-        let mut parsed = url::Url::parse(&url)
-            .map_err(|e| SttError::Other(format!("Invalid Deepgram URL: {e}")))?;
-        let new_scheme = match parsed.scheme() {
-            "wss" => Some("https"),
-            "ws" => Some("http"),
-            _ => None,
-        };
-        if let Some(scheme) = new_scheme {
-            parsed
-                .set_scheme(scheme)
-                .map_err(|_| SttError::Other("Failed to derive SSRF twin URL".into()))?;
-        }
-        parsed.to_string()
-    };
-    let cfg = crate::config::cached_config();
-    let policy = if provider.allow_private_network {
-        SsrfPolicy::AllowPrivate
-    } else {
-        cfg.ssrf.default_policy
-    };
-    check_url(&https_twin, policy, &cfg.ssrf.trusted_hosts)
-        .await
-        .map_err(|e| SttError::SsrfBlocked(e.to_string()))?;
+    let https_twin = super::ws_to_https_twin(&url, "Deepgram")?;
+    provider.check_ssrf(&https_twin).await?;
 
     let mut request = url
         .as_str()
@@ -102,16 +70,12 @@ pub async fn open_stream(
             .map_err(|e| SttError::Other(format!("Bad auth header: {e}")))?,
     );
 
-    let ws_config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
-    let (ws, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
-        .await
-        .map_err(|e| SttError::Network(format!("Deepgram WS connect failed: {e}")))?;
+    let ws = super::ws_connect_with_caps(request, "Deepgram").await?;
     let (mut ws_sink, mut ws_stream) = ws.split();
 
-    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(64);
-    let (delta_tx, delta_rx) = mpsc::channel::<Result<TranscriptDelta, SttError>>(64);
+    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(super::STT_STREAM_CHANNEL_CAPACITY);
+    let (delta_tx, delta_rx) =
+        mpsc::channel::<Result<TranscriptDelta, SttError>>(super::STT_STREAM_CHANNEL_CAPACITY);
 
     // Audio uplink — forward raw bytes from caller into WS binary frames.
     // When the caller drops `audio_tx`, audio_rx.recv() returns None →

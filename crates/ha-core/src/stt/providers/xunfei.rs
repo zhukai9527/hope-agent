@@ -29,18 +29,12 @@ use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::Sha256;
-use std::time::SystemTime;
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
 use crate::provider::AuthProfile;
-use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
 use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
-
-const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
 
 pub async fn open_stream(
     provider: &SttProviderConfig,
@@ -49,44 +43,23 @@ pub async fn open_stream(
     options: &TranscriptOptions,
 ) -> SttResult<super::SttStream> {
     let api_secret = provider
-        .extra
-        .get("api_secret")
-        .ok_or_else(|| {
-            SttError::Other("iFlytek provider requires `extra.api_secret` (APISecret)".into())
-        })?
-        .clone();
-    let app_id = provider
-        .extra
-        .get("app_id")
-        .ok_or_else(|| SttError::Other("iFlytek provider requires `extra.app_id` (APPID)".into()))?
-        .clone();
+        .require_extra("api_secret", "APISecret")?
+        .to_string();
+    let app_id = provider.require_extra("app_id", "APPID")?.to_string();
 
     let base = provider.resolve_base_url(profile).trim_end_matches('/');
     let path = "/v2/iat";
     let signed_url = build_signed_url(base, path, &profile.api_key, &api_secret)?;
 
-    let https_twin = ws_to_https_twin(&signed_url)?;
-    let cfg = crate::config::cached_config();
-    let policy = if provider.allow_private_network {
-        SsrfPolicy::AllowPrivate
-    } else {
-        cfg.ssrf.default_policy
-    };
-    check_url(&https_twin, policy, &cfg.ssrf.trusted_hosts)
-        .await
-        .map_err(|e| SttError::SsrfBlocked(e.to_string()))?;
+    let https_twin = super::ws_to_https_twin(&signed_url, "iFlytek")?;
+    provider.check_ssrf(&https_twin).await?;
 
     let request = signed_url
         .as_str()
         .into_client_request()
         .map_err(|e| SttError::Other(format!("Invalid iFlytek URL: {e}")))?;
 
-    let ws_config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
-    let (ws, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
-        .await
-        .map_err(|e| SttError::Network(format!("iFlytek WS connect failed: {e}")))?;
+    let ws = super::ws_connect_with_caps(request, "iFlytek").await?;
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     let language = options
@@ -102,8 +75,9 @@ pub async fn open_stream(
         "vad_eos": 10_000_u32,
     });
 
-    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(64);
-    let (delta_tx, delta_rx) = mpsc::channel::<Result<TranscriptDelta, SttError>>(64);
+    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(super::STT_STREAM_CHANNEL_CAPACITY);
+    let (delta_tx, delta_rx) =
+        mpsc::channel::<Result<TranscriptDelta, SttError>>(super::STT_STREAM_CHANNEL_CAPACITY);
 
     tokio::spawn(async move {
         let mut first = true;
@@ -198,8 +172,10 @@ fn build_signed_url(
 
     let signature_origin = format!("host: {}\ndate: {}\nGET {} HTTP/1.1", host, date, path);
     type HmacSha256 = Hmac<Sha256>;
+    // HMAC-SHA256 accepts any key length, so `new_from_slice` is
+    // infallible here — `expect` keeps the type signature simple.
     let mut mac = HmacSha256::new_from_slice(api_secret.as_bytes())
-        .map_err(|e| SttError::Auth(format!("HMAC keying failed: {e}")))?;
+        .expect("HMAC-SHA256 accepts any key length");
     mac.update(signature_origin.as_bytes());
     let signature_b64 =
         base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
@@ -223,39 +199,9 @@ fn build_signed_url(
 
 fn http_date_rfc1123() -> String {
     // iFlytek accepts RFC1123 GMT, e.g. `Tue, 16 May 2026 12:34:56 GMT`.
-    let secs = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let day = secs.div_euclid(86_400);
-    let tod = secs.rem_euclid(86_400);
-    let (year, month, mday) = civil_from_days(day);
-    let weekday_idx = (((day % 7) + 4 + 7) % 7) as usize; // 1970-01-01 was Thursday.
-    let weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][weekday_idx];
-    let mon = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ][month as usize - 1];
-    let hh = tod / 3600;
-    let mm = (tod / 60) % 60;
-    let ss = tod % 60;
-    format!(
-        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
-        weekday, mday, mon, year, hh, mm, ss
-    )
-}
-
-fn civil_from_days(day: i64) -> (i64, u32, u32) {
-    let z = day + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y_civil = if m <= 2 { y + 1 } else { y };
-    (y_civil, m, d)
+    chrono::Utc::now()
+        .format("%a, %d %b %Y %H:%M:%S GMT")
+        .to_string()
 }
 
 /// Parse one server frame. iFlytek can send `pgs=apd` (append text) or
@@ -323,22 +269,6 @@ fn parse_message(session_id: &str, raw: &str, acc: &mut String) -> Option<Transc
     })
 }
 
-fn ws_to_https_twin(url: &str) -> SttResult<String> {
-    let mut parsed =
-        url::Url::parse(url).map_err(|e| SttError::Other(format!("Invalid iFlytek URL: {e}")))?;
-    let new_scheme = match parsed.scheme() {
-        "wss" => Some("https"),
-        "ws" => Some("http"),
-        _ => None,
-    };
-    if let Some(scheme) = new_scheme {
-        parsed
-            .set_scheme(scheme)
-            .map_err(|_| SttError::Other("Failed to derive SSRF twin URL".into()))?;
-    }
-    Ok(parsed.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,13 +279,6 @@ mod tests {
         assert!(d.ends_with(" GMT"));
         // Weekday prefix is three letters + comma + space.
         assert_eq!(d.chars().nth(3), Some(','));
-    }
-
-    #[test]
-    fn civil_from_days_round_trip_examples() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        // 2024-01-15 = 19737 days after epoch
-        assert_eq!(civil_from_days(19737), (2024, 1, 15));
     }
 
     #[test]

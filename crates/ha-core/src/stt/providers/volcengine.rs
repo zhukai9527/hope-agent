@@ -34,17 +34,13 @@ use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 use uuid::Uuid;
 
 use crate::provider::AuthProfile;
-use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
 use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
 
-const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
 const DEFAULT_RESOURCE_ID: &str = "volc.bigasr.sauc.duration";
 
 const MSG_CLIENT_CONFIG: u8 = 0x1;
@@ -57,6 +53,7 @@ const FLAG_NEGATIVE: u8 = 0x2;
 
 const SER_JSON: u8 = 0x1;
 const SER_RAW: u8 = 0xf;
+const COMPRESS_NONE: u8 = 0x0;
 const COMPRESS_GZIP: u8 = 0x1;
 
 pub async fn open_stream(
@@ -65,11 +62,7 @@ pub async fn open_stream(
     profile: &AuthProfile,
     options: &TranscriptOptions,
 ) -> SttResult<super::SttStream> {
-    let app_key = provider
-        .extra
-        .get("app_key")
-        .ok_or_else(|| SttError::Other("Volcengine provider requires `extra.app_key`".into()))?
-        .clone();
+    let app_key = provider.require_extra("app_key", "AppKey")?.to_string();
     let resource_id = provider
         .extra
         .get("resource_id")
@@ -80,16 +73,8 @@ pub async fn open_stream(
     let base = provider.resolve_base_url(profile).trim_end_matches('/');
     let url = format!("{}/api/v3/sauc/bigmodel", base);
 
-    let https_twin = ws_to_https_twin(&url)?;
-    let cfg = crate::config::cached_config();
-    let policy = if provider.allow_private_network {
-        SsrfPolicy::AllowPrivate
-    } else {
-        cfg.ssrf.default_policy
-    };
-    check_url(&https_twin, policy, &cfg.ssrf.trusted_hosts)
-        .await
-        .map_err(|e| SttError::SsrfBlocked(e.to_string()))?;
+    let https_twin = super::ws_to_https_twin(&url, "Volcengine")?;
+    provider.check_ssrf(&https_twin).await?;
 
     let request_id = Uuid::new_v4().simple().to_string();
 
@@ -124,12 +109,7 @@ pub async fn open_stream(
             .map_err(|e| SttError::Other(format!("Bad X-Api-Request-Id value: {e}")))?,
     );
 
-    let ws_config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
-    let (ws, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
-        .await
-        .map_err(|e| SttError::Network(format!("Volcengine WS connect failed: {e}")))?;
+    let ws = super::ws_connect_with_caps(request, "Volcengine").await?;
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     let language = options
@@ -158,6 +138,7 @@ pub async fn open_stream(
         MSG_CLIENT_CONFIG,
         0,
         SER_JSON,
+        COMPRESS_GZIP,
         &cfg_body.to_string().into_bytes(),
     )?;
     ws_sink
@@ -165,12 +146,23 @@ pub async fn open_stream(
         .await
         .map_err(|e| SttError::Network(format!("Volcengine config send: {e}")))?;
 
-    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(64);
-    let (delta_tx, delta_rx) = mpsc::channel::<Result<TranscriptDelta, SttError>>(64);
+    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(super::STT_STREAM_CHANNEL_CAPACITY);
+    let (delta_tx, delta_rx) =
+        mpsc::channel::<Result<TranscriptDelta, SttError>>(super::STT_STREAM_CHANNEL_CAPACITY);
 
     tokio::spawn(async move {
+        // Audio frames skip gzip (compression=0x0): raw PCM16 doesn't
+        // compress well (< 5% saving) and at 50 chunks/sec the encoder
+        // cost dominates the wire saving. Volcengine accepts both
+        // compressed and uncompressed audio frames.
         while let Some(chunk) = audio_rx.recv().await {
-            match build_frame(MSG_CLIENT_AUDIO, FLAG_POSITIVE, SER_RAW, &chunk) {
+            match build_frame(
+                MSG_CLIENT_AUDIO,
+                FLAG_POSITIVE,
+                SER_RAW,
+                COMPRESS_NONE,
+                &chunk,
+            ) {
                 Ok(frame) => {
                     if ws_sink.send(Message::Binary(frame.into())).await.is_err() {
                         return;
@@ -180,7 +172,8 @@ pub async fn open_stream(
             }
         }
         // EOS: empty audio frame with negative-sequence flag.
-        if let Ok(frame) = build_frame(MSG_CLIENT_AUDIO, FLAG_NEGATIVE, SER_RAW, &[]) {
+        if let Ok(frame) = build_frame(MSG_CLIENT_AUDIO, FLAG_NEGATIVE, SER_RAW, COMPRESS_NONE, &[])
+        {
             let _ = ws_sink.send(Message::Binary(frame.into())).await;
         }
         let _ = ws_sink.send(Message::Close(None)).await;
@@ -221,22 +214,32 @@ pub async fn open_stream(
     Ok(super::SttStream { audio_tx, delta_rx })
 }
 
-fn build_frame(msg_type: u8, flags: u8, serialization: u8, payload: &[u8]) -> SttResult<Vec<u8>> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    std::io::Write::write_all(&mut encoder, payload)
-        .map_err(|e| SttError::Other(format!("Volcengine gzip encode: {e}")))?;
-    let compressed = encoder
-        .finish()
-        .map_err(|e| SttError::Other(format!("Volcengine gzip finalize: {e}")))?;
+fn build_frame(
+    msg_type: u8,
+    flags: u8,
+    serialization: u8,
+    compression: u8,
+    payload: &[u8],
+) -> SttResult<Vec<u8>> {
+    let body = if compression == COMPRESS_GZIP {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder, payload)
+            .map_err(|e| SttError::Other(format!("Volcengine gzip encode: {e}")))?;
+        encoder
+            .finish()
+            .map_err(|e| SttError::Other(format!("Volcengine gzip finalize: {e}")))?
+    } else {
+        payload.to_vec()
+    };
 
-    let mut frame = Vec::with_capacity(8 + compressed.len());
+    let mut frame = Vec::with_capacity(8 + body.len());
     // protocol_version=1, header_size=1 (4 bytes total header)
     frame.push((1 << 4) | 1);
     frame.push((msg_type << 4) | (flags & 0x0f));
-    frame.push((serialization << 4) | COMPRESS_GZIP);
+    frame.push((serialization << 4) | (compression & 0x0f));
     frame.push(0); // reserved
-    frame.extend_from_slice(&(compressed.len() as u32).to_be_bytes());
-    frame.extend_from_slice(&compressed);
+    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&body);
     Ok(frame)
 }
 
@@ -360,30 +363,14 @@ fn parse_response(session_id: &str, frame: &ParsedFrame) -> Option<TranscriptDel
     })
 }
 
-fn ws_to_https_twin(url: &str) -> SttResult<String> {
-    let mut parsed = url::Url::parse(url)
-        .map_err(|e| SttError::Other(format!("Invalid Volcengine URL: {e}")))?;
-    let new_scheme = match parsed.scheme() {
-        "wss" => Some("https"),
-        "ws" => Some("http"),
-        _ => None,
-    };
-    if let Some(scheme) = new_scheme {
-        parsed
-            .set_scheme(scheme)
-            .map_err(|_| SttError::Other("Failed to derive SSRF twin URL".into()))?;
-    }
-    Ok(parsed.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn build_and_parse_frame_roundtrip_json() {
+    fn build_and_parse_frame_roundtrip_json_gzip() {
         let body = br#"{"hello":"world"}"#;
-        let bytes = build_frame(MSG_SERVER_RESPONSE, 0, SER_JSON, body).unwrap();
+        let bytes = build_frame(MSG_SERVER_RESPONSE, 0, SER_JSON, COMPRESS_GZIP, body).unwrap();
         let parsed = parse_frame(&bytes).unwrap();
         assert_eq!(parsed.msg_type, MSG_SERVER_RESPONSE);
         assert_eq!(parsed.serialization, SER_JSON);
@@ -391,9 +378,16 @@ mod tests {
     }
 
     #[test]
-    fn build_and_parse_frame_roundtrip_binary_pcm() {
+    fn build_and_parse_frame_roundtrip_binary_pcm_uncompressed() {
         let body: Vec<u8> = (0..4096).map(|i| (i & 0xff) as u8).collect();
-        let bytes = build_frame(MSG_CLIENT_AUDIO, FLAG_POSITIVE, SER_RAW, &body).unwrap();
+        let bytes = build_frame(
+            MSG_CLIENT_AUDIO,
+            FLAG_POSITIVE,
+            SER_RAW,
+            COMPRESS_NONE,
+            &body,
+        )
+        .unwrap();
         let parsed = parse_frame(&bytes).unwrap();
         assert_eq!(parsed.msg_type, MSG_CLIENT_AUDIO);
         assert_eq!(parsed.flags, FLAG_POSITIVE);
@@ -403,7 +397,7 @@ mod tests {
 
     #[test]
     fn frame_header_first_byte_is_one_one() {
-        let bytes = build_frame(MSG_CLIENT_CONFIG, 0, SER_JSON, b"{}").unwrap();
+        let bytes = build_frame(MSG_CLIENT_CONFIG, 0, SER_JSON, COMPRESS_GZIP, b"{}").unwrap();
         assert_eq!(bytes[0], 0x11);
     }
 
@@ -412,7 +406,7 @@ mod tests {
         // Build a server-error frame with a plaintext error body so the
         // parser surfaces the string via SttError::ProviderUnavailable.
         let body = b"app key invalid";
-        let bytes = build_frame(MSG_SERVER_ERROR, 0, SER_JSON, body).unwrap();
+        let bytes = build_frame(MSG_SERVER_ERROR, 0, SER_JSON, COMPRESS_GZIP, body).unwrap();
         let err = parse_frame(&bytes).unwrap_err();
         match err {
             SttError::ProviderUnavailable(msg) => assert!(msg.contains("app key invalid")),

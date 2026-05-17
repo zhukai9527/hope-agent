@@ -17,26 +17,19 @@
 //!   about `Path: speech.hypothesis` (partial) and `Path: speech.phrase`
 //!   (final, with `RecognitionStatus: "Success"`).
 //!
-//! `region` belongs in `provider.extra` (e.g. `extra.region="eastus"`)
-//! when the user pastes only the subscription key; otherwise the base
-//! URL must already include the region subdomain.
-
-use std::time::SystemTime;
+//! The base URL must already include the region subdomain (e.g.
+//! `wss://eastus.stt.speech.microsoft.com`) — Azure routes by hostname
+//! and there is no protocol-level region field to forward.
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 use uuid::Uuid;
 
 use crate::provider::AuthProfile;
-use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
 use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
-
-const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
 
 pub async fn open_stream(
     provider: &SttProviderConfig,
@@ -56,16 +49,8 @@ pub async fn open_stream(
         url.push_str("?format=detailed");
     }
 
-    let https_twin = ws_to_https_twin(&url)?;
-    let cfg = crate::config::cached_config();
-    let policy = if provider.allow_private_network {
-        SsrfPolicy::AllowPrivate
-    } else {
-        cfg.ssrf.default_policy
-    };
-    check_url(&https_twin, policy, &cfg.ssrf.trusted_hosts)
-        .await
-        .map_err(|e| SttError::SsrfBlocked(e.to_string()))?;
+    let https_twin = super::ws_to_https_twin(&url, "Azure Speech")?;
+    provider.check_ssrf(&https_twin).await?;
 
     let request_id = Uuid::new_v4().simple().to_string();
     let connection_id = Uuid::new_v4().simple().to_string();
@@ -88,12 +73,7 @@ pub async fn open_stream(
             .map_err(|e| SttError::Other(format!("Bad connection id: {e}")))?,
     );
 
-    let ws_config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
-        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
-    let (ws, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false)
-        .await
-        .map_err(|e| SttError::Network(format!("Azure Speech WS connect failed: {e}")))?;
+    let ws = super::ws_connect_with_caps(request, "Azure Speech").await?;
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     // Opening handshake — Azure requires a `speech.config` text frame
@@ -112,8 +92,9 @@ pub async fn open_stream(
         .await
         .map_err(|e| SttError::Network(format!("Azure speech.config send: {e}")))?;
 
-    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(64);
-    let (delta_tx, delta_rx) = mpsc::channel::<Result<TranscriptDelta, SttError>>(64);
+    let (audio_tx, mut audio_rx) = mpsc::channel::<Vec<u8>>(super::STT_STREAM_CHANNEL_CAPACITY);
+    let (delta_tx, delta_rx) =
+        mpsc::channel::<Result<TranscriptDelta, SttError>>(super::STT_STREAM_CHANNEL_CAPACITY);
 
     let request_id_send = request_id.clone();
     tokio::spawn(async move {
@@ -160,38 +141,9 @@ pub async fn open_stream(
 }
 
 fn iso8601_now() -> String {
-    let secs = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    // Minimal RFC3339 / ISO8601 — Azure accepts seconds precision.
-    chrono_like_iso(secs)
-}
-
-/// Tiny ISO-8601 formatter (`YYYY-MM-DDTHH:MM:SSZ`) so we don't pull
-/// chrono just for one header field. Computes via `time` math.
-fn chrono_like_iso(secs: i64) -> String {
-    // Days / time-of-day.
-    let day = secs.div_euclid(86_400);
-    let tod = secs.rem_euclid(86_400);
-    let hh = tod / 3600;
-    let mm = (tod / 60) % 60;
-    let ss = tod % 60;
-    // Civil-from-days (Howard Hinnant's algorithm).
-    let z = day + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y_civil = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y_civil, m, d, hh, mm, ss
-    )
+    // Azure accepts seconds precision; format matches the documented
+    // X-Timestamp shape (e.g. "2024-01-15T12:34:56Z").
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn build_text_frame(path: &str, request_id: &str, body: &str) -> String {
@@ -294,22 +246,6 @@ fn parse_text_frame(
     })
 }
 
-fn ws_to_https_twin(url: &str) -> SttResult<String> {
-    let mut parsed = url::Url::parse(url)
-        .map_err(|e| SttError::Other(format!("Invalid Azure Speech URL: {e}")))?;
-    let new_scheme = match parsed.scheme() {
-        "wss" => Some("https"),
-        "ws" => Some("http"),
-        _ => None,
-    };
-    if let Some(scheme) = new_scheme {
-        parsed
-            .set_scheme(scheme)
-            .map_err(|_| SttError::Other("Failed to derive SSRF twin URL".into()))?;
-    }
-    Ok(parsed.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,10 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn iso8601_emits_basic_z_format() {
-        // 1970-01-01T00:00:00Z corresponds to epoch 0
-        assert_eq!(chrono_like_iso(0), "1970-01-01T00:00:00Z");
-        // 2024-01-15T12:34:56Z = 1705322096
-        assert_eq!(chrono_like_iso(1705322096), "2024-01-15T12:34:56Z");
+    fn iso8601_emits_basic_z_format_with_current_time() {
+        let s = iso8601_now();
+        // YYYY-MM-DDTHH:MM:SSZ — exactly 20 chars, suffix Z.
+        assert_eq!(s.len(), 20);
+        assert!(s.ends_with('Z'));
+        assert_eq!(s.as_bytes()[10], b'T');
     }
 }

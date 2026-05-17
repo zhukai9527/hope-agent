@@ -219,6 +219,38 @@ impl SttProviderConfig {
         self.models.iter().find(|m| m.id == model_id)
     }
 
+    /// Resolve a required `extra` field with a uniform error shape so each
+    /// provider doesn't repeat the same `ok_or_else` boilerplate. `label`
+    /// is the human-readable name printed in the error (e.g. "APISecret").
+    pub fn require_extra(&self, key: &str, label: &str) -> Result<&str, super::SttError> {
+        self.extra
+            .get(key)
+            .filter(|v| !v.is_empty())
+            .map(|s| s.as_str())
+            .ok_or_else(|| {
+                super::SttError::Other(format!(
+                    "{:?} provider requires `extra.{}` ({})",
+                    self.kind, key, label
+                ))
+            })
+    }
+
+    /// Shared SSRF gate for every outbound provider URL. Picks
+    /// `AllowPrivate` when `allow_private_network` is set (used by
+    /// localhost backends), otherwise falls back to the global default.
+    pub async fn check_ssrf(&self, url: &str) -> Result<(), super::SttError> {
+        let cfg = crate::config::cached_config();
+        let policy = if self.allow_private_network {
+            crate::security::ssrf::SsrfPolicy::AllowPrivate
+        } else {
+            cfg.ssrf.default_policy
+        };
+        crate::security::ssrf::check_url(url, policy, &cfg.ssrf.trusted_hosts)
+            .await
+            .map(|_| ())
+            .map_err(|e| super::SttError::SsrfBlocked(e.to_string()))
+    }
+
     /// Return a copy with all secrets masked for frontend display.
     pub fn masked(&self) -> Self {
         Self {
