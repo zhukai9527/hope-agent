@@ -818,11 +818,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             },
                             "enabled": {
                                 "type": "boolean",
-                                "description": "Require an enabled/disabled element state."
+                                "description": "Set true to require an enabled element. Omit for no filter; false is treated as omitted to tolerate provider-filled defaults."
                             },
                             "focused": {
                                 "type": "boolean",
-                                "description": "Require focused/unfocused element state."
+                                "description": "Set true to require a focused element. Omit for no filter; false is treated as omitted to tolerate provider-filled defaults."
                             }
                         },
                         "additionalProperties": false

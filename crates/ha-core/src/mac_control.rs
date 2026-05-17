@@ -323,6 +323,11 @@ pub struct MacControlAppsRequest {
 
 impl MacControlAppsRequest {
     pub fn clamped(mut self) -> Self {
+        self.app_name = normalize_optional_string(self.app_name);
+        self.bundle_id = normalize_optional_string(self.bundle_id);
+        if self.pid.is_some_and(|pid| pid <= 0) {
+            self.pid = None;
+        }
         if self.limit == 0 {
             self.limit = default_apps_limit();
         }
@@ -361,6 +366,7 @@ pub struct MacControlWaitRequest {
 
 impl MacControlWaitRequest {
     pub fn clamped(mut self) -> Self {
+        self.target = self.target.normalized();
         if self.timeout_ms == 0 {
             self.timeout_ms = DEFAULT_WAIT_TIMEOUT_MS;
         }
@@ -411,6 +417,22 @@ pub struct MacControlTargetQuery {
 }
 
 impl MacControlTargetQuery {
+    fn normalized(mut self) -> Self {
+        self.app_name = normalize_optional_string(self.app_name);
+        self.bundle_id = normalize_optional_string(self.bundle_id);
+        self.window_title = normalize_optional_string(self.window_title);
+        self.element_id = normalize_optional_string(self.element_id);
+        self.text = normalize_optional_string(self.text);
+        self.role = normalize_optional_string(self.role);
+        if self.enabled == Some(false) {
+            self.enabled = None;
+        }
+        if self.focused == Some(false) {
+            self.focused = None;
+        }
+        self
+    }
+
     fn is_empty(&self) -> bool {
         self.app_name.as_deref().is_none_or(str::is_empty)
             && self.bundle_id.as_deref().is_none_or(str::is_empty)
@@ -441,6 +463,17 @@ impl MacControlTargetQuery {
                 .as_deref()
                 .is_some_and(|value| !value.is_empty())
     }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1391,8 +1424,33 @@ mod tests {
     }
 
     #[test]
+    fn wait_request_ignores_schema_filler_target_values() {
+        let request = MacControlWaitRequest {
+            target: MacControlTargetQuery {
+                app_name: Some(" ".to_string()),
+                bundle_id: Some("".to_string()),
+                window_title: Some("".to_string()),
+                element_id: Some("".to_string()),
+                text: Some("".to_string()),
+                role: Some("".to_string()),
+                enabled: Some(false),
+                focused: Some(false),
+            },
+            ..Default::default()
+        }
+        .clamped();
+
+        assert!(request.target.is_empty());
+        assert_eq!(request.target.enabled, None);
+        assert_eq!(request.target.focused, None);
+    }
+
+    #[test]
     fn apps_request_clamps_limit() {
         let request = MacControlAppsRequest {
+            app_name: Some(" Finder ".to_string()),
+            bundle_id: Some(" ".to_string()),
+            pid: Some(0),
             limit: 10_000,
             ..Default::default()
         }
@@ -1400,22 +1458,39 @@ mod tests {
 
         assert_eq!(request.limit, 100);
         assert_eq!(request.op, MacControlAppsOp::Frontmost);
+        assert_eq!(request.app_name.as_deref(), Some("Finder"));
+        assert_eq!(request.bundle_id, None);
+        assert_eq!(request.pid, None);
     }
 
     #[test]
     fn activate_request_requires_target() {
         let missing = MacControlAppsRequest {
             op: MacControlAppsOp::Activate,
+            app_name: Some("".to_string()),
+            bundle_id: Some("".to_string()),
+            pid: Some(0),
             ..Default::default()
-        };
+        }
+        .clamped();
         let by_name = MacControlAppsRequest {
             op: MacControlAppsOp::Activate,
             app_name: Some("Finder".to_string()),
+            pid: Some(0),
             ..Default::default()
-        };
+        }
+        .clamped();
+        let by_bundle = MacControlAppsRequest {
+            op: MacControlAppsOp::Activate,
+            bundle_id: Some("com.apple.finder".to_string()),
+            pid: Some(0),
+            ..Default::default()
+        }
+        .clamped();
 
         assert!(!activate_request_has_target(&missing));
         assert!(activate_request_has_target(&by_name));
+        assert!(activate_request_has_target(&by_bundle));
     }
 
     #[test]
