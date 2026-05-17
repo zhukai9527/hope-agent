@@ -1147,14 +1147,20 @@ mod imp {
         path: &[String],
     ) -> Result<MacControlMenuItemSummary, String> {
         let mut current = menu_root;
+        let mut retained_path = Vec::new();
         let mut last = None;
         for part in path {
             let child = find_menu_child(current, part)
                 .ok_or_else(|| format!("Menu path component '{part}' was not found."))?;
-            perform_ax_action(child.as_ptr() as AXUIElementRef, "AXPress")?;
+            let child_ref = child.as_ptr() as AXUIElementRef;
+            perform_ax_action(child_ref, "AXPress")?;
             thread::sleep(Duration::from_millis(120));
-            current = child.as_ptr() as AXUIElementRef;
-            last = Some(menu_item_summary(current, 2));
+            last = Some(menu_item_summary(child_ref, 2));
+            retained_path.push(child);
+            current = retained_path
+                .last()
+                .expect("retained menu path should contain the current element")
+                .as_ptr() as AXUIElementRef;
         }
         last.ok_or_else(|| "menu.click requires a non-empty path.".to_string())
     }
