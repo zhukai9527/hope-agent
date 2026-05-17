@@ -15,8 +15,6 @@ import {
   BetweenHorizontalStart,
   X,
   Plus,
-  Ghost,
-  Loader2,
   FolderPlus,
 } from "lucide-react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
@@ -40,7 +38,6 @@ import ModelPicker from "./ModelPicker"
 import PermissionModeSwitcher from "./PermissionModeSwitcher"
 import TemperatureSlider from "./TemperatureSlider"
 import AwarenessToggle from "./AwarenessToggle"
-import IncognitoToggle, { type IncognitoDisabledReason } from "./IncognitoToggle"
 import WorkingDirectoryButton from "./WorkingDirectoryButton"
 import { VoiceRecordButton } from "./VoiceRecordButton"
 import { useVoiceInput } from "./useVoiceInput"
@@ -49,13 +46,11 @@ import {
   shouldShowTaskProgressPanel,
   type TaskProgressSnapshot,
 } from "@/components/chat/tasks/taskProgress"
-import { Switch } from "@/components/ui/switch"
 import {
   CHAT_INPUT_INLINE_ADD_ACTIONS_CLASS,
   CHAT_INPUT_OVERFLOW_BREAKPOINT_PX,
   CHAT_INPUT_OVERFLOW_MENU_CLASS,
   getChatInputOverflowActionIds,
-  shouldShowIncognitoPresetAction,
   type ChatInputOverflowActionId,
 } from "./toolbarOverflow"
 
@@ -88,9 +83,6 @@ interface ChatInputProps {
   onSessionTemperatureChange?: (temp: number | null) => void
   // Incognito
   incognitoEnabled?: boolean
-  incognitoSaving?: boolean
-  incognitoDisabledReason?: IncognitoDisabledReason
-  onIncognitoChange?: (enabled: boolean) => void
   // Working directory
   workingDir?: string | null
   /** True when `workingDir` is inherited from the parent project rather than
@@ -108,6 +100,8 @@ interface ChatInputProps {
   // Session-scoped Todo progress
   taskProgressSnapshot?: TaskProgressSnapshot | null
   executionState?: ChatTurnStatus | null
+  /** Larger centered presentation for a brand-new empty conversation. */
+  hero?: boolean
 }
 
 export default function ChatInput({
@@ -135,9 +129,6 @@ export default function ChatInput({
   sessionTemperature,
   onSessionTemperatureChange,
   incognitoEnabled = false,
-  incognitoSaving = false,
-  incognitoDisabledReason,
-  onIncognitoChange,
   workingDir,
   workingDirInherited = false,
   workingDirSaving = false,
@@ -148,10 +139,13 @@ export default function ChatInput({
   onTogglePlanPanel,
   taskProgressSnapshot,
   executionState,
+  hero = false,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputShellRef = useRef<HTMLDivElement>(null)
   const [showOverflowMenu, setShowOverflowMenu] = useState(false)
+  const [toolbarCompact, setToolbarCompact] = useState(false)
 
   // Slash commands
   const slashActions: SlashCommandActions = {
@@ -196,20 +190,35 @@ export default function ChatInput({
     adjustTextareaHeight()
   }, [input, adjustTextareaHeight])
 
-  // The overflow `+` trigger is hidden via CSS once the viewport widens past
-  // the breakpoint, but Radix keeps the open popper mounted in a Portal — with
-  // no measurable trigger it falls back to (0,0). Listen for the breakpoint
-  // crossing and force-close the menu when it goes wide.
+  // The chat column can shrink when a right-side panel opens while the viewport
+  // stays wide, so the overflow affordance has to follow the input container
+  // width instead of a viewport media query.
   useEffect(() => {
-    if (!showOverflowMenu) return
-    if (typeof window === "undefined" || !window.matchMedia) return
-    const mql = window.matchMedia(`(min-width: ${CHAT_INPUT_OVERFLOW_BREAKPOINT_PX + 1}px)`)
-    const onChange = (e: MediaQueryListEvent) => {
-      if (e.matches) setShowOverflowMenu(false)
+    const el = inputShellRef.current
+    if (!el || typeof window === "undefined") return
+
+    const update = (width = el.getBoundingClientRect().width) => {
+      setToolbarCompact(width <= CHAT_INPUT_OVERFLOW_BREAKPOINT_PX)
     }
-    mql.addEventListener("change", onChange)
-    return () => mql.removeEventListener("change", onChange)
-  }, [showOverflowMenu])
+
+    update()
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => update()
+      window.addEventListener("resize", handleResize)
+      return () => window.removeEventListener("resize", handleResize)
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      update(entries[0]?.contentRect.width)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (showOverflowMenu && !toolbarCompact) setShowOverflowMenu(false)
+  }, [showOverflowMenu, toolbarCompact])
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
@@ -262,25 +271,9 @@ export default function ChatInput({
 
   const overflowMenuItemClass =
     "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-foreground/80 outline-none transition-all duration-150 hover:bg-secondary/60 hover:text-foreground focus-visible:bg-secondary/60 focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
-  const showIncognitoPreset = shouldShowIncognitoPresetAction(
-    currentSessionId ?? null,
-    !!onIncognitoChange,
-  )
 
   const toggleSlashCommandMenu = () => {
     slash.setOpen(!slash.isOpen)
-  }
-
-  const toggleIncognito = (next = !incognitoEnabled) => {
-    if (
-      !onIncognitoChange ||
-      !showIncognitoPreset ||
-      incognitoSaving ||
-      incognitoDisabledReason !== undefined
-    ) {
-      return
-    }
-    onIncognitoChange(next)
   }
 
   const visibleTaskProgress = shouldShowTaskProgressPanel(taskProgressSnapshot)
@@ -298,7 +291,6 @@ export default function ChatInput({
     <>
       {onWorkingDirChange && (
         <WorkingDirectoryButton
-          sessionId={currentSessionId ?? null}
           workingDir={workingDir ?? null}
           inherited={workingDirInherited}
           saving={workingDirSaving}
@@ -314,18 +306,9 @@ export default function ChatInput({
           className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
           onClick={toggleSlashCommandMenu}
         >
-          <Slash className="h-3.5 w-3.5" />
+          <Slash className="h-4 w-4" />
         </Button>
       </IconTip>
-      {showIncognitoPreset && onIncognitoChange && (
-        <IncognitoToggle
-          sessionId={currentSessionId ?? null}
-          enabled={incognitoEnabled}
-          saving={incognitoSaving}
-          disabledReason={incognitoDisabledReason}
-          onChange={onIncognitoChange}
-        />
-      )}
     </>
   )
 
@@ -341,7 +324,6 @@ export default function ChatInput({
       case "working-dir":
         return onWorkingDirChange ? (
           <WorkingDirectoryButton
-            sessionId={currentSessionId ?? null}
             workingDir={workingDir ?? null}
             inherited={workingDirInherited}
             saving={workingDirSaving}
@@ -351,7 +333,7 @@ export default function ChatInput({
           />
         ) : (
           <button type="button" disabled className={overflowMenuItemClass}>
-            <FolderPlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">{t("chat.addWorkingDirectory")}</span>
           </button>
         )
@@ -365,65 +347,30 @@ export default function ChatInput({
               toggleSlashCommandMenu()
             }}
           >
-            <Slash className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <Slash className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">{t("slashCommands.buttonTip")}</span>
           </button>
         )
-      case "incognito": {
-        if (!onIncognitoChange || !showIncognitoPreset) return null
-        const disabled = incognitoSaving || incognitoDisabledReason !== undefined
-        return (
-          <div
-            role="button"
-            tabIndex={disabled ? -1 : 0}
-            aria-disabled={disabled}
-            className={cn(
-              overflowMenuItemClass,
-              "justify-between",
-              disabled && "pointer-events-none opacity-50",
-            )}
-            onClick={() => toggleIncognito()}
-            onKeyDown={(e) => {
-              if (disabled) return
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault()
-                toggleIncognito()
-              }
-            }}
-          >
-            <span className="flex min-w-0 items-center gap-3">
-              {incognitoSaving ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-              ) : (
-                <Ghost className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="truncate">{t("chat.incognito")}</span>
-            </span>
-            <Switch
-              checked={incognitoEnabled}
-              disabled={disabled}
-              onClick={(e) => e.stopPropagation()}
-              onCheckedChange={(checked) => toggleIncognito(checked)}
-            />
-          </div>
-        )
-      }
     }
   }
 
   const renderOverflowMenuItems = () => (
     <>
-      {getChatInputOverflowActionIds(currentSessionId ?? null, !!onIncognitoChange).map(
-        (actionId) => (
-          <Fragment key={actionId}>{renderOverflowMenuItem(actionId)}</Fragment>
-        ),
-      )}
+      {getChatInputOverflowActionIds().map((actionId) => (
+        <Fragment key={actionId}>{renderOverflowMenuItem(actionId)}</Fragment>
+      ))}
     </>
   )
 
   return (
-    <div className="px-3 pb-3 pt-2">
-      <div className="relative rounded-2xl border border-border bg-white dark:bg-card">
+    <div className={cn("px-3 pb-3 pt-2", hero && "px-0 pb-0 pt-0")}>
+      <div
+        ref={inputShellRef}
+        className={cn(
+          "relative rounded-input-dock border border-border-soft bg-surface-floating shadow-input-dock",
+          hero && "shadow-floating",
+        )}
+      >
         {/* Slash Command Menu */}
         {slash.isOpen && (
           <SlashCommandMenu
@@ -485,7 +432,7 @@ export default function ChatInput({
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
-                    className="min-w-[140px] bg-popover/95 backdrop-blur-xl border border-border/60 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-1.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150"
+                    className="min-w-[140px] bg-surface-floating/95 backdrop-blur-xl border border-border-soft rounded-floating shadow-floating p-1.5 z-50 animate-in fade-in-0 zoom-in-95 duration-150"
                     sideOffset={6}
                     align="end"
                   >
@@ -552,8 +499,11 @@ export default function ChatInput({
             onSelect={() => mention.recheckTrigger()}
             onClick={() => mention.recheckTrigger()}
             onScroll={(e) => setMirrorScrollTop(e.currentTarget.scrollTop)}
-            rows={1}
-            className="relative border-0 shadow-none bg-transparent px-4 pt-3 pb-1 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground focus-visible:ring-0 resize-none min-h-[42px] max-h-[40vh] overflow-y-auto break-words"
+            rows={hero ? 2 : 1}
+            className={cn(
+              "relative border-0 shadow-none bg-transparent px-4 pt-3 pb-1 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground focus-visible:ring-0 resize-none min-h-[42px] max-h-[40vh] overflow-y-auto break-words",
+              hero && "min-h-[72px] pt-4 pb-2",
+            )}
           />
         </div>
 
@@ -576,9 +526,11 @@ export default function ChatInput({
         {/* Toolbar */}
         <div className="flex items-end justify-between gap-2 px-2 pb-2">
           <div className="flex items-center gap-1 flex-wrap min-w-0">
-            <div className={CHAT_INPUT_INLINE_ADD_ACTIONS_CLASS}>{renderInlineAddControls()}</div>
+            <div className={toolbarCompact ? "hidden" : CHAT_INPUT_INLINE_ADD_ACTIONS_CLASS}>
+              {renderInlineAddControls()}
+            </div>
 
-            <div className={CHAT_INPUT_OVERFLOW_MENU_CLASS}>
+            <div className={toolbarCompact ? "block" : CHAT_INPUT_OVERFLOW_MENU_CLASS}>
               <DropdownMenu.Root open={showOverflowMenu} onOpenChange={setShowOverflowMenu}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -597,7 +549,7 @@ export default function ChatInput({
                 </Tooltip>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
-                    className="z-50 min-w-[180px] overflow-hidden rounded-xl border border-border/60 bg-white p-1.5 text-popover-foreground shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150 dark:bg-popover/95"
+                    className="z-50 min-w-[180px] overflow-hidden rounded-floating border border-border-soft bg-surface-floating/95 p-1.5 text-popover-foreground shadow-floating backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
                     side="top"
                     align="start"
                     sideOffset={8}
@@ -650,7 +602,7 @@ export default function ChatInput({
                         : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                <ClipboardList className="h-3.5 w-3.5 shrink-0" />
+                <ClipboardList className="h-4 w-4 shrink-0" />
                 <span>{planToggleLabel}</span>
               </button>
             </IconTip>

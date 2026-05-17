@@ -4,6 +4,7 @@ import { getTransport } from "@/lib/transport-provider"
 import { save } from "@tauri-apps/plugin-dialog"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
+import { cn } from "@/lib/utils"
 import { Brain } from "lucide-react"
 import type {
   ActiveModel,
@@ -49,6 +50,7 @@ import { useModelState } from "./hooks/useModelState"
 import SystemPromptDialog from "./SystemPromptDialog"
 import { PlanPanel } from "./plan-mode/PlanPanel"
 import type { BuiltPlanComment } from "./plan-mode/planCommentMessage"
+import { RightPanelShell } from "./right-panel/RightPanelShell"
 import { useProjects } from "./project/hooks/useProjects"
 import ProjectDialog from "./project/ProjectDialog"
 import ProjectOverviewDialog from "./project/ProjectOverviewDialog"
@@ -58,6 +60,12 @@ import {
   readChatDisplayModePreference,
   writeChatDisplayModePreference,
 } from "./chatDisplayModePreference"
+import {
+  CHAT_SIDEBAR_DEFAULT_WIDTH,
+  CHAT_SIDEBAR_MAX_WIDTH,
+  CHAT_SIDEBAR_MIN_WIDTH,
+  CHAT_SIDEBAR_WIDTH_STORAGE_KEY,
+} from "./sidebar/types"
 import type { Project, ProjectMeta } from "@/types/project"
 
 interface ChatScreenProps {
@@ -71,6 +79,10 @@ interface ChatScreenProps {
   pendingChatInsert?: string
   /** Called once the insert has been consumed so App can clear the pending slot. */
   onChatInsertConsumed?: () => void
+}
+
+function clampChatSidebarWidth(width: number): number {
+  return Math.min(CHAT_SIDEBAR_MAX_WIDTH, Math.max(CHAT_SIDEBAR_MIN_WIDTH, width))
 }
 
 export default function ChatScreen({
@@ -102,11 +114,25 @@ export default function ChatScreen({
   } = useModelState()
 
   // Sidebar panel width
-  const [panelWidth, setPanelWidth] = useState(288)
+  const [panelWidth, setPanelWidth] = useState(() => {
+    if (typeof window === "undefined") return CHAT_SIDEBAR_DEFAULT_WIDTH
+    const stored = window.localStorage.getItem(CHAT_SIDEBAR_WIDTH_STORAGE_KEY)
+    if (!stored) return CHAT_SIDEBAR_DEFAULT_WIDTH
+
+    const storedWidth = Number(stored)
+    return Number.isFinite(storedWidth)
+      ? clampChatSidebarWidth(storedWidth)
+      : CHAT_SIDEBAR_DEFAULT_WIDTH
+  })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false
     return window.localStorage.getItem("hope.chatSidebarCollapsed") === "true"
   })
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(CHAT_SIDEBAR_WIDTH_STORAGE_KEY, String(panelWidth))
+  }, [panelWidth])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -153,6 +179,7 @@ export default function ChatScreen({
   // Right panel widths (resizable)
   const [planPanelWidth, setPlanPanelWidth] = useState(520)
   const [canvasPanelWidth, setCanvasPanelWidth] = useState(480)
+  const [canvasPanelOpen, setCanvasPanelOpen] = useState(false)
   const [browserPanelWidth, setBrowserPanelWidth] = useState(480)
 
   // Right side diff panel (write/edit/apply_patch metadata viewer)
@@ -216,7 +243,7 @@ export default function ChatScreen({
     archiveProject,
     moveSessionToProject,
     reloadProjects,
-  } = useProjects()
+  } = useProjects({ includeArchived: true })
 
   const refreshProjectAggregates = useCallback(() => {
     void reloadProjects()
@@ -1278,60 +1305,26 @@ export default function ChatScreen({
     planMode.showPanel &&
     planMode.planState !== "off" &&
     (planMode.planState === "planning" || planMode.planContent.trim().length > 0)
+  const rightPanelKey =
+    diffPanel.showPanel && diffPanel.activeChanges.length > 0
+      ? "diff"
+      : shouldShowPlanPanel
+        ? "plan"
+        : showBrowserPanel
+          ? "browser"
+          : canvasPanelOpen
+            ? "canvas"
+            : activeTeamId && showTeamPanel
+              ? "team"
+              : null
+  const lastRightPanelKeyRef = useRef<string | null>(rightPanelKey)
 
-  const handlePlanPanelDragStart = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startWidth = planPanelWidth
-      const maxWidth = Math.min(860, Math.max(420, window.innerWidth * 0.55))
-      const onMouseMove = (ev: MouseEvent) => {
-        const newWidth = Math.min(maxWidth, Math.max(360, startWidth - (ev.clientX - startX)))
-        setPlanPanelWidth(newWidth)
-      }
-      const iframes = document.querySelectorAll("iframe")
-      iframes.forEach((f) => ((f as HTMLElement).style.pointerEvents = "none"))
-      const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove)
-        document.removeEventListener("mouseup", onMouseUp)
-        document.body.style.cursor = ""
-        document.body.style.userSelect = ""
-        iframes.forEach((f) => ((f as HTMLElement).style.pointerEvents = ""))
-      }
-      document.addEventListener("mousemove", onMouseMove)
-      document.addEventListener("mouseup", onMouseUp)
-      document.body.style.cursor = "col-resize"
-      document.body.style.userSelect = "none"
-    },
-    [planPanelWidth],
-  )
-
-  const handleDiffPanelDragStart = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startWidth = diffPanel.panelWidth
-      const maxWidth = Math.min(860, Math.max(420, window.innerWidth * 0.55))
-      const onMouseMove = (ev: MouseEvent) => {
-        const newWidth = Math.min(maxWidth, Math.max(360, startWidth - (ev.clientX - startX)))
-        diffPanel.setPanelWidth(newWidth)
-      }
-      const iframes = document.querySelectorAll("iframe")
-      iframes.forEach((f) => ((f as HTMLElement).style.pointerEvents = "none"))
-      const onMouseUp = () => {
-        document.removeEventListener("mousemove", onMouseMove)
-        document.removeEventListener("mouseup", onMouseUp)
-        document.body.style.cursor = ""
-        document.body.style.userSelect = ""
-        iframes.forEach((f) => ((f as HTMLElement).style.pointerEvents = ""))
-      }
-      document.addEventListener("mousemove", onMouseMove)
-      document.addEventListener("mouseup", onMouseUp)
-      document.body.style.cursor = "col-resize"
-      document.body.style.userSelect = "none"
-    },
-    [diffPanel],
-  )
+  useEffect(() => {
+    if (rightPanelKey && rightPanelKey !== lastRightPanelKeyRef.current) {
+      setSidebarCollapsed(true)
+    }
+    lastRightPanelKeyRef.current = rightPanelKey
+  }, [rightPanelKey])
 
   // Right-side panels (PlanPanel / CanvasPanel / DiffPanel / BrowserPanel)
   // are mutually exclusive at the visual level — opening one closes the
@@ -1378,6 +1371,14 @@ export default function ChatScreen({
       }
     }
   }, [])
+
+  const emptySessionInputHero =
+    session.messages.length === 0 &&
+    !session.loading &&
+    !planMode.pendingQuestionGroup &&
+    !planMode.planCardInfo &&
+    !planMode.planSubagentRunning &&
+    !searchBarOpen
 
   return (
     <>
@@ -1512,7 +1513,7 @@ export default function ChatScreen({
       />
 
       {/* Conversation workspace */}
-      <div className="flex-1 flex flex-col min-w-0 bg-background">
+      <div className="flex-1 flex flex-col min-w-0 bg-surface-app">
         <ChatTitleBar
           agentName={session.agentName}
           currentAgentId={session.currentAgentId}
@@ -1525,7 +1526,6 @@ export default function ChatScreen({
           loading={session.loading}
           compacting={compacting}
           setCompacting={setCompacting}
-          onOpenAgentSettings={onOpenAgentSettings}
           onRenameSession={handleRenameSession}
           onViewSystemPrompt={loadSystemPrompt}
           systemPromptLoading={systemPromptLoading}
@@ -1547,10 +1547,13 @@ export default function ChatScreen({
           onExpandSidebar={() => setSidebarCollapsed(false)}
           displayMode={displayMode}
           onDisplayModeChange={handleDisplayModeChange}
+          incognitoEnabled={incognitoEnabled}
+          incognitoDisabledReason={incognitoDisabledReason}
+          onIncognitoChange={handleIncognitoChange}
         />
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="relative flex-1 flex flex-col min-w-0">
             {activeTeamId && !showTeamPanel && (
               <div className="px-3 py-1 border-b border-border">
                 <TeamMiniIndicator teamId={activeTeamId} onClick={() => setShowTeamPanel(true)} />
@@ -1614,9 +1617,22 @@ export default function ChatScreen({
                * so it doesn't shrink the MessageList scroll container when it
                * appears/disappears. */}
             {!isCronSession && !isSubagentSession && (
-              <div className="relative">
+              <div
+                className={cn(
+                  "relative",
+                  emptySessionInputHero &&
+                    "absolute inset-x-0 top-[48%] z-20 flex -translate-y-1/2 justify-center px-5 sm:px-8",
+                )}
+              >
                 {memoryToast && (
-                  <div className="absolute left-0 right-0 bottom-full mx-4 mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10">
+                  <div
+                    className={cn(
+                      "absolute bottom-full mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10",
+                      emptySessionInputHero
+                        ? "inset-x-5 mx-auto max-w-[920px] sm:inset-x-8"
+                        : "left-0 right-0 mx-4",
+                    )}
+                  >
                     <Brain className="h-3.5 w-3.5 shrink-0" />
                     <span>{t("settings.memoryExtractedToast", { count: memoryToast.count })}</span>
                     <button
@@ -1628,76 +1644,72 @@ export default function ChatScreen({
                   </div>
                 )}
 
-                <ChatInput
-                  input={stream.input}
-                  onInputChange={stream.setInput}
-                  onSend={() => stream.handleSend()}
-                  loading={session.loading}
-                  availableModels={availableModels}
-                  activeModel={activeModel}
-                  reasoningEffort={reasoningEffort}
-                  onModelChange={handleManualModelChange}
-                  onEffortChange={handleSessionEffortChange}
-                  attachedFiles={stream.attachedFiles}
-                  onAttachFiles={(files) => stream.setAttachedFiles((prev) => [...prev, ...files])}
-                  onRemoveFile={(index) =>
-                    stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
-                  }
-                  pendingMessage={stream.pendingMessage}
-                  onCancelPending={() => {
-                    stream.setInput(stream.pendingMessage || "")
-                    stream.setPendingMessage(null)
-                  }}
-                  onDiscardPending={() => {
-                    stream.setPendingMessage(null)
-                  }}
-                  onStop={stream.handleStop}
-                  currentSessionId={session.currentSessionId}
-                  currentAgentId={session.currentAgentId}
-                  onCommandAction={handleCommandAction}
-                  permissionMode={stream.permissionMode}
-                  onPermissionModeChange={stream.setPermissionMode}
-                  sessionTemperature={sessionTemperature}
-                  onSessionTemperatureChange={setSessionTemperature}
-                  incognitoEnabled={incognitoEnabled}
-                  incognitoDisabledReason={incognitoDisabledReason}
-                  onIncognitoChange={handleIncognitoChange}
-                  workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
-                  workingDirInherited={
-                    session.currentSessionId ? workingDirSource === "project" : false
-                  }
-                  workingDirSaving={workingDirSaving}
-                  onWorkingDirChange={handleWorkingDirChange}
-                  planState={planMode.planState}
-                  onEnterPlanMode={planMode.enterPlanMode}
-                  onExitPlanMode={planMode.exitPlanMode}
-                  onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
-                  taskProgressSnapshot={taskProgressSnapshot}
-                  executionState={
-                    session.currentSessionId
-                      ? stream.executionStateBySession.get(session.currentSessionId) ?? null
-                      : null
-                  }
-                />
+                <div className={cn(emptySessionInputHero && "w-full max-w-[920px]")}>
+                  <ChatInput
+                    input={stream.input}
+                    onInputChange={stream.setInput}
+                    onSend={() => stream.handleSend()}
+                    loading={session.loading}
+                    availableModels={availableModels}
+                    activeModel={activeModel}
+                    reasoningEffort={reasoningEffort}
+                    onModelChange={handleManualModelChange}
+                    onEffortChange={handleSessionEffortChange}
+                    attachedFiles={stream.attachedFiles}
+                    onAttachFiles={(files) =>
+                      stream.setAttachedFiles((prev) => [...prev, ...files])
+                    }
+                    onRemoveFile={(index) =>
+                      stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
+                    }
+                    pendingMessage={stream.pendingMessage}
+                    onCancelPending={() => {
+                      stream.setInput(stream.pendingMessage || "")
+                      stream.setPendingMessage(null)
+                    }}
+                    onDiscardPending={() => {
+                      stream.setPendingMessage(null)
+                    }}
+                    onStop={stream.handleStop}
+                    currentSessionId={session.currentSessionId}
+                    currentAgentId={session.currentAgentId}
+                    onCommandAction={handleCommandAction}
+                    permissionMode={stream.permissionMode}
+                    onPermissionModeChange={stream.setPermissionMode}
+                    sessionTemperature={sessionTemperature}
+                    onSessionTemperatureChange={setSessionTemperature}
+                    incognitoEnabled={incognitoEnabled}
+                    workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
+                    workingDirInherited={
+                      session.currentSessionId ? workingDirSource === "project" : false
+                    }
+                    workingDirSaving={workingDirSaving}
+                    onWorkingDirChange={handleWorkingDirChange}
+                    planState={planMode.planState}
+                    onEnterPlanMode={planMode.enterPlanMode}
+                    onExitPlanMode={planMode.exitPlanMode}
+                    onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
+                    taskProgressSnapshot={taskProgressSnapshot}
+                    executionState={
+                      session.currentSessionId
+                        ? stream.executionStateBySession.get(session.currentSessionId) ?? null
+                        : null
+                    }
+                    hero={emptySessionInputHero}
+                  />
+                </div>
               </div>
             )}
           </div>
 
           {/* Diff panel (right side; mutually exclusive with PlanPanel) */}
           {diffPanel.showPanel && diffPanel.activeChanges.length > 0 && (
-            <div
-              className="relative flex h-full min-h-0 shrink-0 min-w-[360px] max-w-[55%] p-3 pl-2"
-              style={{ width: diffPanel.panelWidth }}
+            <RightPanelShell
+              width={diffPanel.panelWidth}
+              onWidthChange={diffPanel.setPanelWidth}
+              resizeLabel={t("diffPanel.resizePanel", "Resize diff panel")}
+              maxWidth={860}
             >
-              <div
-                className="group absolute left-0 top-3 bottom-3 z-10 flex w-3 cursor-col-resize items-center justify-center"
-                onMouseDown={handleDiffPanelDragStart}
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={t("diffPanel.resizePanel", "Resize diff panel")}
-              >
-                <div className="h-full w-px rounded-full bg-transparent transition-colors group-hover:bg-primary/35 group-active:bg-primary/50" />
-              </div>
               <DiffPanel
                 changes={diffPanel.activeChanges}
                 activeIndex={diffPanel.activeIndex}
@@ -1705,24 +1717,17 @@ export default function ChatScreen({
                 onClose={diffPanel.closeDiff}
                 embedded
               />
-            </div>
+            </RightPanelShell>
           )}
 
           {/* Plan workspace (right side, integrated under the shared title bar) */}
           {shouldShowPlanPanel && (
-            <div
-              className="relative flex h-full min-h-0 shrink-0 min-w-[360px] max-w-[55%] p-3 pl-2"
-              style={{ width: planPanelWidth }}
+            <RightPanelShell
+              width={planPanelWidth}
+              onWidthChange={setPlanPanelWidth}
+              resizeLabel={t("planMode.resizePanel", "Resize plan panel")}
+              maxWidth={860}
             >
-              <div
-                className="group absolute left-0 top-3 bottom-3 z-10 flex w-3 cursor-col-resize items-center justify-center"
-                onMouseDown={handlePlanPanelDragStart}
-                role="separator"
-                aria-orientation="vertical"
-                aria-label={t("planMode.resizePanel", "Resize plan panel")}
-              >
-                <div className="h-full w-px rounded-full bg-transparent transition-colors group-hover:bg-primary/35 group-active:bg-primary/50" />
-              </div>
               <PlanPanel
                 planState={planMode.planState}
                 planContent={planMode.planContent}
@@ -1735,7 +1740,7 @@ export default function ChatScreen({
                 onRequestChanges={handleRequestChanges}
                 embedded
               />
-            </div>
+            </RightPanelShell>
           )}
 
           {/* Canvas Preview Panel */}
@@ -1743,6 +1748,7 @@ export default function ChatScreen({
             panelWidth={canvasPanelWidth}
             onPanelWidthChange={setCanvasPanelWidth}
             currentSessionId={currentSessionId}
+            onOpenChange={setCanvasPanelOpen}
           />
 
           {/* Browser live-mirror panel — open on first `browser:frame` push,
