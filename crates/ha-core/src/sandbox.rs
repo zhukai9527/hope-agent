@@ -429,48 +429,77 @@ pub async fn exec_in_sandbox(
         command
     );
 
-    // Wait for container to finish (with timeout)
-    let wait_result = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        wait_for_container(&docker, &container_id),
-    )
-    .await;
-
-    let (exit_code, timed_out) = match wait_result {
-        Ok(Ok(code)) => (code, false),
-        Ok(Err(e)) => {
-            app_warn!("sandbox", "docker", "Container wait error: {}", e);
-            // Try to stop and cleanup
-            if let Err(stop_err) = docker.stop_container(&container_id, None).await {
-                app_warn!(
-                    "sandbox",
-                    "docker",
-                    "Failed to stop container {}: {}",
-                    crate::truncate_utf8(&container_id, 12),
-                    stop_err
-                );
+    // Wait for container to finish. `timeout_secs = 0` disables the exec-level
+    // timeout and lets Docker wait until the container exits naturally.
+    let (exit_code, timed_out) = if timeout_secs == 0 {
+        match wait_for_container(&docker, &container_id).await {
+            Ok(code) => (code, false),
+            Err(e) => {
+                app_warn!("sandbox", "docker", "Container wait error: {}", e);
+                // Try to stop and cleanup
+                if let Err(stop_err) = docker.stop_container(&container_id, None).await {
+                    app_warn!(
+                        "sandbox",
+                        "docker",
+                        "Failed to stop container {}: {}",
+                        crate::truncate_utf8(&container_id, 12),
+                        stop_err
+                    );
+                }
+                if let Err(cleanup_err) = cleanup_container(&docker, &container_id).await {
+                    app_warn!(
+                        "sandbox",
+                        "docker",
+                        "Failed to cleanup container {}: {}",
+                        crate::truncate_utf8(&container_id, 12),
+                        cleanup_err
+                    );
+                }
+                return Err(anyhow::anyhow!("Container execution failed: {}", e));
             }
-            if let Err(cleanup_err) = cleanup_container(&docker, &container_id).await {
-                app_warn!(
-                    "sandbox",
-                    "docker",
-                    "Failed to cleanup container {}: {}",
-                    crate::truncate_utf8(&container_id, 12),
-                    cleanup_err
-                );
-            }
-            return Err(anyhow::anyhow!("Container execution failed: {}", e));
         }
-        Err(_) => {
-            // Timeout — kill the container
-            app_warn!(
-                "sandbox",
-                "docker",
-                "Sandbox container timed out after {}s, killing...",
-                timeout_secs
-            );
-            let _ = docker.stop_container(&container_id, None).await;
-            (-1, true)
+    } else {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            wait_for_container(&docker, &container_id),
+        )
+        .await
+        {
+            Ok(Ok(code)) => (code, false),
+            Ok(Err(e)) => {
+                app_warn!("sandbox", "docker", "Container wait error: {}", e);
+                // Try to stop and cleanup
+                if let Err(stop_err) = docker.stop_container(&container_id, None).await {
+                    app_warn!(
+                        "sandbox",
+                        "docker",
+                        "Failed to stop container {}: {}",
+                        crate::truncate_utf8(&container_id, 12),
+                        stop_err
+                    );
+                }
+                if let Err(cleanup_err) = cleanup_container(&docker, &container_id).await {
+                    app_warn!(
+                        "sandbox",
+                        "docker",
+                        "Failed to cleanup container {}: {}",
+                        crate::truncate_utf8(&container_id, 12),
+                        cleanup_err
+                    );
+                }
+                return Err(anyhow::anyhow!("Container execution failed: {}", e));
+            }
+            Err(_) => {
+                // Timeout — kill the container
+                app_warn!(
+                    "sandbox",
+                    "docker",
+                    "Sandbox container timed out after {}s, killing...",
+                    timeout_secs
+                );
+                let _ = docker.stop_container(&container_id, None).await;
+                (-1, true)
+            }
         }
     };
 

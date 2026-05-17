@@ -1415,6 +1415,7 @@ impl AssistantAgent {
             project_id,
             async_tool_policy: caps.async_tool_policy,
             bypass_async_dispatch: false,
+            suppress_global_tool_timeout: false,
             metadata_sink: None,
         }
     }

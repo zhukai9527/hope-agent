@@ -101,7 +101,10 @@ pub(super) async fn resolve_tool_permission(
 /// Load the user-configured tool timeout from config.json. Returns `None`
 /// when the user explicitly set 0 (disabled). The serde default in
 /// [`AppConfig`] provides the 300s fallback when the field is missing.
-fn tool_timeout() -> Option<Duration> {
+fn tool_timeout(ctx: &ToolExecContext) -> Option<Duration> {
+    if ctx.suppress_global_tool_timeout {
+        return None;
+    }
     let secs = crate::config::cached_config().tool_timeout;
     if secs == 0 {
         None
@@ -190,6 +193,11 @@ pub struct ToolExecContext {
     /// recursion: even if the tool is async-capable and the policy is
     /// `always-background`, this single re-dispatch runs synchronously.
     pub bypass_async_dispatch: bool,
+    /// Internal flag set for async tool jobs that already have their own
+    /// background runtime cap (`asyncTools.maxJobSecs`). This prevents the
+    /// global foreground safety net (`toolTimeout`) from shortening long
+    /// background work unexpectedly.
+    pub suppress_global_tool_timeout: bool,
     /// Per-dispatch sink for structured tool metadata (e.g. file change
     /// before/after snapshots, line deltas). The orchestrator constructs a
     /// fresh `Arc<Mutex<None>>` for **each** tool dispatch, attaches the same
@@ -661,6 +669,7 @@ pub async fn execute_tool_with_context(
             .auto_background_secs;
         let mut inner_ctx = ctx.clone();
         inner_ctx.bypass_async_dispatch = true;
+        inner_ctx.suppress_global_tool_timeout = true;
         // Approval already ran at this outer layer — silence the inner re-entry.
         inner_ctx.auto_approve_tools = true;
         let raw =
@@ -856,7 +865,7 @@ pub async fn execute_tool_with_context(
         }
     };
 
-    let result = if let Some(hard_timeout) = tool_timeout() {
+    let result = if let Some(hard_timeout) = tool_timeout(ctx) {
         match timeout(hard_timeout, dispatch).await {
             Ok(inner) => inner,
             Err(_elapsed) => {
@@ -1192,6 +1201,16 @@ mod tests {
         };
 
         assert_eq!(ctx.default_path(), "/tmp/projects/demo");
+    }
+
+    #[test]
+    fn background_async_jobs_suppress_global_tool_timeout() {
+        let ctx = ToolExecContext {
+            suppress_global_tool_timeout: true,
+            ..ToolExecContext::default()
+        };
+
+        assert!(tool_timeout(&ctx).is_none());
     }
 
     #[test]

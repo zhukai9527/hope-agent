@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use super::db::AsyncJobsDB;
 use super::injection;
 use super::types::{AsyncJob, AsyncJobStatus, JobOrigin};
-use crate::tools::ToolExecContext;
+use crate::tools::{ToolExecContext, ASYNC_JOB_TIMEOUT_ARG};
 
 const DEFAULT_PREVIEW_BYTES: usize = 4096;
 
@@ -50,13 +50,15 @@ pub fn synthetic_started_result(job_id: &str, tool_name: &str, origin: JobOrigin
     let hint = match origin {
         JobOrigin::Explicit | JobOrigin::PolicyForced => {
             "The tool is running in the background. Continue with other work; the result will \
-             be auto-injected as a `<tool-job-result>` user message when ready. To actively \
-             wait, call `job_status` with `block: true`."
+             be auto-injected as a `<tool-job-result>` user message when ready. Use \
+             `job_status` without `block` only for a quick snapshot; avoid `block: true` unless \
+             the user explicitly asked to wait or the result is required for the next answer."
         }
         JobOrigin::AutoBackgrounded => {
             "The tool exceeded the synchronous time budget and was auto-backgrounded. The \
-             result will be auto-injected when ready, or you can call `job_status` to wait \
-             for it explicitly."
+             result will be auto-injected when ready. Use `job_status` without `block` only for \
+             a quick snapshot; avoid `block: true` unless the user explicitly asked to wait or \
+             the result is required for the next answer."
         }
     };
     json!({
@@ -67,6 +69,39 @@ pub fn synthetic_started_result(job_id: &str, tool_name: &str, origin: JobOrigin
         "hint": hint,
     })
     .to_string()
+}
+
+/// Strip async-job control parameters before recursively dispatching the
+/// actual tool implementation. The outer async layer consumes these knobs;
+/// individual tools should only see their own schema parameters.
+fn strip_async_control_args(mut args: Value) -> Value {
+    if let Some(obj) = args.as_object_mut() {
+        obj.remove("run_in_background");
+        obj.remove(ASYNC_JOB_TIMEOUT_ARG);
+    }
+    args
+}
+
+fn requested_job_timeout_secs(args: &Value) -> Option<u64> {
+    args.get(ASYNC_JOB_TIMEOUT_ARG)
+        .and_then(|v| v.as_u64())
+        .filter(|secs| *secs > 0)
+}
+
+fn clamp_job_timeout_secs(configured_max_secs: u64, requested_secs: Option<u64>) -> u64 {
+    match (configured_max_secs, requested_secs) {
+        (0, Some(requested)) => requested,
+        (0, None) => 0,
+        (configured, Some(requested)) => configured.min(requested),
+        (configured, None) => configured,
+    }
+}
+
+fn effective_max_job_secs(args: &Value) -> u64 {
+    clamp_job_timeout_secs(
+        crate::config::cached_config().async_tools.max_job_secs,
+        requested_job_timeout_secs(args),
+    )
 }
 
 /// Public API: spawn a background tool job.
@@ -96,21 +131,19 @@ pub fn spawn_explicit_job(
 
     let synthetic = synthetic_started_result(&job_id, tool_name, origin);
 
-    // Strip `run_in_background` from args AND set bypass on the ctx so the
+    // Strip async-job controls from args AND set bypass on the ctx so the
     // recursive `execute_tool_with_context` call inside the OS thread runtime
     // goes straight to the sync dispatch path. Without bypass the
     // `AlwaysBackground` policy would re-enter `spawn_explicit_job` forever.
-    let mut clean_args = args;
-    if let Some(obj) = clean_args.as_object_mut() {
-        obj.remove("run_in_background");
-    }
+    let max_secs = effective_max_job_secs(&args);
+    let clean_args = strip_async_control_args(args);
     ctx.bypass_async_dispatch = true;
     // The outer call already passed the approval gate for this exact arg set;
     // the recursive inner call must not re-prompt (the user has no surface to
     // answer it from inside a background runtime). The visibility / plan-mode
     // checks still re-run as belt-and-suspenders.
     ctx.auto_approve_tools = true;
-    let max_secs = crate::config::cached_config().async_tools.max_job_secs;
+    ctx.suppress_global_tool_timeout = true;
     let preview_bytes = preview_byte_budget();
     let tool_name_owned = tool_name.to_string();
     let job_id_owned = job_id.clone();
@@ -192,10 +225,11 @@ pub async fn dispatch_with_auto_background(
     let notify_w = notify.clone();
     let job_id_w = job_id.clone();
     let name_w = name.to_string();
-    let args_w = args.clone();
+    let args_w = strip_async_control_args(args.clone());
     let ctx_w = ctx.clone();
     let cancel_w = cancel_token.clone();
     let preview_bytes = preview_byte_budget();
+    let max_secs = effective_max_job_secs(args);
 
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()
@@ -214,12 +248,28 @@ pub async fn dispatch_with_auto_background(
             let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
                 &name_w, &args_w, &ctx_w,
             ));
-            let result: Result<String, String> = tokio::select! {
-                inner = &mut dispatch => inner.map_err(|e| e.to_string()),
-                _ = cancel_w.cancelled() => Err(format!(
-                    "Async tool job '{}' was cancelled",
-                    job_id_w
-                )),
+            let result: Result<String, String> = if max_secs == 0 {
+                tokio::select! {
+                    inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+                    _ = cancel_w.cancelled() => Err(format!(
+                        "Async tool job '{}' was cancelled",
+                        job_id_w
+                    )),
+                }
+            } else {
+                let timer = tokio::time::sleep(std::time::Duration::from_secs(max_secs));
+                tokio::pin!(timer);
+                tokio::select! {
+                    inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+                    _ = &mut timer => Err(format!(
+                        "Async tool job '{}' exceeded max_job_secs ({}s) and was cancelled",
+                        job_id_w, max_secs
+                    )),
+                    _ = cancel_w.cancelled() => Err(format!(
+                        "Async tool job '{}' was cancelled",
+                        job_id_w
+                    )),
+                }
             };
 
             let mut p = phase_w.lock().unwrap_or_else(|p| p.into_inner());
@@ -611,6 +661,26 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("exceeded the synchronous time budget"));
+    }
+
+    #[test]
+    fn per_call_job_timeout_only_tightens_configured_cap() {
+        assert_eq!(clamp_job_timeout_secs(1800, None), 1800);
+        assert_eq!(clamp_job_timeout_secs(1800, Some(600)), 600);
+        assert_eq!(clamp_job_timeout_secs(1800, Some(3600)), 1800);
+        assert_eq!(clamp_job_timeout_secs(0, None), 0);
+        assert_eq!(clamp_job_timeout_secs(0, Some(600)), 600);
+    }
+
+    #[test]
+    fn strip_async_control_args_removes_outer_async_knobs() {
+        let cleaned = strip_async_control_args(json!({
+            "command": "echo hi",
+            "run_in_background": true,
+            "job_timeout_secs": 60
+        }));
+
+        assert_eq!(cleaned, json!({ "command": "echo hi" }));
     }
 
     #[test]

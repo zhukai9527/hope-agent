@@ -192,8 +192,9 @@ pub struct AsyncToolsConfig {
     #[serde(default = "default_async_auto_background_secs")]
     pub auto_background_secs: u64,
     /// Maximum time (seconds) a backgrounded job may run before being killed.
-    /// Default: 1800 (30 min). 0 = no per-job limit (still bounded by
-    /// `tool_timeout`).
+    /// Default: 1800 (30 min). 0 = no async-job limit; individual tools may
+    /// still enforce their own timeouts (for example `exec.timeout`).
+    /// Per-call `job_timeout_secs` can only tighten this limit, not extend it.
     #[serde(default = "default_async_max_job_secs")]
     pub max_job_secs: u64,
     /// Number of result bytes to inline in the synthetic completion notification.
@@ -548,8 +549,9 @@ pub struct AppConfig {
     /// PDF tool configuration (max PDFs, max vision pages, etc.)
     #[serde(default)]
     pub pdf: crate::tools::pdf::PdfToolConfig,
-    /// Global hard timeout (seconds) for a single tool execution.
+    /// Global hard timeout (seconds) for a foreground/synchronous tool execution.
     /// Safety net for when inner tool timeouts don't fire (network issues, etc.).
+    /// Async background jobs bypass this and use `async_tools.max_job_secs`.
     /// Default 300 (5 min). Set to 0 to disable.
     #[serde(default = "default_tool_timeout")]
     pub tool_timeout: u64,

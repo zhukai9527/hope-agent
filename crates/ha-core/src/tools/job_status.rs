@@ -14,7 +14,7 @@ use tokio::sync::Notify;
 
 use crate::async_jobs::{self, wait, AsyncJobStatus};
 
-const DEFAULT_WAIT_SECS: u64 = 1800;
+const DEFAULT_WAIT_SECS: u64 = 60;
 const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
 const MAX_BACKOFF: Duration = Duration::from_secs(2);
 
@@ -156,7 +156,7 @@ fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
             AsyncJobStatus::Running => {
                 map.insert(
                     "hint".to_string(),
-                    json!("Job is still running. Re-call with block=true to wait."),
+                    json!("Job is still running. Continue with other work; the result will be auto-injected when ready. Use block=true only if the user explicitly asked to wait or your next answer depends on this result."),
                 );
             }
             AsyncJobStatus::Cancelling => {
@@ -175,11 +175,12 @@ fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
 pub fn get_job_status_tool() -> super::definitions::ToolDefinition {
     super::definitions::ToolDefinition {
         name: super::TOOL_JOB_STATUS.into(),
-        description: "Inspect or wait on an async tool job created by `run_in_background: true` \
+        description: "Inspect an async tool job created by `run_in_background: true` \
             or auto-backgrounded by the runtime. Use after the model received a synthetic \
-            `{job_id, status: \"started\"}` response from another tool. Set `block: true` to \
-            actively wait until the job reaches a terminal state (with `timeout_ms` cap). \
-            Without `block`, returns the current snapshot immediately."
+            `{job_id, status: \"started\"}` response from another tool. Prefer the default \
+            snapshot mode so the conversation can continue while the job runs. Set `block: true` \
+            only when the user explicitly asked to wait or the result is required for the very \
+            next answer; otherwise rely on auto-injection."
             .into(),
         tier: super::definitions::ToolTier::Core {
             subclass: super::definitions::CoreSubclass::Meta,
@@ -196,11 +197,11 @@ pub fn get_job_status_tool() -> super::definitions::ToolDefinition {
                 },
                 "block": {
                     "type": "boolean",
-                    "description": "When true, wait until the job completes (or until timeout_ms). Default false (snapshot)."
+                    "description": "Default false returns a non-blocking snapshot. Set true only if you must wait in this turn; it keeps the chat turn active until completion or timeout_ms."
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "Max milliseconds to wait when block=true. Defaults to min(max_job_secs, 1800) seconds. Hard cap = max_job_secs (or asyncTools.jobStatusMaxWaitSecs when max_job_secs=0). Values above the cap are clamped.",
+                    "description": "Max milliseconds to wait when block=true. Defaults to 60000ms. Values above the runtime cap are clamped.",
                     "minimum": 1
                 }
             },
