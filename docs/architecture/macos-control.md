@@ -2,7 +2,7 @@
 
 > 返回 [文档索引](../README.md)
 >
-> 状态：Phase 2B primary-display screenshot mirror 落地中
+> 状态：Phase 2C read-only wait / target query 落地中
 
 本文定义 Hope Agent 原生 macOS 控制能力的目标架构。目标不是依赖 Peekaboo，而是吸收它的工程经验：**先看屏幕与 AX 树，再按稳定元素行动；优先使用 Accessibility 原生 action，必要时才回落到合成键鼠事件**。
 
@@ -278,7 +278,7 @@ status -> snapshot -> act/menu/windows -> snapshot -> 必要时继续
 
 ```rust
 pub enum MacControlRisk {
-    ReadOnly,        // status, permissions, snapshot, list
+    ReadOnly,        // status, permissions, snapshot, wait, list
     FocusOnly,       // activate app, focus window, hover
     Input,           // type, set_value, hotkey, press
     Pointer,         // click, drag, scroll
@@ -390,6 +390,7 @@ Transport 对齐：
 
 - `status` 返回 readiness、缺失权限、下一步建议
 - `snapshot` 返回元素摘要、图片引用、被截断数量
+- `wait` 返回是否命中、尝试次数、命中的 app/window/element 和最后一份 snapshot
 - `act` 返回实际执行路径：`AXPress` / `AXSetValue` / `CGEventFallback`
 - `menu` 返回菜单路径匹配结果
 - 失败返回可恢复原因：缺权限、App 不存在、元素 stale、目标不可见、窗口不在当前 Space、AX action 不支持
@@ -434,11 +435,18 @@ Phase 2A 先落地后端只读切片：
 
 Phase 2B 再补齐完整 snapshot：
 
-- 实现 ScreenCaptureKit 截图，多显示器与 Retina scale
+- 实现 primary-display 截图镜像（当前走 xcap/CoreGraphics；ScreenCaptureKit / 多显示器完整帧留后续）
 - 实现 AX 树采集、元素筛选、ID 分配、snapshot cache
 - `snapshot` action 返回图片引用和元素表
 - EventBus 发 `mac_control:frame`
 - 右侧 `MacControlPanel` 显示最新帧
+
+Phase 2C 铺只读 target 查询和等待能力：
+
+- `mac_control(action=wait)` 轮询只读 AX snapshot，直到 app/window/element query 命中或超时
+- target query 支持 `appName`、`bundleId`、`windowTitle`、`elementId`、`text`、`role`、`enabled`、`focused`
+- `wait` 不截图、不执行点击/输入、不触发审批；它只为后续 `act` 的 target 解析和 stale recovery 打基础
+- 命中时返回匹配列表和当次 snapshot；未命中时返回最后一次 snapshot 方便模型解释阻塞点
 
 验证场景：
 
@@ -446,6 +454,7 @@ Phase 2B 再补齐完整 snapshot：
 - 多显示器坐标
 - Retina 1x/2x 缩放
 - 屏幕录制未授权的错误路径
+- 等待前台 App / 窗口标题 / 按钮文本出现和超时路径
 
 ### Phase 3：安全动作 MVP
 
@@ -469,7 +478,7 @@ Phase 2B 再补齐完整 snapshot：
 - drag/drop、right click、double click
 - close window / quit app / dangerous menu patterns
 - Apple Events fallback
-- 更强的 wait_for_element / wait_until_gone
+- wait_until_gone 和更强的 target ranking
 - snapshot LRU 清理和错误统计
 
 ### Phase 5：产品化

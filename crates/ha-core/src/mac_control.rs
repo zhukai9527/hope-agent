@@ -1,15 +1,15 @@
 //! macOS desktop control bridge and readiness model.
 //!
-//! Phase 2A exposes status / permissions plus a read-only Accessibility
-//! snapshot model. ScreenCaptureKit frames and mutating input actions are
-//! intentionally left for later phases.
+//! Phase 2C exposes status / permissions, read-only Accessibility snapshots,
+//! primary-display screenshot frames, and read-only wait/target matching.
+//! Mutating input actions are intentionally left for later phases.
 
 use std::{
     collections::VecDeque,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 
 use async_trait::async_trait;
@@ -31,6 +31,11 @@ const HARD_SNAPSHOT_MAX_ELEMENTS: usize = 500;
 const HARD_SNAPSHOT_MAX_DEPTH: usize = 16;
 const MAX_SNAPSHOT_CACHE: usize = 20;
 const MAX_SCREENSHOT_FILES: usize = 100;
+const DEFAULT_WAIT_TIMEOUT_MS: u64 = 10_000;
+const DEFAULT_WAIT_POLL_MS: u64 = 500;
+const HARD_WAIT_TIMEOUT_MS: u64 = 60_000;
+const MIN_WAIT_POLL_MS: u64 = 100;
+const HARD_WAIT_POLL_MS: u64 = 5_000;
 pub const EVENT_MAC_CONTROL_FRAME: &str = "mac_control:frame";
 
 #[async_trait]
@@ -151,6 +156,19 @@ pub struct MacControlSnapshotResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MacControlWaitResponse {
+    pub status: MacControlStatus,
+    pub matched: bool,
+    pub elapsed_ms: u64,
+    pub attempts: u32,
+    pub target: MacControlTargetQuery,
+    pub matches: MacControlTargetMatches,
+    pub snapshot: Option<MacControlSnapshot>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MacControlFrameResponse {
     pub status: MacControlStatus,
     pub frame: Option<MacControlFramePayload>,
@@ -258,6 +276,113 @@ pub struct MacControlFramePayload {
     pub frontmost_app: Option<MacControlAppSummary>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlWaitRequest {
+    #[serde(default)]
+    pub target: MacControlTargetQuery,
+    #[serde(default = "default_wait_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_wait_poll_ms")]
+    pub poll_ms: u64,
+    #[serde(default = "default_snapshot_max_elements")]
+    pub max_elements: usize,
+    #[serde(default = "default_snapshot_max_depth")]
+    pub max_depth: usize,
+}
+
+impl MacControlWaitRequest {
+    pub fn clamped(mut self) -> Self {
+        if self.timeout_ms == 0 {
+            self.timeout_ms = DEFAULT_WAIT_TIMEOUT_MS;
+        }
+        if self.poll_ms == 0 {
+            self.poll_ms = DEFAULT_WAIT_POLL_MS;
+        }
+        if self.max_elements == 0 {
+            self.max_elements = DEFAULT_SNAPSHOT_MAX_ELEMENTS;
+        }
+        if self.max_depth == 0 {
+            self.max_depth = DEFAULT_SNAPSHOT_MAX_DEPTH;
+        }
+        self.timeout_ms = self.timeout_ms.min(HARD_WAIT_TIMEOUT_MS);
+        self.poll_ms = self.poll_ms.clamp(MIN_WAIT_POLL_MS, HARD_WAIT_POLL_MS);
+        self.max_elements = self.max_elements.min(HARD_SNAPSHOT_MAX_ELEMENTS);
+        self.max_depth = self.max_depth.min(HARD_SNAPSHOT_MAX_DEPTH);
+        self
+    }
+}
+
+fn default_wait_timeout_ms() -> u64 {
+    DEFAULT_WAIT_TIMEOUT_MS
+}
+
+fn default_wait_poll_ms() -> u64 {
+    DEFAULT_WAIT_POLL_MS
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlTargetQuery {
+    #[serde(default)]
+    pub app_name: Option<String>,
+    #[serde(default)]
+    pub bundle_id: Option<String>,
+    #[serde(default)]
+    pub window_title: Option<String>,
+    #[serde(default)]
+    pub element_id: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub focused: Option<bool>,
+}
+
+impl MacControlTargetQuery {
+    fn is_empty(&self) -> bool {
+        self.app_name.as_deref().is_none_or(str::is_empty)
+            && self.bundle_id.as_deref().is_none_or(str::is_empty)
+            && self.window_title.as_deref().is_none_or(str::is_empty)
+            && self.element_id.as_deref().is_none_or(str::is_empty)
+            && self.text.as_deref().is_none_or(str::is_empty)
+            && self.role.as_deref().is_none_or(str::is_empty)
+            && self.enabled.is_none()
+            && self.focused.is_none()
+    }
+
+    fn wants_element(&self) -> bool {
+        self.element_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+            || self.text.as_deref().is_some_and(|value| !value.is_empty())
+            || self.role.as_deref().is_some_and(|value| !value.is_empty())
+            || self.enabled.is_some()
+            || self.focused.is_some()
+    }
+
+    fn wants_app(&self) -> bool {
+        self.app_name
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+            || self
+                .bundle_id
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlTargetMatches {
+    pub app: Option<MacControlAppSummary>,
+    pub windows: Vec<MacControlWindowSummary>,
+    pub elements: Vec<MacControlElementSummary>,
+}
+
 pub async fn status() -> MacControlStatus {
     let Some(bridge) = available_bridge() else {
         return unsupported_status(unsupported_reason());
@@ -320,6 +445,116 @@ pub async fn snapshot(request: MacControlSnapshotRequest) -> MacControlSnapshotR
             snapshot: None,
             error: Some(error),
         },
+    }
+}
+
+pub async fn wait(request: MacControlWaitRequest) -> MacControlWaitResponse {
+    let request = request.clamped();
+    let target = request.target.clone();
+    let Some(bridge) = available_bridge() else {
+        return unsupported_wait_response(unsupported_reason(), target);
+    };
+    let system_permissions = bridge.system_permissions().await;
+    let status = status_from_system_permissions(true, true, system_permissions.clone());
+    if target.is_empty() {
+        return MacControlWaitResponse {
+            status,
+            matched: false,
+            elapsed_ms: 0,
+            attempts: 0,
+            target,
+            matches: MacControlTargetMatches::default(),
+            snapshot: None,
+            error: Some("mac_control wait requires at least one target field.".to_string()),
+        };
+    }
+    if !system_permissions.supported {
+        return MacControlWaitResponse {
+            status,
+            matched: false,
+            elapsed_ms: 0,
+            attempts: 0,
+            target,
+            matches: MacControlTargetMatches::default(),
+            snapshot: None,
+            error: Some("macOS control is unsupported in this runtime.".to_string()),
+        };
+    }
+    if !permission_granted(&system_permissions, "accessibility") {
+        return MacControlWaitResponse {
+            status,
+            matched: false,
+            elapsed_ms: 0,
+            attempts: 0,
+            target,
+            matches: MacControlTargetMatches::default(),
+            snapshot: None,
+            error: Some("mac_control wait requires Accessibility permission.".to_string()),
+        };
+    }
+
+    let started = Instant::now();
+    let timeout = Duration::from_millis(request.timeout_ms);
+    let poll = Duration::from_millis(request.poll_ms);
+    let mut attempts = 0_u32;
+    let mut last_snapshot = None;
+    let mut last_matches = MacControlTargetMatches::default();
+    let mut last_error = None;
+
+    loop {
+        attempts = attempts.saturating_add(1);
+        match bridge
+            .snapshot(MacControlSnapshotRequest {
+                include_screenshot: false,
+                max_elements: request.max_elements,
+                max_depth: request.max_depth,
+            })
+            .await
+        {
+            Ok(snapshot) => {
+                let matches = find_target_matches(&snapshot, &target);
+                let matched = target_matches(&target, &matches);
+                record_snapshot(snapshot.clone());
+                if matched {
+                    return MacControlWaitResponse {
+                        status,
+                        matched: true,
+                        elapsed_ms: elapsed_ms(started),
+                        attempts,
+                        target,
+                        matches,
+                        snapshot: Some(snapshot),
+                        error: None,
+                    };
+                }
+                last_matches = matches;
+                last_snapshot = Some(snapshot);
+            }
+            Err(error) => {
+                last_error = Some(error);
+            }
+        }
+
+        if started.elapsed() >= timeout {
+            return MacControlWaitResponse {
+                status,
+                matched: false,
+                elapsed_ms: elapsed_ms(started),
+                attempts,
+                target,
+                matches: last_matches,
+                snapshot: last_snapshot,
+                error: Some(last_error.unwrap_or_else(|| {
+                    format!(
+                        "Timed out waiting for macOS target after {} ms.",
+                        request.timeout_ms
+                    )
+                })),
+            };
+        }
+
+        let remaining = timeout.saturating_sub(started.elapsed());
+        tokio::time::sleep(poll.min(remaining)).await;
     }
 }
 
@@ -452,6 +687,22 @@ pub fn unsupported_permissions_response(message: &str) -> MacControlPermissionsR
 pub fn unsupported_snapshot_response(message: &str) -> MacControlSnapshotResponse {
     MacControlSnapshotResponse {
         status: unsupported_status(message),
+        snapshot: None,
+        error: Some(message.to_string()),
+    }
+}
+
+pub fn unsupported_wait_response(
+    message: &str,
+    target: MacControlTargetQuery,
+) -> MacControlWaitResponse {
+    MacControlWaitResponse {
+        status: unsupported_status(message),
+        matched: false,
+        elapsed_ms: 0,
+        attempts: 0,
+        target,
+        matches: MacControlTargetMatches::default(),
         snapshot: None,
         error: Some(message.to_string()),
     }
@@ -627,6 +878,156 @@ fn record_snapshot(snapshot: MacControlSnapshot) {
     }
 }
 
+pub fn cached_snapshot(snapshot_id: &str) -> Option<MacControlSnapshot> {
+    let cache = snapshot_cache().lock().ok()?;
+    cache
+        .iter()
+        .rev()
+        .find(|snapshot| snapshot.snapshot_id == snapshot_id)
+        .cloned()
+}
+
+fn find_target_matches(
+    snapshot: &MacControlSnapshot,
+    target: &MacControlTargetQuery,
+) -> MacControlTargetMatches {
+    let app_matches = snapshot
+        .frontmost_app
+        .as_ref()
+        .filter(|app| app_matches_target(app, target))
+        .cloned();
+    let windows = snapshot
+        .windows
+        .iter()
+        .filter(|window| window_matches_target(window, target))
+        .cloned()
+        .collect::<Vec<_>>();
+    let elements = snapshot
+        .elements
+        .iter()
+        .filter(|element| element_matches_target(element, target, snapshot))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    MacControlTargetMatches {
+        app: app_matches,
+        windows,
+        elements,
+    }
+}
+
+fn target_matches(target: &MacControlTargetQuery, matches: &MacControlTargetMatches) -> bool {
+    if target.wants_app() && matches.app.is_none() {
+        return false;
+    }
+    if target.wants_element() {
+        return !matches.elements.is_empty();
+    }
+    if target
+        .window_title
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        return !matches.windows.is_empty();
+    }
+    matches.app.is_some()
+}
+
+fn app_matches_target(app: &MacControlAppSummary, target: &MacControlTargetQuery) -> bool {
+    optional_contains(app.name.as_deref(), target.app_name.as_deref())
+        && optional_contains(app.bundle_id.as_deref(), target.bundle_id.as_deref())
+}
+
+fn window_matches_target(window: &MacControlWindowSummary, target: &MacControlTargetQuery) -> bool {
+    optional_contains(window.title.as_deref(), target.window_title.as_deref())
+}
+
+fn element_matches_target(
+    element: &MacControlElementSummary,
+    target: &MacControlTargetQuery,
+    snapshot: &MacControlSnapshot,
+) -> bool {
+    if !optional_eq(element.id.as_str(), target.element_id.as_deref()) {
+        return false;
+    }
+    if !optional_contains(element.role.as_deref(), target.role.as_deref()) {
+        return false;
+    }
+    if !optional_contains_any(
+        &[element.label.as_deref(), element.value.as_deref()],
+        target.text.as_deref(),
+    ) {
+        return false;
+    }
+    if target
+        .enabled
+        .is_some_and(|enabled| element.enabled != Some(enabled))
+    {
+        return false;
+    }
+    if target
+        .focused
+        .is_some_and(|focused| element.focused != focused)
+    {
+        return false;
+    }
+    if !target
+        .window_title
+        .as_deref()
+        .filter(|query| !query.is_empty())
+        .map(|query| {
+            element
+                .window_id
+                .as_deref()
+                .and_then(|window_id| {
+                    snapshot
+                        .windows
+                        .iter()
+                        .find(|window| window.id == window_id)
+                })
+                .is_some_and(|window| contains_ci(window.title.as_deref(), query))
+        })
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    true
+}
+
+fn optional_eq(actual: &str, query: Option<&str>) -> bool {
+    query
+        .filter(|query| !query.is_empty())
+        .map_or(true, |query| actual == query)
+}
+
+fn optional_contains(actual: Option<&str>, query: Option<&str>) -> bool {
+    query
+        .filter(|query| !query.is_empty())
+        .map_or(true, |query| contains_ci(actual, query))
+}
+
+fn optional_contains_any(actuals: &[Option<&str>], query: Option<&str>) -> bool {
+    query
+        .filter(|query| !query.is_empty())
+        .map_or(true, |query| {
+            actuals.iter().any(|actual| contains_ci(*actual, query))
+        })
+}
+
+fn contains_ci(actual: Option<&str>, query: &str) -> bool {
+    actual
+        .map(|actual| {
+            actual
+                .to_ascii_lowercase()
+                .contains(&query.to_ascii_lowercase())
+        })
+        .unwrap_or(false)
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 fn sanitize_media_id(media_id: &str) -> Result<String, String> {
     let sanitized = media_id
         .chars()
@@ -692,6 +1093,53 @@ mod tests {
             platform: "macos".to_string(),
             supported: true,
             items,
+        }
+    }
+
+    fn sample_snapshot() -> MacControlSnapshot {
+        MacControlSnapshot {
+            snapshot_id: "macsnap_sample".to_string(),
+            created_at: "2026-05-17T00:00:00Z".to_string(),
+            frontmost_app: Some(MacControlAppSummary {
+                pid: 42,
+                bundle_id: Some("com.apple.finder".to_string()),
+                name: Some("Finder".to_string()),
+            }),
+            displays: Vec::new(),
+            windows: vec![MacControlWindowSummary {
+                id: "win_1".to_string(),
+                app_pid: Some(42),
+                title: Some("Downloads".to_string()),
+                focused: true,
+                bounds_points: None,
+            }],
+            elements: vec![
+                MacControlElementSummary {
+                    id: "el_1".to_string(),
+                    window_id: Some("win_1".to_string()),
+                    role: Some("AXButton".to_string()),
+                    label: Some("Open".to_string()),
+                    value: None,
+                    enabled: Some(true),
+                    focused: false,
+                    bounds_points: None,
+                    actions: vec!["AXPress".to_string()],
+                },
+                MacControlElementSummary {
+                    id: "el_2".to_string(),
+                    window_id: Some("win_1".to_string()),
+                    role: Some("AXTextField".to_string()),
+                    label: None,
+                    value: Some("Search Downloads".to_string()),
+                    enabled: Some(true),
+                    focused: true,
+                    bounds_points: None,
+                    actions: Vec::new(),
+                },
+            ],
+            screenshot: None,
+            truncated: false,
+            warnings: Vec::new(),
         }
     }
 
@@ -800,6 +1248,23 @@ mod tests {
     }
 
     #[test]
+    fn wait_request_clamps_limits() {
+        let request = MacControlWaitRequest {
+            timeout_ms: 500_000,
+            poll_ms: 1,
+            max_elements: 10_000,
+            max_depth: 100,
+            ..Default::default()
+        }
+        .clamped();
+
+        assert_eq!(request.timeout_ms, HARD_WAIT_TIMEOUT_MS);
+        assert_eq!(request.poll_ms, MIN_WAIT_POLL_MS);
+        assert_eq!(request.max_elements, HARD_SNAPSHOT_MAX_ELEMENTS);
+        assert_eq!(request.max_depth, HARD_SNAPSHOT_MAX_DEPTH);
+    }
+
+    #[test]
     fn unsupported_snapshot_response_has_consistent_shape() {
         let response = unsupported_snapshot_response("no desktop bridge");
 
@@ -808,6 +1273,21 @@ mod tests {
         assert!(response.status.missing_required.is_empty());
         assert!(response.snapshot.is_none());
         assert_eq!(response.error.as_deref(), Some("no desktop bridge"));
+    }
+
+    #[test]
+    fn unsupported_wait_response_has_consistent_shape() {
+        let target = MacControlTargetQuery {
+            app_name: Some("Finder".to_string()),
+            ..Default::default()
+        };
+        let response = unsupported_wait_response("no wait bridge", target);
+
+        assert_eq!(response.status.readiness, MacControlReadiness::Unsupported);
+        assert!(!response.status.supported);
+        assert!(!response.matched);
+        assert!(response.snapshot.is_none());
+        assert_eq!(response.error.as_deref(), Some("no wait bridge"));
     }
 
     #[test]
@@ -843,5 +1323,45 @@ mod tests {
             cache.back().map(|snapshot| snapshot.snapshot_id.as_str()),
             Some("macsnap_test_21")
         );
+    }
+
+    #[test]
+    fn target_query_matches_combined_app_window_and_element_filters() {
+        let snapshot = sample_snapshot();
+        let target = MacControlTargetQuery {
+            app_name: Some("find".to_string()),
+            window_title: Some("down".to_string()),
+            text: Some("open".to_string()),
+            role: Some("button".to_string()),
+            enabled: Some(true),
+            ..Default::default()
+        };
+
+        let matches = find_target_matches(&snapshot, &target);
+
+        assert!(target_matches(&target, &matches));
+        assert_eq!(
+            matches.app.as_ref().and_then(|app| app.name.as_deref()),
+            Some("Finder")
+        );
+        assert_eq!(matches.windows.len(), 1);
+        assert_eq!(matches.elements.len(), 1);
+        assert_eq!(matches.elements[0].id, "el_1");
+    }
+
+    #[test]
+    fn target_query_requires_app_filter_even_when_element_matches() {
+        let snapshot = sample_snapshot();
+        let target = MacControlTargetQuery {
+            app_name: Some("Safari".to_string()),
+            text: Some("open".to_string()),
+            ..Default::default()
+        };
+
+        let matches = find_target_matches(&snapshot, &target);
+
+        assert!(!target_matches(&target, &matches));
+        assert!(matches.app.is_none());
+        assert_eq!(matches.elements.len(), 1);
     }
 }

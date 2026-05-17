@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect Hope Agent's native macOS desktop-control readiness and capture a read-only Accessibility snapshot. Phase 2B supports `status`, `permissions`, and `snapshot`; `snapshot.includeScreenshot=true` stores a primary-display JPEG and mirrors it in the right panel. Clicks, typing, windows, apps, and menus are intentionally unavailable until later phases.".into(),
+            description: "Inspect Hope Agent's native macOS desktop-control readiness, capture read-only Accessibility snapshots, and wait for a desktop target to appear. Phase 2C supports `status`, `permissions`, `snapshot`, and read-only `wait`; `snapshot.includeScreenshot=true` stores a primary-display JPEG and mirrors it in the right panel. Clicks, typing, windows, apps, and menus are intentionally unavailable until later phases.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -734,8 +734,8 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["status", "permissions", "snapshot"],
-                        "description": "`status` returns bridge/platform/readiness summary. `permissions` also includes the underlying macOS system permissions response. `snapshot` returns a read-only frontmost-app/window/AX element summary and can include a stored screenshot summary."
+                        "enum": ["status", "permissions", "snapshot", "wait"],
+                        "description": "`status` returns bridge/platform/readiness summary. `permissions` also includes the underlying macOS system permissions response. `snapshot` returns a read-only frontmost-app/window/AX element summary and can include a stored screenshot summary. `wait` polls read-only AX snapshots until a target query matches or times out."
                     },
                     "includeScreenshot": {
                         "type": "boolean",
@@ -751,7 +751,58 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 16,
-                        "description": "Maximum AX tree traversal depth for snapshot. Defaults to 8 and is hard-capped at 16."
+                        "description": "Maximum AX tree traversal depth for `snapshot` or `wait`. Defaults to 8 and is hard-capped at 16."
+                    },
+                    "timeoutMs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 60000,
+                        "description": "For `wait`: total polling timeout in milliseconds. Defaults to 10000 and is hard-capped at 60000."
+                    },
+                    "pollMs": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 5000,
+                        "description": "For `wait`: polling interval in milliseconds. Defaults to 500 and is clamped to 100..5000."
+                    },
+                    "target": {
+                        "type": "object",
+                        "description": "For `wait`: target query. App/window filters combine with element filters when provided.",
+                        "properties": {
+                            "appName": {
+                                "type": "string",
+                                "description": "Case-insensitive substring match against the frontmost app name."
+                            },
+                            "bundleId": {
+                                "type": "string",
+                                "description": "Case-insensitive substring match against the frontmost app bundle id when available."
+                            },
+                            "windowTitle": {
+                                "type": "string",
+                                "description": "Case-insensitive substring match against window title. When element filters are present, restricts matching elements to that window."
+                            },
+                            "elementId": {
+                                "type": "string",
+                                "description": "Exact element id match within the freshly captured snapshot."
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "Case-insensitive substring match against element label or value."
+                            },
+                            "role": {
+                                "type": "string",
+                                "description": "Case-insensitive substring match against AX role, for example AXButton or text."
+                            },
+                            "enabled": {
+                                "type": "boolean",
+                                "description": "Require an enabled/disabled element state."
+                            },
+                            "focused": {
+                                "type": "boolean",
+                                "description": "Require focused/unfocused element state."
+                            }
+                        },
+                        "additionalProperties": false
                     }
                 },
                 "required": ["action"],

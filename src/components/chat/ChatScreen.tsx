@@ -1798,7 +1798,8 @@ export default function ChatScreen({
           )}
 
           {/* Mac Control live-mirror panel — open on first `mac_control:frame`
-              push. The panel is read-only in Phase 2B. */}
+              push. The panel remains read-only while `wait`/target matching
+              lands in Phase 2C. */}
           {showMacControlPanel && (
             <MacControlPanel
               panelWidth={macControlPanelWidth}
