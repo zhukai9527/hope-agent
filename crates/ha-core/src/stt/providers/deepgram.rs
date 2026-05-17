@@ -42,7 +42,7 @@ pub async fn open_stream(
     model: &SttModelConfig,
     profile: &AuthProfile,
     options: &TranscriptOptions,
-) -> SttResult<DeepgramStream> {
+) -> SttResult<super::SttStream> {
     let base = provider.resolve_base_url(profile).trim_end_matches('/');
     let mut url = format!("{}/v1/listen?model={}&interim_results=true", base, model.id);
     if let Some(lang) = &options.language {
@@ -160,12 +160,7 @@ pub async fn open_stream(
         }
     });
 
-    Ok(DeepgramStream { audio_tx, delta_rx })
-}
-
-pub struct DeepgramStream {
-    pub audio_tx: mpsc::Sender<Vec<u8>>,
-    pub delta_rx: mpsc::Receiver<Result<TranscriptDelta, SttError>>,
+    Ok(super::SttStream { audio_tx, delta_rx })
 }
 
 fn parse_message(session_id: &str, raw: &str) -> Option<TranscriptDelta> {

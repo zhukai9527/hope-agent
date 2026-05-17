@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::engine::resolve_active;
 use super::errors::{SttError, SttResult};
-use super::providers::deepgram;
+use super::providers::{assemblyai, azure, deepgram, volcengine, xunfei};
 use super::types::{
     ActiveSttModel, SttProviderKind, Transcript, TranscriptDelta, TranscriptOptions,
 };
@@ -102,22 +102,33 @@ impl SttSessionManager {
         let (provider, model, profile) =
             resolve_active(&cfg, &active).ok_or_else(|| SttError::NotFound(active.to_string()))?;
 
-        // Phase 2 only wires Deepgram's streaming path. Everything else
-        // falls through to a hard error so the caller can fall back to
-        // the batch `stt_transcribe_blob` route or surface a useful
-        // "streaming not supported" message.
-        if !matches!(provider.kind, SttProviderKind::DeepgramWs) {
-            return Err(SttError::Other(format!(
-                "Streaming transcription for {:?} is not implemented yet (try the batch endpoint)",
-                provider.kind
-            )));
-        }
-
         let session_id = format!("stt_{}", uuid::Uuid::new_v4().simple());
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (final_tx, final_rx) = oneshot::channel();
 
-        let stream = deepgram::open_stream(&provider, &model, &profile, &options).await?;
+        let stream = match provider.kind {
+            SttProviderKind::DeepgramWs => {
+                deepgram::open_stream(&provider, &model, &profile, &options).await?
+            }
+            SttProviderKind::AssemblyaiWs => {
+                assemblyai::open_stream(&provider, &model, &profile, &options).await?
+            }
+            SttProviderKind::AzureWs => {
+                azure::open_stream(&provider, &model, &profile, &options).await?
+            }
+            SttProviderKind::VolcengineWs => {
+                volcengine::open_stream(&provider, &model, &profile, &options).await?
+            }
+            SttProviderKind::XunfeiWs => {
+                xunfei::open_stream(&provider, &model, &profile, &options).await?
+            }
+            SttProviderKind::OpenaiTranscriptions | SttProviderKind::OpenaiCompatible => {
+                return Err(SttError::Other(format!(
+                    "Streaming transcription for {:?} requires a streaming-capable provider (use the batch endpoint)",
+                    provider.kind
+                )));
+            }
+        };
         let audio_tx = stream.audio_tx;
         let delta_rx = stream.delta_rx;
 
