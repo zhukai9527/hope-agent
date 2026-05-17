@@ -17,6 +17,7 @@ mod pruning;
 pub(crate) mod recovery;
 pub(crate) mod round_grouping;
 mod summarization;
+mod task_notification;
 mod truncation;
 mod types;
 
@@ -89,6 +90,7 @@ MUST PRESERVE:
 - Decisions made and their rationale
 - TODOs, open questions, and constraints
 - Any commitments or follow-ups promised
+- Async job references, preserving task-id, tool-use-id, tool, status, output-file, error, and summary exactly
 
 PRIORITIZE recent context over older history."#;
 
