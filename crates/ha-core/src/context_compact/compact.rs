@@ -8,6 +8,9 @@ use super::estimation::{
     is_tool_result, is_user_message, set_tool_result_text,
 };
 use super::pruning::prune_old_context;
+use super::task_notification::{
+    collect_async_job_references_from_messages, render_async_job_reference_section,
+};
 use super::truncation::truncate_tool_results;
 use super::types::{CompactDetails, CompactResult};
 use serde_json::Value;
@@ -178,8 +181,19 @@ pub fn emergency_compact(messages: &mut Vec<Value>, config: &CompactConfig) -> C
     keep_from = super::round_grouping::find_round_safe_boundary_forward(messages, keep_from);
 
     if keep_from > 0 && keep_from < messages.len() {
+        let async_refs = collect_async_job_references_from_messages(&messages[..keep_from]);
         let removed = keep_from;
         messages.drain(..keep_from);
+        let reference_section = render_async_job_reference_section(&async_refs);
+        if !reference_section.is_empty() {
+            messages.insert(
+                0,
+                serde_json::json!({
+                    "role": "user",
+                    "content": format!("[Previous conversation summary]\n{}", reference_section)
+                }),
+            );
+        }
         affected += removed;
     }
 
@@ -341,5 +355,42 @@ pub fn compact_if_needed(
         messages_affected: 0,
         description: "no_action_needed".to_string(),
         details: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn emergency_compact_preserves_async_job_references_from_removed_history() {
+        let config = CompactConfig {
+            preserve_recent_turns: 2,
+            ..CompactConfig::default()
+        };
+        let mut messages = vec![
+            json!({
+                "role": "user",
+                "content": "<task-notification>\n<task-id>job_old</task-id>\n<tool>exec</tool>\n<status>completed</status>\n<output-file>/tmp/out.txt</output-file>\n</task-notification>"
+            }),
+            json!({"role": "assistant", "content": "noted"}),
+            json!({"role": "user", "content": "recent 1"}),
+            json!({"role": "assistant", "content": "ok"}),
+            json!({"role": "user", "content": "recent 2"}),
+        ];
+
+        emergency_compact(&mut messages, &config);
+
+        let joined = messages
+            .iter()
+            .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("<async-job-reference>"));
+        assert!(joined.contains("<task-id>job_old</task-id>"));
+        assert!(joined.contains("<output-file>/tmp/out.txt</output-file>"));
+        assert!(joined.contains("recent 1"));
+        assert!(joined.contains("recent 2"));
     }
 }

@@ -2,10 +2,14 @@
 
 use super::config::CompactConfig;
 use super::estimation::{estimate_tokens, get_tool_result_text, is_tool_result, is_user_message};
+use super::task_notification::{
+    build_summary_with_async_job_references, collect_async_job_references_from_message,
+    collect_async_job_references_from_messages, render_async_job_reference_section,
+    text_without_async_job_references,
+};
 use super::types::SummarizationSplit;
 use super::{
     BASE_CHUNK_RATIO, IDENTIFIER_PRESERVATION_INSTRUCTIONS, MIN_CHUNK_RATIO, SAFETY_MARGIN,
-    SUMMARY_TRUNCATED_MARKER,
 };
 use serde_json::Value;
 
@@ -22,6 +26,7 @@ MUST PRESERVE:
 - TODOs, open questions, and constraints
 - Any commitments or follow-ups promised
 - All file paths, function names, and code references mentioned
+- Async job notification references, preserving task-id, tool-use-id, tool, status, output-file, error, and summary exactly
 
 PRIORITIZE recent context over older history. The agent needs to know what it was doing, not just what was discussed.
 
@@ -99,6 +104,13 @@ pub fn build_summarization_prompt(
     // Serialize messages in a readable format
     for msg in messages_to_summarize {
         let msg_type = msg.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let async_refs = collect_async_job_references_from_message(msg);
+        let has_async_refs = !async_refs.is_empty();
+        if has_async_refs {
+            prompt.push_str("[async_job_reference]:");
+            prompt.push_str(&render_async_job_reference_section(&async_refs));
+            prompt.push('\n');
+        }
 
         // Skip encrypted reasoning items (not human-readable)
         if msg_type == "reasoning" {
@@ -127,14 +139,18 @@ pub fn build_summarization_prompt(
         // Responses API function_call_output → readable tool result
         if msg_type == "function_call_output" {
             let output = msg.get("output").and_then(|o| o.as_str()).unwrap_or("");
+            let output = prompt_text_without_async_refs(output, has_async_refs);
+            if output.trim().is_empty() {
+                continue;
+            }
             let preview = if output.len() > 500 {
                 format!(
                     "{}... [{}+ chars]",
-                    crate::truncate_utf8(output, 500),
+                    crate::truncate_utf8(&output, 500),
                     output.len()
                 )
             } else {
-                output.to_string()
+                output
             };
             prompt.push_str(&format!("[tool_result]: {}\n", preview));
             continue;
@@ -147,6 +163,10 @@ pub fn build_summarization_prompt(
 
         if is_tool_result(msg) {
             if let Some(text) = get_tool_result_text(msg) {
+                let text = prompt_text_without_async_refs(&text, has_async_refs);
+                if text.trim().is_empty() {
+                    continue;
+                }
                 let preview = if text.len() > 500 {
                     format!(
                         "{}... [{}+ chars]",
@@ -164,14 +184,14 @@ pub fn build_summarization_prompt(
                 for part in parts {
                     if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            prompt.push_str(&format!("[{}]: {}\n", role, text));
+                            push_role_text(&mut prompt, role, text, has_async_refs);
                         }
                     }
                 }
             }
         } else if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
             // Simple string content (Chat Completions / Anthropic simple format)
-            prompt.push_str(&format!("[{}]: {}\n", role, content));
+            push_role_text(&mut prompt, role, content, has_async_refs);
         } else if let Some(content_arr) = msg.get("content").and_then(|c| c.as_array()) {
             // Array content (Anthropic format with thinking + text blocks)
             for block in content_arr {
@@ -179,7 +199,7 @@ pub fn build_summarization_prompt(
                 match block_type {
                     "text" => {
                         if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                            prompt.push_str(&format!("[{}]: {}\n", role, text));
+                            push_role_text(&mut prompt, role, text, has_async_refs);
                         }
                     }
                     "thinking" => {
@@ -233,6 +253,21 @@ pub fn build_summarization_prompt(
     prompt
 }
 
+fn push_role_text(prompt: &mut String, role: &str, text: &str, strip_async_refs: bool) {
+    let text = prompt_text_without_async_refs(text, strip_async_refs);
+    if !text.trim().is_empty() {
+        prompt.push_str(&format!("[{}]: {}\n", role, text));
+    }
+}
+
+fn prompt_text_without_async_refs(text: &str, strip_async_refs: bool) -> String {
+    if strip_async_refs {
+        text_without_async_job_references(text).trim().to_string()
+    } else {
+        text.to_string()
+    }
+}
+
 /// Apply a summary: replace old messages with a summary message + preserved messages.
 pub fn apply_summary(
     messages: &mut Vec<Value>,
@@ -242,16 +277,13 @@ pub fn apply_summary(
 ) {
     // Cap summary length (configurable, clamped to 4000–64000)
     let max_summary_chars = config.max_compaction_summary_chars.clamp(4_000, 64_000);
-    let capped_summary = if summary.len() > max_summary_chars {
-        let budget = max_summary_chars.saturating_sub(SUMMARY_TRUNCATED_MARKER.len());
-        format!(
-            "{}{}",
-            crate::truncate_utf8(summary, budget),
-            SUMMARY_TRUNCATED_MARKER
-        )
+    let async_refs = if preserved_start_index <= messages.len() {
+        collect_async_job_references_from_messages(&messages[..preserved_start_index])
     } else {
-        summary.to_string()
+        Vec::new()
     };
+    let capped_summary =
+        build_summary_with_async_job_references(summary, &async_refs, max_summary_chars);
 
     // Build summary message
     let summary_msg = serde_json::json!({
@@ -335,4 +367,61 @@ pub fn split_messages_by_token_share(messages: &[Value], parts: usize) -> Vec<Ve
     }
 
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn summarization_prompt_canonicalizes_task_notifications() {
+        let config = CompactConfig::default();
+        let messages = vec![json!({
+            "role": "user",
+            "content": "<task-notification>\n<task-id>job_123</task-id>\n<tool-use-id>call_123</tool-use-id>\n<tool>exec</tool>\n<status>completed</status>\n<output-file>/tmp/output.txt</output-file>\n<output-preview>large content that should not be copied</output-preview>\n<summary>done</summary>\n</task-notification>"
+        })];
+
+        let prompt = build_summarization_prompt(&messages, None, &config);
+        assert!(prompt.contains("[async_job_reference]:"));
+        assert!(prompt.contains("<task-id>job_123</task-id>"));
+        assert!(prompt.contains("<output-file>/tmp/output.txt</output-file>"));
+        assert!(!prompt.contains("large content that should not be copied"));
+    }
+
+    #[test]
+    fn summarization_prompt_preserves_summary_body_with_async_references() {
+        let config = CompactConfig::default();
+        let messages = vec![json!({
+            "role": "user",
+            "content": "[Previous conversation summary]\n\n## Decisions\n- Store async outputs on disk.\n\n## Async job references\n<async-job-reference>\n<task-id>job_123</task-id>\n<tool>exec</tool>\n<status>completed</status>\n<output-file>/tmp/output.txt</output-file>\n</async-job-reference>"
+        })];
+
+        let prompt = build_summarization_prompt(&messages, None, &config);
+        assert!(prompt.contains("[async_job_reference]:"));
+        assert!(prompt.contains("<task-id>job_123</task-id>"));
+        assert!(prompt.contains("[user]: [Previous conversation summary]"));
+        assert!(prompt.contains("- Store async outputs on disk."));
+    }
+
+    #[test]
+    fn apply_summary_preserves_async_job_reference_when_model_omits_it() {
+        let config = CompactConfig::default();
+        let mut messages = vec![
+            json!({
+                "role": "user",
+                "content": "<task-notification>\n<task-id>job_keep</task-id>\n<tool>exec</tool>\n<status>completed</status>\n<output-file>/tmp/result.txt</output-file>\n<summary>done</summary>\n</task-notification>"
+            }),
+            json!({"role": "user", "content": "recent"}),
+        ];
+
+        apply_summary(&mut messages, "Old discussion.", 1, &config);
+
+        let summary = messages[0]["content"].as_str().unwrap();
+        assert!(summary.contains("Old discussion."));
+        assert!(summary.contains("<async-job-reference>"));
+        assert!(summary.contains("<task-id>job_keep</task-id>"));
+        assert!(summary.contains("<output-file>/tmp/result.txt</output-file>"));
+        assert_eq!(messages[1]["content"].as_str(), Some("recent"));
+    }
 }
