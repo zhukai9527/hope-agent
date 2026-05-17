@@ -21,9 +21,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 use crate::provider::AuthProfile;
 use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
-use crate::stt::types::{
-    SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions,
-};
+use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
 
 /// WS frame caps matching the MCP / Deepgram client conventions.
 const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -122,9 +120,7 @@ pub async fn open_stream(
                 Ok(Message::Close(_)) => break,
                 Err(e) => {
                     let _ = delta_tx
-                        .send(Err(SttError::Network(format!(
-                            "AssemblyAI WS recv: {e}"
-                        ))))
+                        .send(Err(SttError::Network(format!("AssemblyAI WS recv: {e}"))))
                         .await;
                     break;
                 }

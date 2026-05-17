@@ -123,6 +123,7 @@ const KIND_OPTIONS: { value: SttProviderKind; label: string }[] = [
   { value: "assemblyai-ws", label: "AssemblyAI (WS)" },
   { value: "azure-ws", label: "Azure Speech (WS)" },
   { value: "xunfei-ws", label: "iFlytek IAT (WS)" },
+  { value: "volcengine-ws", label: "Volcengine / Doubao (WS)" },
 ]
 
 const blankProvider = (): SttProviderConfig => ({

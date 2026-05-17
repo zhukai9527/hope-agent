@@ -37,9 +37,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 use crate::provider::AuthProfile;
 use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
-use crate::stt::types::{
-    SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions,
-};
+use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
 
 const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
@@ -60,9 +58,7 @@ pub async fn open_stream(
     let app_id = provider
         .extra
         .get("app_id")
-        .ok_or_else(|| {
-            SttError::Other("iFlytek provider requires `extra.app_id` (APPID)".into())
-        })?
+        .ok_or_else(|| SttError::Other("iFlytek provider requires `extra.app_id` (APPID)".into()))?
         .clone();
 
     let base = provider.resolve_base_url(profile).trim_end_matches('/');
@@ -200,21 +196,20 @@ fn build_signed_url(
         .ok_or_else(|| SttError::Other("iFlytek base URL is missing host".into()))?;
     let date = http_date_rfc1123();
 
-    let signature_origin = format!(
-        "host: {}\ndate: {}\nGET {} HTTP/1.1",
-        host, date, path
-    );
+    let signature_origin = format!("host: {}\ndate: {}\nGET {} HTTP/1.1", host, date, path);
     type HmacSha256 = Hmac<Sha256>;
     let mut mac = HmacSha256::new_from_slice(api_secret.as_bytes())
         .map_err(|e| SttError::Auth(format!("HMAC keying failed: {e}")))?;
     mac.update(signature_origin.as_bytes());
-    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let signature_b64 =
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
     let authorization_origin = format!(
         "api_key=\"{}\", algorithm=\"hmac-sha256\", headers=\"host date request-line\", signature=\"{}\"",
         api_key, signature_b64
     );
-    let authorization = base64::engine::general_purpose::STANDARD.encode(authorization_origin.as_bytes());
+    let authorization =
+        base64::engine::general_purpose::STANDARD.encode(authorization_origin.as_bytes());
 
     Ok(format!(
         "{}{}?authorization={}&date={}&host={}",
@@ -329,8 +324,8 @@ fn parse_message(session_id: &str, raw: &str, acc: &mut String) -> Option<Transc
 }
 
 fn ws_to_https_twin(url: &str) -> SttResult<String> {
-    let mut parsed = url::Url::parse(url)
-        .map_err(|e| SttError::Other(format!("Invalid iFlytek URL: {e}")))?;
+    let mut parsed =
+        url::Url::parse(url).map_err(|e| SttError::Other(format!("Invalid iFlytek URL: {e}")))?;
     let new_scheme = match parsed.scheme() {
         "wss" => Some("https"),
         "ws" => Some("http"),
@@ -365,13 +360,8 @@ mod tests {
 
     #[test]
     fn build_signed_url_contains_required_params() {
-        let url = build_signed_url(
-            "wss://iat-api.xfyun.cn",
-            "/v2/iat",
-            "key123",
-            "secret456",
-        )
-        .unwrap();
+        let url =
+            build_signed_url("wss://iat-api.xfyun.cn", "/v2/iat", "key123", "secret456").unwrap();
         assert!(url.starts_with("wss://iat-api.xfyun.cn/v2/iat?"));
         assert!(url.contains("authorization="));
         assert!(url.contains("date="));
@@ -381,10 +371,12 @@ mod tests {
     #[test]
     fn parse_append_accumulates_partials() {
         let mut acc = String::new();
-        let frame = r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"你"}]}],"pgs":"apd"}}}"#;
+        let frame =
+            r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"你"}]}],"pgs":"apd"}}}"#;
         let d = parse_message("s", frame, &mut acc).unwrap();
         assert_eq!(d.text, "你");
-        let frame2 = r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"好"}]}],"pgs":"apd"}}}"#;
+        let frame2 =
+            r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"好"}]}],"pgs":"apd"}}}"#;
         let d2 = parse_message("s", frame2, &mut acc).unwrap();
         assert_eq!(d2.text, "你好");
         assert!(!d2.is_final);
@@ -393,7 +385,8 @@ mod tests {
     #[test]
     fn parse_replace_resets_accumulator() {
         let mut acc = String::from("旧");
-        let frame = r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"新"}]}],"pgs":"rpl"}}}"#;
+        let frame =
+            r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"新"}]}],"pgs":"rpl"}}}"#;
         let d = parse_message("s", frame, &mut acc).unwrap();
         assert_eq!(d.text, "新");
         assert_eq!(acc, "新");

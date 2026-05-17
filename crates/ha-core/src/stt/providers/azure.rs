@@ -33,9 +33,7 @@ use uuid::Uuid;
 use crate::provider::AuthProfile;
 use crate::security::ssrf::{check_url, SsrfPolicy};
 use crate::stt::errors::{SttError, SttResult};
-use crate::stt::types::{
-    SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions,
-};
+use crate::stt::types::{SttModelConfig, SttProviderConfig, TranscriptDelta, TranscriptOptions};
 
 const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WS_FRAME_BYTES: usize = 1024 * 1024;
@@ -150,9 +148,7 @@ pub async fn open_stream(
                 Ok(Message::Close(_)) => break,
                 Err(e) => {
                     let _ = delta_tx
-                        .send(Err(SttError::Network(format!(
-                            "Azure Speech WS recv: {e}"
-                        ))))
+                        .send(Err(SttError::Network(format!("Azure Speech WS recv: {e}"))))
                         .await;
                     break;
                 }
@@ -169,8 +165,7 @@ fn iso8601_now() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     // Minimal RFC3339 / ISO8601 — Azure accepts seconds precision.
-    let datetime = chrono_like_iso(secs);
-    datetime
+    chrono_like_iso(secs)
 }
 
 /// Tiny ISO-8601 formatter (`YYYY-MM-DDTHH:MM:SSZ`) so we don't pull
@@ -193,7 +188,10 @@ fn chrono_like_iso(secs: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y_civil = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y_civil, m, d, hh, mm, ss)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y_civil, m, d, hh, mm, ss
+    )
 }
 
 fn build_text_frame(path: &str, request_id: &str, body: &str) -> String {
@@ -281,7 +279,10 @@ fn parse_text_frame(
         session_id: session_id.to_string(),
         text: text.to_string(),
         is_final,
-        start_ms: value.get("Offset").and_then(|v| v.as_u64()).map(|t| t / 10_000),
+        start_ms: value
+            .get("Offset")
+            .and_then(|v| v.as_u64())
+            .map(|t| t / 10_000),
         end_ms: value
             .get("Offset")
             .and_then(|v| v.as_u64())
