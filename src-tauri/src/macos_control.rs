@@ -21,10 +21,12 @@ mod imp {
         MacControlSnapshot, MacControlSnapshotRequest, MacControlWindowSummary,
     };
     use image::codecs::jpeg::JpegEncoder;
+    use objc2::rc::Retained;
     use objc2_app_kit::{
         NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication,
         NSWorkspace,
     };
+    use objc2_foundation::NSString;
     use xcap::Monitor;
 
     struct TauriMacControlBridge;
@@ -254,23 +256,49 @@ mod imp {
             .as_deref()
             .map(running_app_summary);
         let running = workspace.runningApplications().to_vec();
-        let mut apps = running
+        let mut all_apps = running
             .iter()
             .map(|app| running_app_summary(app))
+            .collect::<Vec<_>>();
+        if let Some(frontmost) = frontmost.clone() {
+            merge_running_app_summary(&mut all_apps, frontmost);
+        }
+        if let Some(bundle_id) = request
+            .bundle_id
+            .as_deref()
+            .filter(|bundle_id| !bundle_id.is_empty())
+        {
+            for app in running_apps_with_bundle_id(bundle_id) {
+                merge_running_app_summary(&mut all_apps, running_app_summary(&app));
+            }
+        }
+
+        if all_apps.len() <= 1
+            || (request.op == MacControlAppsOp::Activate
+                && !all_apps
+                    .iter()
+                    .any(|app| app_matches_request(app, &request)))
+        {
+            for app in fallback_running_app_summaries() {
+                merge_running_app_summary(&mut all_apps, app);
+            }
+        }
+
+        let mut apps = all_apps
+            .iter()
             .filter(|app| app_matches_request(app, &request))
             .take(request.limit)
+            .cloned()
             .collect::<Vec<_>>();
 
         let activated = if request.op == MacControlAppsOp::Activate {
-            let app = running
-                .iter()
-                .find(|app| app_matches_request(&running_app_summary(app), &request))
+            let app = find_running_app_for_request(&request, &running, &all_apps)
                 .ok_or_else(|| "No running macOS app matched the activate request.".to_string())?;
             let ok = app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
             if !ok {
                 return Err("macOS refused the app activation request.".to_string());
             }
-            let summary = running_app_summary(app);
+            let summary = running_app_summary(&app);
             if apps.iter().all(|item| item.pid != summary.pid) {
                 apps.insert(0, summary.clone());
             }
@@ -298,6 +326,72 @@ mod imp {
             return false;
         }
         true
+    }
+
+    fn find_running_app_for_request(
+        request: &MacControlAppsRequest,
+        running: &[Retained<NSRunningApplication>],
+        candidates: &[MacControlRunningApp],
+    ) -> Option<Retained<NSRunningApplication>> {
+        if let Some(pid) = request.pid {
+            return NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
+        }
+
+        if let Some(bundle_id) = request
+            .bundle_id
+            .as_deref()
+            .filter(|bundle_id| !bundle_id.is_empty())
+        {
+            if let Some(app) = running_apps_with_bundle_id(bundle_id)
+                .iter()
+                .find(|app| app_matches_request(&running_app_summary(app), request))
+            {
+                return Some(app.clone());
+            }
+        }
+
+        if let Some(app) = running
+            .iter()
+            .find(|app| app_matches_request(&running_app_summary(app), request))
+        {
+            return Some(app.clone());
+        }
+
+        candidates
+            .iter()
+            .find(|app| app_matches_request(app, request))
+            .and_then(|app| NSRunningApplication::runningApplicationWithProcessIdentifier(app.pid))
+    }
+
+    fn running_apps_with_bundle_id(bundle_id: &str) -> Vec<Retained<NSRunningApplication>> {
+        let bundle_id = NSString::from_str(bundle_id);
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id).to_vec()
+    }
+
+    fn fallback_running_app_summaries() -> Vec<MacControlRunningApp> {
+        let mut system = sysinfo::System::new();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
+
+        let mut apps = Vec::new();
+        for process in system.processes().values() {
+            let pid = process.pid().as_u32();
+            if pid > i32::MAX as u32 {
+                continue;
+            }
+            if let Some(app) =
+                NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32)
+            {
+                merge_running_app_summary(&mut apps, running_app_summary(&app));
+            }
+        }
+        apps
+    }
+
+    fn merge_running_app_summary(apps: &mut Vec<MacControlRunningApp>, app: MacControlRunningApp) {
+        if apps.iter().any(|existing| existing.pid == app.pid) {
+            return;
+        }
+        apps.push(app);
     }
 
     fn running_app_summary(app: &NSRunningApplication) -> MacControlRunningApp {
