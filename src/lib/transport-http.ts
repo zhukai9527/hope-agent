@@ -552,6 +552,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_smart_mode_config:           { method: "GET",    path: "/api/permission/smart" },
   set_smart_mode_config:           { method: "POST",   path: "/api/permission/smart" },
   get_global_yolo_status:          { method: "GET",    path: "/api/permission/global-yolo" },
+  mac_control_status:              { method: "GET",    path: "/api/mac-control/status" },
+  mac_control_permissions:         { method: "GET",    path: "/api/mac-control/permissions" },
   get_tool_result_disk_threshold:  { method: "GET",    path: "/api/config/tool-result-threshold" },
   set_tool_result_disk_threshold:  { method: "POST",   path: "/api/config/tool-result-threshold" },
   get_tool_limits:                 { method: "GET",    path: "/api/config/tool-limits" },

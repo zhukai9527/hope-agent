@@ -3284,6 +3284,23 @@
     "permUnknown": "Проверить вручную",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "Требуется: {{items}}",
+      "messages": {
+        "blocked": "Для управления macOS нужны разрешения Универсального доступа и Записи экрана.",
+        "limited": "Базовое управление macOS готово; дополнительные разрешения еще ожидают подтверждения.",
+        "ready": "Управление macOS готово.",
+        "unsupported": "Управление macOS недоступно в этой среде выполнения."
+      },
+      "optionalPending": "Дополнительно ожидает: {{items}}",
+      "readiness": {
+        "blocked": "Заблокировано",
+        "limited": "Основное готово",
+        "ready": "Готово",
+        "unsupported": "Не поддерживается"
+      },
+      "title": "Управление Mac"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

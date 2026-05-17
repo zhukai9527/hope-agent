@@ -3284,6 +3284,23 @@
     "permUnknown": "Manuel doğrula",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "Gerekli: {{items}}",
+      "messages": {
+        "blocked": "macOS kontrolü için Erişilebilirlik ve Ekran Kaydı izinleri gerekir.",
+        "limited": "Temel macOS kontrolü hazır; isteğe bağlı izinler hâlâ bekliyor.",
+        "ready": "macOS kontrolü hazır.",
+        "unsupported": "macOS kontrolü bu çalışma ortamında kullanılamaz."
+      },
+      "optionalPending": "İsteğe bağlı bekliyor: {{items}}",
+      "readiness": {
+        "blocked": "Engellendi",
+        "limited": "Temel hazır",
+        "ready": "Hazır",
+        "unsupported": "Desteklenmiyor"
+      },
+      "title": "Mac Kontrolü"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

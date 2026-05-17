@@ -3284,6 +3284,23 @@
     "permUnknown": "수동 확인",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "필요: {{items}}",
+      "messages": {
+        "blocked": "macOS 제어에는 손쉬운 사용 및 화면 기록 권한이 필요합니다.",
+        "limited": "핵심 macOS 제어는 준비되었지만 선택 권한이 아직 대기 중입니다.",
+        "ready": "macOS 제어가 준비되었습니다.",
+        "unsupported": "현재 실행 환경에서는 macOS 제어를 사용할 수 없습니다."
+      },
+      "optionalPending": "선택 권한 대기 중: {{items}}",
+      "readiness": {
+        "blocked": "차단됨",
+        "limited": "핵심 준비됨",
+        "ready": "준비됨",
+        "unsupported": "지원 안 함"
+      },
+      "title": "Mac 제어"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

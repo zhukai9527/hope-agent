@@ -3284,6 +3284,23 @@
     "permUnknown": "手動で確認",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "必要: {{items}}",
+      "messages": {
+        "blocked": "macOS 制御にはアクセシビリティと画面収録の権限が必要です。",
+        "limited": "macOS 制御のコア機能は準備完了です。任意の権限がまだ未確認です。",
+        "ready": "macOS 制御は準備完了です。",
+        "unsupported": "この実行環境では macOS 制御を利用できません。"
+      },
+      "optionalPending": "任意項目が未確認: {{items}}",
+      "readiness": {
+        "blocked": "ブロック中",
+        "limited": "コア準備完了",
+        "ready": "準備完了",
+        "unsupported": "未対応"
+      },
+      "title": "Mac 制御"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

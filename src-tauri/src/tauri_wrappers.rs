@@ -30,6 +30,18 @@ pub async fn request_system_permission(id: String) -> ha_core::permissions::Syst
     ha_core::permissions::request_system_permission(id).await
 }
 
+// ── macOS Control ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn mac_control_status() -> ha_core::mac_control::MacControlStatus {
+    ha_core::mac_control::status().await
+}
+
+#[tauri::command]
+pub async fn mac_control_permissions() -> ha_core::mac_control::MacControlPermissionsResponse {
+    ha_core::mac_control::permissions().await
+}
+
 // ── Sandbox ──────────────────────────────────────────────────────
 
 #[tauri::command]

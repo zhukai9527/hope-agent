@@ -3284,6 +3284,23 @@
     "permUnknown": "Sahkan secara manual",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "Diperlukan: {{items}}",
+      "messages": {
+        "blocked": "Kawalan macOS memerlukan kebenaran Kebolehcapaian dan Rakaman Skrin.",
+        "limited": "Kawalan macOS teras sudah sedia; kebenaran pilihan masih belum selesai.",
+        "ready": "Kawalan macOS sudah sedia.",
+        "unsupported": "Kawalan macOS tidak tersedia dalam persekitaran masa jalan ini."
+      },
+      "optionalPending": "Pilihan belum selesai: {{items}}",
+      "readiness": {
+        "blocked": "Disekat",
+        "limited": "Teras sedia",
+        "ready": "Sedia",
+        "unsupported": "Tidak disokong"
+      },
+      "title": "Kawalan Mac"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

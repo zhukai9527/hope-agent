@@ -3284,6 +3284,23 @@
     "permUnknown": "Xác minh thủ công",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "Cần: {{items}}",
+      "messages": {
+        "blocked": "Điều khiển macOS cần quyền Trợ năng và Ghi màn hình.",
+        "limited": "Điều khiển macOS cốt lõi đã sẵn sàng; các quyền tùy chọn vẫn đang chờ.",
+        "ready": "Điều khiển macOS đã sẵn sàng.",
+        "unsupported": "Điều khiển macOS không khả dụng trong môi trường chạy này."
+      },
+      "optionalPending": "Tùy chọn đang chờ: {{items}}",
+      "readiness": {
+        "blocked": "Bị chặn",
+        "limited": "Lõi sẵn sàng",
+        "ready": "Sẵn sàng",
+        "unsupported": "Không hỗ trợ"
+      },
+      "title": "Điều khiển Mac"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",

@@ -3284,6 +3284,23 @@
     "permUnknown": "Verify Manually",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
+    "macControl": {
+      "missingRequired": "Needs: {{items}}",
+      "messages": {
+        "blocked": "macOS control needs Accessibility and Screen Recording permissions.",
+        "limited": "Core macOS control is ready; optional permissions are still pending.",
+        "ready": "macOS control is ready.",
+        "unsupported": "macOS control is unavailable in this runtime."
+      },
+      "optionalPending": "Optional pending: {{items}}",
+      "readiness": {
+        "blocked": "Blocked",
+        "limited": "Core ready",
+        "ready": "Ready",
+        "unsupported": "Unsupported"
+      },
+      "title": "Mac Control"
+    },
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
