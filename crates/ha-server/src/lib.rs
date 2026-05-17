@@ -1359,6 +1359,10 @@ fn build_router_with_cors(
             get(routes::mac_control::permissions),
         )
         .route("/mac-control/snapshot", post(routes::mac_control::snapshot))
+        .route(
+            "/mac-control/capture-frame",
+            post(routes::mac_control::capture_frame),
+        )
         // Local LLM assistant
         .route("/local-llm/hardware", get(routes::local_llm::get_hardware))
         .route(

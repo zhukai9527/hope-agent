@@ -38,3 +38,10 @@ pub async fn snapshot(
         HTTP_UNSUPPORTED_MESSAGE,
     )))
 }
+
+pub async fn capture_frame() -> Result<Json<ha_core::mac_control::MacControlFrameResponse>, AppError>
+{
+    Ok(Json(ha_core::mac_control::unsupported_frame_response(
+        HTTP_UNSUPPORTED_MESSAGE,
+    )))
+}

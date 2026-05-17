@@ -49,6 +49,11 @@ pub async fn mac_control_snapshot(
     ha_core::mac_control::snapshot(options.unwrap_or_default()).await
 }
 
+#[tauri::command]
+pub async fn mac_control_capture_frame() -> ha_core::mac_control::MacControlFrameResponse {
+    ha_core::mac_control::capture_frame().await
+}
+
 // ── Sandbox ──────────────────────────────────────────────────────
 
 #[tauri::command]

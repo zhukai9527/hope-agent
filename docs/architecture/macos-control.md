@@ -2,7 +2,7 @@
 
 > 返回 [文档索引](../README.md)
 >
-> 状态：Phase 2A AX-only snapshot 落地中
+> 状态：Phase 2B primary-display screenshot mirror 落地中
 
 本文定义 Hope Agent 原生 macOS 控制能力的目标架构。目标不是依赖 Peekaboo，而是吸收它的工程经验：**先看屏幕与 AX 树，再按稳定元素行动；优先使用 Accessibility 原生 action，必要时才回落到合成键鼠事件**。
 
@@ -101,7 +101,8 @@ macOS 控制的最小可用权限分三层：
 
 工具执行时也要做运行时防御：
 
-- `snapshot` 需要 Screen Recording；如果只请求 AX 树，可允许无截图降级
+- `snapshot` 读取 AX 树需要 Accessibility；`includeScreenshot=true` 额外需要 Screen Recording。截图失败时返回 AX snapshot + warning，不把整个只读结果打掉
+- `mac_control_capture_frame` 只读镜像帧只需要 Screen Recording；HTTP/server mode 仍返回 `supported=false`
 - `act` / `windows` / `menu` 需要 Accessibility
 - Apple Events fallback 需要对应 Automation consent
 - `server` / `acp` 模式没有已注册 bridge 时，工具返回结构化 `unsupported`，不伪装成功
@@ -205,8 +206,8 @@ status -> snapshot -> act/menu/windows -> snapshot -> 必要时继续
 - `element.id` 只保证在当前 snapshot 或短 TTL 内有效
 - 结果必须同时说明坐标空间：AX / CGWindow 使用 point，截图使用 pixel，桥接层负责 scale 转换
 - 元素树默认截断，优先返回可交互元素、文本框、菜单项、按钮、链接、表格行、dialog 控件
-- 大截图走现有媒体/附件机制或工具结果磁盘持久化，不把 base64 塞进上下文
-- snapshot 文件落在 `~/.hope-agent/mac-control/snapshots/`，按数量和时间 LRU 清理
+- 大截图落盘并通过 EventBus 给右侧镜像面板；工具结果只返回 `screenshot` 摘要，不把 base64 塞进上下文
+- snapshot 文件落在 `~/.hope-agent/mac-control/snapshots/`，Phase 2B 按数量 LRU 清理，默认最多保留 100 个 JPEG
 
 ### Target 解析
 

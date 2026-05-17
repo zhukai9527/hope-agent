@@ -4,7 +4,13 @@
 //! snapshot model. ScreenCaptureKit frames and mutating input actions are
 //! intentionally left for later phases.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::VecDeque,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::SystemTime,
+};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -23,6 +29,9 @@ const DEFAULT_SNAPSHOT_MAX_ELEMENTS: usize = 120;
 const DEFAULT_SNAPSHOT_MAX_DEPTH: usize = 8;
 const HARD_SNAPSHOT_MAX_ELEMENTS: usize = 500;
 const HARD_SNAPSHOT_MAX_DEPTH: usize = 16;
+const MAX_SNAPSHOT_CACHE: usize = 20;
+const MAX_SCREENSHOT_FILES: usize = 100;
+pub const EVENT_MAC_CONTROL_FRAME: &str = "mac_control:frame";
 
 #[async_trait]
 pub trait MacControlBridge: Send + Sync {
@@ -31,9 +40,11 @@ pub trait MacControlBridge: Send + Sync {
         &self,
         request: MacControlSnapshotRequest,
     ) -> Result<MacControlSnapshot, String>;
+    async fn capture_frame(&self) -> Result<MacControlFramePayload, String>;
 }
 
 static MAC_CONTROL_BRIDGE: OnceLock<Arc<dyn MacControlBridge>> = OnceLock::new();
+static SNAPSHOT_CACHE: OnceLock<Mutex<VecDeque<MacControlSnapshot>>> = OnceLock::new();
 
 pub fn set_mac_control_bridge(bridge: Arc<dyn MacControlBridge>) {
     let _ = MAC_CONTROL_BRIDGE.set(bridge);
@@ -140,6 +151,14 @@ pub struct MacControlSnapshotResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MacControlFrameResponse {
+    pub status: MacControlStatus,
+    pub frame: Option<MacControlFramePayload>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MacControlSnapshot {
     pub snapshot_id: String,
     pub created_at: String,
@@ -226,6 +245,19 @@ pub struct MacControlScreenshotSummary {
     pub height_px: u32,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlFramePayload {
+    pub snapshot_id: String,
+    pub media_id: Option<String>,
+    pub path: Option<String>,
+    pub jpeg_base64: String,
+    pub width_px: u32,
+    pub height_px: u32,
+    pub captured_at: i64,
+    pub frontmost_app: Option<MacControlAppSummary>,
+}
+
 pub async fn status() -> MacControlStatus {
     let Some(bridge) = available_bridge() else {
         return unsupported_status(unsupported_reason());
@@ -275,16 +307,105 @@ pub async fn snapshot(request: MacControlSnapshotRequest) -> MacControlSnapshotR
     }
 
     match bridge.snapshot(request.clamped()).await {
-        Ok(snapshot) => MacControlSnapshotResponse {
-            status,
-            snapshot: Some(snapshot),
-            error: None,
-        },
+        Ok(snapshot) => {
+            record_snapshot(snapshot.clone());
+            MacControlSnapshotResponse {
+                status,
+                snapshot: Some(snapshot),
+                error: None,
+            }
+        }
         Err(error) => MacControlSnapshotResponse {
             status,
             snapshot: None,
             error: Some(error),
         },
+    }
+}
+
+pub async fn capture_frame() -> MacControlFrameResponse {
+    let Some(bridge) = available_bridge() else {
+        return unsupported_frame_response(unsupported_reason());
+    };
+    let system_permissions = bridge.system_permissions().await;
+    let status = status_from_system_permissions(true, true, system_permissions.clone());
+    if !system_permissions.supported {
+        return MacControlFrameResponse {
+            status,
+            frame: None,
+            error: Some("macOS control is unsupported in this runtime.".to_string()),
+        };
+    }
+    if !permission_granted(&system_permissions, "screen_recording") {
+        return MacControlFrameResponse {
+            status,
+            frame: None,
+            error: Some(
+                "Mac Control frame capture requires Screen Recording permission.".to_string(),
+            ),
+        };
+    }
+
+    match bridge.capture_frame().await {
+        Ok(frame) => {
+            emit_frame(&frame);
+            MacControlFrameResponse {
+                status,
+                frame: Some(frame),
+                error: None,
+            }
+        }
+        Err(error) => MacControlFrameResponse {
+            status,
+            frame: None,
+            error: Some(error),
+        },
+    }
+}
+
+pub fn store_screenshot_jpeg(
+    media_id: &str,
+    bytes: &[u8],
+    width_px: u32,
+    height_px: u32,
+) -> Result<MacControlScreenshotSummary, String> {
+    let media_id = sanitize_media_id(media_id)?;
+    let dir = crate::paths::mac_control_snapshots_dir()
+        .map_err(|e| format!("Unable to resolve macOS control snapshots directory: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "Unable to create macOS control snapshots directory {}: {e}",
+            dir.display()
+        )
+    })?;
+    let path = dir.join(format!("{media_id}.jpg"));
+    fs::write(&path, bytes).map_err(|e| {
+        format!(
+            "Unable to write macOS control screenshot {}: {e}",
+            path.display()
+        )
+    })?;
+    prune_screenshot_files(&dir);
+
+    Ok(MacControlScreenshotSummary {
+        media_id,
+        path: path.display().to_string(),
+        width_px,
+        height_px,
+    })
+}
+
+pub fn emit_frame(payload: &MacControlFramePayload) {
+    if let Some(bus) = crate::globals::get_event_bus() {
+        match serde_json::to_value(payload) {
+            Ok(value) => bus.emit(EVENT_MAC_CONTROL_FRAME, value),
+            Err(e) => app_warn!(
+                "mac_control",
+                "frame",
+                "Failed to serialize MacControlFramePayload: {}",
+                e
+            ),
+        }
     }
 }
 
@@ -332,6 +453,14 @@ pub fn unsupported_snapshot_response(message: &str) -> MacControlSnapshotRespons
     MacControlSnapshotResponse {
         status: unsupported_status(message),
         snapshot: None,
+        error: Some(message.to_string()),
+    }
+}
+
+pub fn unsupported_frame_response(message: &str) -> MacControlFrameResponse {
+    MacControlFrameResponse {
+        status: unsupported_status(message),
+        frame: None,
         error: Some(message.to_string()),
     }
 }
@@ -480,8 +609,65 @@ fn permission_granted(response: &SystemPermissionsResponse, id: &str) -> bool {
         .any(|item| item.id == id && item.status == SystemPermissionStatus::Granted)
 }
 
-fn new_snapshot_id() -> String {
+pub fn new_snapshot_id() -> String {
     format!("macsnap_{}", Uuid::new_v4().simple())
+}
+
+fn snapshot_cache() -> &'static Mutex<VecDeque<MacControlSnapshot>> {
+    SNAPSHOT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn record_snapshot(snapshot: MacControlSnapshot) {
+    let Ok(mut cache) = snapshot_cache().lock() else {
+        return;
+    };
+    cache.push_back(snapshot);
+    while cache.len() > MAX_SNAPSHOT_CACHE {
+        cache.pop_front();
+    }
+}
+
+fn sanitize_media_id(media_id: &str) -> Result<String, String> {
+    let sanitized = media_id
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+        .collect::<String>();
+    if sanitized.is_empty() {
+        Err("macOS control screenshot media id is empty after sanitization.".to_string())
+    } else {
+        Ok(sanitized)
+    }
+}
+
+fn prune_screenshot_files(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut files = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
+                .unwrap_or(false)
+        })
+        .map(|path| {
+            let modified = path
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            (modified, path)
+        })
+        .collect::<Vec<(SystemTime, PathBuf)>>();
+    if files.len() <= MAX_SCREENSHOT_FILES {
+        return;
+    }
+    files.sort_by_key(|(modified, _)| *modified);
+    let remove_count = files.len().saturating_sub(MAX_SCREENSHOT_FILES);
+    for (_, path) in files.into_iter().take(remove_count) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 #[cfg(test)]
@@ -622,5 +808,40 @@ mod tests {
         assert!(response.status.missing_required.is_empty());
         assert!(response.snapshot.is_none());
         assert_eq!(response.error.as_deref(), Some("no desktop bridge"));
+    }
+
+    #[test]
+    fn unsupported_frame_response_has_consistent_shape() {
+        let response = unsupported_frame_response("no frame bridge");
+
+        assert_eq!(response.status.readiness, MacControlReadiness::Unsupported);
+        assert!(!response.status.supported);
+        assert!(response.frame.is_none());
+        assert_eq!(response.error.as_deref(), Some("no frame bridge"));
+    }
+
+    #[test]
+    fn snapshot_cache_keeps_newest_entries() {
+        {
+            let mut cache = snapshot_cache().lock().expect("snapshot cache lock");
+            cache.clear();
+        }
+
+        for idx in 0..(MAX_SNAPSHOT_CACHE + 2) {
+            let mut snapshot = MacControlSnapshot::new_empty();
+            snapshot.snapshot_id = format!("macsnap_test_{idx}");
+            record_snapshot(snapshot);
+        }
+
+        let cache = snapshot_cache().lock().expect("snapshot cache lock");
+        assert_eq!(cache.len(), MAX_SNAPSHOT_CACHE);
+        assert_eq!(
+            cache.front().map(|snapshot| snapshot.snapshot_id.as_str()),
+            Some("macsnap_test_2")
+        );
+        assert_eq!(
+            cache.back().map(|snapshot| snapshot.snapshot_id.as_str()),
+            Some("macsnap_test_21")
+        );
     }
 }

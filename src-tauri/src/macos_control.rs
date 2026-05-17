@@ -1,8 +1,9 @@
 //! Desktop macOS control bridge.
 //!
-//! Phase 2A registers the authorized desktop process and exposes a read-only
-//! Accessibility snapshot of the frontmost app. ScreenCaptureKit frames and
-//! mutating input actions are intentionally left for later slices.
+//! Phase 2B registers the authorized desktop process and exposes a read-only
+//! Accessibility snapshot of the frontmost app plus a primary-display JPEG
+//! frame for the chat-side Mac Control mirror. Mutating input actions are
+//! intentionally left for later slices.
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -12,10 +13,14 @@ mod imp {
     use std::sync::Arc;
 
     use async_trait::async_trait;
+    use base64::Engine;
     use ha_core::mac_control::{
-        MacControlAppSummary, MacControlBounds, MacControlBridge, MacControlElementSummary,
+        MacControlAppSummary, MacControlBounds, MacControlBridge, MacControlDisplaySummary,
+        MacControlElementSummary, MacControlFramePayload, MacControlScreenshotSummary,
         MacControlSnapshot, MacControlSnapshotRequest, MacControlWindowSummary,
     };
+    use image::codecs::jpeg::JpegEncoder;
+    use xcap::Monitor;
 
     struct TauriMacControlBridge;
 
@@ -32,6 +37,12 @@ mod imp {
             tokio::task::spawn_blocking(move || capture_ax_snapshot(request))
                 .await
                 .map_err(|e| format!("macOS snapshot worker failed: {e}"))?
+        }
+
+        async fn capture_frame(&self) -> Result<MacControlFramePayload, String> {
+            tokio::task::spawn_blocking(capture_desktop_frame)
+                .await
+                .map_err(|e| format!("macOS frame worker failed: {e}"))?
         }
     }
 
@@ -146,6 +157,12 @@ mod imp {
         truncated: bool,
     }
 
+    struct CapturedDesktopFrame {
+        jpeg: Vec<u8>,
+        width_px: u32,
+        height_px: u32,
+    }
+
     fn capture_ax_snapshot(
         request: MacControlSnapshotRequest,
     ) -> Result<MacControlSnapshot, String> {
@@ -161,11 +178,23 @@ mod imp {
 
         let mut snapshot = MacControlSnapshot::new_empty();
         snapshot.frontmost_app = Some(app_summary(app_ref));
+        match display_summaries() {
+            Ok(displays) => snapshot.displays = displays,
+            Err(error) => snapshot.warnings.push(error),
+        }
         if request.include_screenshot {
-            snapshot.warnings.push(
-                "ScreenCaptureKit screenshots are not implemented in Phase 2A; returning AX-only snapshot."
-                    .to_string(),
-            );
+            match capture_desktop_frame_with_id(
+                &snapshot.snapshot_id,
+                snapshot.frontmost_app.clone(),
+            ) {
+                Ok((frame, screenshot)) => {
+                    snapshot.screenshot = Some(screenshot);
+                    ha_core::mac_control::emit_frame(&frame);
+                }
+                Err(error) => snapshot.warnings.push(format!(
+                    "Screenshot capture failed; returning AX-only snapshot: {error}"
+                )),
+            }
         }
 
         let mut state = CaptureState {
@@ -201,6 +230,108 @@ mod imp {
             );
         }
         Ok(snapshot)
+    }
+
+    fn capture_desktop_frame() -> Result<MacControlFramePayload, String> {
+        let snapshot_id = ha_core::mac_control::new_snapshot_id();
+        let frontmost_app = focused_app_summary();
+        let captured = capture_desktop_frame_bytes()?;
+        Ok(build_frame_payload(
+            &snapshot_id,
+            frontmost_app,
+            &captured,
+            None,
+        ))
+    }
+
+    fn capture_desktop_frame_with_id(
+        snapshot_id: &str,
+        frontmost_app: Option<MacControlAppSummary>,
+    ) -> Result<(MacControlFramePayload, MacControlScreenshotSummary), String> {
+        let captured = capture_desktop_frame_bytes()?;
+        let screenshot = ha_core::mac_control::store_screenshot_jpeg(
+            snapshot_id,
+            &captured.jpeg,
+            captured.width_px,
+            captured.height_px,
+        )?;
+        let frame = build_frame_payload(snapshot_id, frontmost_app, &captured, Some(&screenshot));
+        Ok((frame, screenshot))
+    }
+
+    fn capture_desktop_frame_bytes() -> Result<CapturedDesktopFrame, String> {
+        let monitors = Monitor::all().map_err(|e| format!("Failed to list macOS displays: {e}"))?;
+        let monitor = monitors
+            .iter()
+            .find(|monitor| monitor.is_primary().unwrap_or(false))
+            .or_else(|| monitors.first())
+            .ok_or_else(|| "No macOS displays detected.".to_string())?;
+        let rgba_image = monitor.capture_image().map_err(|e| {
+            format!("Desktop capture failed; Screen Recording permission may be missing: {e}")
+        })?;
+        let width_px = rgba_image.width();
+        let height_px = rgba_image.height();
+        let rgb_image = image::DynamicImage::ImageRgba8(rgba_image).to_rgb8();
+        let mut jpeg = Vec::new();
+        let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, 70);
+        encoder
+            .encode_image(&rgb_image)
+            .map_err(|e| format!("Failed to encode macOS frame as JPEG: {e}"))?;
+
+        Ok(CapturedDesktopFrame {
+            jpeg,
+            width_px,
+            height_px,
+        })
+    }
+
+    fn build_frame_payload(
+        snapshot_id: &str,
+        frontmost_app: Option<MacControlAppSummary>,
+        captured: &CapturedDesktopFrame,
+        screenshot: Option<&MacControlScreenshotSummary>,
+    ) -> MacControlFramePayload {
+        let jpeg_base64 =
+            base64::engine::general_purpose::STANDARD.encode(captured.jpeg.as_slice());
+        MacControlFramePayload {
+            snapshot_id: snapshot_id.to_string(),
+            media_id: screenshot.map(|item| item.media_id.clone()),
+            path: screenshot.map(|item| item.path.clone()),
+            jpeg_base64,
+            width_px: captured.width_px,
+            height_px: captured.height_px,
+            captured_at: chrono::Utc::now().timestamp_millis(),
+            frontmost_app,
+        }
+    }
+
+    fn display_summaries() -> Result<Vec<MacControlDisplaySummary>, String> {
+        let monitors = Monitor::all().map_err(|e| format!("Failed to list macOS displays: {e}"))?;
+        Ok(monitors
+            .iter()
+            .filter_map(|monitor| monitor_display_summary(monitor))
+            .collect())
+    }
+
+    fn monitor_display_summary(monitor: &Monitor) -> Option<MacControlDisplaySummary> {
+        let scale = monitor.scale_factor().ok().map(f64::from).unwrap_or(1.0);
+        Some(MacControlDisplaySummary {
+            id: monitor.id().ok()?,
+            frame_points: MacControlBounds {
+                x: f64::from(monitor.x().ok()?),
+                y: f64::from(monitor.y().ok()?),
+                width: f64::from(monitor.width().ok()?),
+                height: f64::from(monitor.height().ok()?),
+            },
+            scale,
+        })
+    }
+
+    fn focused_app_summary() -> Option<MacControlAppSummary> {
+        let system = unsafe { AXUIElementCreateSystemWide() };
+        let system = CfOwned::new(system as CFTypeRef)?;
+        let app = copy_attribute(system.as_ptr() as AXUIElementRef, "AXFocusedApplication")?;
+        Some(app_summary(app.as_ptr() as AXUIElementRef))
     }
 
     fn app_summary(app: AXUIElementRef) -> MacControlAppSummary {

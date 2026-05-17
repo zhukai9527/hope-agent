@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect Hope Agent's native macOS desktop-control readiness and capture a read-only Accessibility snapshot. Phase 2A supports `status`, `permissions`, and `snapshot`; screenshots, clicks, typing, windows, apps, and menus are intentionally unavailable until later phases.".into(),
+            description: "Inspect Hope Agent's native macOS desktop-control readiness and capture a read-only Accessibility snapshot. Phase 2B supports `status`, `permissions`, and `snapshot`; `snapshot.includeScreenshot=true` stores a primary-display JPEG and mirrors it in the right panel. Clicks, typing, windows, apps, and menus are intentionally unavailable until later phases.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -735,11 +735,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "action": {
                         "type": "string",
                         "enum": ["status", "permissions", "snapshot"],
-                        "description": "`status` returns bridge/platform/readiness summary. `permissions` also includes the underlying macOS system permissions response. `snapshot` returns a read-only frontmost-app/window/AX element summary."
+                        "description": "`status` returns bridge/platform/readiness summary. `permissions` also includes the underlying macOS system permissions response. `snapshot` returns a read-only frontmost-app/window/AX element summary and can include a stored screenshot summary."
                     },
                     "includeScreenshot": {
                         "type": "boolean",
-                        "description": "Reserved for the ScreenCaptureKit follow-up. Phase 2A keeps screenshots disabled and returns screenshot=null."
+                        "description": "For `snapshot`: capture the primary display as a JPEG, store it under ~/.hope-agent/mac-control/snapshots/, and emit a Mac Control mirror frame. Requires Screen Recording permission."
                     },
                     "maxElements": {
                         "type": "integer",
