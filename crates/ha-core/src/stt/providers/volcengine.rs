@@ -18,15 +18,22 @@
 //! bytes 4..8:  payload size, u32 big-endian
 //! bytes 8..  : gzip(payload)
 //! ```
-//! Message types: 0x1 client config, 0x2 client audio, 0x4 server response,
-//! 0x9 server error. Audio flags: 0x1 = positive seq (continue), 0x2 =
-//! negative seq (last).
+//! Message types (per ByteDance BigModel WS docs): 0x1 client config,
+//! 0x2 client audio, 0x9 (=0b1001) full server response, 0xf (=0b1111)
+//! server error. Audio flags: 0x1 = positive seq (continue + sequence
+//! number embedded), 0x2 = negative seq (last frame).
 //!
 //! Server JSON shape after gunzip:
 //! `{"result":{"text":"...","utterances":[{"text":"...","definite":bool,
 //!   "start_time":ms,"end_time":ms}]}}`
 //! `definite=true` ⇒ final utterance; partial deltas come as multiple
 //! `definite=false` frames sharing prefix text.
+//!
+//! Sequence handling: when `flags & 0x1` is set ("positive sequence")
+//! the frame carries a 4-byte BE sequence number BEFORE the payload size
+//! prefix. Audio client frames always set this flag and increment the
+//! sequence per chunk; server full-response frames carry the matching
+//! reply sequence. Frames without the flag have no sequence field.
 
 use std::io::Read;
 
@@ -45,10 +52,15 @@ const DEFAULT_RESOURCE_ID: &str = "volc.bigasr.sauc.duration";
 
 const MSG_CLIENT_CONFIG: u8 = 0x1;
 const MSG_CLIENT_AUDIO: u8 = 0x2;
-const MSG_SERVER_RESPONSE: u8 = 0x4;
-const MSG_SERVER_ERROR: u8 = 0x9;
+/// Full server response — per ByteDance BigModel WS contract, type 0b1001.
+const MSG_SERVER_RESPONSE: u8 = 0x9;
+/// Server error frame — per the same contract, type 0b1111.
+const MSG_SERVER_ERROR: u8 = 0xf;
 
-const FLAG_POSITIVE: u8 = 0x1;
+/// `flags & FLAG_SEQUENCE` indicates a 4-byte BE sequence number is
+/// embedded in the frame between the fixed header and the payload size.
+const FLAG_SEQUENCE: u8 = 0x1;
+/// Last-packet marker (set on the final client audio frame).
 const FLAG_NEGATIVE: u8 = 0x2;
 
 const SER_JSON: u8 = 0x1;
@@ -137,6 +149,7 @@ pub async fn open_stream(
     let config_frame = build_frame(
         MSG_CLIENT_CONFIG,
         0,
+        None,
         SER_JSON,
         COMPRESS_GZIP,
         &cfg_body.to_string().into_bytes(),
@@ -155,10 +168,12 @@ pub async fn open_stream(
         // compress well (< 5% saving) and at 50 chunks/sec the encoder
         // cost dominates the wire saving. Volcengine accepts both
         // compressed and uncompressed audio frames.
+        let mut seq: u32 = 1;
         while let Some(chunk) = audio_rx.recv().await {
             match build_frame(
                 MSG_CLIENT_AUDIO,
-                FLAG_POSITIVE,
+                FLAG_SEQUENCE,
+                Some(seq),
                 SER_RAW,
                 COMPRESS_NONE,
                 &chunk,
@@ -167,16 +182,26 @@ pub async fn open_stream(
                     if ws_sink.send(Message::Binary(frame.into())).await.is_err() {
                         return;
                     }
+                    seq = seq.wrapping_add(1);
                 }
                 Err(_) => return,
             }
         }
-        // EOS: empty audio frame with negative-sequence flag.
-        if let Ok(frame) = build_frame(MSG_CLIENT_AUDIO, FLAG_NEGATIVE, SER_RAW, COMPRESS_NONE, &[])
-        {
+        // EOS: empty audio frame with negative-sequence + last flag.
+        if let Ok(frame) = build_frame(
+            MSG_CLIENT_AUDIO,
+            FLAG_SEQUENCE | FLAG_NEGATIVE,
+            Some(seq),
+            SER_RAW,
+            COMPRESS_NONE,
+            &[],
+        ) {
             let _ = ws_sink.send(Message::Binary(frame.into())).await;
         }
-        let _ = ws_sink.send(Message::Close(None)).await;
+        // Don't send a WebSocket Close here — server may still be
+        // delivering the final transcript after EOS. Dropping ws_sink at
+        // task end + server's own Close frame handle the lifecycle;
+        // session::finalize's 30s timeout backstops a stuck server.
     });
 
     let session_id = String::new();
@@ -217,10 +242,18 @@ pub async fn open_stream(
 fn build_frame(
     msg_type: u8,
     flags: u8,
+    sequence: Option<u32>,
     serialization: u8,
     compression: u8,
     payload: &[u8],
 ) -> SttResult<Vec<u8>> {
+    // Sanity: if a sequence is supplied, the flag bit must be set so the
+    // receiver knows to read it. Programmer error if not.
+    debug_assert!(
+        sequence.is_none() || (flags & FLAG_SEQUENCE) != 0,
+        "FLAG_SEQUENCE must be set when sending a sequence number"
+    );
+
     let body = if compression == COMPRESS_GZIP {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::Write::write_all(&mut encoder, payload)
@@ -232,12 +265,16 @@ fn build_frame(
         payload.to_vec()
     };
 
-    let mut frame = Vec::with_capacity(8 + body.len());
-    // protocol_version=1, header_size=1 (4 bytes total header)
+    let capacity = 8 + sequence.map(|_| 4).unwrap_or(0) + body.len();
+    let mut frame = Vec::with_capacity(capacity);
+    // protocol_version=1, header_size=1 (4 bytes total header).
     frame.push((1 << 4) | 1);
     frame.push((msg_type << 4) | (flags & 0x0f));
     frame.push((serialization << 4) | (compression & 0x0f));
     frame.push(0); // reserved
+    if let Some(seq) = sequence {
+        frame.extend_from_slice(&seq.to_be_bytes());
+    }
     frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
     frame.extend_from_slice(&body);
     Ok(frame)
@@ -248,6 +285,7 @@ struct ParsedFrame {
     msg_type: u8,
     flags: u8,
     serialization: u8,
+    sequence: Option<u32>,
     body: Vec<u8>,
 }
 
@@ -257,7 +295,7 @@ fn parse_frame(bytes: &[u8]) -> SttResult<ParsedFrame> {
     }
     let header_words = bytes[0] & 0x0f;
     let header_len = header_words as usize * 4;
-    if header_len == 0 || bytes.len() < header_len + 4 {
+    if header_len == 0 {
         return Err(SttError::Other(
             "Volcengine frame missing payload prefix".into(),
         ));
@@ -268,14 +306,37 @@ fn parse_frame(bytes: &[u8]) -> SttResult<ParsedFrame> {
     let serialization = (ser_compress >> 4) & 0x0f;
     let compression = ser_compress & 0x0f;
 
-    let size_offset = header_len;
+    let mut cursor = header_len;
+    let sequence = if (flags & FLAG_SEQUENCE) != 0 {
+        if bytes.len() < cursor + 4 {
+            return Err(SttError::Other(
+                "Volcengine frame missing sequence number".into(),
+            ));
+        }
+        let seq = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]);
+        cursor += 4;
+        Some(seq)
+    } else {
+        None
+    };
+
+    if bytes.len() < cursor + 4 {
+        return Err(SttError::Other(
+            "Volcengine frame missing payload size prefix".into(),
+        ));
+    }
     let body_size = u32::from_be_bytes([
-        bytes[size_offset],
-        bytes[size_offset + 1],
-        bytes[size_offset + 2],
-        bytes[size_offset + 3],
+        bytes[cursor],
+        bytes[cursor + 1],
+        bytes[cursor + 2],
+        bytes[cursor + 3],
     ]) as usize;
-    let body_start = size_offset + 4;
+    let body_start = cursor + 4;
     if bytes.len() < body_start + body_size {
         return Err(SttError::Other(
             "Volcengine frame body shorter than declared size".into(),
@@ -311,6 +372,7 @@ fn parse_frame(bytes: &[u8]) -> SttResult<ParsedFrame> {
         msg_type,
         flags,
         serialization,
+        sequence,
         body,
     })
 }
@@ -368,21 +430,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_and_parse_frame_roundtrip_json_gzip() {
+    fn build_and_parse_frame_roundtrip_json_gzip_no_sequence() {
         let body = br#"{"hello":"world"}"#;
-        let bytes = build_frame(MSG_SERVER_RESPONSE, 0, SER_JSON, COMPRESS_GZIP, body).unwrap();
+        let bytes =
+            build_frame(MSG_SERVER_RESPONSE, 0, None, SER_JSON, COMPRESS_GZIP, body).unwrap();
         let parsed = parse_frame(&bytes).unwrap();
         assert_eq!(parsed.msg_type, MSG_SERVER_RESPONSE);
         assert_eq!(parsed.serialization, SER_JSON);
+        assert_eq!(parsed.sequence, None);
         assert_eq!(parsed.body, body);
     }
 
     #[test]
-    fn build_and_parse_frame_roundtrip_binary_pcm_uncompressed() {
+    fn build_and_parse_audio_frame_with_sequence_uncompressed() {
         let body: Vec<u8> = (0..4096).map(|i| (i & 0xff) as u8).collect();
         let bytes = build_frame(
             MSG_CLIENT_AUDIO,
-            FLAG_POSITIVE,
+            FLAG_SEQUENCE,
+            Some(42),
             SER_RAW,
             COMPRESS_NONE,
             &body,
@@ -390,23 +455,45 @@ mod tests {
         .unwrap();
         let parsed = parse_frame(&bytes).unwrap();
         assert_eq!(parsed.msg_type, MSG_CLIENT_AUDIO);
-        assert_eq!(parsed.flags, FLAG_POSITIVE);
+        assert_eq!(parsed.flags & FLAG_SEQUENCE, FLAG_SEQUENCE);
         assert_eq!(parsed.serialization, SER_RAW);
+        assert_eq!(parsed.sequence, Some(42));
+        assert_eq!(parsed.body, body);
+    }
+
+    #[test]
+    fn build_and_parse_server_response_with_sequence_gzip() {
+        // Per BigModel docs, full server responses carry a positive
+        // sequence echoing the client's audio frame index.
+        let body = br#"{"result":{"text":"hello"}}"#;
+        let bytes = build_frame(
+            MSG_SERVER_RESPONSE,
+            FLAG_SEQUENCE,
+            Some(7),
+            SER_JSON,
+            COMPRESS_GZIP,
+            body,
+        )
+        .unwrap();
+        let parsed = parse_frame(&bytes).unwrap();
+        assert_eq!(parsed.msg_type, MSG_SERVER_RESPONSE);
+        assert_eq!(parsed.sequence, Some(7));
         assert_eq!(parsed.body, body);
     }
 
     #[test]
     fn frame_header_first_byte_is_one_one() {
-        let bytes = build_frame(MSG_CLIENT_CONFIG, 0, SER_JSON, COMPRESS_GZIP, b"{}").unwrap();
+        let bytes =
+            build_frame(MSG_CLIENT_CONFIG, 0, None, SER_JSON, COMPRESS_GZIP, b"{}").unwrap();
         assert_eq!(bytes[0], 0x11);
     }
 
     #[test]
     fn parse_error_msg_type_surfaces_provider_unavailable() {
-        // Build a server-error frame with a plaintext error body so the
-        // parser surfaces the string via SttError::ProviderUnavailable.
+        // Build a server-error frame (type=0xf) with a plaintext error
+        // body so the parser surfaces the string via ProviderUnavailable.
         let body = b"app key invalid";
-        let bytes = build_frame(MSG_SERVER_ERROR, 0, SER_JSON, COMPRESS_GZIP, body).unwrap();
+        let bytes = build_frame(MSG_SERVER_ERROR, 0, None, SER_JSON, COMPRESS_GZIP, body).unwrap();
         let err = parse_frame(&bytes).unwrap_err();
         match err {
             SttError::ProviderUnavailable(msg) => assert!(msg.contains("app key invalid")),
@@ -420,6 +507,7 @@ mod tests {
             msg_type: MSG_SERVER_RESPONSE,
             flags: 0,
             serialization: SER_JSON,
+            sequence: None,
             body: r#"{"result":{"text":"你好世界","utterances":[
                 {"text":"你好","definite":false,"start_time":0,"end_time":500}
             ]}}"#
@@ -439,6 +527,7 @@ mod tests {
             msg_type: MSG_SERVER_RESPONSE,
             flags: 0,
             serialization: SER_JSON,
+            sequence: None,
             body: r#"{"result":{"utterances":[{"text":"完成","definite":true}]}}"#
                 .as_bytes()
                 .to_vec(),
@@ -454,6 +543,7 @@ mod tests {
             msg_type: MSG_SERVER_RESPONSE,
             flags: 0,
             serialization: SER_JSON,
+            sequence: None,
             body: br#"{"result":{"text":"hello"}}"#.to_vec(),
         };
         let d = parse_response("s", &frame).unwrap();

@@ -114,7 +114,9 @@ pub async fn open_stream(
                 return;
             }
         }
-        // EOS frame: status=2, empty audio.
+        // EOS frame: status=2, empty audio. Then let iFlytek flush
+        // its trailing data.status=2 final-result frame before closing
+        // — sending WS Close here races against the terminal frame.
         let last = json!({
             "data": {
                 "status": 2_u8,
@@ -124,7 +126,6 @@ pub async fn open_stream(
             }
         });
         let _ = ws_sink.send(Message::Text(last.to_string().into())).await;
-        let _ = ws_sink.send(Message::Close(None)).await;
     });
 
     let session_id = String::new();
@@ -133,8 +134,15 @@ pub async fn open_stream(
         while let Some(msg) = ws_stream.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    if let Some(delta) = parse_message(&session_id, &text, &mut accumulated) {
-                        if delta_tx.send(Ok(delta)).await.is_err() {
+                    match parse_message(&session_id, &text, &mut accumulated) {
+                        Ok(Some(delta)) => {
+                            if delta_tx.send(Ok(delta)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            let _ = delta_tx.send(Err(e)).await;
                             break;
                         }
                     }
@@ -208,13 +216,35 @@ fn http_date_rfc1123() -> String {
 /// `pgs=rpl` (replace at sn `rg`). We accumulate via `acc` so each emitted
 /// `TranscriptDelta.text` is the full running transcript snapshot, which
 /// matches how the rest of the subsystem renders partials.
-fn parse_message(session_id: &str, raw: &str, acc: &mut String) -> Option<TranscriptDelta> {
-    let value: Value = serde_json::from_str(raw).ok()?;
+///
+/// Returns `Err` for non-zero server `code` values (auth failure, quota
+/// exceeded, etc) so the downstream task can surface a useful error
+/// instead of letting `finalize` return an empty-but-Ok transcript.
+/// Returns `Ok(None)` for keep-alive / no-text frames.
+fn parse_message(
+    session_id: &str,
+    raw: &str,
+    acc: &mut String,
+) -> SttResult<Option<TranscriptDelta>> {
+    let value: Value = match serde_json::from_str::<Value>(raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
     let code = value.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
     if code != 0 {
-        return None;
+        let message = value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        let sid = value
+            .get("sid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<no-sid>");
+        return Err(classify_xunfei_code(code, message, sid));
     }
-    let data = value.get("data")?;
+    let Some(data) = value.get("data") else {
+        return Ok(None);
+    };
     let status = data.get("status").and_then(|v| v.as_i64()).unwrap_or(0);
     let is_final = status == 2;
 
@@ -255,9 +285,9 @@ fn parse_message(session_id: &str, raw: &str, acc: &mut String) -> Option<Transc
     }
 
     if acc.is_empty() && !is_final {
-        return None;
+        return Ok(None);
     }
-    Some(TranscriptDelta {
+    Ok(Some(TranscriptDelta {
         session_id: session_id.to_string(),
         text: acc.clone(),
         is_final,
@@ -266,7 +296,26 @@ fn parse_message(session_id: &str, raw: &str, acc: &mut String) -> Option<Transc
         confidence: None,
         language: None,
         accumulated: None,
-    })
+    }))
+}
+
+/// Map iFlytek's numeric `code` field to a typed `SttError`. Codes
+/// covered are pulled from the IAT documentation's error table; anything
+/// else falls through to `Other` with the raw fields so logs aren't
+/// blank.
+fn classify_xunfei_code(code: i64, message: &str, sid: &str) -> SttError {
+    let detail = format!("iFlytek code {code}: {message} (sid {sid})");
+    match code {
+        // 10005..10007 — appid / authentication failures.
+        10005..=10007 => SttError::Auth(detail),
+        // 10160..10163 — invalid request parameters (often bad audio config).
+        10160 | 10161 | 10163 => SttError::UnsupportedAudio(detail),
+        // 10043 / 10165 — concurrent / QPS limit.
+        10043 | 10165 => SttError::RateLimit(detail),
+        // 10114 / 10202 — service busy, transient.
+        10114 | 10202 => SttError::ProviderUnavailable(detail),
+        _ => SttError::Other(detail),
+    }
 }
 
 #[cfg(test)]
@@ -296,11 +345,11 @@ mod tests {
         let mut acc = String::new();
         let frame =
             r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"你"}]}],"pgs":"apd"}}}"#;
-        let d = parse_message("s", frame, &mut acc).unwrap();
+        let d = parse_message("s", frame, &mut acc).unwrap().unwrap();
         assert_eq!(d.text, "你");
         let frame2 =
             r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"好"}]}],"pgs":"apd"}}}"#;
-        let d2 = parse_message("s", frame2, &mut acc).unwrap();
+        let d2 = parse_message("s", frame2, &mut acc).unwrap().unwrap();
         assert_eq!(d2.text, "你好");
         assert!(!d2.is_final);
     }
@@ -310,7 +359,7 @@ mod tests {
         let mut acc = String::from("旧");
         let frame =
             r#"{"code":0,"data":{"status":1,"result":{"ws":[{"cw":[{"w":"新"}]}],"pgs":"rpl"}}}"#;
-        let d = parse_message("s", frame, &mut acc).unwrap();
+        let d = parse_message("s", frame, &mut acc).unwrap().unwrap();
         assert_eq!(d.text, "新");
         assert_eq!(acc, "新");
     }
@@ -320,15 +369,31 @@ mod tests {
         let mut acc = String::from("hello");
         let frame =
             r#"{"code":0,"data":{"status":2,"result":{"ws":[{"cw":[{"w":""}]}],"pgs":"apd"}}}"#;
-        let d = parse_message("s", frame, &mut acc).unwrap();
+        let d = parse_message("s", frame, &mut acc).unwrap().unwrap();
         assert!(d.is_final);
         assert_eq!(d.text, "hello");
     }
 
     #[test]
-    fn parse_skips_non_zero_code() {
+    fn parse_non_zero_code_returns_auth_error() {
         let mut acc = String::new();
-        let frame = r#"{"code":10005,"message":"invalid app_id"}"#;
-        assert!(parse_message("s", frame, &mut acc).is_none());
+        let frame = r#"{"code":10005,"message":"invalid appid","sid":"sid-abc"}"#;
+        let err = parse_message("s", frame, &mut acc).unwrap_err();
+        match err {
+            SttError::Auth(msg) => {
+                assert!(msg.contains("10005"));
+                assert!(msg.contains("invalid appid"));
+                assert!(msg.contains("sid-abc"));
+            }
+            other => panic!("expected Auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unknown_code_falls_through_to_other() {
+        let mut acc = String::new();
+        let frame = r#"{"code":99999,"message":"weird"}"#;
+        let err = parse_message("s", frame, &mut acc).unwrap_err();
+        assert!(matches!(err, SttError::Other(_)));
     }
 }

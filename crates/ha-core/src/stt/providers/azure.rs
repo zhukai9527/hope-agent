@@ -104,10 +104,11 @@ pub async fn open_stream(
                 break;
             }
         }
-        // Send the empty-body audio frame Azure treats as EOS.
+        // Send the empty-body audio frame Azure treats as EOS, then
+        // let the server flush its final speech.phrase + turn.end
+        // frames before closing. Sending Close here races against those.
         let eos = build_binary_frame("audio", &request_id_send, &[]);
         let _ = ws_sink.send(Message::Binary(eos.into())).await;
-        let _ = ws_sink.send(Message::Close(None)).await;
     });
 
     let session_id = String::new();

@@ -126,6 +126,53 @@ const KIND_OPTIONS: { value: SttProviderKind; label: string }[] = [
   { value: "volcengine-ws", label: "Volcengine / Doubao (WS)" },
 ]
 
+/// Per-kind default `baseUrl` so the user doesn't have to memorise each
+/// vendor's host. Empty string = no default (user must paste their own
+/// region/subdomain — e.g. Azure requires a region prefix).
+const KIND_DEFAULT_BASE_URL: Record<SttProviderKind, string> = {
+  "openai-transcriptions": "https://api.openai.com",
+  "openai-compatible": "",
+  "deepgram-ws": "wss://api.deepgram.com",
+  "assemblyai-ws": "wss://streaming.assemblyai.com",
+  "azure-ws": "",
+  "xunfei-ws": "wss://iat-api.xfyun.cn",
+  "volcengine-ws": "wss://openspeech.bytedance.com",
+}
+
+interface ExtraField {
+  key: string
+  label: string
+  hint?: string
+  type: "text" | "password"
+  required: boolean
+}
+
+/// Required and optional `extra` fields per provider kind. Used to
+/// surface the right inputs in the edit dialog so users can fill the
+/// per-vendor credentials (`app_id`, `api_secret`, `app_key`, etc) that
+/// the backend will require at WS handshake time.
+const KIND_EXTRA_SCHEMA: Record<SttProviderKind, ExtraField[]> = {
+  "openai-transcriptions": [],
+  "openai-compatible": [],
+  "deepgram-ws": [],
+  "assemblyai-ws": [],
+  "azure-ws": [],
+  "xunfei-ws": [
+    { key: "api_secret", label: "APISecret", type: "password", required: true },
+    { key: "app_id", label: "APPID", type: "text", required: true },
+  ],
+  "volcengine-ws": [
+    { key: "app_key", label: "AppKey", type: "text", required: true },
+    {
+      key: "resource_id",
+      label: "ResourceId",
+      type: "text",
+      required: false,
+      hint: "Defaults to volc.bigasr.sauc.duration",
+    },
+  ],
+}
+
 const blankProvider = (): SttProviderConfig => ({
   id: "",
   name: "",
@@ -553,16 +600,45 @@ function ProviderDialog({
   const [apiKey, setApiKey] = useState(provider.apiKey ?? "")
   const [enabled, setEnabled] = useState(provider.enabled)
   const [allowPrivate, setAllowPrivate] = useState(provider.allowPrivateNetwork ?? false)
+  const [extraValues, setExtraValues] = useState<Record<string, string>>(
+    () => ({ ...(provider.extra ?? {}) }),
+  )
   const [modelsText, setModelsText] = useState(
     provider.models.map((m) => `${m.id}\t${m.name || m.id}`).join("\n"),
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const extraSchema = useMemo(() => KIND_EXTRA_SCHEMA[kind] ?? [], [kind])
+
+  const onKindChange = useCallback(
+    (next: SttProviderKind) => {
+      setKind(next)
+      // Prefill the default baseUrl on kind switch when the user hasn't
+      // started typing one (or is on the previous kind's default).
+      const currentDefault = KIND_DEFAULT_BASE_URL[kind] ?? ""
+      const nextDefault = KIND_DEFAULT_BASE_URL[next] ?? ""
+      if (!baseUrl.trim() || baseUrl.trim() === currentDefault) {
+        setBaseUrl(nextDefault)
+      }
+    },
+    [baseUrl, kind],
+  )
+
   const save = useCallback(async () => {
     setSaving(true)
     setError(null)
     try {
+      // Validate required `extra` fields before sending so the user sees
+      // the missing-credential message in the dialog instead of a
+      // cryptic backend error on first stream attempt.
+      for (const field of extraSchema) {
+        if (field.required && !extraValues[field.key]?.trim()) {
+          setError(`Missing required field: ${field.label}`)
+          setSaving(false)
+          return
+        }
+      }
       const models: SttModelConfig[] = modelsText
         .split("\n")
         .map((row) => row.trim())
@@ -571,6 +647,12 @@ function ProviderDialog({
           const [id, ...rest] = row.split("\t")
           return { id: id.trim(), name: rest.join("\t").trim() || id.trim() }
         })
+      // Strip empty extra values so they don't override redacted-but-set
+      // values on round-trip and don't get sent as `""`.
+      const trimmedExtra: Record<string, string> = {}
+      for (const [k, v] of Object.entries(extraValues)) {
+        if (v.trim()) trimmedExtra[k] = v.trim()
+      }
       const payload: SttProviderConfig = {
         ...provider,
         name: name.trim(),
@@ -580,6 +662,7 @@ function ProviderDialog({
         models,
         enabled,
         allowPrivateNetwork: allowPrivate,
+        extra: trimmedExtra,
       }
       if (isNew) {
         await getTransport().call("add_stt_provider", { provider: payload })
@@ -597,7 +680,20 @@ function ProviderDialog({
     } finally {
       setSaving(false)
     }
-  }, [allowPrivate, apiKey, baseUrl, enabled, isNew, kind, modelsText, name, onSaved, provider])
+  }, [
+    allowPrivate,
+    apiKey,
+    baseUrl,
+    enabled,
+    extraSchema,
+    extraValues,
+    isNew,
+    kind,
+    modelsText,
+    name,
+    onSaved,
+    provider,
+  ])
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -614,7 +710,7 @@ function ProviderDialog({
           </div>
           <div className="space-y-1.5">
             <Label>{t("voice.settings.providerKind")}</Label>
-            <Select value={kind} onValueChange={(v) => setKind(v as SttProviderKind)}>
+            <Select value={kind} onValueChange={(v) => onKindChange(v as SttProviderKind)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -640,6 +736,24 @@ function ProviderDialog({
               placeholder={isNew ? "" : t("voice.settings.apiKeyMasked")}
             />
           </div>
+          {extraSchema.map((field) => (
+            <div key={field.key} className="space-y-1.5">
+              <Label>
+                {field.label}
+                {field.required && <span className="text-destructive ml-0.5">*</span>}
+              </Label>
+              <Input
+                type={field.type === "password" ? "password" : "text"}
+                value={extraValues[field.key] ?? ""}
+                onChange={(e) =>
+                  setExtraValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                }
+              />
+              {field.hint && (
+                <p className="text-xs text-muted-foreground">{field.hint}</p>
+              )}
+            </div>
+          ))}
           <div className="space-y-1.5">
             <Label>{t("voice.settings.models")}</Label>
             <textarea

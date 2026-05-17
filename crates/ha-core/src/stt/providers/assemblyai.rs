@@ -77,11 +77,12 @@ pub async fn open_stream(
                 break;
             }
         }
-        // Best-effort terminate hint then graceful close.
+        // Send the Terminate sentinel and let AssemblyAI deliver its
+        // final Turn + Termination frames before closing on its end.
+        // Sending Close here races against those final data frames.
         let _ = ws_sink
             .send(Message::Text(r#"{"type":"Terminate"}"#.into()))
             .await;
-        let _ = ws_sink.send(Message::Close(None)).await;
     });
 
     let session_id = String::new();

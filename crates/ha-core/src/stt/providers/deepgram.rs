@@ -87,11 +87,12 @@ pub async fn open_stream(
                 break;
             }
         }
-        // Best-effort EOS hint then graceful close.
+        // Send Deepgram's `CloseStream` sentinel and let the server
+        // deliver its final transcript before closing. Sending Close
+        // here races against the trailing partial→final frame.
         let _ = ws_sink
             .send(Message::Text(r#"{"type":"CloseStream"}"#.into()))
             .await;
-        let _ = ws_sink.send(Message::Close(None)).await;
     });
 
     // Session_id is filled in by the SttSessionManager after open_stream
