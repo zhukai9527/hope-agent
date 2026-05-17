@@ -77,6 +77,8 @@ const LOAD_MORE_THRESHOLD_PX = 200
 // — only the render slice. See `displayedStart`.
 const MAX_DOM_MESSAGES = 200
 const UNLOAD_BATCH = 30
+const COMPACT_USER_ANCHOR_LEAD_PX = 32
+const COMPACT_USER_ANCHOR_EXIT_MS = 200
 
 function shouldPassExecutionStateToBubble(
   isLast: boolean,
@@ -128,6 +130,7 @@ export default function MessageList({
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const [highlightMessageId, setHighlightMessageId] = useState<number | null>(null)
   const [compactUserAnchorVisible, setCompactUserAnchorVisible] = useState(false)
+  const [compactUserAnchorMounted, setCompactUserAnchorMounted] = useState(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<{
@@ -285,14 +288,27 @@ export default function MessageList({
       return
     }
     const containerTop = el.getBoundingClientRect().top
-    const targetTop = target.getBoundingClientRect().top
-    const visible = targetTop < containerTop - 1
+    const targetBottom = target.getBoundingClientRect().bottom
+    const visible = targetBottom < containerTop - COMPACT_USER_ANCHOR_LEAD_PX
     setCompactUserAnchorVisible((prev) => (prev === visible ? prev : visible))
   }, [compactUserAnchor?.rowKey])
 
   useLayoutEffect(() => {
     updateCompactUserAnchor()
   }, [items, updateCompactUserAnchor])
+
+  useEffect(() => {
+    if (compactUserAnchorVisible) {
+      setCompactUserAnchorMounted(true)
+      return
+    }
+
+    const timer = setTimeout(
+      () => setCompactUserAnchorMounted(false),
+      COMPACT_USER_ANCHOR_EXIT_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [compactUserAnchorVisible])
 
   // Baseline for entrance animation: only messages appended *after* this
   // session was opened animate in. The initial set renders statically — no
@@ -876,12 +892,22 @@ export default function MessageList({
         </div>
       </div>
 
-      {compactUserAnchor && compactUserAnchorVisible && (
-        <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-end px-5 sm:px-6">
+      {compactUserAnchor && (compactUserAnchorVisible || compactUserAnchorMounted) && (
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-end px-5 transition-all duration-200 ease-out sm:px-6",
+            compactUserAnchorVisible
+              ? "translate-y-0 opacity-100 animate-in fade-in-0 slide-in-from-top-1"
+              : "-translate-y-1 opacity-0",
+          )}
+        >
           <button
             type="button"
             onClick={handleCompactUserAnchorClick}
-            className="pointer-events-auto flex h-9 max-w-[min(720px,85%)] cursor-pointer items-center rounded-full border border-border-soft bg-surface-floating/95 px-3.5 text-right text-sm font-medium text-foreground shadow-panel backdrop-blur transition-colors hover:bg-surface-subtle supports-[backdrop-filter]:bg-surface-floating/85"
+            className={cn(
+              "pointer-events-auto flex h-9 max-w-[min(720px,85%)] cursor-pointer items-center rounded-full border border-border-soft bg-surface-floating/95 px-3.5 text-right text-sm font-medium text-foreground shadow-panel backdrop-blur transition-colors hover:bg-surface-subtle supports-[backdrop-filter]:bg-surface-floating/85",
+              !compactUserAnchorVisible && "pointer-events-none",
+            )}
           >
             <span className="min-w-0 flex-1 truncate">
               {compactUserAnchor.text}

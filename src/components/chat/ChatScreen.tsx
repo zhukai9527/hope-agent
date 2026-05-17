@@ -4,6 +4,7 @@ import { getTransport } from "@/lib/transport-provider"
 import { save } from "@tauri-apps/plugin-dialog"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
+import { cn } from "@/lib/utils"
 import { Brain } from "lucide-react"
 import type {
   ActiveModel,
@@ -1347,6 +1348,14 @@ export default function ChatScreen({
     }
   }, [])
 
+  const emptySessionInputHero =
+    session.messages.length === 0 &&
+    !session.loading &&
+    !planMode.pendingQuestionGroup &&
+    !planMode.planCardInfo &&
+    !planMode.planSubagentRunning &&
+    !searchBarOpen
+
   return (
     <>
       {/* Sidebar */}
@@ -1521,7 +1530,7 @@ export default function ChatScreen({
         />
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="relative flex-1 flex flex-col min-w-0">
             {activeTeamId && !showTeamPanel && (
               <div className="px-3 py-1 border-b border-border">
                 <TeamMiniIndicator teamId={activeTeamId} onClick={() => setShowTeamPanel(true)} />
@@ -1585,9 +1594,22 @@ export default function ChatScreen({
                * so it doesn't shrink the MessageList scroll container when it
                * appears/disappears. */}
             {!isCronSession && !isSubagentSession && (
-              <div className="relative">
+              <div
+                className={cn(
+                  "relative",
+                  emptySessionInputHero &&
+                    "absolute inset-x-0 top-[48%] z-20 flex -translate-y-1/2 justify-center px-5 sm:px-8",
+                )}
+              >
                 {memoryToast && (
-                  <div className="absolute left-0 right-0 bottom-full mx-4 mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10">
+                  <div
+                    className={cn(
+                      "absolute bottom-full mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10",
+                      emptySessionInputHero
+                        ? "inset-x-5 mx-auto max-w-[920px] sm:inset-x-8"
+                        : "left-0 right-0 mx-4",
+                    )}
+                  >
                     <Brain className="h-3.5 w-3.5 shrink-0" />
                     <span>{t("settings.memoryExtractedToast", { count: memoryToast.count })}</span>
                     <button
@@ -1599,55 +1621,60 @@ export default function ChatScreen({
                   </div>
                 )}
 
-                <ChatInput
-                  input={stream.input}
-                  onInputChange={stream.setInput}
-                  onSend={() => stream.handleSend()}
-                  loading={session.loading}
-                  availableModels={availableModels}
-                  activeModel={activeModel}
-                  reasoningEffort={reasoningEffort}
-                  onModelChange={handleManualModelChange}
-                  onEffortChange={handleSessionEffortChange}
-                  attachedFiles={stream.attachedFiles}
-                  onAttachFiles={(files) => stream.setAttachedFiles((prev) => [...prev, ...files])}
-                  onRemoveFile={(index) =>
-                    stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
-                  }
-                  pendingMessage={stream.pendingMessage}
-                  onCancelPending={() => {
-                    stream.setInput(stream.pendingMessage || "")
-                    stream.setPendingMessage(null)
-                  }}
-                  onDiscardPending={() => {
-                    stream.setPendingMessage(null)
-                  }}
-                  onStop={stream.handleStop}
-                  currentSessionId={session.currentSessionId}
-                  currentAgentId={session.currentAgentId}
-                  onCommandAction={handleCommandAction}
-                  permissionMode={stream.permissionMode}
-                  onPermissionModeChange={stream.setPermissionMode}
-                  sessionTemperature={sessionTemperature}
-                  onSessionTemperatureChange={setSessionTemperature}
-                  incognitoEnabled={incognitoEnabled}
-                  workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
-                  workingDirInherited={
-                    session.currentSessionId ? workingDirSource === "project" : false
-                  }
-                  workingDirSaving={workingDirSaving}
-                  onWorkingDirChange={handleWorkingDirChange}
-                  planState={planMode.planState}
-                  onEnterPlanMode={planMode.enterPlanMode}
-                  onExitPlanMode={planMode.exitPlanMode}
-                  onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
-                  taskProgressSnapshot={taskProgressSnapshot}
-                  executionState={
-                    session.currentSessionId
-                      ? stream.executionStateBySession.get(session.currentSessionId) ?? null
-                      : null
-                  }
-                />
+                <div className={cn(emptySessionInputHero && "w-full max-w-[920px]")}>
+                  <ChatInput
+                    input={stream.input}
+                    onInputChange={stream.setInput}
+                    onSend={() => stream.handleSend()}
+                    loading={session.loading}
+                    availableModels={availableModels}
+                    activeModel={activeModel}
+                    reasoningEffort={reasoningEffort}
+                    onModelChange={handleManualModelChange}
+                    onEffortChange={handleSessionEffortChange}
+                    attachedFiles={stream.attachedFiles}
+                    onAttachFiles={(files) =>
+                      stream.setAttachedFiles((prev) => [...prev, ...files])
+                    }
+                    onRemoveFile={(index) =>
+                      stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
+                    }
+                    pendingMessage={stream.pendingMessage}
+                    onCancelPending={() => {
+                      stream.setInput(stream.pendingMessage || "")
+                      stream.setPendingMessage(null)
+                    }}
+                    onDiscardPending={() => {
+                      stream.setPendingMessage(null)
+                    }}
+                    onStop={stream.handleStop}
+                    currentSessionId={session.currentSessionId}
+                    currentAgentId={session.currentAgentId}
+                    onCommandAction={handleCommandAction}
+                    permissionMode={stream.permissionMode}
+                    onPermissionModeChange={stream.setPermissionMode}
+                    sessionTemperature={sessionTemperature}
+                    onSessionTemperatureChange={setSessionTemperature}
+                    incognitoEnabled={incognitoEnabled}
+                    workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
+                    workingDirInherited={
+                      session.currentSessionId ? workingDirSource === "project" : false
+                    }
+                    workingDirSaving={workingDirSaving}
+                    onWorkingDirChange={handleWorkingDirChange}
+                    planState={planMode.planState}
+                    onEnterPlanMode={planMode.enterPlanMode}
+                    onExitPlanMode={planMode.exitPlanMode}
+                    onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
+                    taskProgressSnapshot={taskProgressSnapshot}
+                    executionState={
+                      session.currentSessionId
+                        ? stream.executionStateBySession.get(session.currentSessionId) ?? null
+                        : null
+                    }
+                    hero={emptySessionInputHero}
+                  />
+                </div>
               </div>
             )}
           </div>

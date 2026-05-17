@@ -98,6 +98,8 @@ interface ChatInputProps {
   // Session-scoped Todo progress
   taskProgressSnapshot?: TaskProgressSnapshot | null
   executionState?: ChatTurnStatus | null
+  /** Larger centered presentation for a brand-new empty conversation. */
+  hero?: boolean
 }
 
 export default function ChatInput({
@@ -135,6 +137,7 @@ export default function ChatInput({
   onTogglePlanPanel,
   taskProgressSnapshot,
   executionState,
+  hero = false,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -342,10 +345,13 @@ export default function ChatInput({
   )
 
   return (
-    <div className="px-3 pb-3 pt-2">
+    <div className={cn("px-3 pb-3 pt-2", hero && "px-0 pb-0 pt-0")}>
       <div
         ref={inputShellRef}
-        className="relative rounded-input-dock border border-border-soft bg-surface-floating shadow-input-dock"
+        className={cn(
+          "relative rounded-input-dock border border-border-soft bg-surface-floating shadow-input-dock",
+          hero && "shadow-floating",
+        )}
       >
         {/* Slash Command Menu */}
         {slash.isOpen && (
@@ -475,8 +481,11 @@ export default function ChatInput({
             onSelect={() => mention.recheckTrigger()}
             onClick={() => mention.recheckTrigger()}
             onScroll={(e) => setMirrorScrollTop(e.currentTarget.scrollTop)}
-            rows={1}
-            className="relative border-0 shadow-none bg-transparent px-4 pt-3 pb-1 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground focus-visible:ring-0 resize-none min-h-[42px] max-h-[40vh] overflow-y-auto break-words"
+            rows={hero ? 2 : 1}
+            className={cn(
+              "relative border-0 shadow-none bg-transparent px-4 pt-3 pb-1 text-sm leading-[1.5] text-foreground placeholder:text-muted-foreground focus-visible:ring-0 resize-none min-h-[42px] max-h-[40vh] overflow-y-auto break-words",
+              hero && "min-h-[72px] pt-4 pb-2",
+            )}
           />
         </div>
 
