@@ -6,7 +6,6 @@ import { useAppVersion } from "@/lib/appMeta"
 import { basename } from "@/lib/path"
 import { IconTip } from "@/components/ui/tooltip"
 import {
-  Settings,
   Copy,
   BarChart3,
   Pencil,
@@ -17,12 +16,12 @@ import {
   FolderCheck,
   ListChecks,
   Loader2,
-  MessagesSquare,
+  MessageCircle,
   Search,
   Send,
   Ghost,
-  Download,
-  PanelLeftOpen,
+  Share2,
+  PanelLeft,
 } from "lucide-react"
 import { ExportSessionDialog } from "@/components/chat/export/ExportSessionDialog"
 import ChannelIcon from "@/components/common/ChannelIcon"
@@ -55,7 +54,6 @@ interface ChatTitleBarProps {
   loading: boolean
   compacting: boolean
   setCompacting: (v: boolean) => void
-  onOpenAgentSettings?: (agentId: string) => void
   onRenameSession?: (sessionId: string, title: string) => void
   onViewSystemPrompt?: () => void
   systemPromptLoading?: boolean
@@ -119,7 +117,6 @@ export default function ChatTitleBar({
   compacting,
   setCompacting,
   onRenameSession,
-  onOpenAgentSettings,
   onViewSystemPrompt,
   systemPromptLoading,
   onCommandAction,
@@ -245,7 +242,7 @@ export default function ChatTitleBar({
 
   return (
     <div
-      className="h-10 flex items-end justify-between px-4 bg-background shrink-0"
+      className="h-10 flex items-end justify-between px-4 bg-surface-app shrink-0"
       data-tauri-drag-region
     >
       <div className="flex items-end gap-2 min-w-0 pb-1.5">
@@ -256,7 +253,7 @@ export default function ChatTitleBar({
               aria-label={t("chat.expandSidebar")}
               onClick={onExpandSidebar}
             >
-              <PanelLeftOpen className="h-4 w-4" />
+              <PanelLeft className="h-4 w-4" />
             </button>
           </IconTip>
         )}
@@ -371,7 +368,7 @@ export default function ChatTitleBar({
               }
             >
               {displayMode === "timeline" ? (
-                <MessagesSquare className="h-4 w-4" />
+                <MessageCircle className="h-4 w-4" />
               ) : (
                 <ListChecks className="h-4 w-4" />
               )}
@@ -766,7 +763,7 @@ export default function ChatTitleBar({
               className="pb-1.5 text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setExportOpen(true)}
             >
-              <Download className="h-4 w-4" />
+              <Share2 className="h-4 w-4" />
             </button>
           </IconTip>
         )}
@@ -778,17 +775,6 @@ export default function ChatTitleBar({
               onClick={() => onOpenHandover(currentSessionId)}
             >
               <Send className="h-4 w-4" />
-            </button>
-          </IconTip>
-        )}
-        {/* Settings Button */}
-        {onOpenAgentSettings && (
-          <IconTip label={t("settings.agentSettings")}>
-            <button
-              className="pb-1.5 text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => onOpenAgentSettings(currentAgentId)}
-            >
-              <Settings className="h-4 w-4" />
             </button>
           </IconTip>
         )}
