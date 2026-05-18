@@ -17,10 +17,8 @@ pub async fn status() -> Result<Json<ha_core::mac_control::MacControlStatus>, Ap
     )))
 }
 
-pub async fn permissions() -> Result<
-    Json<ha_core::mac_control::MacControlPermissionsResponse>,
-    AppError,
-> {
+pub async fn permissions(
+) -> Result<Json<ha_core::mac_control::MacControlPermissionsResponse>, AppError> {
     Ok(Json(
         ha_core::mac_control::unsupported_permissions_response(HTTP_UNSUPPORTED_MESSAGE),
     ))
