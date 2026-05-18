@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "Asenkron araç arka plana alma",
+      "desc": "Asenkron destekli araçların (exec / web_search / image_generate) ne zaman arka plan işine alınacağı. Onaydan bağımsız.",
+      "modelDecide": {
+        "label": "Model karar verir (varsayılan)",
+        "desc": "Modelin gönderdiği `run_in_background:true` değerine uy; aksi halde global eşik aşılınca otomatik arka plana al."
+      },
+      "alwaysBackground": {
+        "label": "Her zaman arka planda",
+        "desc": "Asenkron destekli her çağrı anında arka plana alınır ve bir iş kimliği döner. Model `job_status` ile yoklamalıdır."
+      },
+      "neverBackground": {
+        "label": "Asla arka planda",
+        "desc": "Arka planı tamamen kapat; tüm araçlar senkron çalışır ve tamamlanana kadar engeller."
+      }
+    },
     "agentAvatar": "Avatar",
     "agentAvatarPick": "Resim seç",
     "agentBasicInfo": "Temel Bilgiler",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "job_status maksimum bekleme",
     "asyncToolsJobStatusMaxWaitDesc": "Tek bir job_status(block=true) çağrısının üst sınırı. Yalnızca iş başına maksimum süre = 0 olduğunda uygulanır; aksi halde iş başına maksimum süre önceliklidir.",
     "asyncToolsMaxJob": "Maks. iş süresi",
-    "asyncToolsMaxJobDesc": "Arka plan işinin çalışabileceği süre sınırı. Aşılırsa sonlandırılır. 0 = iş başına sınır yok.",
+    "asyncToolsMaxJobDesc": "Arka plan işinin çalışabileceği süre sınırı. Aşılırsa sonlandırılır. 0 = async job katmanında sınır yok; tek tek araçlar kendi zaman aşımlarını uygulayabilir.",
     "asyncToolsOrphanGrace": "Yetim spool bekleme süresi",
     "asyncToolsOrphanGraceDesc": "Veritabanında referansı olmayan spool dosyaları bu saatler sonra temizlenir. Bekleme süresi, uçuş halindeki yazmalarla yarışı önler.",
     "asyncToolsRetention": "Sonlanmış iş saklama",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} verildi",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "Sistem izinleri",
+    "permUnknown": "Manuel doğrula",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "Manuel doğrula",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "Görevi güncelle",
     "toolTeamDesc": "Paylaşılan görev panoları ve üyeler arası mesajlaşma ile agent takımları oluştur ve yönet",
     "toolTeamName": "Agent Takımı",
-    "toolTimeout": "Araç çalıştırma zaman aşımı",
-    "toolTimeoutDesc": "Araç çağrısı başına maksimum çalıştırma süresi. Ağ sorunlarından kaynaklanan sonsuz takılmaları önler. Devre dışı bırakmak için 0",
+    "toolTimeout": "Senkron araç zaman aşımı",
+    "toolTimeoutDesc": "Ön plan/senkron araç çağrıları için maksimum çalıştırma süresi. Ağ sorunlarından kaynaklanan sonsuz takılmaları önler. Arka plan async job'ları async araçlardaki maksimum iş süresini kullanır. Devre dışı bırakmak için 0",
     "toolUpdateCoreMemoryDesc": "Sistem istemine enjekte edilen memory.md dosyasını güncelle",
     "toolUpdateCoreMemoryName": "Çekirdek Belleği Güncelle",
     "toolUpdateMemoryDesc": "Mevcut bir hafızanın içeriğini güncelle",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "Uygulama dilini takip et",
     "webSearchNeedsConfig": "Yapılandırma gerekli",
     "webSearchNeedsKey": "Anahtar gerekli",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

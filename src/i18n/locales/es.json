@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "Backgrounding de herramientas asíncronas",
+      "desc": "Cuándo desacoplar a tareas en segundo plano las herramientas async-capable (exec / web_search / image_generate). Independiente de la aprobación.",
+      "modelDecide": {
+        "label": "Decide el modelo (predeterminado)",
+        "desc": "Respeta `run_in_background:true` del modelo; en caso contrario, pasa automáticamente a segundo plano tras el umbral global."
+      },
+      "alwaysBackground": {
+        "label": "Siempre en segundo plano",
+        "desc": "Cada llamada async-capable se desacopla inmediatamente y devuelve un id de trabajo. El modelo debe consultar con `job_status`."
+      },
+      "neverBackground": {
+        "label": "Nunca en segundo plano",
+        "desc": "Desactiva por completo el segundo plano; todas las herramientas se ejecutan sincrónicamente y bloquean hasta terminar."
+      }
+    },
     "agentAvatar": "Avatar",
     "agentAvatarPick": "Elegir imagen",
     "agentBasicInfo": "Info Básica",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "Espera máxima de job_status",
     "asyncToolsJobStatusMaxWaitDesc": "Límite superior para una única llamada job_status(block=true). Solo se aplica cuando la duración máxima por trabajo = 0; de lo contrario prevalece la duración máxima por trabajo.",
     "asyncToolsMaxJob": "Duración máx. de un job",
-    "asyncToolsMaxJobDesc": "Límite de tiempo de ejecución de un job en segundo plano. Al superarlo se termina. 0 = sin límite por job.",
+    "asyncToolsMaxJobDesc": "Límite de tiempo de ejecución de un job en segundo plano. Al superarlo se termina. 0 = sin límite en la capa de jobs async; cada herramienta aún puede aplicar sus propios timeouts.",
     "asyncToolsOrphanGrace": "Periodo de gracia de spool huérfanos",
     "asyncToolsOrphanGraceDesc": "Los archivos spool no referenciados por una fila de la BD se eliminan tras estas horas. El periodo evita carreras con escrituras en curso.",
     "asyncToolsRetention": "Retención de jobs finalizados",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} concedidos",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "Permisos del sistema",
+    "permUnknown": "Verificar manualmente",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "Verificar manualmente",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "Actualizar tarea",
     "toolTeamDesc": "Crear y gestionar equipos de agentes con tableros de tareas compartidos y mensajería entre miembros",
     "toolTeamName": "Equipo de Agentes",
-    "toolTimeout": "Timeout de ejecución de herramientas",
-    "toolTimeoutDesc": "Tiempo máximo de ejecución por llamada a herramienta. Evita bloqueos infinitos por problemas de red. 0 para desactivar",
+    "toolTimeout": "Timeout de herramientas síncronas",
+    "toolTimeoutDesc": "Tiempo máximo de ejecución para llamadas de herramientas en primer plano/síncronas. Evita bloqueos infinitos por problemas de red. Los jobs async en segundo plano usan la duración máxima de las herramientas async. 0 para desactivar",
     "toolUpdateCoreMemoryDesc": "Actualizar el archivo memory.md inyectado en el system prompt",
     "toolUpdateCoreMemoryName": "Actualizar Memoria Central",
     "toolUpdateMemoryDesc": "Actualizar el contenido de una memoria existente",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "Seguir el idioma de la app",
     "webSearchNeedsConfig": "Requiere configuración",
     "webSearchNeedsKey": "Requiere clave",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "Фоновый режим для асинхронных инструментов",
+      "desc": "Когда асинхронно-совместимые инструменты (exec / web_search / image_generate) отделяются в фоновые задания. Независимо от одобрения.",
+      "modelDecide": {
+        "label": "Решает модель (по умолчанию)",
+        "desc": "Учитывать `run_in_background:true` от модели; иначе автоматический переход в фон после глобального порога."
+      },
+      "alwaysBackground": {
+        "label": "Всегда в фоне",
+        "desc": "Каждый вызов асинхронно-совместимого инструмента сразу переводится в фон и возвращает id задания. Модель должна опрашивать его через `job_status`."
+      },
+      "neverBackground": {
+        "label": "Никогда в фоне",
+        "desc": "Полностью отключить фоновый режим; все инструменты выполняются синхронно и блокируют до завершения."
+      }
+    },
     "agentAvatar": "Аватар",
     "agentAvatarPick": "Выбрать изображение",
     "agentBasicInfo": "Основная информация",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "Максимальное ожидание job_status",
     "asyncToolsJobStatusMaxWaitDesc": "Верхний предел одного вызова job_status(block=true). Применяется только если максимальная длительность задания = 0; иначе приоритет имеет максимальная длительность задания.",
     "asyncToolsMaxJob": "Макс. длительность задания",
-    "asyncToolsMaxJobDesc": "Жёсткий лимит времени выполнения фонового задания. По истечении задание завершается. 0 = без лимита на задание.",
+    "asyncToolsMaxJobDesc": "Жёсткий лимит времени выполнения фонового задания. По истечении задание завершается. 0 = без лимита на уровне async job; отдельные инструменты всё ещё могут применять собственные таймауты.",
     "asyncToolsOrphanGrace": "Льготный период для spool-сирот",
     "asyncToolsOrphanGraceDesc": "Spool-файлы без ссылок из БД удаляются через указанное число часов. Льготный период предотвращает гонки с активными записями.",
     "asyncToolsRetention": "Хранение завершённых заданий",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} предоставлено",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "Системные разрешения",
+    "permUnknown": "Проверить вручную",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "Проверить вручную",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "Обновить задачу",
     "toolTeamDesc": "Создание и управление командами агентов с общими досками задач и обменом сообщениями между участниками",
     "toolTeamName": "Команда агентов",
-    "toolTimeout": "Таймаут выполнения инструмента",
-    "toolTimeoutDesc": "Максимальное время выполнения одного вызова инструмента. Защищает от бесконечного зависания из-за сетевых проблем. 0 = отключено",
+    "toolTimeout": "Таймаут синхронных инструментов",
+    "toolTimeoutDesc": "Максимальное время выполнения foreground/синхронных вызовов инструментов. Защищает от бесконечного зависания из-за сетевых проблем. Фоновые async job используют максимальную длительность из настроек async tools. 0 = отключено",
     "toolUpdateCoreMemoryDesc": "Обновить файл memory.md, внедряемый в системный промпт",
     "toolUpdateCoreMemoryName": "Обновить базовую память",
     "toolUpdateMemoryDesc": "Обновить содержимое существующей записи памяти",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "Следовать языку приложения",
     "webSearchNeedsConfig": "Нужна настройка",
     "webSearchNeedsKey": "Нужен ключ",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

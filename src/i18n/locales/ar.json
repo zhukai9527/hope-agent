@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "نقل الأدوات غير المتزامنة للخلفية",
+      "desc": "متى يتم نقل الأدوات القادرة على العمل غير المتزامن (exec / web_search / image_generate) إلى مهام خلفية. مستقل عن الموافقة.",
+      "modelDecide": {
+        "label": "النموذج يقرر (الافتراضي)",
+        "desc": "احترام `run_in_background:true` المرسل من النموذج؛ خلاف ذلك يتم نقله تلقائيًا للخلفية بعد العتبة العامة."
+      },
+      "alwaysBackground": {
+        "label": "دائمًا في الخلفية",
+        "desc": "كل استدعاء قادر على العمل غير المتزامن يُنقل فورًا للخلفية ويعيد معرّف مهمة. يجب على النموذج الاستعلام بواسطة `job_status`."
+      },
+      "neverBackground": {
+        "label": "لا تنقل للخلفية أبدًا",
+        "desc": "تعطيل النقل للخلفية بالكامل؛ تعمل جميع الأدوات بشكل متزامن وتحجب حتى الانتهاء."
+      }
+    },
     "agentAvatar": "الصورة الرمزية",
     "agentAvatarPick": "اختر صورة",
     "agentBasicInfo": "معلومات أساسية",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "الحد الأقصى لانتظار job_status",
     "asyncToolsJobStatusMaxWaitDesc": "الحد الأعلى لمكالمة job_status(block=true) واحدة. يُطبَّق فقط عندما يكون الحد الأقصى لمدة المهمة = 0، وإلا فإن الحد الأقصى لمدة المهمة يسبقه.",
     "asyncToolsMaxJob": "الحد الأقصى لمدة المهمة",
-    "asyncToolsMaxJobDesc": "الحد الأقصى لمدة تشغيل المهمة الخلفية؛ عند تجاوزه يتم إنهاؤها. 0 = بلا حد لكل مهمة.",
+    "asyncToolsMaxJobDesc": "الحد الأقصى لمدة تشغيل المهمة الخلفية؛ عند تجاوزه يتم إنهاؤها. 0 = بلا حد على طبقة مهام async؛ قد تظل الأدوات الفردية تفرض مهلاتها الخاصة.",
     "asyncToolsOrphanGrace": "فترة السماح للملفات اليتيمة",
     "asyncToolsOrphanGraceDesc": "تُنظَّف ملفات spool غير المرتبطة بسجل في قاعدة البيانات بعد هذا العدد من الساعات. تحافظ فترة السماح على عدم التعارض مع الكتابات الجارية.",
     "asyncToolsRetention": "الاحتفاظ بالمهام المكتملة",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} ممنوحة",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "صلاحيات النظام",
+    "permUnknown": "تحقق يدوياً",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "تحقق يدوياً",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "تحديث مهمة",
     "toolTeamDesc": "إنشاء وإدارة فِرق الوكلاء بألواح مهام مشتركة وتراسل بين الأعضاء",
     "toolTeamName": "فريق الوكلاء",
-    "toolTimeout": "مهلة تنفيذ الأداة",
-    "toolTimeoutDesc": "الحد الأقصى لوقت التنفيذ لكل استدعاء أداة. يمنع التعليق اللانهائي بسبب مشاكل الشبكة. اضبط على 0 لتعطيله",
+    "toolTimeout": "مهلة الأدوات المتزامنة",
+    "toolTimeoutDesc": "الحد الأقصى لوقت تنفيذ استدعاءات الأدوات الأمامية/المتزامنة. يمنع التعليق اللانهائي بسبب مشاكل الشبكة. تستخدم مهام async الخلفية مدة المهمة القصوى في إعدادات الأدوات غير المتزامنة. اضبط على 0 لتعطيله",
     "toolUpdateCoreMemoryDesc": "تحديث ملف memory.md الذي يُحقن في موجّه النظام",
     "toolUpdateCoreMemoryName": "تحديث الذاكرة الأساسية",
     "toolUpdateMemoryDesc": "تحديث محتوى ذاكرة موجودة",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "اتباع لغة التطبيق",
     "webSearchNeedsConfig": "يتطلب تكويناً",
     "webSearchNeedsKey": "يتطلب مفتاحاً",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

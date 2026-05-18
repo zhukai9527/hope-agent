@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 
@@ -16,6 +17,7 @@ use crate::channel::types::{InlineButton, ReplyPayload};
 use crate::tools::approval::{
     submit_approval_response, ApprovalReasonKind, ApprovalReasonPayload, ApprovalResponse,
 };
+use crate::ttl_cache::TtlCache;
 
 use std::sync::Arc;
 
@@ -37,6 +39,43 @@ static TEXT_PENDING: OnceLock<Mutex<HashMap<(String, String), Vec<PendingTextApp
 
 fn get_text_pending() -> &'static Mutex<HashMap<(String, String), Vec<PendingTextApproval>>> {
     TEXT_PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Throttle for the "you have N pending approvals" hint — one nudge per
+/// (account, chat) per the configured interval (see
+/// `permission.imApprovalHintThrottleSecs`, default 60s). Backed by
+/// [`TtlCache`] so stale entries auto-expire (bounded memory across
+/// long-lived IM deployments). Capacity 1024 is generous for any
+/// plausible per-process chat count.
+static HINT_THROTTLE_CACHE: OnceLock<TtlCache<(String, String), ()>> = OnceLock::new();
+
+fn get_hint_throttle() -> &'static TtlCache<(String, String), ()> {
+    HINT_THROTTLE_CACHE.get_or_init(|| TtlCache::new(1024))
+}
+
+fn hint_throttle_duration() -> Duration {
+    let secs = crate::config::cached_config()
+        .permission
+        .im_approval_hint_throttle_secs;
+    Duration::from_secs(secs)
+}
+
+/// Remove any in-memory pending text-reply state for `request_id`. Called by
+/// the tool execution path when an approval is timed out / cancelled /
+/// otherwise resolved without an IM reply, so stale entries don't
+/// accumulate. Mirrors [`super::ask_user::drop_pending_by_request_id`].
+pub async fn drop_pending_by_request_id(request_id: &str) {
+    let mut map = get_text_pending().lock().await;
+    let mut empty_keys = Vec::new();
+    for (key, list) in map.iter_mut() {
+        list.retain(|p| p.request_id != request_id);
+        if list.is_empty() {
+            empty_keys.push(key.clone());
+        }
+    }
+    for k in empty_keys {
+        map.remove(&k);
+    }
 }
 
 // ── InlineButton helper ──────────────────────────────────────────
@@ -103,15 +142,139 @@ fn format_approval_text(command: &str, reason: Option<&ApprovalReasonPayload>) -
     )
 }
 
+/// Short visible tag for a `request_id`, used to disambiguate multiple
+/// pending approvals when the user replies. Six UTF-8 chars keeps
+/// collisions effectively impossible at the per-(account, chat) scope —
+/// `truncate_utf8` stays safe even if the id generator ever moves off
+/// ASCII UUIDs.
+fn id_tag(request_id: &str) -> &str {
+    crate::truncate_utf8(request_id, 6)
+}
+
 /// Format the text-only approval prompt (for channels without buttons).
-fn format_text_approval(command: &str, reason: Option<&ApprovalReasonPayload>) -> String {
+/// Includes the `#tag` so the user can target a specific pending approval
+/// (`yes#abc123`) when several are queued; bare replies (`yes` / `1`) fall
+/// back to LIFO order.
+///
+/// `stack_depth` is the number of pending approvals (including this one)
+/// in the current (account, chat). When >1 the reply hint nudges the user
+/// to disambiguate with `#tag`.
+///
+/// `timeout_secs` comes from `permission.approval_timeout_secs` so the
+/// deadline shown to the user matches the actual timeout. `0` is
+/// rendered as "no time limit" — matches the tool-side behaviour where
+/// `0` makes the approval wait forever.
+fn format_text_approval(
+    command: &str,
+    reason: Option<&ApprovalReasonPayload>,
+    request_id: &str,
+    stack_depth: usize,
+    timeout_secs: u64,
+) -> String {
     let preview = crate::truncate_utf8(command, 500);
+    let tag = id_tag(request_id);
+    let stack_hint = if stack_depth > 1 {
+        format!("\n\n({stack_depth} pending — append `#{tag}` to target this one specifically)")
+    } else {
+        String::new()
+    };
+    let reply_header = timeout_reply_header(timeout_secs);
     format!(
-        "🔐 Tool approval required:\n{}{}\n\nReply:\n1 - Allow once\n2 - Always allow\n3 - Deny",
-        preview,
-        smart_judge_line(reason)
+        "🔐 Tool approval required #{tag}:\n{preview}{smart}\n\n{reply_header}\n  1 / yes / ok — Allow once\n  2 / always   — Always allow\n  3 / no / deny — Deny\n(中文也可: 同意 / 总是 / 拒绝){stack_hint}",
+        smart = smart_judge_line(reason)
     )
 }
+
+/// Render the "reply within X" header line from a timeout in seconds.
+/// `0` → no deadline; whole minutes are formatted as "X min", anything
+/// else stays in seconds so weird values like 90 don't get rounded.
+fn timeout_reply_header(timeout_secs: u64) -> String {
+    if timeout_secs == 0 {
+        "Reply (no time limit):".to_string()
+    } else if timeout_secs % 60 == 0 {
+        let mins = timeout_secs / 60;
+        format!("Reply within {mins} min:")
+    } else {
+        format!("Reply within {timeout_secs}s:")
+    }
+}
+
+// ── Text reply parsing ───────────────────────────────────────────
+
+/// Parsed approval verb plus an optional `#<id>` suffix the user appended
+/// to target a specific pending approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedReply<'a> {
+    response: ApprovalResponse,
+    id_suffix: Option<&'a str>,
+}
+
+/// Match `raw` against the approval reply whitelist.
+///
+/// Whitespace-trimmed, case-insensitive, supports both English and Chinese
+/// aliases. An optional `#<id>` suffix routes to a specific pending approval
+/// instead of the LIFO top (`yes#abc123` / `3#abc123`).
+///
+/// `AllowAlways` is matched before `AllowOnce` so the literal `yes always`
+/// resolves to `AllowAlways` instead of being eaten by the `yes` arm.
+fn parse_approval_reply(raw: &str) -> Option<ParsedReply<'_>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (verb_part, id_suffix) = match trimmed.split_once('#') {
+        Some((v, id)) => {
+            let id_trimmed = id.trim();
+            if id_trimmed.is_empty() {
+                return None;
+            }
+            (v.trim_end(), Some(id_trimmed))
+        }
+        None => (trimmed, None),
+    };
+    // Whitelist is pure ASCII + CJK; CJK has no case variants and
+    // `to_ascii_lowercase` is allocation-free for already-lowercase input,
+    // so this is both correct and cheaper than `to_lowercase`. AllowAlways
+    // is checked first so `"yes always"` doesn't get eaten by the
+    // `"yes"` arm in AllowOnce.
+    let lower = verb_part.to_ascii_lowercase();
+    let response = if ALLOW_ALWAYS_ALIASES.contains(&lower.as_str()) {
+        ApprovalResponse::AllowAlways
+    } else if ALLOW_ONCE_ALIASES.contains(&lower.as_str()) {
+        ApprovalResponse::AllowOnce
+    } else if DENY_ALIASES.contains(&lower.as_str()) {
+        ApprovalResponse::Deny
+    } else {
+        return None;
+    };
+    Some(ParsedReply {
+        response,
+        id_suffix,
+    })
+}
+
+/// `AllowAlways` aliases. Matched **before** [`ALLOW_ONCE_ALIASES`] so
+/// `"yes always"` doesn't get eaten by the AllowOnce `"yes"` entry.
+/// Adding a language (jp / ko / es / …) is one line per array.
+const ALLOW_ALWAYS_ALIASES: &[&str] = &[
+    "2",
+    "a",
+    "always",
+    "yes always",
+    "yesalways",
+    "总是",
+    "总是允许",
+    "永远",
+    "始终",
+];
+
+const ALLOW_ONCE_ALIASES: &[&str] = &[
+    "1", "y", "yes", "ok", "okay", "allow", "approve", "好", "好的", "同意", "允许", "可以", "行",
+];
+
+const DENY_ALIASES: &[&str] = &[
+    "3", "n", "no", "deny", "block", "stop", "cancel", "不", "不行", "拒绝", "否", "取消",
+];
 
 // ── Shared callback handler (eliminates boilerplate in channel plugins) ──
 
@@ -156,8 +319,18 @@ pub fn spawn_channel_approval_listener(channel_db: Arc<ChannelDB>, registry: Arc
                 }
             };
 
-            if event.name != "approval_required" {
-                continue;
+            match event.name.as_str() {
+                "approval_required" => {} // fall through to dispatch below
+                "approval_timed_out" => {
+                    handle_timeout_event(
+                        event.payload.clone(),
+                        channel_db.clone(),
+                        registry.clone(),
+                    )
+                    .await;
+                    continue;
+                }
+                _ => continue,
             }
 
             // Deserialize the approval request
@@ -226,22 +399,29 @@ pub fn spawn_channel_approval_listener(channel_db: Arc<ChannelDB>, registry: Arc
                     ..ReplyPayload::text("")
                 }
             } else {
-                // Register for text-reply routing
-                {
-                    let key = (
-                        conversation.account_id.clone(),
-                        conversation.chat_id.clone(),
-                    );
+                // Register for text-reply routing. Compute stack_depth inside
+                // the same lock so the rendered prompt's "N pending" line
+                // matches what `try_handle_approval_reply` will see.
+                let key = (
+                    conversation.account_id.clone(),
+                    conversation.chat_id.clone(),
+                );
+                let stack_depth = {
                     let mut pending = get_text_pending().lock().await;
-                    pending.entry(key).or_default().push(PendingTextApproval {
+                    let list = pending.entry(key).or_default();
+                    list.push(PendingTextApproval {
                         request_id: request.request_id.clone(),
                     });
-                }
+                    list.len()
+                };
 
                 ReplyPayload {
                     text: Some(format_text_approval(
                         &request.command,
                         request.reason.as_ref(),
+                        &request.request_id,
+                        stack_depth,
+                        crate::tools::approval::approval_timeout_secs(),
                     )),
                     thread_id: conversation.thread_id.clone(),
                     ..ReplyPayload::text("")
@@ -263,6 +443,106 @@ pub fn spawn_channel_approval_listener(channel_db: Arc<ChannelDB>, registry: Arc
     });
 }
 
+/// Wire payload of the `approval_timed_out` EventBus event. Tools side
+/// (`tools::approval::check_and_request_approval` timeout branch) emits
+/// this so the IM channel listener can notify the user — the actual list
+/// cleanup is independently handled by [`drop_pending_by_request_id`]
+/// also called from the tools side, so this listener never has to touch
+/// `TEXT_PENDING`.
+#[derive(serde::Deserialize)]
+struct ApprovalTimedOut {
+    request_id: String,
+    session_id: Option<String>,
+    #[serde(default)]
+    timeout_secs: u64,
+    /// What the tool path did after the timeout. Determines whether the
+    /// IM notification says "denied" (the tool call was blocked) or
+    /// "continued anyway" (the tool ran with no human approval per
+    /// `permission.approval_timeout_action=proceed`). Optional only for
+    /// forward-compat with payloads emitted before the field existed;
+    /// missing → assume default `Deny`.
+    #[serde(default)]
+    timeout_action: crate::config::ApprovalTimeoutAction,
+}
+
+/// Tell the IM user the approval prompt expired. Best-effort — if the
+/// channel is offline we just log; the tool-side timeout (deny / proceed
+/// per config) has already taken effect, and the IM-side `TEXT_PENDING`
+/// entry has already been cleared by the tools side calling
+/// [`drop_pending_by_request_id`].
+async fn handle_timeout_event(
+    payload: serde_json::Value,
+    channel_db: Arc<ChannelDB>,
+    registry: Arc<ChannelRegistry>,
+) {
+    let event: ApprovalTimedOut = match serde_json::from_value(payload) {
+        Ok(e) => e,
+        Err(err) => {
+            app_warn!(
+                "channel",
+                "approval",
+                "Failed to parse approval_timed_out payload: {}",
+                err
+            );
+            return;
+        }
+    };
+    let Some(session_id) = event.session_id else {
+        return;
+    };
+
+    let conversation = match channel_db.get_conversation_by_session(&session_id) {
+        Ok(Some(c)) => c,
+        Ok(None) => return, // not an IM session — desktop handles its own UI
+        Err(e) => {
+            app_warn!(
+                "channel",
+                "approval",
+                "Timeout lookup failed for session {}: {}",
+                session_id,
+                e
+            );
+            return;
+        }
+    };
+
+    let store = crate::config::cached_config();
+    let account_config = match store.channels.find_account(&conversation.account_id) {
+        Some(c) => c.clone(),
+        None => return,
+    };
+
+    let tag = id_tag(&event.request_id);
+    let timeout_secs = event.timeout_secs;
+    let body = match event.timeout_action {
+        crate::config::ApprovalTimeoutAction::Deny => format!(
+            "⏱ Tool approval #{tag} timed out after {timeout_secs}s. The tool call has been denied — ask me again if you still want it to run."
+        ),
+        // `proceed` means the tool path didn't block: it ran the tool
+        // anyway. Tell the user clearly so they don't assume the action
+        // was cancelled — side effects already happened.
+        crate::config::ApprovalTimeoutAction::Proceed => format!(
+            "⏱ Tool approval #{tag} timed out after {timeout_secs}s. The tool call continued anyway (per `permission.approval_timeout_action=proceed`) — any side effects have already happened."
+        ),
+    };
+    let payload = ReplyPayload {
+        text: Some(body),
+        thread_id: conversation.thread_id.clone(),
+        ..ReplyPayload::text("")
+    };
+    if let Err(e) = registry
+        .send_reply(&account_config, &conversation.chat_id, &payload)
+        .await
+    {
+        app_warn!(
+            "channel",
+            "approval",
+            "Failed to send approval-timeout notice: {}",
+            e
+        );
+    }
+}
+
 // ── Text-reply approval handler ──────────────────────────────────
 
 /// Try to handle an inbound message as an approval text reply.
@@ -270,39 +550,61 @@ pub fn spawn_channel_approval_listener(channel_db: Arc<ChannelDB>, registry: Arc
 /// Returns `true` if the message was consumed as an approval reply,
 /// `false` if it should proceed through normal message processing.
 pub async fn try_handle_approval_reply(msg: &crate::channel::types::MsgContext) -> bool {
-    let text = match msg.text.as_deref() {
-        Some(t) => t.trim(),
-        None => return false,
+    let Some(raw) = msg.text.as_deref() else {
+        return false;
     };
-
-    let response = match text {
-        "1" => ApprovalResponse::AllowOnce,
-        "2" => ApprovalResponse::AllowAlways,
-        "3" => ApprovalResponse::Deny,
-        _ => return false,
+    let Some(parsed) = parse_approval_reply(raw) else {
+        return false;
     };
 
     let key = (msg.account_id.clone(), msg.chat_id.clone());
-    let request_id = {
+    // Snapshot the available tags before popping so we can build a
+    // helpful "did you mean" reply when the suffix doesn't match.
+    let (popped, available_tags) = {
         let mut pending = get_text_pending().lock().await;
-        if let Some(list) = pending.get_mut(&key) {
-            if list.is_empty() {
-                return false;
-            }
-            // LIFO: the most recent approval gets the reply
-            let Some(entry) = list.pop() else {
-                return false;
-            };
-            if list.is_empty() {
-                pending.remove(&key);
-            }
-            entry.request_id
-        } else {
+        let Some(list) = pending.get_mut(&key) else {
+            return false;
+        };
+        if list.is_empty() {
+            pending.remove(&key);
             return false;
         }
+        // `#<id>` suffix targets a specific pending approval by short tag
+        // (`id_tag` prefix match). Without suffix, fall back to LIFO so the
+        // most-recently-prompted approval is the default — matches what's
+        // visually on screen.
+        let popped = match parsed.id_suffix {
+            Some(target) => list
+                .iter()
+                .position(|entry| id_tag(&entry.request_id) == target)
+                .map(|idx| list.remove(idx)),
+            None => list.pop(),
+        };
+        let tags: Vec<String> = list
+            .iter()
+            .map(|entry| id_tag(&entry.request_id).to_string())
+            .collect();
+        if list.is_empty() {
+            pending.remove(&key);
+        }
+        (popped, tags)
     };
 
-    match submit_approval_response(&request_id, response).await {
+    let Some(entry) = popped else {
+        // Suffix typo: the user clearly tried to reply to an approval
+        // (verb parsed, `#<tag>` provided) but the tag doesn't match any
+        // pending entry. Consume the message and tell them which tags are
+        // valid — falling through to a fresh chat turn would silently
+        // route the typo to the LLM and leave the approval pending.
+        if let Some(target) = parsed.id_suffix {
+            send_suffix_mismatch_notice(msg, target, &available_tags).await;
+            return true;
+        }
+        return false;
+    };
+    let request_id = entry.request_id;
+
+    match submit_approval_response(&request_id, parsed.response).await {
         Ok(()) => true,
         Err(e) => {
             // Approval already expired (5-min timeout) — don't consume the message
@@ -314,6 +616,112 @@ pub async fn try_handle_approval_reply(msg: &crate::channel::types::MsgContext) 
             );
             false
         }
+    }
+}
+
+/// Tell the user their `#<tag>` suffix didn't match any pending approval.
+/// Lists the tags that ARE pending so the typo is fixable in one message.
+async fn send_suffix_mismatch_notice(
+    msg: &crate::channel::types::MsgContext,
+    target: &str,
+    available_tags: &[String],
+) {
+    let store = crate::config::cached_config();
+    let Some(account_config) = store.channels.find_account(&msg.account_id).cloned() else {
+        return;
+    };
+    let body = if available_tags.is_empty() {
+        // Race: pending was popped between parse and our reply. Don't
+        // surface a misleading "available tags: <none>" string.
+        format!("ℹ️ Tag `#{target}` doesn't match any pending approval (it may have just been answered or timed out).")
+    } else {
+        let tag_list = available_tags
+            .iter()
+            .map(|t| format!("`#{t}`"))
+            .collect::<Vec<_>>()
+            .join(" / ");
+        format!(
+            "ℹ️ Tag `#{target}` doesn't match any pending approval. Currently pending: {tag_list}. Reply e.g. `yes#{first}` or `no#{first}`.",
+            first = available_tags[0]
+        )
+    };
+    let registry = match crate::globals::get_channel_registry() {
+        Some(r) => r,
+        None => return,
+    };
+    let payload = ReplyPayload {
+        text: Some(body),
+        thread_id: msg.thread_id.clone(),
+        ..ReplyPayload::text("")
+    };
+    if let Err(e) = registry
+        .send_reply(&account_config, &msg.chat_id, &payload)
+        .await
+    {
+        app_warn!(
+            "channel",
+            "approval",
+            "Failed to send suffix-mismatch notice: {}",
+            e
+        );
+    }
+}
+
+/// Best-effort nudge for users whose chat has pending text-mode approvals
+/// but who sent something that isn't a reply (e.g. a fresh question while
+/// the approval prompt is still up). Sends one line per (account, chat)
+/// per [`hint_throttle_duration`] (configurable), not on every non-
+/// matching message.
+///
+/// No-op for accounts on button-capable channels (they never have entries
+/// in `TEXT_PENDING`). Called by the dispatcher after
+/// [`try_handle_approval_reply`] returns `false`.
+pub async fn maybe_send_pending_hint(
+    msg: &crate::channel::types::MsgContext,
+    registry: &ChannelRegistry,
+) {
+    let key = (msg.account_id.clone(), msg.chat_id.clone());
+
+    let stack_depth = {
+        let pending = get_text_pending().lock().await;
+        pending.get(&key).map(|list| list.len()).unwrap_or(0)
+    };
+    if stack_depth == 0 {
+        return;
+    }
+
+    // Throttle gate: skip if we already nudged this chat recently. The
+    // `TtlCache` bounds memory (capacity 1024) so long-running IM
+    // deployments don't accumulate one entry per ever-seen (account, chat).
+    let throttle = get_hint_throttle();
+    if throttle.get(&key, hint_throttle_duration()).is_some() {
+        return;
+    }
+    throttle.put(key, ());
+
+    let store = crate::config::cached_config();
+    let Some(account_config) = store.channels.find_account(&msg.account_id).cloned() else {
+        return;
+    };
+
+    let body = format!(
+        "ℹ️ You have {stack_depth} pending tool approval(s). Treating this as a new message. Reply `1` / `yes` to allow, `3` / `no` to deny — or append `#<tag>` to target a specific one."
+    );
+    let payload = ReplyPayload {
+        text: Some(body),
+        thread_id: msg.thread_id.clone(),
+        ..ReplyPayload::text("")
+    };
+    if let Err(e) = registry
+        .send_reply(&account_config, &msg.chat_id, &payload)
+        .await
+    {
+        app_warn!(
+            "channel",
+            "approval",
+            "Failed to send pending-approval hint: {}",
+            e
+        );
     }
 }
 
@@ -401,12 +809,273 @@ mod tests {
 
     #[test]
     fn format_text_approval_keeps_numeric_reply_block() {
-        let txt = format_text_approval("exec ls", Some(&smart(Some("ok per project rules"))));
+        let txt = format_text_approval(
+            "exec ls",
+            Some(&smart(Some("ok per project rules"))),
+            "abc123def456",
+            1,
+            300,
+        );
         assert!(txt.contains("💭 Smart Judge: ok per project rules"));
-        assert!(txt.contains("\nReply:\n1 - Allow once\n2 - Always allow\n3 - Deny"));
+        assert!(txt.contains("1 / yes / ok"));
+        assert!(txt.contains("3 / no / deny"));
+        // The visible #tag uses the 6-char prefix of the request id.
+        assert!(txt.contains("#abc123"));
         // Smart Judge must precede the digit list so 1/2/3 parsing isn't shifted.
         let smart_idx = txt.find("Smart Judge").expect("has smart line");
-        let reply_idx = txt.find("Reply:").expect("has reply block");
+        let reply_idx = txt.find("Reply within").expect("has reply block");
         assert!(smart_idx < reply_idx);
+    }
+
+    #[test]
+    fn format_text_approval_renders_stack_hint_when_multiple_pending() {
+        let single = format_text_approval("exec ls", None, "abcdef123456", 1, 300);
+        assert!(!single.contains("pending"));
+
+        let multi = format_text_approval("exec ls", None, "abcdef123456", 3, 300);
+        assert!(multi.contains("3 pending"));
+        assert!(multi.contains("#abcdef"));
+    }
+
+    #[test]
+    fn format_text_approval_renders_configured_timeout() {
+        // Default 5-minute timeout reads as "Reply within 5 min".
+        let default = format_text_approval("exec ls", None, "abcdef123456", 1, 300);
+        assert!(default.contains("Reply within 5 min:"));
+
+        // Custom whole-minute timeout follows the same shape.
+        let two_min = format_text_approval("exec ls", None, "abcdef123456", 1, 120);
+        assert!(two_min.contains("Reply within 2 min:"));
+
+        // Non-whole-minute timeout stays in seconds — no rounding.
+        let ninety = format_text_approval("exec ls", None, "abcdef123456", 1, 90);
+        assert!(ninety.contains("Reply within 90s:"));
+
+        // `0` = no time limit; the deadline phrase changes so the user
+        // doesn't assume a 5-min cutoff that doesn't exist.
+        let unlimited = format_text_approval("exec ls", None, "abcdef123456", 1, 0);
+        assert!(unlimited.contains("Reply (no time limit):"));
+        assert!(!unlimited.contains("Reply within"));
+    }
+
+    #[test]
+    fn parse_approval_reply_accepts_english_aliases() {
+        for (input, expected) in [
+            ("1", ApprovalResponse::AllowOnce),
+            ("yes", ApprovalResponse::AllowOnce),
+            ("YES", ApprovalResponse::AllowOnce),
+            ("  Yes  ", ApprovalResponse::AllowOnce),
+            ("y", ApprovalResponse::AllowOnce),
+            ("ok", ApprovalResponse::AllowOnce),
+            ("allow", ApprovalResponse::AllowOnce),
+            ("2", ApprovalResponse::AllowAlways),
+            ("always", ApprovalResponse::AllowAlways),
+            ("yes always", ApprovalResponse::AllowAlways),
+            ("3", ApprovalResponse::Deny),
+            ("no", ApprovalResponse::Deny),
+            ("N", ApprovalResponse::Deny),
+            ("deny", ApprovalResponse::Deny),
+            ("cancel", ApprovalResponse::Deny),
+        ] {
+            let parsed = parse_approval_reply(input).unwrap_or_else(|| panic!("failed: {input:?}"));
+            assert_eq!(parsed.response, expected, "input {input:?}");
+            assert!(parsed.id_suffix.is_none(), "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn parse_approval_reply_accepts_chinese_aliases() {
+        for (input, expected) in [
+            ("好", ApprovalResponse::AllowOnce),
+            ("好的", ApprovalResponse::AllowOnce),
+            ("同意", ApprovalResponse::AllowOnce),
+            ("允许", ApprovalResponse::AllowOnce),
+            ("总是", ApprovalResponse::AllowAlways),
+            ("永远", ApprovalResponse::AllowAlways),
+            ("不", ApprovalResponse::Deny),
+            ("拒绝", ApprovalResponse::Deny),
+            ("取消", ApprovalResponse::Deny),
+        ] {
+            let parsed = parse_approval_reply(input).unwrap_or_else(|| panic!("failed: {input:?}"));
+            assert_eq!(parsed.response, expected, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn parse_approval_reply_rejects_unrelated_text() {
+        // Avoid false positives — "yesterday" must not match "yes" via
+        // prefix or contains.
+        assert!(parse_approval_reply("yesterday").is_none());
+        assert!(parse_approval_reply("notnow").is_none());
+        assert!(parse_approval_reply("好像").is_none());
+        assert!(parse_approval_reply("").is_none());
+        assert!(parse_approval_reply("   ").is_none());
+        assert!(parse_approval_reply("帮我看看天气").is_none());
+        assert!(parse_approval_reply("yes please").is_none());
+    }
+
+    #[test]
+    fn parse_approval_reply_extracts_id_suffix() {
+        let parsed = parse_approval_reply("yes#abc123").unwrap();
+        assert_eq!(parsed.response, ApprovalResponse::AllowOnce);
+        assert_eq!(parsed.id_suffix, Some("abc123"));
+
+        let parsed = parse_approval_reply("3#xyz789").unwrap();
+        assert_eq!(parsed.response, ApprovalResponse::Deny);
+        assert_eq!(parsed.id_suffix, Some("xyz789"));
+
+        // Trim whitespace around the suffix too.
+        let parsed = parse_approval_reply("同意 #abc123 ").unwrap();
+        assert_eq!(parsed.response, ApprovalResponse::AllowOnce);
+        assert_eq!(parsed.id_suffix, Some("abc123"));
+
+        // Empty suffix is rejected — `yes#` would otherwise route nowhere.
+        assert!(parse_approval_reply("yes#").is_none());
+        assert!(parse_approval_reply("yes#   ").is_none());
+    }
+
+    // The two tests below pin the **list-manipulation primitives** the
+    // dispatcher path relies on (LIFO `pop` for bare verbs, `position +
+    // remove` for `#tag` suffix). They deliberately do NOT call
+    // `try_handle_approval_reply` end-to-end because that requires a live
+    // `tools::approval::PENDING_APPROVALS` entry (which would need a
+    // `pub(crate)` test hook into a private struct). End-to-end routing
+    // coverage is registered as a follow-up in
+    // `docs/plans/review-followups.md`.
+
+    #[tokio::test]
+    async fn text_pending_list_pop_is_lifo_for_bare_verb() {
+        let key = ("acct-lifo".to_string(), "chat-lifo".to_string());
+        {
+            let mut pending = get_text_pending().lock().await;
+            pending
+                .entry(key.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "older-id-aaa".to_string(),
+                });
+            pending
+                .entry(key.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "newer-id-bbb".to_string(),
+                });
+        }
+        // Bare "yes" parses with no suffix → dispatcher uses `list.pop()`.
+        let parsed = parse_approval_reply("yes").unwrap();
+        assert!(parsed.id_suffix.is_none());
+
+        let popped = {
+            let mut pending = get_text_pending().lock().await;
+            let list = pending.get_mut(&key).unwrap();
+            let entry = list.pop().unwrap();
+            if list.is_empty() {
+                pending.remove(&key);
+            }
+            entry
+        };
+        assert_eq!(popped.request_id, "newer-id-bbb");
+
+        let mut pending = get_text_pending().lock().await;
+        pending.remove(&key);
+    }
+
+    #[tokio::test]
+    async fn text_pending_id_tag_position_match_routes_to_non_top() {
+        let key = ("acct-suffix".to_string(), "chat-suffix".to_string());
+        {
+            let mut pending = get_text_pending().lock().await;
+            pending
+                .entry(key.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "aaaaaa-older".to_string(),
+                });
+            pending
+                .entry(key.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "bbbbbb-newer".to_string(),
+                });
+        }
+
+        let parsed = parse_approval_reply("yes#aaaaaa").unwrap();
+        assert_eq!(parsed.id_suffix, Some("aaaaaa"));
+
+        // Dispatcher path on `#tag` reply: `iter().position(|e|
+        // id_tag(&e.request_id) == target).map(|i| list.remove(i))`.
+        let popped = {
+            let mut pending = get_text_pending().lock().await;
+            let list = pending.get_mut(&key).unwrap();
+            let idx = list
+                .iter()
+                .position(|e| id_tag(&e.request_id) == "aaaaaa")
+                .expect("targeted entry exists");
+            let entry = list.remove(idx);
+            if list.is_empty() {
+                pending.remove(&key);
+            }
+            entry
+        };
+        assert_eq!(popped.request_id, "aaaaaa-older");
+        let pending = get_text_pending().lock().await;
+        let remaining = pending.get(&key).expect("newer entry still queued");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].request_id, "bbbbbb-newer");
+        drop(pending);
+
+        let mut pending = get_text_pending().lock().await;
+        pending.remove(&key);
+    }
+
+    #[tokio::test]
+    async fn drop_pending_by_request_id_clears_across_chats() {
+        let key_a = ("acct-drop".to_string(), "chat-a".to_string());
+        let key_b = ("acct-drop".to_string(), "chat-b".to_string());
+        {
+            let mut pending = get_text_pending().lock().await;
+            pending
+                .entry(key_a.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "shared-id-xyz".to_string(),
+                });
+            pending
+                .entry(key_b.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "shared-id-xyz".to_string(),
+                });
+            pending
+                .entry(key_b.clone())
+                .or_default()
+                .push(PendingTextApproval {
+                    request_id: "unrelated-id-pdq".to_string(),
+                });
+        }
+
+        drop_pending_by_request_id("shared-id-xyz").await;
+
+        let pending = get_text_pending().lock().await;
+        assert!(
+            pending.get(&key_a).is_none(),
+            "chat A entry should be cleared and the now-empty list removed",
+        );
+        let remaining_b = pending
+            .get(&key_b)
+            .expect("chat B still has unrelated entry");
+        assert_eq!(remaining_b.len(), 1);
+        assert_eq!(remaining_b[0].request_id, "unrelated-id-pdq");
+        drop(pending);
+
+        let mut pending = get_text_pending().lock().await;
+        pending.remove(&key_b);
+    }
+
+    #[test]
+    fn id_tag_clamps_to_six_chars_or_shorter() {
+        assert_eq!(id_tag("abcdef123456"), "abcdef");
+        assert_eq!(id_tag("ab"), "ab");
+        assert_eq!(id_tag(""), "");
     }
 }

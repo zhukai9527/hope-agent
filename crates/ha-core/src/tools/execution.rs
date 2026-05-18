@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use super::app_update;
 use super::project_read_file;
@@ -101,7 +102,10 @@ pub(super) async fn resolve_tool_permission(
 /// Load the user-configured tool timeout from config.json. Returns `None`
 /// when the user explicitly set 0 (disabled). The serde default in
 /// [`AppConfig`] provides the 300s fallback when the field is missing.
-fn tool_timeout() -> Option<Duration> {
+fn tool_timeout(ctx: &ToolExecContext) -> Option<Duration> {
+    if ctx.suppress_global_tool_timeout {
+        return None;
+    }
     let secs = crate::config::cached_config().tool_timeout;
     if secs == 0 {
         None
@@ -109,6 +113,8 @@ fn tool_timeout() -> Option<Duration> {
         Some(Duration::from_secs(secs))
     }
 }
+
+const TOOL_TIMEOUT_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 
 // ── Tool Execution Context ────────────────────────────────────────
 
@@ -145,6 +151,10 @@ pub struct ToolExecContext {
     pub session_working_dir: Option<String>,
     /// Current session ID (for sub-agent spawning context)
     pub session_id: Option<String>,
+    /// Provider tool-call id for the currently executing tool. Async jobs
+    /// persist this so completion notifications can point back to the exact
+    /// original call.
+    pub tool_call_id: Option<String>,
     /// Current agent ID
     pub agent_id: Option<String>,
     /// Sub-agent nesting depth (0 = top-level)
@@ -170,8 +180,28 @@ pub struct ToolExecContext {
     /// for the bundled plan agent so a planning subagent can't run shell
     /// commands without confirmation.
     pub plan_mode_ask_tools: Vec<String>,
-    /// When true, automatically approve all tool calls (IM channel auto-approve mode).
+    /// When true, automatically approve all tool calls — skips BOTH the
+    /// permission-engine gate AND the `exec` command-level gate. Set by the
+    /// IM channel auto-approve account flag and by skill-triggered slash
+    /// commands (the user has out-of-band authorized everything that path
+    /// will run). **Do not** set this for internal re-entries that only mean
+    /// "the engine already ran at the outer dispatch" — use
+    /// [`Self::external_pre_approved`] instead, otherwise `exec` will
+    /// silently bypass its dangerous/edit-command audits.
     pub auto_approve_tools: bool,
+    /// Set by the async-job spawner / auto-bg helper to mark that the
+    /// permission engine gate (see [`needs_permission_engine`]) was already
+    /// satisfied at the outer dispatch. Inner re-entries skip the engine
+    /// gate but **still run command-level gates** (notably `exec`'s
+    /// dangerous/edit-command + AllowAlways audit), because for the `exec`
+    /// tool those gates are intentionally bypassed at the outer engine layer
+    /// (`needs_permission_engine` excludes `TOOL_EXEC`) and `exec` is
+    /// expected to run them itself.
+    ///
+    /// Differs from [`Self::auto_approve_tools`], which means "skip ALL
+    /// approval gates including command-level" and is set only by IM
+    /// auto-approve accounts or slash-skill execution.
+    pub external_pre_approved: bool,
     /// Per-session permission mode (Default / Smart / Yolo). Resolved from the
     /// `sessions.permission_mode` column at agent build time. The engine
     /// consumes this together with `global_yolo` to decide approval behavior.
@@ -190,6 +220,21 @@ pub struct ToolExecContext {
     /// recursion: even if the tool is async-capable and the policy is
     /// `always-background`, this single re-dispatch runs synchronously.
     pub bypass_async_dispatch: bool,
+    /// Internal flag set for async tool jobs that already have their own
+    /// background runtime cap (`asyncTools.maxJobSecs`). This prevents the
+    /// global foreground safety net (`toolTimeout`) from shortening long
+    /// background work unexpectedly.
+    pub suppress_global_tool_timeout: bool,
+    /// Internal flag for async tool jobs. They persist the final result through
+    /// `async_jobs::spawn::persist_result`, so the generic large-result
+    /// preview layer must not wrap the output first and turn the async
+    /// output-file into a pointer to a second file.
+    pub suppress_result_disk_persistence: bool,
+    /// Best-effort cancellation signal for the currently executing tool.
+    /// The chat turn, async-job timeout, or runtime_cancel path can trip this
+    /// token; resource-owning tools such as `exec` use it to clean up process
+    /// trees instead of merely returning a cancelled tool result.
+    pub cancellation_token: Option<CancellationToken>,
     /// Per-dispatch sink for structured tool metadata (e.g. file change
     /// before/after snapshots, line deltas). The orchestrator constructs a
     /// fresh `Arc<Mutex<None>>` for **each** tool dispatch, attaches the same
@@ -206,6 +251,32 @@ pub struct ToolExecContext {
 }
 
 impl ToolExecContext {
+    /// True when either local gate-skip flag is set (`auto_approve_tools`
+    /// from IM auto-approve accounts / slash-skill execution, or
+    /// `external_pre_approved` from async-job re-entry). Callers that need
+    /// the full effective verdict still need to OR in
+    /// `mcp_tool_auto_approves(name).await` — that one is async-only and
+    /// can't fold into a sync method.
+    #[inline]
+    pub fn local_auto_approve(&self) -> bool {
+        self.auto_approve_tools || self.external_pre_approved
+    }
+
+    /// True when `exec` must run its command-level audit (dangerous-commands
+    /// + edit-commands + AllowAlways prefix). Only `auto_approve_tools`
+    /// bypasses this — `external_pre_approved` deliberately does NOT,
+    /// because the outer engine gate excludes `TOOL_EXEC` and this audit is
+    /// `exec`'s only safeguard against dangerous patterns when the call is
+    /// re-dispatched through the async-job spawner / auto-bg helper.
+    ///
+    /// Changing this read site without also updating
+    /// [`Self::auto_approve_tools`] / [`Self::external_pre_approved`] doc
+    /// is a security regression.
+    #[inline]
+    pub fn should_run_exec_command_gate(&self) -> bool {
+        !self.auto_approve_tools
+    }
+
     /// Returns the default path for path-aware tools: session working dir,
     /// then agent home, then ".".
     pub fn default_path(&self) -> &str {
@@ -504,7 +575,12 @@ pub async fn execute_tool_with_context(
     //   - the tool is `exec` (which usually skips the engine for its own
     //     command-level prefix gate; in Plan Mode the engine's
     //     plan-mode-ask path takes precedence).
-    let effective_auto_approve = ctx.auto_approve_tools || mcp_tool_auto_approves(name).await;
+    // `external_pre_approved` only suppresses re-entry into the engine gate —
+    // it does NOT pierce `exec`'s command-level audit (exec.rs reads
+    // `auto_approve_tools` directly via `should_run_exec_command_gate`).
+    // `auto_approve_tools` continues to mean "skip everything" for IM
+    // auto-approve accounts and skill-triggered slash commands.
+    let effective_auto_approve = ctx.local_auto_approve() || mcp_tool_auto_approves(name).await;
     let needs_engine = needs_permission_engine(name, args, ctx, effective_auto_approve);
     if needs_engine {
         let decision =
@@ -589,10 +665,14 @@ pub async fn execute_tool_with_context(
                         app_warn!(
                             "tool",
                             "approval",
-                            "Tool approval check failed for '{}' ({}), proceeding",
+                            "Tool approval check failed for '{}' ({}); blocking execution",
                             name,
                             e
                         );
+                        return Err(super::rejection::ToolRejection::approval_failed(
+                            name,
+                            e.to_string(),
+                        ));
                     }
                 }
             }
@@ -661,14 +741,22 @@ pub async fn execute_tool_with_context(
             .auto_background_secs;
         let mut inner_ctx = ctx.clone();
         inner_ctx.bypass_async_dispatch = true;
-        // Approval already ran at this outer layer — silence the inner re-entry.
-        inner_ctx.auto_approve_tools = true;
+        inner_ctx.suppress_global_tool_timeout = true;
+        // The engine gate either ran (for non-exec tools) or was deliberately
+        // skipped (`exec` is always excluded from the outer engine gate and
+        // runs its command-level audit instead). Tell the recursive inner
+        // dispatch "engine already handled" so it doesn't double-prompt the
+        // user — but **do not** flip `auto_approve_tools`, which would also
+        // bypass `exec`'s command-level dangerous/edit audit and let any
+        // shell command run silently as long as it's async-eligible.
+        inner_ctx.external_pre_approved = true;
         let raw =
             async_jobs::dispatch_with_auto_background(name, args, &inner_ctx, auto_bg_secs).await?;
-        // The auto-bg helper already routed the result through this function
-        // recursively (inner_ctx.bypass_async_dispatch=true) so disk-persist
-        // and logging fired inside that nested call. Return as-is.
-        return Ok(raw);
+        // The inner worker suppresses generic disk persistence so detached jobs
+        // can spool their raw output into the async output-file. If the worker
+        // finished within the foreground budget, persist large inline output at
+        // this outer layer before returning it to the model.
+        return maybe_persist_large_tool_result(name, raw, ctx);
     }
 
     // ── Conditional skill activation (`paths:` frontmatter) ──────
@@ -680,74 +768,103 @@ pub async fn execute_tool_with_context(
         maybe_activate_conditional_skills(name, args, ctx);
     }
 
+    let hard_timeout = tool_timeout(ctx);
+    let timeout_ctx = hard_timeout.map(|_| {
+        let mut timeout_ctx = ctx.clone();
+        let token = ctx
+            .cancellation_token
+            .as_ref()
+            .map(CancellationToken::child_token)
+            .unwrap_or_default();
+        timeout_ctx.cancellation_token = Some(token);
+        timeout_ctx
+    });
+    let dispatch_ctx = timeout_ctx.as_ref().unwrap_or(ctx);
+    let timeout_cancel_token = dispatch_ctx.cancellation_token.clone();
+
     let dispatch = async {
         match name {
-            TOOL_EXEC => exec::tool_exec(args, ctx).await,
+            TOOL_EXEC => exec::tool_exec(args, dispatch_ctx).await,
             TOOL_PROCESS => process::tool_process(args).await,
-            TOOL_READ | "read_file" => read::tool_read_file(args, ctx).await,
-            TOOL_PROJECT_READ_FILE => project_read_file::tool_project_read_file(args, ctx).await,
-            TOOL_WRITE | "write_file" => write::tool_write_file(args, ctx).await,
-            TOOL_EDIT | "patch_file" => edit::tool_edit(args, ctx).await,
-            TOOL_LS | "list_dir" => ls::tool_ls(args, ctx).await,
-            TOOL_GREP => grep::tool_grep(args, ctx).await,
-            TOOL_FIND => find::tool_find(args, ctx).await,
-            TOOL_APPLY_PATCH => apply_patch::tool_apply_patch(args, ctx).await,
+            TOOL_READ | "read_file" => read::tool_read_file(args, dispatch_ctx).await,
+            TOOL_PROJECT_READ_FILE => {
+                project_read_file::tool_project_read_file(args, dispatch_ctx).await
+            }
+            TOOL_WRITE | "write_file" => write::tool_write_file(args, dispatch_ctx).await,
+            TOOL_EDIT | "patch_file" => edit::tool_edit(args, dispatch_ctx).await,
+            TOOL_LS | "list_dir" => ls::tool_ls(args, dispatch_ctx).await,
+            TOOL_GREP => grep::tool_grep(args, dispatch_ctx).await,
+            TOOL_FIND => find::tool_find(args, dispatch_ctx).await,
+            TOOL_APPLY_PATCH => apply_patch::tool_apply_patch(args, dispatch_ctx).await,
             TOOL_WEB_SEARCH => web_search::tool_web_search(args).await,
             TOOL_WEB_FETCH => web_fetch::tool_web_fetch(args).await,
-            TOOL_SAVE_MEMORY => memory::tool_save_memory(args, ctx).await,
+            TOOL_SAVE_MEMORY => memory::tool_save_memory(args, dispatch_ctx).await,
             TOOL_RECALL_MEMORY => memory::tool_recall_memory(args).await,
             TOOL_UPDATE_MEMORY => memory::tool_update_memory(args).await,
             TOOL_DELETE_MEMORY => memory::tool_delete_memory(args).await,
             TOOL_UPDATE_CORE_MEMORY => {
                 memory::tool_update_core_memory(
                     args,
-                    ctx.agent_id
+                    dispatch_ctx
+                        .agent_id
                         .as_deref()
                         .unwrap_or(crate::agent_loader::DEFAULT_AGENT_ID),
                 )
                 .await
             }
-            TOOL_MANAGE_CRON => cron::tool_manage_cron(args, ctx.session_id.as_deref()).await,
-            TOOL_BROWSER => browser::tool_browser(args, ctx.session_id.as_deref()).await,
-            TOOL_SEND_NOTIFICATION => notification::tool_send_notification(args, ctx).await,
-            TOOL_SUBAGENT => subagent::tool_subagent(args, ctx).await,
-            TOOL_TEAM => team::tool_team(args, ctx).await,
-            TOOL_ACP_SPAWN => acp_spawn::tool_acp_spawn(args, ctx).await,
+            TOOL_MANAGE_CRON => {
+                cron::tool_manage_cron(args, dispatch_ctx.session_id.as_deref()).await
+            }
+            TOOL_BROWSER => browser::tool_browser(args, dispatch_ctx.session_id.as_deref()).await,
+            TOOL_SEND_NOTIFICATION => {
+                notification::tool_send_notification(args, dispatch_ctx).await
+            }
+            TOOL_SUBAGENT => subagent::tool_subagent(args, dispatch_ctx).await,
+            TOOL_TEAM => team::tool_team(args, dispatch_ctx).await,
+            TOOL_ACP_SPAWN => acp_spawn::tool_acp_spawn(args, dispatch_ctx).await,
             TOOL_MEMORY_GET => memory::tool_memory_get(args).await,
             TOOL_AGENTS_LIST => agents::tool_agents_list(args).await,
             TOOL_SESSIONS_LIST => sessions::tool_sessions_list(args).await,
             TOOL_SESSION_STATUS => sessions::tool_session_status(args).await,
             TOOL_SESSIONS_HISTORY => sessions::tool_sessions_history(args).await,
-            TOOL_SESSIONS_SEND => Box::pin(sessions::tool_sessions_send(args, ctx)).await,
+            TOOL_SESSIONS_SEND => Box::pin(sessions::tool_sessions_send(args, dispatch_ctx)).await,
             TOOL_IMAGE => image::tool_image(args).await,
-            TOOL_IMAGE_GENERATE => image_generate::tool_image_generate(args, ctx).await,
+            TOOL_IMAGE_GENERATE => image_generate::tool_image_generate(args, dispatch_ctx).await,
             TOOL_PDF => pdf::tool_pdf(args).await,
-            TOOL_CANVAS => canvas::tool_canvas(args, ctx).await,
+            TOOL_CANVAS => canvas::tool_canvas(args, dispatch_ctx).await,
             TOOL_GET_WEATHER => weather::tool_get_weather(args).await,
             TOOL_ASK_USER_QUESTION => {
-                Ok(ask_user_question::execute(args, ctx.session_id.as_deref()).await)
+                Ok(ask_user_question::execute(args, dispatch_ctx.session_id.as_deref()).await)
             }
             TOOL_ENTER_PLAN_MODE => {
-                Ok(enter_plan_mode::execute(args, ctx.session_id.as_deref()).await)
+                Ok(enter_plan_mode::execute(args, dispatch_ctx.session_id.as_deref()).await)
             }
-            TOOL_SUBMIT_PLAN => Ok(submit_plan::execute(args, ctx.session_id.as_deref()).await),
-            TOOL_TASK_CREATE => Ok(task::tool_task_create(args, ctx.session_id.as_deref()).await),
-            TOOL_TASK_UPDATE => Ok(task::tool_task_update(args, ctx.session_id.as_deref()).await),
-            TOOL_TASK_LIST => Ok(task::tool_task_list(args, ctx.session_id.as_deref()).await),
-            super::TOOL_APP_UPDATE => app_update::tool_app_update(args, ctx).await,
+            TOOL_SUBMIT_PLAN => {
+                Ok(submit_plan::execute(args, dispatch_ctx.session_id.as_deref()).await)
+            }
+            TOOL_TASK_CREATE => {
+                Ok(task::tool_task_create(args, dispatch_ctx.session_id.as_deref()).await)
+            }
+            TOOL_TASK_UPDATE => {
+                Ok(task::tool_task_update(args, dispatch_ctx.session_id.as_deref()).await)
+            }
+            TOOL_TASK_LIST => {
+                Ok(task::tool_task_list(args, dispatch_ctx.session_id.as_deref()).await)
+            }
+            super::TOOL_APP_UPDATE => app_update::tool_app_update(args, dispatch_ctx).await,
             TOOL_JOB_STATUS => job_status::tool_job_status(args).await,
             TOOL_RUNTIME_CANCEL => runtime_cancel::tool_runtime_cancel(args).await,
-            super::TOOL_TOOL_SEARCH => super::tool_search::tool_search(args, ctx).await,
+            super::TOOL_TOOL_SEARCH => super::tool_search::tool_search(args, dispatch_ctx).await,
             super::TOOL_PEEK_SESSIONS => {
-                crate::awareness::run_peek_sessions(args, ctx.session_id.as_deref())
+                crate::awareness::run_peek_sessions(args, dispatch_ctx.session_id.as_deref())
                     .map_err(|e| anyhow::anyhow!(e))
             }
             TOOL_GET_SETTINGS => settings::tool_get_settings(args).await,
             TOOL_UPDATE_SETTINGS => settings::tool_update_settings(args).await,
             TOOL_LIST_SETTINGS_BACKUPS => settings::tool_list_settings_backups(args).await,
             TOOL_RESTORE_SETTINGS_BACKUP => settings::tool_restore_settings_backup(args).await,
-            TOOL_SEND_ATTACHMENT => send_attachment::tool_send_attachment(args, ctx).await,
-            super::TOOL_SKILL => skill::tool_skill(args, ctx).await,
+            TOOL_SEND_ATTACHMENT => send_attachment::tool_send_attachment(args, dispatch_ctx).await,
+            super::TOOL_SKILL => skill::tool_skill(args, dispatch_ctx).await,
             super::TOOL_MCP_RESOURCE => crate::mcp::resources::tool_mcp_resource(args).await,
             super::TOOL_MCP_PROMPT => crate::mcp::prompts::tool_mcp_prompt(args).await,
             super::feishu::TOOL_DOCX_CREATE => super::feishu::docx::execute_create(args).await,
@@ -850,16 +967,21 @@ pub async fn execute_tool_with_context(
             // MCP-sourced tools all share the `mcp__<server>__<tool>`
             // prefix; dispatch them through the dedicated subsystem.
             n if crate::mcp::catalog::is_mcp_tool_name(n) => {
-                crate::mcp::invoke::call_tool(n, args, ctx).await
+                crate::mcp::invoke::call_tool(n, args, dispatch_ctx).await
             }
             _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
         }
     };
 
-    let result = if let Some(hard_timeout) = tool_timeout() {
-        match timeout(hard_timeout, dispatch).await {
+    let mut dispatch = Box::pin(dispatch);
+    let result = if let Some(hard_timeout) = hard_timeout {
+        match timeout(hard_timeout, &mut dispatch).await {
             Ok(inner) => inner,
             Err(_elapsed) => {
+                if let Some(token) = &timeout_cancel_token {
+                    token.cancel();
+                }
+                let _ = timeout(TOOL_TIMEOUT_CLEANUP_GRACE, &mut dispatch).await;
                 app_error!(
                     "tool",
                     "execution",
@@ -914,47 +1036,56 @@ pub async fn execute_tool_with_context(
         }
     }
 
-    // ── Large result disk persistence ────────────────────────────────
-    // If the result exceeds the threshold, write it to disk and return
-    // a preview with a path reference so the model can `read` the full file.
     match result {
-        Ok(output) if should_persist_large_result(&output) => {
-            if crate::tools::image_markers::has_valid_image_markers(&output) {
-                app_info!(
-                    "tool",
-                    "disk_persist",
-                    "Tool '{}' result {}B contains valid image marker; preserving inline for provider vision",
-                    name,
-                    output.len()
-                );
-                return Ok(output);
-            }
-            match persist_large_result(&output, ctx.session_id.as_deref(), name) {
-                Ok(path) => {
-                    app_info!(
-                        "tool",
-                        "disk_persist",
-                        "Tool '{}' result {}B persisted to {}",
-                        name,
-                        output.len(),
-                        path
-                    );
-                    Ok(build_persisted_large_result_preview(&output, &path))
-                }
-                Err(e) => {
-                    // Fall back to returning the full result if persistence fails
-                    app_warn!(
-                        "tool",
-                        "disk_persist",
-                        "Failed to persist large result for '{}': {}",
-                        name,
-                        e
-                    );
-                    Ok(output)
-                }
-            }
-        }
+        Ok(output) => maybe_persist_large_tool_result(name, output, ctx),
         other => other,
+    }
+}
+
+// ── Large result disk persistence ────────────────────────────────
+// If the result exceeds the threshold, write it to disk and return a preview
+// with a path reference so the model can `read` the full file.
+fn maybe_persist_large_tool_result(
+    name: &str,
+    output: String,
+    ctx: &ToolExecContext,
+) -> anyhow::Result<String> {
+    if ctx.suppress_result_disk_persistence || !should_persist_large_result(&output) {
+        return Ok(output);
+    }
+    if crate::tools::image_markers::has_valid_image_markers(&output) {
+        app_info!(
+            "tool",
+            "disk_persist",
+            "Tool '{}' result {}B contains valid image marker; preserving inline for provider vision",
+            name,
+            output.len()
+        );
+        return Ok(output);
+    }
+    match persist_large_result(&output, ctx.session_id.as_deref(), name) {
+        Ok(path) => {
+            app_info!(
+                "tool",
+                "disk_persist",
+                "Tool '{}' result {}B persisted to {}",
+                name,
+                output.len(),
+                path
+            );
+            Ok(build_persisted_large_result_preview(&output, &path))
+        }
+        Err(e) => {
+            // Fall back to returning the full result if persistence fails.
+            app_warn!(
+                "tool",
+                "disk_persist",
+                "Failed to persist large result for '{}': {}",
+                name,
+                e
+            );
+            Ok(output)
+        }
     }
 }
 
@@ -1143,7 +1274,7 @@ fn persist_large_result(
 mod tests {
     use super::{
         build_persisted_large_result_preview, mcp_server_auto_approves_config,
-        needs_permission_engine, ToolExecContext,
+        needs_permission_engine, tool_timeout, ToolExecContext,
     };
     use crate::mcp::{McpServerConfig, McpTransportSpec, McpTrustLevel};
     use crate::tools::browser::IMAGE_BASE64_PREFIX;
@@ -1192,6 +1323,16 @@ mod tests {
         };
 
         assert_eq!(ctx.default_path(), "/tmp/projects/demo");
+    }
+
+    #[test]
+    fn background_async_jobs_suppress_global_tool_timeout() {
+        let ctx = ToolExecContext {
+            suppress_global_tool_timeout: true,
+            ..ToolExecContext::default()
+        };
+
+        assert!(tool_timeout(&ctx).is_none());
     }
 
     #[test]
@@ -1284,5 +1425,127 @@ mod tests {
         };
 
         assert!(needs_permission_engine(&tool, &json!({}), &ctx, true));
+    }
+
+    // ── Regression: `external_pre_approved` vs `auto_approve_tools` split ──
+    //
+    // Before the split there was a single `auto_approve_tools` flag used both
+    // by IM auto-approve accounts ("skip ALL gates") and by async-job
+    // re-entry helpers ("engine already ran outside"). For `exec` the
+    // re-entry meaning was wrong — the outer engine gate intentionally
+    // excludes `TOOL_EXEC` (see `needs_permission_engine`), so flipping
+    // `auto_approve_tools=true` on re-entry let `exec` silently bypass its
+    // own command-level dangerous/edit audit. These tests pin the new
+    // contract: `external_pre_approved` only suppresses the engine gate,
+    // never the per-tool command-level gate.
+
+    #[test]
+    fn external_pre_approved_skips_engine_for_non_exec() {
+        let ctx = ToolExecContext {
+            external_pre_approved: true,
+            ..ToolExecContext::default()
+        };
+        assert!(ctx.local_auto_approve());
+        assert!(!needs_permission_engine(
+            "read",
+            &json!({"path": "/tmp/x"}),
+            &ctx,
+            ctx.local_auto_approve()
+        ));
+    }
+
+    #[test]
+    fn external_pre_approved_does_not_pierce_exec_command_gate() {
+        // Core regression: even with `external_pre_approved=true` the
+        // command-level audit (dangerous/edit-commands + AllowAlways prefix)
+        // must still run inside `exec::tool_exec`.
+        let ctx = ToolExecContext {
+            external_pre_approved: true,
+            auto_approve_tools: false,
+            ..ToolExecContext::default()
+        };
+        assert!(
+            ctx.should_run_exec_command_gate(),
+            "external_pre_approved must NOT bypass exec command-level audit"
+        );
+    }
+
+    #[test]
+    fn auto_approve_tools_pierces_exec_command_gate() {
+        // IM auto-approve account / skill-triggered slash command behavior:
+        // `auto_approve_tools=true` legitimately bypasses every gate
+        // including the exec command-level audit.
+        let ctx = ToolExecContext {
+            auto_approve_tools: true,
+            ..ToolExecContext::default()
+        };
+        assert!(
+            !ctx.should_run_exec_command_gate(),
+            "IM auto-approve behavior regression"
+        );
+    }
+
+    #[test]
+    fn plan_mode_ask_tools_pierces_external_pre_approved_for_exec() {
+        // Plan Mode `ask_tools` user-sovereignty contract: even if a recursive
+        // inner dispatch claims "engine already ran outside", Plan Mode forces
+        // the engine to re-prompt because the outer turn's plan agent had
+        // already decided this tool must always ask.
+        let ctx = ToolExecContext {
+            external_pre_approved: true,
+            plan_mode_allowed_tools: vec!["exec".to_string()],
+            plan_mode_ask_tools: vec!["exec".to_string()],
+            ..ToolExecContext::default()
+        };
+        assert!(needs_permission_engine(
+            "exec",
+            &json!({"command": "ls"}),
+            &ctx,
+            ctx.local_auto_approve()
+        ));
+    }
+
+    #[test]
+    fn plan_mode_ask_tools_pierces_auto_approve_tools_for_exec() {
+        let ctx = ToolExecContext {
+            auto_approve_tools: true,
+            plan_mode_allowed_tools: vec!["exec".to_string()],
+            plan_mode_ask_tools: vec!["exec".to_string()],
+            ..ToolExecContext::default()
+        };
+        assert!(needs_permission_engine(
+            "exec",
+            &json!({"command": "ls"}),
+            &ctx,
+            ctx.local_auto_approve()
+        ));
+    }
+
+    #[test]
+    fn async_spawn_keeps_exec_command_gate() {
+        // Pins the spawn.rs / auto-bg helper contract: when re-dispatching
+        // into the OS-thread runtime, only `external_pre_approved` may be
+        // flipped to silence the engine re-entry; `auto_approve_tools` must
+        // stay false so the command-level audit still catches things like
+        // `git push --force` or `rm -rf /`.
+        let inner_ctx = ToolExecContext {
+            bypass_async_dispatch: true,
+            external_pre_approved: true,
+            // auto_approve_tools intentionally NOT touched
+            ..ToolExecContext::default()
+        };
+        assert!(
+            inner_ctx.should_run_exec_command_gate(),
+            "async spawn must NOT flip auto_approve_tools — that was the original CVE-class bug"
+        );
+        // Engine gate skipped on re-entry (exec was already excluded from the
+        // outer engine gate; the load-bearing guarantee is the command-level
+        // audit above still fires).
+        assert!(!needs_permission_engine(
+            "exec",
+            &json!({"command": "rm -rf /"}),
+            &inner_ctx,
+            inner_ctx.local_auto_approve()
+        ));
     }
 }

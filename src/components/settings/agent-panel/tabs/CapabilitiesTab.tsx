@@ -13,8 +13,26 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { OpenClawHintBanner } from "./CustomTab"
-import type { AgentConfig, SkillSummary } from "../types"
+import type { AgentConfig, AsyncToolPolicy, SkillSummary } from "../types"
+
+/** Ordered policy options. First entry is the implicit default. The
+ * `i18nKey` segment plugs into `settings.agentAsyncToolPolicy.<key>` —
+ * see [`src/i18n/locales/en.json`](../../../i18n/locales/en.json) for
+ * the mirrored nested structure. */
+const ASYNC_TOOL_POLICIES: ReadonlyArray<{ value: AsyncToolPolicy; i18nKey: string }> = [
+  { value: "model-decide", i18nKey: "modelDecide" },
+  { value: "always-background", i18nKey: "alwaysBackground" },
+  { value: "never-background", i18nKey: "neverBackground" },
+]
+const ASYNC_TOOL_POLICY_DEFAULT = ASYNC_TOOL_POLICIES[0].value
 
 /** Collapsible section wrapper used by every tier block in this tab. */
 function CollapsibleSection({
@@ -213,6 +231,36 @@ export default function CapabilitiesTab({
               {t("settings.agentUnlimited")}
             </label>
           </div>
+        </div>
+
+        {/* Async tool backgrounding policy. Title-only — each option carries
+            its own description inside the dropdown, so no leading <p> here. */}
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-2 px-1">
+            {t("settings.agentAsyncToolPolicy.title")}
+          </div>
+          <Select
+            value={config.capabilities.asyncToolPolicy ?? ASYNC_TOOL_POLICY_DEFAULT}
+            onValueChange={(v) =>
+              updateCapabilities({ asyncToolPolicy: v as AsyncToolPolicy })
+            }
+          >
+            <SelectTrigger className="h-8 w-full text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASYNC_TOOL_POLICIES.map(({ value, i18nKey }) => (
+                <SelectItem key={value} value={value}>
+                  <div className="flex flex-col gap-0.5 text-left">
+                    <span>{t(`settings.agentAsyncToolPolicy.${i18nKey}.label`)}</span>
+                    <span className="text-[11px] text-muted-foreground/70">
+                      {t(`settings.agentAsyncToolPolicy.${i18nKey}.desc`)}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Tier 1: Core (read-only listing) */}

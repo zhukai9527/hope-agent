@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "Pelaksanaan latar belakang alat asinkron",
+      "desc": "Bila alat yang menyokong async (exec / web_search / image_generate) dialihkan ke kerja latar belakang. Bebas daripada kelulusan.",
+      "modelDecide": {
+        "label": "Model membuat keputusan (lalai)",
+        "desc": "Hormat `run_in_background:true` daripada model; jika tiada, alih ke latar belakang secara automatik selepas ambang global."
+      },
+      "alwaysBackground": {
+        "label": "Sentiasa di latar belakang",
+        "desc": "Setiap panggilan yang menyokong async dialihkan serta-merta ke latar belakang dan mengembalikan id kerja. Model perlu poll dengan `job_status`."
+      },
+      "neverBackground": {
+        "label": "Tidak pernah di latar belakang",
+        "desc": "Lumpuhkan latar belakang sepenuhnya; semua alat dijalankan secara segerak dan menyekat sehingga selesai."
+      }
+    },
     "agentAvatar": "Avatar",
     "agentAvatarPick": "Pilih gambar",
     "agentBasicInfo": "Info Asas",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "Masa menunggu maksimum job_status",
     "asyncToolsJobStatusMaxWaitDesc": "Had atas untuk satu panggilan job_status(block=true). Hanya digunakan apabila tempoh maksimum setiap kerja = 0; jika tidak, tempoh maksimum setiap kerja diutamakan.",
     "asyncToolsMaxJob": "Tempoh maksimum kerja",
-    "asyncToolsMaxJobDesc": "Had masa pelaksanaan kerja latar. Jika melebihi, ia dihentikan. 0 = tiada had per kerja.",
+    "asyncToolsMaxJobDesc": "Had masa pelaksanaan kerja latar. Jika melebihi, ia dihentikan. 0 = tiada had pada lapisan kerja async; alat individu masih boleh mengenakan tamat masa sendiri.",
     "asyncToolsOrphanGrace": "Tempoh ihsan spool yatim",
     "asyncToolsOrphanGraceDesc": "Fail spool tanpa rujukan DB dibersihkan selepas jam ini. Tempoh ihsan mengelak perlumbaan dengan penulisan sedang berjalan.",
     "asyncToolsRetention": "Pengekalan kerja terminal",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} diberikan",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "Kebenaran sistem",
+    "permUnknown": "Sahkan secara manual",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "Sahkan secara manual",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "Kemas kini tugasan",
     "toolTeamDesc": "Cipta dan urus pasukan agen dengan papan tugas dikongsi dan pemesejan antara ahli",
     "toolTeamName": "Pasukan Agen",
-    "toolTimeout": "Tamat masa pelaksanaan alat",
-    "toolTimeoutDesc": "Masa pelaksanaan maksimum setiap panggilan alat. Mengelakkan gantung tidak terhingga akibat masalah rangkaian. Tetapkan 0 untuk lumpuhkan",
+    "toolTimeout": "Tamat masa alat segerak",
+    "toolTimeoutDesc": "Masa pelaksanaan maksimum untuk panggilan alat latar depan/segerak. Mengelakkan gantung tidak terhingga akibat masalah rangkaian. Kerja async latar menggunakan tempoh kerja maksimum alat async. Tetapkan 0 untuk lumpuhkan",
     "toolUpdateCoreMemoryDesc": "Kemas kini fail memory.md yang disuntik ke dalam system prompt",
     "toolUpdateCoreMemoryName": "Kemas Kini Memori Teras",
     "toolUpdateMemoryDesc": "Kemas kini kandungan ingatan sedia ada",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "Ikut bahasa aplikasi",
     "webSearchNeedsConfig": "Perlukan konfigurasi",
     "webSearchNeedsKey": "Perlukan kunci",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

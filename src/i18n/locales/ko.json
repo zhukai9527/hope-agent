@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "승인",
+    "agentAsyncToolPolicy": {
+      "title": "비동기 도구 백그라운드 처리",
+      "desc": "비동기 가능 도구(exec / web_search / image_generate)를 백그라운드 작업으로 전환하는 시점입니다. 승인과 독립적입니다.",
+      "modelDecide": {
+        "label": "모델이 결정 (기본)",
+        "desc": "모델이 보낸 `run_in_background:true`를 따르며, 보내지 않으면 글로벌 임계값을 넘긴 뒤 자동으로 백그라운드로 전환됩니다."
+      },
+      "alwaysBackground": {
+        "label": "항상 백그라운드 실행",
+        "desc": "모든 비동기 가능 호출이 즉시 백그라운드로 전환되어 job id를 반환합니다. 모델은 `job_status`로 폴링해야 합니다."
+      },
+      "neverBackground": {
+        "label": "백그라운드 사용 안 함",
+        "desc": "백그라운드 처리를 완전히 비활성화하여 모든 도구가 동기로 실행되고 완료될 때까지 대기합니다."
+      }
+    },
     "agentAvatar": "아바타",
     "agentAvatarPick": "이미지 선택",
     "agentBasicInfo": "기본 정보",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "job_status 최대 대기 시간",
     "asyncToolsJobStatusMaxWaitDesc": "단일 job_status(block=true) 호출의 상한. 작업당 최대 시간 = 0일 때만 적용되며, 그렇지 않으면 작업당 최대 시간이 우선합니다.",
     "asyncToolsMaxJob": "작업당 최대 시간",
-    "asyncToolsMaxJobDesc": "백그라운드 작업의 최대 실행 시간. 초과 시 강제 종료됩니다. 0 = 제한 없음(도구 타임아웃은 적용).",
+    "asyncToolsMaxJobDesc": "백그라운드 작업의 최대 실행 시간. 초과 시 강제 종료됩니다. 0 = async job 계층에서는 제한 없음. 개별 도구는 자체 타임아웃을 적용할 수 있습니다.",
     "asyncToolsOrphanGrace": "고아 spool 유예 시간",
     "asyncToolsOrphanGraceDesc": "DB 레코드로 참조되지 않는 spool 파일은 이 시간(시간) 이후에 정리됩니다. 유예 기간으로 쓰기 중인 파일과의 경합을 방지합니다.",
     "asyncToolsRetention": "종결 작업 보존(일)",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} 부여됨",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "시스템 권한",
+    "permUnknown": "수동 확인",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "수동 확인",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "작업 업데이트",
     "toolTeamDesc": "Agent 팀 생성 및 관리 (멀티멤버 협업, 공유 작업 보드, 멤버 간 메시지)",
     "toolTeamName": "Agent 팀",
-    "toolTimeout": "도구 실행 시간 초과",
-    "toolTimeoutDesc": "도구 호출당 최대 실행 시간. 네트워크 문제로 인한 무한 대기 방지. 0 으로 설정하면 비활성화",
+    "toolTimeout": "동기 도구 시간 초과",
+    "toolTimeoutDesc": "포그라운드/동기 도구 호출의 최대 실행 시간입니다. 네트워크 문제로 인한 무한 대기를 방지합니다. 백그라운드 async job은 비동기 도구의 작업 최대 시간을 사용합니다. 0으로 설정하면 비활성화됩니다",
     "toolUpdateCoreMemoryDesc": "시스템 프롬프트에 상주하는 memory.md 파일 업데이트",
     "toolUpdateCoreMemoryName": "핵심 기억 업데이트",
     "toolUpdateMemoryDesc": "기존 기억의 내용 업데이트",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "앱 언어 따르기",
     "webSearchNeedsConfig": "구성 필요",
     "webSearchNeedsKey": "키 필요",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",

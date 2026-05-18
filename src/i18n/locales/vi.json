@@ -2180,6 +2180,22 @@
       }
     },
     "agentApprovalTab": "Approval",
+    "agentAsyncToolPolicy": {
+      "title": "Chạy ngầm cho công cụ bất đồng bộ",
+      "desc": "Khi nào các công cụ hỗ trợ chạy bất đồng bộ (exec / web_search / image_generate) tách ra thành công việc nền. Độc lập với phê duyệt.",
+      "modelDecide": {
+        "label": "Mô hình quyết định (mặc định)",
+        "desc": "Tôn trọng `run_in_background:true` từ mô hình; nếu không, tự động chuyển sang chạy nền sau ngưỡng toàn cục."
+      },
+      "alwaysBackground": {
+        "label": "Luôn chạy nền",
+        "desc": "Mỗi lệnh gọi hỗ trợ async sẽ ngay lập tức tách thành tác vụ nền và trả về job id. Mô hình phải dùng `job_status` để hỏi trạng thái."
+      },
+      "neverBackground": {
+        "label": "Không chạy nền",
+        "desc": "Vô hiệu hoá hoàn toàn chế độ chạy nền; tất cả công cụ chạy đồng bộ và chặn cho đến khi xong."
+      }
+    },
     "agentAvatar": "Avatar",
     "agentAvatarPick": "Chọn ảnh",
     "agentBasicInfo": "Thông tin cơ bản",
@@ -2363,7 +2379,7 @@
     "asyncToolsJobStatusMaxWait": "Thời gian chờ tối đa job_status",
     "asyncToolsJobStatusMaxWaitDesc": "Giới hạn trên cho một lệnh gọi job_status(block=true) duy nhất. Chỉ áp dụng khi thời lượng tối đa mỗi job = 0; ngược lại ưu tiên thời lượng tối đa mỗi job.",
     "asyncToolsMaxJob": "Thời lượng job tối đa",
-    "asyncToolsMaxJobDesc": "Giới hạn thời gian chạy tối đa của job nền. Quá hạn sẽ bị kết thúc. 0 = không giới hạn riêng mỗi job.",
+    "asyncToolsMaxJobDesc": "Giới hạn thời gian chạy tối đa của job nền. Quá hạn sẽ bị kết thúc. 0 = không giới hạn ở tầng async job; từng công cụ vẫn có thể áp dụng timeout riêng.",
     "asyncToolsOrphanGrace": "Khoảng ân hạn spool mồ côi",
     "asyncToolsOrphanGraceDesc": "File spool không có bản ghi DB tham chiếu sẽ được dọn sau số giờ này. Thời gian ân hạn tránh xung đột với ghi đang diễn ra.",
     "asyncToolsRetention": "Lưu trữ job đã kết thúc",
@@ -3275,9 +3291,9 @@
     "permSummary": "{{granted}} / {{total}} đã cấp",
     "permSummaryV2": "{{granted}} granted · {{needsAction}} need action · {{manual}} manual checks · {{inactive}} unused/not applicable",
     "permTitle": "Quyền hệ thống",
+    "permUnknown": "Xác minh thủ công",
     "permUnsupportedDesc": "This page currently supports the macOS desktop app only. Windows, Linux, and HTTP/server mode will get their own permissions implementation later.",
     "permUnsupportedTitle": "System permissions are macOS-only for now",
-    "permUnknown": "Xác minh thủ công",
     "permissionGroups": {
       "controlCapture": "Control & Capture",
       "deviceNetwork": "Devices & Network",
@@ -3964,8 +3980,8 @@
     "toolTaskUpdateName": "Cập nhật tác vụ",
     "toolTeamDesc": "Tạo và quản lý nhóm agent với bảng nhiệm vụ chung và nhắn tin giữa các thành viên",
     "toolTeamName": "Nhóm Agent",
-    "toolTimeout": "Hết thời gian thực thi công cụ",
-    "toolTimeoutDesc": "Thời gian thực thi tối đa cho mỗi lệnh gọi công cụ. Ngăn treo vô hạn từ các vấn đề mạng. Đặt 0 để tắt",
+    "toolTimeout": "Timeout công cụ đồng bộ",
+    "toolTimeoutDesc": "Thời gian thực thi tối đa cho các lệnh gọi công cụ foreground/đồng bộ. Ngăn treo vô hạn do vấn đề mạng. Các async job nền dùng thời lượng job tối đa trong công cụ async. Đặt 0 để tắt",
     "toolUpdateCoreMemoryDesc": "Cập nhật file memory.md được nạp vào system prompt",
     "toolUpdateCoreMemoryName": "Cập Nhật Bộ Nhớ Lõi",
     "toolUpdateMemoryDesc": "Cập nhật nội dung của bộ nhớ hiện có",
@@ -4077,8 +4093,8 @@
     "webSearchLanguageAuto": "Theo ngôn ngữ ứng dụng",
     "webSearchNeedsConfig": "Cần cấu hình",
     "webSearchNeedsKey": "Cần khóa",
-    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderBocha": "Bocha AI Search",
+    "webSearchProviderBrave": "Brave Search",
     "webSearchProviderDDG": "DuckDuckGo",
     "webSearchProviderGoogle": "Google Custom Search",
     "webSearchProviderGrok": "Grok (X.AI)",
