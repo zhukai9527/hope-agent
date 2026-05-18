@@ -1,14 +1,23 @@
 //! Deepgram realtime WebSocket STT.
 //!
-//! `wss://api.deepgram.com/v1/listen?model=...&interim_results=true&punctuate=true&...`
+//! Reference docs:
+//! - <https://developers.deepgram.com/reference/speech-to-text/listen-streaming>
+//! - <https://developers.deepgram.com/docs/live-streaming-audio>
+//!
+//! `wss://api.deepgram.com/v1/listen?model=...&encoding=linear16&sample_rate=16000&interim_results=true&...`
 //! Auth: `Authorization: Token <api_key>`.
 //!
 //! Wire shape:
-//! - Upstream: binary frames carrying raw audio bytes (PCM16 / Opus /
-//!   WebM-Opus all accepted — Deepgram auto-detects from the first chunk).
+//! - Upstream: binary frames carrying raw audio bytes. We always advertise
+//!   `encoding=linear16&sample_rate=16000` because hope-agent's PCM16
+//!   AudioWorklet emits raw little-endian 16 kHz mono PCM — Deepgram's
+//!   container auto-detect only works when the first chunk carries a
+//!   container header (WebM / Ogg), which raw PCM frames don't.
 //! - Downstream: JSON text frames `{ "channel": { "alternatives": [{ "transcript": "...", "confidence": ... }] }, "is_final": bool, ... }`.
 //!   `speech_final` / `is_final` distinguishes a stable utterance edge from
 //!   an interim partial.
+//! - End-of-audio sentinel: send `{"type":"CloseStream"}` text frame; the
+//!   server flushes the final partial → final and closes.
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -37,7 +46,14 @@ pub async fn open_stream(
     options: &TranscriptOptions,
 ) -> SttResult<super::SttStream> {
     let base = provider.resolve_base_url(profile).trim_end_matches('/');
-    let mut url = format!("{}/v1/listen?model={}&interim_results=true", base, model.id);
+    // PCM16 LE 16 kHz mono is the hope-agent worklet contract — declare
+    // it explicitly so Deepgram doesn't try (and fail) to sniff a
+    // container header from raw PCM frames.
+    let sample_rate = options.sample_rate_hz.unwrap_or(16_000);
+    let mut url = format!(
+        "{}/v1/listen?model={}&encoding=linear16&sample_rate={}&interim_results=true",
+        base, model.id, sample_rate
+    );
     if let Some(lang) = &options.language {
         if !lang.is_empty() {
             url.push_str(&format!("&language={}", urlencoding::encode(lang)));
@@ -48,12 +64,6 @@ pub async fn open_stream(
     }
     if options.diarization.unwrap_or(false) {
         url.push_str("&diarize=true");
-    }
-    if let Some(sr) = options.sample_rate_hz {
-        // Deepgram needs encoding+sample_rate when the audio is raw PCM. For
-        // container-wrapped audio (WebM/Opus, MP3) it autodetects; we forward
-        // sample_rate as a hint either way.
-        url.push_str(&format!("&sample_rate={}", sr));
     }
 
     let https_twin = super::ws_to_https_twin(&url, "Deepgram")?;

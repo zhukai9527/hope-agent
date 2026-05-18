@@ -1,5 +1,9 @@
 //! Azure Speech Service realtime WebSocket transcription.
 //!
+//! Reference docs:
+//! - <https://learn.microsoft.com/azure/ai-services/speech-service/speech-services-quickstart-realtime-transcription>
+//! - <https://learn.microsoft.com/azure/ai-services/speech-service/rest-speech-to-text-short>
+//!
 //! `wss://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`
 //! Auth header: `Ocp-Apim-Subscription-Key: <subscription_key>` (we skip
 //! the optional STS token exchange to keep the dial-up cost to a single
@@ -17,9 +21,12 @@
 //!   about `Path: speech.hypothesis` (partial) and `Path: speech.phrase`
 //!   (final, with `RecognitionStatus: "Success"`).
 //!
-//! The base URL must already include the region subdomain (e.g.
-//! `wss://eastus.stt.speech.microsoft.com`) — Azure routes by hostname
-//! and there is no protocol-level region field to forward.
+//! Region resolution: Azure routes by hostname, so the base URL must
+//! resolve to `wss://{region}.stt.speech.microsoft.com`. Two ways to get
+//! there:
+//! - Fill `extra.region` (e.g. `eastus`); we synthesise the URL.
+//! - Or paste the full `wss://…stt.speech.microsoft.com` into `base_url`.
+//! `extra.region` wins when both are set so the GUI hint is non-decorative.
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -37,7 +44,19 @@ pub async fn open_stream(
     profile: &AuthProfile,
     options: &TranscriptOptions,
 ) -> SttResult<super::SttStream> {
-    let base = provider.resolve_base_url(profile).trim_end_matches('/');
+    let base_owned;
+    let base = match provider
+        .extra
+        .get("region")
+        .map(String::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        Some(region) => {
+            base_owned = format!("wss://{}.stt.speech.microsoft.com", region);
+            base_owned.as_str()
+        }
+        None => provider.resolve_base_url(profile).trim_end_matches('/'),
+    };
     let mut url = format!(
         "{}/speech/recognition/conversation/cognitiveservices/v1",
         base

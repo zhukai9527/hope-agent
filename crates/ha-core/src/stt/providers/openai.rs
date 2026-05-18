@@ -1,5 +1,9 @@
 //! OpenAI `/v1/audio/transcriptions` batch engine.
 //!
+//! Reference docs:
+//! - <https://platform.openai.com/docs/api-reference/audio/createTranscription>
+//! - <https://platform.openai.com/docs/guides/speech-to-text>
+//!
 //! Drives both `SttProviderKind::OpenaiTranscriptions` (api.openai.com) and
 //! `SttProviderKind::OpenaiCompatible` (Groq, whisper.cpp server,
 //! faster-whisper-server, FunASR + OpenAI wrapper, sherpa-onnx server,

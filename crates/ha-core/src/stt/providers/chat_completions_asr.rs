@@ -1,5 +1,10 @@
 //! DashScope / Qwen-style ASR via OpenAI chat-completions `input_audio`.
 //!
+//! Reference docs:
+//! - <https://help.aliyun.com/zh/model-studio/qwen-speech-recognition> (中文)
+//! - <https://www.alibabacloud.com/help/en/model-studio/qwen-speech-recognition> (English)
+//! - <https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope>
+//!
 //! Alibaba's Qwen3-ASR family does NOT expose the standard
 //! `/v1/audio/transcriptions` multipart endpoint that
 //! [`super::openai`] targets. Instead the audio is sent as an

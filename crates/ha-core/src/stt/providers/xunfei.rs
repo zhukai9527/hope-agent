@@ -1,8 +1,17 @@
 //! iFlytek (讯飞) IAT realtime WebSocket transcription.
 //!
-//! `wss://iat-api.xfyun.cn/v2/iat` — URL must carry `host`, `date`, and
-//! HMAC-SHA256 `authorization` query params per the iFlytek auth contract
-//! (Hawk-flavoured signature derived from APIKey + APISecret + `app_id`).
+//! Reference docs:
+//! - <https://www.xfyun.cn/doc/asr/voicedictation/API.html>
+//!
+//! Endpoints (the implementation defaults to the first; the GUI lets a user
+//! override `base_url` if they need the alternate hosts):
+//! - `wss://iat-api.xfyun.cn/v2/iat` (recommended, zh + en)
+//! - `wss://ws-api.xfyun.cn/v2/iat` (alternate)
+//! - `wss://iat-niche-api.xfyun.cn/v2/iat` (minority-language pool)
+//!
+//! URL must carry `host`, `date`, and HMAC-SHA256 `authorization` query
+//! params per the iFlytek auth contract (signature derived from APIKey +
+//! APISecret + `app_id`).
 //!
 //! Auth dance:
 //! 1. Sign `"host: iat-api.xfyun.cn\ndate: <RFC1123>\nGET /v2/iat HTTP/1.1"`

@@ -1,5 +1,10 @@
 //! AssemblyAI Universal Streaming (v3) WebSocket transcription.
 //!
+//! Reference docs:
+//! - <https://www.assemblyai.com/docs/speech-to-text/universal-streaming>
+//! - <https://www.assemblyai.com/docs/universal-streaming/message-sequence>
+//! - <https://assemblyai.com/docs/api-reference/streaming-api/streaming-api>
+//!
 //! `wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&format_turns=true`
 //! Auth header: `Authorization: <api_key>` (raw key, no `Bearer` / `Token`).
 //!
@@ -11,6 +16,7 @@
 //!   - `{"type":"Begin","id":"...","expires_at":...}` (session bootstrap)
 //!   - `{"type":"Turn","turn_order":N,"transcript":"...","end_of_turn":bool,"transcript_confidence":...}`
 //!   - `{"type":"Termination",...}`
+//! - Client-side end-of-stream sentinel: `{"type":"Terminate"}` text frame.
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;

@@ -156,21 +156,58 @@ const KIND_EXTRA_SCHEMA: Record<SttProviderKind, ExtraField[]> = {
   "openai-chat-completions-asr": [],
   "deepgram-ws": [],
   "assemblyai-ws": [],
-  "azure-ws": [],
+  "azure-ws": [
+    {
+      key: "region",
+      label: "Region",
+      type: "text",
+      required: true,
+      hint: "e.g. eastus, westus, southeastasia — matches your Azure Speech resource region",
+    },
+  ],
   "xunfei-ws": [
-    { key: "api_secret", label: "APISecret", type: "password", required: true },
-    { key: "app_id", label: "APPID", type: "text", required: true },
+    {
+      key: "api_secret",
+      label: "APISecret",
+      type: "password",
+      required: true,
+      hint: "讯飞控制台 → 我的应用 → 该应用的 APISecret",
+    },
+    {
+      key: "app_id",
+      label: "APPID",
+      type: "text",
+      required: true,
+      hint: "讯飞控制台 → 我的应用 → 该应用的 APPID",
+    },
   ],
   "volcengine-ws": [
-    { key: "app_key", label: "AppKey", type: "text", required: true },
+    {
+      key: "app_key",
+      label: "APP ID",
+      type: "text",
+      required: true,
+      hint: "火山引擎控制台 → 服务接口认证信息 → APP ID (数字)",
+    },
     {
       key: "resource_id",
       label: "ResourceId",
       type: "text",
       required: false,
-      hint: "Defaults to volc.bigasr.sauc.duration",
+      hint: "1.0 (BigASR) 留空即用默认 volc.bigasr.sauc.duration；2.0 (Seed，实例 ID 含 Speech_Recognition_Seed_streaming) 填 volc.seedasr.sauc.duration",
     },
   ],
+}
+
+/**
+ * Per-kind hint for the API Key input — surfaces what the upstream
+ * console actually calls this secret (Access Token, Subscription Key,
+ * APIKey, …) so users don't paste the wrong field.
+ */
+const KIND_API_KEY_HINT: Partial<Record<SttProviderKind, string>> = {
+  "azure-ws": "Subscription Key (Azure 资源 → 密钥与终结点)",
+  "volcengine-ws": "Access Token —— 不是 Secret Key",
+  "xunfei-ws": "APIKey",
 }
 
 const blankProvider = (): SttProviderConfig => ({
@@ -724,7 +761,14 @@ function ProviderDialog({
             <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>{t("voice.settings.apiKey")}</Label>
+            <Label>
+              {t("voice.settings.apiKey")}
+              {KIND_API_KEY_HINT[kind] && (
+                <span className="ml-1.5 text-xs text-muted-foreground font-normal">
+                  · {KIND_API_KEY_HINT[kind]}
+                </span>
+              )}
+            </Label>
             <Input
               type="password"
               value={apiKey}

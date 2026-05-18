@@ -1,6 +1,10 @@
 //! Volcengine (火山引擎 / 字节豆包) streaming ASR WebSocket — BigModel
 //! generation (`/api/v3/sauc/bigmodel`).
 //!
+//! Reference docs:
+//! - <https://www.volcengine.com/docs/6561/1354869> (大模型流式语音识别 API)
+//! - <https://www.volcengine.com/docs/6561/1096680> (豆包语音 API 接口文档)
+//!
 //! Auth headers on the WS upgrade (old-console flow — new-console exposes
 //! a single `X-Api-Key` instead of the App-Key + Access-Key pair):
 //! - `X-Api-App-Key: <app_key>` — `extra.app_key` (the "APP ID" digit
