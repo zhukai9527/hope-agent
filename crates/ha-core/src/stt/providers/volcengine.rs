@@ -1,12 +1,19 @@
 //! Volcengine (火山引擎 / 字节豆包) streaming ASR WebSocket — BigModel
 //! generation (`/api/v3/sauc/bigmodel`).
 //!
-//! Auth headers on the WS upgrade:
-//! - `X-Api-App-Key: <app_key>` — `extra.app_key`
-//! - `X-Api-Access-Key: <access_key>` — `provider.api_key`
-//! - `X-Api-Resource-Id: <resource>` — defaults to
-//!   `volc.bigasr.sauc.duration`, override via `extra.resource_id`
+//! Auth headers on the WS upgrade (old-console flow — new-console exposes
+//! a single `X-Api-Key` instead of the App-Key + Access-Key pair):
+//! - `X-Api-App-Key: <app_key>` — `extra.app_key` (the "APP ID" digit
+//!   string in the Volcengine console)
+//! - `X-Api-Access-Key: <access_key>` — `provider.api_key` (the
+//!   "Access Token" — NOT the IAM Secret Key)
+//! - `X-Api-Resource-Id: <resource>` — defaults to the 1.0 hourly
+//!   resource `volc.bigasr.sauc.duration`. For the 2.0 "Seed" tier
+//!   (instances whose id contains `Speech_Recognition_Seed_streaming…`),
+//!   override `extra.resource_id` to `volc.seedasr.sauc.duration`.
 //! - `X-Api-Request-Id: <UUID>` — fresh per session
+//! - `X-Api-Sequence: -1` — fixed sentinel required on the upgrade
+//!   (Volcengine refuses the connection silently if missing)
 //!
 //! Binary framing (BigModel protocol, all frames):
 //! ```text
@@ -120,6 +127,10 @@ pub async fn open_stream(
             .parse()
             .map_err(|e| SttError::Other(format!("Bad X-Api-Request-Id value: {e}")))?,
     );
+    // Documented as a mandatory header on the WS upgrade (both new- and
+    // old-console flows). Volcengine treats absence as a malformed
+    // request → connection refused, not a clear 4xx.
+    headers.insert("X-Api-Sequence", "-1".parse().expect("static header value"));
 
     let ws = super::ws_connect_with_caps(request, "Volcengine").await?;
     let (mut ws_sink, mut ws_stream) = ws.split();
