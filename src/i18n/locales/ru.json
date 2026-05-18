@@ -242,7 +242,9 @@
     "wechatScannedHint": "QR отсканирован. Подтвердите вход в WeChat.",
     "whatsappBaseUrl": "URL bridge-сервиса",
     "whatsappBridgeToken": "Токен авторизации (опционально)",
-    "whatsappHint": "Требуется работающий WhatsApp bridge-сервис. Укажите URL его HTTP API."
+    "whatsappHint": "Требуется работающий WhatsApp bridge-сервис. Укажите URL его HTTP API.",
+    "autoTranscribeVoice": "Автоматически расшифровывать голосовые",
+    "autoTranscribeVoiceHint": "Расшифровывает входящий голос/аудио через настроенную модель STT. Каждое сообщение расходует квоту STT API."
   },
   "chat": {
     "addWorkingDirectory": "Добавить рабочий каталог",
@@ -2186,14 +2188,22 @@
       }
     },
     "agentApprovalTab": "Approval",
-    "agentAsyncToolPolicy": "Фоновый режим для асинхронных инструментов",
-    "agentAsyncToolPolicyAlwaysBackground": "Всегда в фоне",
-    "agentAsyncToolPolicyAlwaysBackgroundDesc": "Каждый вызов асинхронно-совместимого инструмента сразу переводится в фон и возвращает id задания. Модель должна опрашивать его через `job_status`.",
-    "agentAsyncToolPolicyDesc": "Когда асинхронно-совместимые инструменты (exec / web_search / image_generate) отделяются в фоновые задания. Независимо от одобрения — не влияет на запросы подтверждения.",
-    "agentAsyncToolPolicyModelDecide": "Решает модель (по умолчанию)",
-    "agentAsyncToolPolicyModelDecideDesc": "Учитывать `run_in_background:true` от модели; иначе автоматический переход в фон после глобального порога.",
-    "agentAsyncToolPolicyNeverBackground": "Никогда в фоне",
-    "agentAsyncToolPolicyNeverBackgroundDesc": "Полностью отключить фоновый режим; все инструменты выполняются синхронно и блокируют до завершения.",
+    "agentAsyncToolPolicy": {
+      "title": "Фоновый режим для асинхронных инструментов",
+      "desc": "Когда асинхронно-совместимые инструменты (exec / web_search / image_generate) отделяются в фоновые задания. Независимо от одобрения.",
+      "modelDecide": {
+        "label": "Решает модель (по умолчанию)",
+        "desc": "Учитывать `run_in_background:true` от модели; иначе автоматический переход в фон после глобального порога."
+      },
+      "alwaysBackground": {
+        "label": "Всегда в фоне",
+        "desc": "Каждый вызов асинхронно-совместимого инструмента сразу переводится в фон и возвращает id задания. Модель должна опрашивать его через `job_status`."
+      },
+      "neverBackground": {
+        "label": "Никогда в фоне",
+        "desc": "Полностью отключить фоновый режим; все инструменты выполняются синхронно и блокируют до завершения."
+      }
+    },
     "agentAvatar": "Аватар",
     "agentAvatarPick": "Выбрать изображение",
     "agentBasicInfo": "Основная информация",
@@ -4435,5 +4445,47 @@
     "openaiChatDesc": "Сервисы, совместимые с /v1/chat/completions",
     "openaiResponsesDesc": "Сервисы, совместимые с /v1/responses",
     "selectApiType": "Выберите тип API"
+  },
+  "voice": {
+    "record": "Записать голос",
+    "stop": "Стоп",
+    "cancel": "Отмена",
+    "processing": "Расшифровка…",
+    "permissionDenied": "Доступ к микрофону запрещён",
+    "noProvider": "Модель распознавания речи не настроена",
+    "failed": "Не удалось распознать речь",
+    "empty": "Речь не обнаружена",
+    "settings": {
+      "tab": "Распознавание речи",
+      "title": "Распознавание речи",
+      "subtitle": "Голосовой ввод на десктопе + автоматическая расшифровка в IM-каналах. Управление облачными STT-провайдерами и самохостинговыми OpenAI-совместимыми бэкендами.",
+      "activeModel": "Активная модель",
+      "activeModelLabel": "Модель голосового ввода (десктоп)",
+      "batchOnlyHint": "Перечислены только провайдеры, совместимые с OpenAI — Deepgram / AssemblyAI / Azure / Volcengine / iFlytek работают только в режиме realtime-WS и пока не могут обслуживать поток «записать и расшифровать».",
+      "noModel": "Не настроено",
+      "imFallback": "Модель IM-расшифровки",
+      "imFallbackHint": "Используется аккаунтами IM с включенным autoTranscribeVoice. Если не задано, используется модель десктопа.",
+      "imFallbackEmpty": "Использовать активную модель десктопа",
+      "providers": "Облачные провайдеры",
+      "addProvider": "Добавить провайдера",
+      "editProvider": "Редактировать провайдера",
+      "noProviders": "Провайдеры не настроены. Добавьте OpenAI Whisper, DashScope (Qwen3-ASR), Groq, Deepgram или любой OpenAI-совместимый эндпоинт.",
+      "disabled": "отключено",
+      "localBackends": "Локальные бэкенды",
+      "backendAlive": "Обнаружен",
+      "backendOffline": "Не запущен",
+      "probe": "Проверить",
+      "providerName": "Отображаемое имя",
+      "providerKind": "Протокол",
+      "baseUrl": "Базовый URL",
+      "apiKey": "API Key",
+      "apiKeyMasked": "Оставьте пустым, чтобы сохранить текущий ключ",
+      "models": "Модели",
+      "modelsPlaceholder": "whisper-1\\tWhisper\\nqwen3-asr-flash\\tQwen3-ASR Flash",
+      "modelsHint": "Одна модель на строку. Формат: `model_id<TAB>имя`. TAB необязателен.",
+      "enabled": "Включено",
+      "allowPrivate": "Разрешить loopback / приватную сеть",
+      "allowPrivateHint": "Необходимо для self-hosted серверов на 127.0.0.1 / LAN."
+    }
   }
 }

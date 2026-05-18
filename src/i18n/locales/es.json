@@ -242,7 +242,9 @@
     "wechatScannedHint": "QR escaneado. Confirma el inicio de sesión en WeChat.",
     "whatsappBaseUrl": "URL del servicio puente",
     "whatsappBridgeToken": "Token de autenticación (opcional)",
-    "whatsappHint": "Requiere un servicio puente de WhatsApp en ejecución. Apunta a su URL de API HTTP."
+    "whatsappHint": "Requiere un servicio puente de WhatsApp en ejecución. Apunta a su URL de API HTTP.",
+    "autoTranscribeVoice": "Transcribir mensajes de voz automáticamente",
+    "autoTranscribeVoiceHint": "Transcribe el audio / voz entrante mediante el subsistema STT configurado. Cada mensaje consume cuota de la API STT."
   },
   "chat": {
     "addWorkingDirectory": "Agregar directorio de trabajo",
@@ -2186,14 +2188,22 @@
       }
     },
     "agentApprovalTab": "Approval",
-    "agentAsyncToolPolicy": "Backgrounding de herramientas asíncronas",
-    "agentAsyncToolPolicyAlwaysBackground": "Siempre en segundo plano",
-    "agentAsyncToolPolicyAlwaysBackgroundDesc": "Cada llamada async-capable se desacopla inmediatamente y devuelve un id de trabajo. El modelo debe consultar con `job_status`.",
-    "agentAsyncToolPolicyDesc": "Cuándo desacoplar a tareas en segundo plano las herramientas async-capable (exec / web_search / image_generate). Independiente de la aprobación — no afecta si se te pide confirmación.",
-    "agentAsyncToolPolicyModelDecide": "Decide el modelo (predeterminado)",
-    "agentAsyncToolPolicyModelDecideDesc": "Respeta `run_in_background:true` del modelo; en caso contrario, pasa automáticamente a segundo plano tras el umbral global.",
-    "agentAsyncToolPolicyNeverBackground": "Nunca en segundo plano",
-    "agentAsyncToolPolicyNeverBackgroundDesc": "Desactiva por completo el segundo plano; todas las herramientas se ejecutan sincrónicamente y bloquean hasta terminar.",
+    "agentAsyncToolPolicy": {
+      "title": "Backgrounding de herramientas asíncronas",
+      "desc": "Cuándo desacoplar a tareas en segundo plano las herramientas async-capable (exec / web_search / image_generate). Independiente de la aprobación.",
+      "modelDecide": {
+        "label": "Decide el modelo (predeterminado)",
+        "desc": "Respeta `run_in_background:true` del modelo; en caso contrario, pasa automáticamente a segundo plano tras el umbral global."
+      },
+      "alwaysBackground": {
+        "label": "Siempre en segundo plano",
+        "desc": "Cada llamada async-capable se desacopla inmediatamente y devuelve un id de trabajo. El modelo debe consultar con `job_status`."
+      },
+      "neverBackground": {
+        "label": "Nunca en segundo plano",
+        "desc": "Desactiva por completo el segundo plano; todas las herramientas se ejecutan sincrónicamente y bloquean hasta terminar."
+      }
+    },
     "agentAvatar": "Avatar",
     "agentAvatarPick": "Elegir imagen",
     "agentBasicInfo": "Info Básica",
@@ -4435,5 +4445,47 @@
     "openaiChatDesc": "Servicios compatibles con /v1/chat/completions",
     "openaiResponsesDesc": "Servicios compatibles con /v1/responses",
     "selectApiType": "Seleccione Tipo de API"
+  },
+  "voice": {
+    "record": "Grabar voz",
+    "stop": "Detener",
+    "cancel": "Cancelar",
+    "processing": "Transcribiendo…",
+    "permissionDenied": "Permiso de micrófono denegado",
+    "noProvider": "No hay modelo de voz a texto configurado",
+    "failed": "La transcripción de voz falló",
+    "empty": "No se detectó voz",
+    "settings": {
+      "tab": "Voz a texto",
+      "title": "Voz a texto",
+      "subtitle": "Entrada de voz en escritorio + transcripción automática en canales IM. Gestiona proveedores STT en la nube y backends OpenAI-compatibles autohospedados.",
+      "activeModel": "Modelo activo",
+      "activeModelLabel": "Modelo de entrada de voz (escritorio)",
+      "batchOnlyHint": "Solo se muestran proveedores compatibles con OpenAI — Deepgram / AssemblyAI / Azure / Volcengine / iFlytek son solo WS en tiempo real y todavía no admiten el flujo \"grabar y luego transcribir\".",
+      "noModel": "Sin configurar",
+      "imFallback": "Modelo de transcripción IM",
+      "imFallbackHint": "Usado por cuentas IM con autoTranscribeVoice activado. Si está vacío, usa el modelo de escritorio.",
+      "imFallbackEmpty": "Usar modelo activo de escritorio",
+      "providers": "Proveedores en la nube",
+      "addProvider": "Añadir proveedor",
+      "editProvider": "Editar proveedor",
+      "noProviders": "Sin proveedores configurados. Añade OpenAI Whisper, DashScope (Qwen3-ASR), Groq, Deepgram o cualquier endpoint compatible con OpenAI.",
+      "disabled": "deshabilitado",
+      "localBackends": "Backends locales",
+      "backendAlive": "Detectado",
+      "backendOffline": "No en ejecución",
+      "probe": "Probar",
+      "providerName": "Nombre visible",
+      "providerKind": "Protocolo",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "apiKeyMasked": "Vacío para conservar la clave existente",
+      "models": "Modelos",
+      "modelsPlaceholder": "whisper-1\\tWhisper\\nqwen3-asr-flash\\tQwen3-ASR Flash",
+      "modelsHint": "Un modelo por línea. Formato: `model_id<TAB>nombre`. TAB opcional.",
+      "enabled": "Habilitado",
+      "allowPrivate": "Permitir loopback / red privada",
+      "allowPrivateHint": "Necesario para servidores locales en 127.0.0.1 / LAN."
+    }
   }
 }
