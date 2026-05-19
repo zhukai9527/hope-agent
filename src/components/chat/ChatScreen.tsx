@@ -77,6 +77,7 @@ import {
   CHAT_SIDEBAR_MIN_WIDTH,
   CHAT_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./sidebar/types"
+import { generateClientId } from "./chatScrollKeys"
 import type { Project, ProjectMeta } from "@/types/project"
 
 interface ChatScreenProps {
@@ -131,6 +132,22 @@ function clampChatSidebarWidth(width: number): number {
 
 function isSessionMode(value: unknown): value is SessionMode {
   return value === "default" || value === "smart" || value === "yolo"
+}
+
+function readActionString(action: object, camelKey: string, snakeKey: string): string | null {
+  const record = action as Record<string, unknown>
+  const value = record[camelKey] ?? record[snakeKey]
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
+type ClientEventMessage = Omit<Message, "role" | "_clientId">
+
+function makeClientEventMessage(message: ClientEventMessage): Message {
+  return {
+    role: "event",
+    _clientId: generateClientId(),
+    ...message,
+  }
 }
 
 export default function ChatScreen({
@@ -340,8 +357,7 @@ export default function ChatScreen({
   const handleNewChatInProject = session.handleNewChatInProject
   const currentSessionId = session.currentSessionId
   const displayModeSessionKey = currentSessionId ?? "draft"
-  const displayMode =
-    sessionDisplayModeOverrides[displayModeSessionKey] ?? defaultDisplayMode
+  const displayMode = sessionDisplayModeOverrides[displayModeSessionKey] ?? defaultDisplayMode
   const previousDisplayModeSessionKeyRef = useRef(displayModeSessionKey)
   const setAgentName = session.setAgentName
   const updateSessionMeta = session.updateSessionMeta
@@ -364,9 +380,7 @@ export default function ChatScreen({
   const handleDisplayModeChange = useCallback(
     (mode: ChatDisplayMode) => {
       setSessionDisplayModeOverrides((prev) =>
-        prev[displayModeSessionKey] === mode
-          ? prev
-          : { ...prev, [displayModeSessionKey]: mode },
+        prev[displayModeSessionKey] === mode ? prev : { ...prev, [displayModeSessionKey]: mode },
       )
     },
     [displayModeSessionKey],
@@ -988,10 +1002,7 @@ export default function ChatScreen({
 
   // ── Plan Mode Hook ─────────────────────────────────────────
   const planMode = usePlanMode(session.currentSessionId, planModeState, setPlanModeState)
-  const taskProgressSnapshot = useTaskProgressSnapshot(
-    session.currentSessionId,
-    session.messages,
-  )
+  const taskProgressSnapshot = useTaskProgressSnapshot(session.currentSessionId, session.messages)
   const setPlanState = planMode.setPlanState
   const sendMessage = stream.handleSend
 
@@ -1054,26 +1065,29 @@ export default function ChatScreen({
       const slashHistoryMessages: Message[] = []
       if (shouldShowSlashHistory && result._slashCommandText) {
         const now = new Date().toISOString()
-        slashHistoryMessages.push({
-          role: "event",
-          content: result._slashCommandText,
-          timestamp: now,
-          slashEvent: { kind: "command", displayAs: "user" },
-        })
-        if (shouldAppendResultContent) {
-          slashHistoryMessages.push({
-            role: "event",
-            content: result.content,
+        slashHistoryMessages.push(
+          makeClientEventMessage({
+            content: result._slashCommandText,
             timestamp: now,
-            slashEvent: { kind: "result", command: result._slashCommandText },
-          })
+            slashEvent: { kind: "command", displayAs: "user" },
+          }),
+        )
+        if (shouldAppendResultContent) {
+          slashHistoryMessages.push(
+            makeClientEventMessage({
+              content: result.content,
+              timestamp: now,
+              slashEvent: { kind: "result", command: result._slashCommandText },
+            }),
+          )
         }
       } else if (shouldAppendResultContent && shouldShowSlashHistory) {
-        slashHistoryMessages.push({
-          role: "event",
-          content: result.content,
-          timestamp: new Date().toISOString(),
-        })
+        slashHistoryMessages.push(
+          makeClientEventMessage({
+            content: result.content,
+            timestamp: new Date().toISOString(),
+          }),
+        )
       }
       if (slashHistoryMessages.length > 0) {
         session.setMessages((prev) => [...prev, ...slashHistoryMessages])
@@ -1137,8 +1151,7 @@ export default function ChatScreen({
         case "exportFile":
           try {
             const ext = (action.filename.split(".").pop() ?? "md").toLowerCase()
-            const filterName =
-              ext === "json" ? "JSON" : ext === "html" ? "HTML" : "Markdown"
+            const filterName = ext === "json" ? "JSON" : ext === "html" ? "HTML" : "Markdown"
             const filePath = await save({
               defaultPath: action.filename,
               filters: [{ name: filterName, extensions: [ext] }],
@@ -1160,8 +1173,7 @@ export default function ChatScreen({
           // Already handled above by adding event message
           break
         case "showModelPicker": {
-          const pickerMsg: Message = {
-            role: "event",
+          const pickerMsg: Message = makeClientEventMessage({
             content: "",
             timestamp: new Date().toISOString(),
             modelPickerData: {
@@ -1169,7 +1181,7 @@ export default function ChatScreen({
               activeProviderId: action.activeProviderId,
               activeModelId: action.activeModelId,
             },
-          }
+          })
           session.setMessages((prev) => [...prev, pickerMsg])
           break
         }
@@ -1195,12 +1207,11 @@ export default function ChatScreen({
           loadSystemPrompt()
           break
         case "showContextBreakdown": {
-          const contextMsg: Message = {
-            role: "event",
+          const contextMsg: Message = makeClientEventMessage({
             content: "",
             timestamp: new Date().toISOString(),
             contextBreakdownData: action.breakdown,
-          }
+          })
           session.setMessages((prev) => [...prev, contextMsg])
           break
         }
@@ -1215,11 +1226,10 @@ export default function ChatScreen({
           }
           lines.push("")
           lines.push(`> \`/project <${t("project.projectName")}>\``)
-          const pickerMsg: Message = {
-            role: "event",
+          const pickerMsg: Message = makeClientEventMessage({
             content: lines.join("\n"),
             timestamp: new Date().toISOString(),
-          }
+          })
           session.setMessages((prev) => [...prev, pickerMsg])
           break
         }
@@ -1254,11 +1264,10 @@ export default function ChatScreen({
           }
           lines.push("")
           lines.push("> `/session <id>` · `/sessions <query>`")
-          const pickerMsg: Message = {
-            role: "event",
+          const pickerMsg: Message = makeClientEventMessage({
             content: lines.join("\n"),
             timestamp: new Date().toISOString(),
-          }
+          })
           session.setMessages((prev) => [...prev, pickerMsg])
           break
         }
@@ -1273,11 +1282,10 @@ export default function ChatScreen({
         case "detachFromSession": {
           // GUI has no IM-attach to release. Surface a hint so /session exit
           // typed from the desktop slash menu doesn't appear silent.
-          const msg: Message = {
-            role: "event",
+          const msg: Message = makeClientEventMessage({
             content: t("chat.detachOnDesktopNoop"),
             timestamp: new Date().toISOString(),
-          }
+          })
           session.setMessages((prev) => [...prev, msg])
           break
         }
@@ -1293,29 +1301,31 @@ export default function ChatScreen({
               chatId: action.chatId,
               threadId: action.threadId ?? null,
             })
-            const msg: Message = {
-              role: "event",
+            const msg: Message = makeClientEventMessage({
               content: t("chat.handover.done"),
               timestamp: new Date().toISOString(),
-            }
+            })
             session.setMessages((prev) => [...prev, msg])
           } catch (e) {
-            const msg: Message = {
-              role: "event",
+            const msg: Message = makeClientEventMessage({
               content: t("chat.handover.failed", { error: String(e) }),
               timestamp: new Date().toISOString(),
-            }
+            })
             session.setMessages((prev) => [...prev, msg])
           }
           break
         }
         case "recapCard": {
-          const msg: Message = {
-            role: "event",
+          const reportId = readActionString(action, "reportId", "report_id")
+          if (!reportId) {
+            logger.warn("chat", "ChatScreen::slashRecapCard", "Missing report id", action)
+            break
+          }
+          const msg: Message = makeClientEventMessage({
             content: "",
             timestamp: new Date().toISOString(),
-            recapCardData: { reportId: action.reportId },
-          }
+            recapCardData: { reportId },
+          })
           session.setMessages((prev) => [...prev, msg])
           break
         }
@@ -1323,15 +1333,22 @@ export default function ChatScreen({
           onOpenDashboardTab?.(action.tab)
           break
         case "skillFork": {
-          const msg: Message = {
-            role: "event",
+          const runId = readActionString(action, "runId", "run_id")
+          if (!runId) {
+            logger.warn("chat", "ChatScreen::slashSkillFork", "Missing run id", action)
+            break
+          }
+          const skillName =
+            readActionString(action, "skillName", "skill_name") ??
+            t("skills.defaultName", { defaultValue: "skill" })
+          const msg: Message = makeClientEventMessage({
             content: "",
             timestamp: new Date().toISOString(),
             skillForkData: {
-              runId: action.runId,
-              skillName: action.skillName,
+              runId,
+              skillName,
             },
-          }
+          })
           session.setMessages((prev) => [...prev, msg])
           break
         }
@@ -1459,8 +1476,9 @@ export default function ChatScreen({
   // Plan / Diff / Browser / Mac Control / Canvas / Team share the same right
   // rail. Track rising edges so the panel that just opened wins while the
   // others remain open in the background and can be switched back to.
-  const previousRightPanelVisibilityRef =
-    useRef<ExclusiveRightPanelVisibility>(EMPTY_RIGHT_PANEL_VISIBILITY)
+  const previousRightPanelVisibilityRef = useRef<ExclusiveRightPanelVisibility>(
+    EMPTY_RIGHT_PANEL_VISIBILITY,
+  )
   useLayoutEffect(() => {
     const previous = previousRightPanelVisibilityRef.current
     const newlyOpened =
@@ -1471,17 +1489,13 @@ export default function ChatScreen({
       activeExclusiveRightPanel && rightPanelVisibility[activeExclusiveRightPanel]
         ? activeExclusiveRightPanel
         : null
-    const active = newlyOpened ?? stillActive ?? (openExclusiveRightPanels[0] ?? null)
+    const active = newlyOpened ?? stillActive ?? openExclusiveRightPanels[0] ?? null
 
     previousRightPanelVisibilityRef.current = rightPanelVisibility
     if (activeExclusiveRightPanel !== active) {
       setActiveExclusiveRightPanel(active)
     }
-  }, [
-    activeExclusiveRightPanel,
-    openExclusiveRightPanels,
-    rightPanelVisibility,
-  ])
+  }, [activeExclusiveRightPanel, openExclusiveRightPanels, rightPanelVisibility])
 
   // Reset dismissal flags (and any open panel state) on session switch so each
   // session gets a fresh chance to auto-open live mirror panels.
@@ -1726,7 +1740,7 @@ export default function ChatScreen({
               loading={session.loading}
               executionState={
                 session.currentSessionId
-                  ? stream.executionStateBySession.get(session.currentSessionId) ?? null
+                  ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
                   : null
               }
               agents={session.agents}
@@ -1743,9 +1757,7 @@ export default function ChatScreen({
               onScrollTargetHandled={session.clearPendingScrollIntent}
               pendingQuestionGroup={planMode.pendingQuestionGroup}
               onQuestionSubmitted={() => planMode.setPendingQuestionGroup(null)}
-              planCardData={
-                planMode.planCardInfo ? { title: planMode.planCardInfo.title } : null
-              }
+              planCardData={planMode.planCardInfo ? { title: planMode.planCardInfo.title } : null}
               planState={planMode.planState}
               onOpenPlanPanel={planMode.openPlanPanel}
               onApprovePlan={handlePlanApprove}
@@ -1765,8 +1777,8 @@ export default function ChatScreen({
             />
 
             {/* Memory extraction toast — absolute-positioned above ChatInput
-               * so it doesn't shrink the MessageList scroll container when it
-               * appears/disappears. */}
+             * so it doesn't shrink the MessageList scroll container when it
+             * appears/disappears. */}
             {!isCronSession && !isSubagentSession && (
               <div
                 className={cn(
@@ -1843,7 +1855,7 @@ export default function ChatScreen({
                     taskProgressSnapshot={taskProgressSnapshot}
                     executionState={
                       session.currentSessionId
-                        ? stream.executionStateBySession.get(session.currentSessionId) ?? null
+                        ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
                         : null
                     }
                     hero={emptySessionInputHero}

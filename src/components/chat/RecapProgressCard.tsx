@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import type { RecapProgress, RecapReport } from "@/components/dashboard/types"
 
 interface RecapProgressCardProps {
-  reportId: string
+  reportId?: string | null
   onOpenDashboardTab?: (tab: string, initialReportId?: string | null) => void
 }
 
@@ -18,17 +18,19 @@ export default function RecapProgressCard({
   onOpenDashboardTab,
 }: RecapProgressCardProps) {
   const { t } = useTranslation()
+  const safeReportId = reportId?.trim() ?? ""
   const [progress, setProgress] = useState<RecapProgress | null>(null)
   const [reportTitle, setReportTitle] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!safeReportId) return
     let cancelled = false
     getTransport()
-      .call<RecapReport | null>("recap_get_report", { id: reportId })
+      .call<RecapReport | null>("recap_get_report", { id: safeReportId })
       .then((report) => {
         if (cancelled || !report) return
         setReportTitle(report.meta.title)
-        setProgress({ phase: "done", reportId })
+        setProgress({ phase: "done", reportId: safeReportId })
       })
       .catch((e) => {
         logger.debug("recap", "RecapProgressCard::hydrate", "No report yet", e)
@@ -39,14 +41,13 @@ export default function RecapProgressCard({
       const next = raw.progress
       if (!next) return
       const eventReportId =
-        raw.reportId ??
-        ("reportId" in next ? (next as { reportId?: string }).reportId : undefined)
-      if (eventReportId !== reportId) return
+        raw.reportId ?? ("reportId" in next ? (next as { reportId?: string }).reportId : undefined)
+      if (eventReportId !== safeReportId) return
 
       setProgress(next)
       if (next.phase === "done") {
         getTransport()
-          .call<RecapReport | null>("recap_get_report", { id: reportId })
+          .call<RecapReport | null>("recap_get_report", { id: safeReportId })
           .then((report) => {
             if (report) setReportTitle(report.meta.title)
           })
@@ -58,7 +59,15 @@ export default function RecapProgressCard({
       cancelled = true
       unlisten()
     }
-  }, [reportId])
+  }, [safeReportId])
+
+  if (!safeReportId) {
+    return (
+      <div className="w-full max-w-[520px] rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+        {t("recap.chatCard.missingId", { defaultValue: "Recap report id is missing." })}
+      </div>
+    )
+  }
 
   const state = progressState(progress)
   const pct = progressPercent(progress)
@@ -73,8 +82,7 @@ export default function RecapProgressCard({
         defaultValue: "Waiting for recap progress...",
       })
 
-  const StatusIcon =
-    state === "done" ? CheckCircle2 : state === "failed" ? XCircle : Loader2
+  const StatusIcon = state === "done" ? CheckCircle2 : state === "failed" ? XCircle : Loader2
 
   return (
     <div className="w-full max-w-[520px] rounded-lg border border-border-soft bg-surface-panel p-3 text-sm shadow-sm">
@@ -106,13 +114,13 @@ export default function RecapProgressCard({
           </div>
           <div className="mt-3 flex items-center justify-between gap-2">
             <code className="truncate text-[11px] text-muted-foreground">
-              {reportId.slice(0, 8)}
+              {safeReportId.slice(0, 8)}
             </code>
             <Button
               type="button"
               size="sm"
               variant="secondary"
-              onClick={() => onOpenDashboardTab?.("recap", reportId)}
+              onClick={() => onOpenDashboardTab?.("recap", safeReportId)}
             >
               {t("recap.chatCard.open", { defaultValue: "Open Recap" })}
             </Button>
