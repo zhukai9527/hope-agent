@@ -9,6 +9,7 @@
 pub mod api;
 pub mod format;
 pub mod inbound_media;
+pub mod media;
 pub mod socket;
 
 use anyhow::Result;
@@ -111,10 +112,15 @@ impl ChannelPlugin for SlackPlugin {
             // Slack chat.postMessage 上限 4000 字符；UTF-8 字节计算下 CJK 字符
             // 占 3 bytes，留 20% 余量到 3200 字节避免 msg_too_long
             streaming_preview_max_bytes: Some(3200),
-            // TODO: native Slack media (files.getUploadURLExternal +
-            // files.completeUploadExternal) not yet implemented. Dispatcher
-            // falls back to a download-link text for now.
-            supports_media: Vec::new(),
+            supports_media: vec![
+                MediaType::Photo,
+                MediaType::Video,
+                MediaType::Audio,
+                MediaType::Document,
+                MediaType::Sticker,
+                MediaType::Voice,
+                MediaType::Animation,
+            ],
             supports_card_stream: false,
         }
     }
@@ -206,13 +212,22 @@ impl ChannelPlugin for SlackPlugin {
         payload: &ReplyPayload,
     ) -> Result<DeliveryResult> {
         let api = self.get_api(account_id).await?;
+        let thread_ts = payload.thread_id.as_deref();
+
+        if !payload.media.is_empty() {
+            let files = media::build_slack_files(&payload.media).await?;
+            let initial_comment =
+                media::merge_initial_comment(payload.text.as_deref(), &payload.media);
+            let file_id = api
+                .upload_files_external(chat_id, thread_ts, initial_comment.as_deref(), files)
+                .await?;
+            return Ok(DeliveryResult::ok(file_id));
+        }
 
         if let Some(ref text) = payload.text {
             if text.is_empty() {
                 return Ok(DeliveryResult::ok("empty"));
             }
-
-            let thread_ts = payload.thread_id.as_deref();
 
             // Convert buttons to Slack Block Kit format if present
             let blocks = if payload.buttons.is_empty() {
