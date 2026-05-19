@@ -5,7 +5,16 @@ import { save } from "@tauri-apps/plugin-dialog"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
 import { cn } from "@/lib/utils"
-import { Brain } from "lucide-react"
+import {
+  Brain,
+  ClipboardList,
+  GitCompare,
+  Globe,
+  Monitor,
+  MousePointer2,
+  Users,
+  type LucideIcon,
+} from "lucide-react"
 import type {
   ActiveModel,
   AvailableModel,
@@ -23,13 +32,14 @@ import ChatTitleBar from "@/components/chat/ChatTitleBar"
 import HandoverDialog from "@/components/chat/HandoverDialog"
 import MessageList from "@/components/chat/MessageList"
 import CrashRecoveryBanner from "@/components/common/CrashRecoveryBanner"
-import CanvasPanel, { CLOSE_CANVAS_PANEL_EVENT } from "@/components/chat/CanvasPanel"
+import CanvasPanel from "@/components/chat/CanvasPanel"
 import BrowserPanel from "@/components/chat/BrowserPanel"
 import MacControlPanel from "@/components/chat/MacControlPanel"
 import { TeamPanel } from "@/components/team/TeamPanel"
 import TeamMiniIndicator from "@/components/team/TeamMiniIndicator"
 import { useActiveTeam } from "@/components/team/useTeam"
 import SessionSearchBar from "@/components/chat/SessionSearchBar"
+import { IconTip } from "@/components/ui/tooltip"
 import {
   AlertDialog,
   AlertDialogContent,
@@ -101,6 +111,15 @@ const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
   "mac-control": false,
   canvas: false,
   team: false,
+}
+
+const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
+  diff: GitCompare,
+  plan: ClipboardList,
+  browser: Globe,
+  "mac-control": MousePointer2,
+  canvas: Monitor,
+  team: Users,
 }
 
 function clampChatSidebarWidth(width: number): number {
@@ -1357,29 +1376,52 @@ export default function ChatScreen({
   const isDiffPanelVisible = diffPanel.showPanel && diffPanel.activeChanges.length > 0
   const [activeExclusiveRightPanel, setActiveExclusiveRightPanel] =
     useState<ExclusiveRightPanel | null>(null)
-  const closeDiffPanel = diffPanel.closeDiff
-  const setPlanPanelOpen = planMode.setShowPanel
-  const closeCanvasPanel = useCallback(() => {
-    setCanvasPanelOpen(false)
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(CLOSE_CANVAS_PANEL_EVENT))
-    }
-  }, [])
-
-  let renderedExclusiveRightPanel: ExclusiveRightPanel | null = null
-  if (activeExclusiveRightPanel === "diff" && isDiffPanelVisible) {
-    renderedExclusiveRightPanel = "diff"
-  } else if (activeExclusiveRightPanel === "plan" && shouldShowPlanPanel) {
-    renderedExclusiveRightPanel = "plan"
-  } else if (activeExclusiveRightPanel === "browser" && showBrowserPanel) {
-    renderedExclusiveRightPanel = "browser"
-  } else if (activeExclusiveRightPanel === "mac-control" && showMacControlPanel) {
-    renderedExclusiveRightPanel = "mac-control"
-  } else if (activeExclusiveRightPanel === "canvas" && canvasPanelOpen) {
-    renderedExclusiveRightPanel = "canvas"
-  } else if (activeExclusiveRightPanel === "team" && activeTeamId && showTeamPanel) {
-    renderedExclusiveRightPanel = "team"
-  }
+  const rightPanelVisibility = useMemo<ExclusiveRightPanelVisibility>(
+    () => ({
+      diff: isDiffPanelVisible,
+      plan: shouldShowPlanPanel,
+      browser: showBrowserPanel,
+      "mac-control": showMacControlPanel,
+      canvas: canvasPanelOpen,
+      team: !!activeTeamId && showTeamPanel,
+    }),
+    [
+      activeTeamId,
+      canvasPanelOpen,
+      isDiffPanelVisible,
+      shouldShowPlanPanel,
+      showBrowserPanel,
+      showMacControlPanel,
+      showTeamPanel,
+    ],
+  )
+  const openExclusiveRightPanels = useMemo(
+    () => EXCLUSIVE_RIGHT_PANEL_ORDER.filter((panel) => rightPanelVisibility[panel]),
+    [rightPanelVisibility],
+  )
+  const renderedExclusiveRightPanel =
+    activeExclusiveRightPanel && rightPanelVisibility[activeExclusiveRightPanel]
+      ? activeExclusiveRightPanel
+      : (openExclusiveRightPanels[0] ?? null)
+  const getRightPanelLabel = useCallback(
+    (panel: ExclusiveRightPanel) => {
+      switch (panel) {
+        case "diff":
+          return t("diffPanel.title", "Diff")
+        case "plan":
+          return t("planMode.panelTitle", "Plan")
+        case "browser":
+          return t("browser.panelTitle", "Browser")
+        case "mac-control":
+          return t("macControl.panelTitle", "Mac Control")
+        case "canvas":
+          return t("canvas.panelTitle", "Canvas")
+        case "team":
+          return t("team.panelTitle", "Team")
+      }
+    },
+    [t],
+  )
   const rightPanelKey = renderedExclusiveRightPanel
   const lastRightPanelKeyRef = useRef<string | null>(rightPanelKey)
 
@@ -1390,56 +1432,31 @@ export default function ChatScreen({
     lastRightPanelKeyRef.current = rightPanelKey
   }, [rightPanelKey])
 
-  // Plan / Diff / Browser / Mac Control / Canvas / Team all occupy the same right
-  // rail. Track rising edges so the panel that just opened wins, then close
-  // the rest through their owning state APIs. `useLayoutEffect` prevents a
-  // one-frame double-panel flash when two sources open in the same render.
+  // Plan / Diff / Browser / Mac Control / Canvas / Team share the same right
+  // rail. Track rising edges so the panel that just opened wins while the
+  // others remain open in the background and can be switched back to.
   const previousRightPanelVisibilityRef =
     useRef<ExclusiveRightPanelVisibility>(EMPTY_RIGHT_PANEL_VISIBILITY)
   useLayoutEffect(() => {
-    const current: ExclusiveRightPanelVisibility = {
-      diff: isDiffPanelVisible,
-      plan: shouldShowPlanPanel,
-      browser: showBrowserPanel,
-      "mac-control": showMacControlPanel,
-      canvas: canvasPanelOpen,
-      team: !!activeTeamId && showTeamPanel,
-    }
     const previous = previousRightPanelVisibilityRef.current
     const newlyOpened =
-      EXCLUSIVE_RIGHT_PANEL_ORDER.find((panel) => current[panel] && !previous[panel]) ?? null
+      EXCLUSIVE_RIGHT_PANEL_ORDER.find(
+        (panel) => rightPanelVisibility[panel] && !previous[panel],
+      ) ?? null
     const stillActive =
-      activeExclusiveRightPanel && current[activeExclusiveRightPanel]
+      activeExclusiveRightPanel && rightPanelVisibility[activeExclusiveRightPanel]
         ? activeExclusiveRightPanel
         : null
-    const firstVisible =
-      EXCLUSIVE_RIGHT_PANEL_ORDER.find((panel) => current[panel]) ?? null
-    const active = newlyOpened ?? stillActive ?? firstVisible
+    const active = newlyOpened ?? stillActive ?? (openExclusiveRightPanels[0] ?? null)
 
-    previousRightPanelVisibilityRef.current = current
+    previousRightPanelVisibilityRef.current = rightPanelVisibility
     if (activeExclusiveRightPanel !== active) {
       setActiveExclusiveRightPanel(active)
     }
-    if (!active) return
-
-    if (active !== "diff" && current.diff) closeDiffPanel()
-    if (active !== "plan" && current.plan) setPlanPanelOpen(false)
-    if (active !== "browser" && current.browser) setShowBrowserPanel(false)
-    if (active !== "mac-control" && current["mac-control"]) setShowMacControlPanel(false)
-    if (active !== "canvas" && current.canvas) closeCanvasPanel()
-    if (active !== "team" && current.team) setShowTeamPanel(false)
   }, [
-    activeTeamId,
     activeExclusiveRightPanel,
-    canvasPanelOpen,
-    closeCanvasPanel,
-    closeDiffPanel,
-    isDiffPanelVisible,
-    setPlanPanelOpen,
-    shouldShowPlanPanel,
-    showBrowserPanel,
-    showTeamPanel,
-    showMacControlPanel,
+    openExclusiveRightPanels,
+    rightPanelVisibility,
   ])
 
   // Reset dismissal flags (and any open panel state) on session switch so each
@@ -1811,7 +1828,38 @@ export default function ChatScreen({
             )}
           </div>
 
-          {/* Diff panel (right side; mutually exclusive with the other primary panels) */}
+          {openExclusiveRightPanels.length > 1 && (
+            <div className="flex h-full shrink-0 items-start py-3 pl-1">
+              <div className="flex flex-col gap-1 rounded-lg border border-border-soft bg-surface-panel/95 p-1 shadow-panel">
+                {openExclusiveRightPanels.map((panel) => {
+                  const PanelIcon = EXCLUSIVE_RIGHT_PANEL_ICONS[panel]
+                  const label = getRightPanelLabel(panel)
+                  const isActive = renderedExclusiveRightPanel === panel
+
+                  return (
+                    <IconTip key={panel} label={label} side="left">
+                      <button
+                        type="button"
+                        aria-label={label}
+                        aria-pressed={isActive}
+                        onClick={() => setActiveExclusiveRightPanel(panel)}
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
+                          isActive
+                            ? "bg-secondary text-foreground shadow-sm"
+                            : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
+                        )}
+                      >
+                        <PanelIcon className="h-4 w-4" />
+                      </button>
+                    </IconTip>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Diff panel (right side, selected from the shared panel rail) */}
           {renderedExclusiveRightPanel === "diff" && (
             <RightPanelShell
               width={diffPanel.panelWidth}
@@ -1862,7 +1910,7 @@ export default function ChatScreen({
           />
 
           {/* Browser live-mirror panel — open on first `browser:frame` push,
-              close-only by user. Mutex with Plan / Diff / Canvas above. */}
+              close-only by user, then switchable from the shared panel rail. */}
           {renderedExclusiveRightPanel === "browser" && (
             <BrowserPanel
               panelWidth={browserPanelWidth}
