@@ -96,7 +96,7 @@ IM Channel 系统是 Hope Agent 的多渠道即时通讯接入层，允许用户
 | **QQ Bot** | ⏳ 待补 | — | `POST /v2/groups/{group_openid}/files` 拿 `file_info` 再发 `media` 消息 | 群消息富媒体走"上传换 file_info"两步 |
 | **Signal** | ✅ 已实现 | Photo, Video, Audio, Document, Sticker, Voice, Animation | signal-cli JSON-RPC `send.attachments` | 本地路径直传；URL / bytes 先物化到临时文件 |
 | **iMessage** | ✅ 已实现 | Photo, Video, Audio, Document, Sticker, Voice, Animation | imsg JSON-RPC `send` + `file` 参数 | 本地路径直传；URL / bytes 先物化到临时文件；`imsg` 自行 stage 到 Messages 附件目录 |
-| **WhatsApp** | ⏳ 待补 | — | 桥接服务（与 WeChat iLink 同源协议）`media` 字段 | 桥接侧已具备能力，待 plugin 端补封装 |
+| **WhatsApp** | ✅ 已实现 | Photo, Video, Audio, Document, Sticker, Voice, Animation | bridge `POST /api/media`，`media=data:<mime>;name=<filename>;base64,...` | 同时发送旧 `data` alias；bridge 负责上传到 Cloud API / whatsmeow / Baileys |
 | **Google Chat** | ⏳ 认证模型阻塞 | — | `spaces.messages.create` + `attachment` 数组（先 `media.upload` 拿 `attachmentDataRef`） | 官方 `media.upload` 需要 user auth `chat.messages.create` / `chat.messages`；当前插件是 app-auth `chat.bot` |
 | **LINE** | ⏳ 待补 | — | Reply/Push API 的 `image` / `video` / `audio` / `file` message object | 必须公网 HTTPS URL，本地附件需自带文件中转 |
 | **IRC** | ❌ 协议限制 | — | （IRC 纯文本协议） | 无原生二进制传输，永久走链接兜底；可选未来接 DCC SEND 但实用性低 |
@@ -566,7 +566,7 @@ crates/ha-core/src/channel/
 │   ├── mod.rs, client.rs, daemon.rs, format.rs
 ├── imessage/           iMessage（macOS, imsg CLI JSON-RPC）
 │   ├── mod.rs, client.rs, format.rs
-├── whatsapp/           WhatsApp（外部桥接服务轮询）
+├── whatsapp/           WhatsApp（外部桥接服务轮询 + media bridge）
 │   ├── mod.rs, api.rs, format.rs, polling.rs
 ├── googlechat/         Google Chat（Webhook + REST API）
 │   ├── mod.rs, api.rs, auth.rs, format.rs, webhook.rs
@@ -1707,13 +1707,13 @@ registry.register_plugin(Arc::new(channel::{channel_name}::{Channel}Plugin::new(
 | **Telegram** | `telegram/{mod,api,format,media,polling}.rs` | teloxide + Long-polling |
 | **WeChat** | `wechat/{mod,api,login,media,polling}.rs` | iLink HTTP 长轮询 |
 | **Discord** | `discord/{mod,api,format,gateway}.rs` | WebSocket Gateway + Application Commands |
-| **Slack** | `slack/{mod,api,format,socket}.rs` | Socket Mode WebSocket |
+| **Slack** | `slack/{mod,api,format,inbound_media,media,socket}.rs` | Socket Mode WebSocket |
 | **飞书** | `feishu/{mod,api,auth,format,ws_event}.rs` | WebSocket + OAuth Token |
 | **QQ Bot** | `qqbot/{mod,api,auth,format,gateway}.rs` | WebSocket Gateway + Token |
 | **IRC** | `irc/{mod,client,format,protocol}.rs` | TCP/TLS 直连 + 原生 IRC 协议 |
-| **Signal** | `signal/{mod,client,daemon,format}.rs` | signal-cli daemon + SSE |
-| **iMessage** | `imessage/{mod,client,format}.rs` | imsg CLI JSON-RPC over stdio (macOS) |
-| **WhatsApp** | `whatsapp/{mod,api,format,polling}.rs` | 外部桥接服务 HTTP 轮询 |
+| **Signal** | `signal/{mod,client,daemon,format,inbound_media,media}.rs` | signal-cli daemon + SSE |
+| **iMessage** | `imessage/{mod,client,format,media}.rs` | imsg CLI JSON-RPC over stdio (macOS) |
+| **WhatsApp** | `whatsapp/{mod,api,format,inbound_media,media,polling}.rs` | 外部桥接服务 HTTP 轮询 |
 | **Google Chat** | `googlechat/{mod,api,auth,format,webhook}.rs` | Service Account JWT + Webhook |
 | **LINE** | `line/{mod,api,format,webhook}.rs` | HMAC-SHA256 Webhook + REST API |
 
