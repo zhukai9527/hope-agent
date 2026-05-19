@@ -40,6 +40,27 @@ impl SignalClient {
         cache.get(message_id).cloned()
     }
 
+    /// Check whether the signal-cli HTTP daemon is ready to accept requests.
+    pub async fn check_ready(&self) -> Result<()> {
+        let url = format!("{}/api/v1/check", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(1))
+            .send()
+            .await
+            .context("Signal daemon readiness check request failed")?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "Signal daemon readiness check returned HTTP {}",
+                resp.status()
+            )
+        }
+    }
+
     /// Make a JSON-RPC 2.0 call to the signal-cli daemon.
     async fn rpc(&self, method: &str, params: Value) -> Result<Value> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -292,10 +313,9 @@ impl SignalClient {
                                     current_data.clear();
                                 } else if line.starts_with(':') {
                                     // SSE comment, ignore
-                                } else if let Some(value) = line.strip_prefix("event:") {
+                                } else if let Some(value) = sse_field_value(&line, "event") {
                                     current_event = value.trim().to_string();
-                                } else if let Some(value) = line.strip_prefix("data:") {
-                                    let value = value.strip_prefix(' ').unwrap_or(value);
+                                } else if let Some(value) = sse_field_value(&line, "data") {
                                     if current_data.is_empty() {
                                         current_data = value.to_string();
                                     } else {
@@ -463,6 +483,14 @@ impl SignalClient {
     }
 }
 
+fn sse_field_value<'a>(line: &'a str, field: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(field)?;
+    if rest.is_empty() {
+        return Some("");
+    }
+    rest.strip_prefix(':').map(|value| value.trim_start())
+}
+
 fn build_send_params(
     account: &str,
     recipient: &str,
@@ -570,6 +598,24 @@ mod tests {
     fn is_group_id_rejects_random_strings() {
         // 短而不像 group id
         assert!(!is_group_id("short"));
+    }
+
+    #[test]
+    fn sse_field_value_accepts_optional_and_extra_spaces() {
+        assert_eq!(
+            sse_field_value("data:{\"hello\":true}", "data"),
+            Some("{\"hello\":true}")
+        );
+        assert_eq!(
+            sse_field_value("data: {\"hello\":true}", "data"),
+            Some("{\"hello\":true}")
+        );
+        assert_eq!(
+            sse_field_value("data:   {\"hello\":true}", "data"),
+            Some("{\"hello\":true}")
+        );
+        assert_eq!(sse_field_value("data", "data"), Some(""));
+        assert_eq!(sse_field_value("database: nope", "data"), None);
     }
 
     #[test]

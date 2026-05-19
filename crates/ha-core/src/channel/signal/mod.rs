@@ -91,6 +91,47 @@ impl SignalPlugin {
     }
 }
 
+async fn wait_for_daemon_ready(
+    client: &SignalClient,
+    daemon: &mut SignalDaemon,
+    phone: &str,
+) -> Result<()> {
+    let timeout = std::time::Duration::from_secs(10);
+    let started_at = std::time::Instant::now();
+    let mut last_error: Option<String> = None;
+
+    loop {
+        if !daemon.is_running() {
+            anyhow::bail!(
+                "signal-cli daemon exited before readiness check passed for {}{}",
+                phone,
+                last_error
+                    .as_deref()
+                    .map(|e| format!(": {}", e))
+                    .unwrap_or_default()
+            );
+        }
+
+        match client.check_ready().await {
+            Ok(()) => return Ok(()),
+            Err(e) => last_error = Some(e.to_string()),
+        }
+
+        if started_at.elapsed() >= timeout {
+            anyhow::bail!(
+                "timed out waiting for signal-cli daemon readiness at /api/v1/check for {}{}",
+                phone,
+                last_error
+                    .as_deref()
+                    .map(|e| format!(": {}", e))
+                    .unwrap_or_default()
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
 #[async_trait]
 impl ChannelPlugin for SignalPlugin {
     fn meta(&self) -> ChannelMeta {
@@ -150,11 +191,11 @@ impl ChannelPlugin for SignalPlugin {
         let mut daemon = SignalDaemon::start(&phone, cli_path.as_deref(), port)?;
         let daemon_port = daemon.port();
 
-        // Wait briefly for the daemon to initialize
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        if !daemon.is_running() {
-            anyhow::bail!("signal-cli daemon exited immediately after start");
+        // Create the client and actively poll signal-cli's readiness endpoint.
+        let client = Arc::new(SignalClient::new(daemon_port, phone.clone()));
+        if let Err(e) = wait_for_daemon_ready(&client, &mut daemon, &phone).await {
+            daemon.stop().await;
+            return Err(e);
         }
 
         app_info!(
@@ -165,10 +206,8 @@ impl ChannelPlugin for SignalPlugin {
             daemon_port
         );
 
-        // Create the client. SSE loop 内部 parse_data_payload 会顺手把
-        // (message_id → sender_id) 写到 client.quote_authors 缓存，给 outbound
-        // reply 拼 quoteAuthor 用。
-        let client = Arc::new(SignalClient::new(daemon_port, phone.clone()));
+        // SSE loop 内部 parse_data_payload 会顺手把 (message_id → sender_id)
+        // 写到 client.quote_authors 缓存，给 outbound reply 拼 quoteAuthor 用。
 
         {
             let mut accounts = self.accounts.lock().await;
