@@ -85,6 +85,7 @@ interface ChatScreenProps {
   initialSessionId?: string
   onSessionNavigated?: () => void
   onUnreadCountChange?: (count: number) => void
+  onOpenDashboardTab?: (tab: string, initialReportId?: string | null) => void
   sessionsRefreshTrigger?: number
   /** Free-form text to append to the chat input on next render (e.g. `@plan:abcd:v0`). */
   pendingChatInsert?: string
@@ -138,6 +139,7 @@ export default function ChatScreen({
   initialSessionId,
   onSessionNavigated,
   onUnreadCountChange,
+  onOpenDashboardTab,
   sessionsRefreshTrigger,
   pendingChatInsert,
   onChatInsertConsumed,
@@ -1044,7 +1046,10 @@ export default function ChatScreen({
         action?.type !== "passThrough" &&
         !result._isSkillPassThrough
       const actionRendersResult =
-        action?.type === "showProjectPicker" || action?.type === "showSessionPicker"
+        action?.type === "showProjectPicker" ||
+        action?.type === "showSessionPicker" ||
+        action?.type === "recapCard" ||
+        action?.type === "skillFork"
       const shouldAppendResultContent = result.content && !actionRendersResult
       const slashHistoryMessages: Message[] = []
       if (shouldShowSlashHistory && result._slashCommandText) {
@@ -1304,12 +1309,32 @@ export default function ChatScreen({
           }
           break
         }
-        // result.content (rendered above as an event chip) is the only
-        // user-facing surface today; richer wiring tracked in F-033.
-        case "recapCard":
-        case "openDashboardTab":
-        case "skillFork":
+        case "recapCard": {
+          const msg: Message = {
+            role: "event",
+            content: "",
+            timestamp: new Date().toISOString(),
+            recapCardData: { reportId: action.reportId },
+          }
+          session.setMessages((prev) => [...prev, msg])
           break
+        }
+        case "openDashboardTab":
+          onOpenDashboardTab?.(action.tab)
+          break
+        case "skillFork": {
+          const msg: Message = {
+            role: "event",
+            content: "",
+            timestamp: new Date().toISOString(),
+            skillForkData: {
+              runId: action.runId,
+              skillName: action.skillName,
+            },
+          }
+          session.setMessages((prev) => [...prev, msg])
+          break
+        }
       }
     },
     [
@@ -1322,6 +1347,7 @@ export default function ChatScreen({
       loadSystemPrompt,
       handleNewChatInProject,
       refreshUnreadState,
+      onOpenDashboardTab,
       t,
     ],
   )
@@ -1727,6 +1753,7 @@ export default function ChatScreen({
               planSubagentRunning={planMode.planSubagentRunning}
               onSwitchModel={handleMessageSwitchModel}
               onViewSystemPrompt={loadSystemPrompt}
+              onOpenDashboardTab={onOpenDashboardTab}
               onSwitchSession={(sid) => {
                 void session.handleSwitchSession(sid)
               }}
