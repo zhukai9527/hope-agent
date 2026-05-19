@@ -168,18 +168,6 @@
 - **影响面**：纯一致性 + 边缘 bug。后端 `set_skill_env_check` 走 `mutate_config` 几乎不会失败（除非配置文件磁盘异常），实际触发概率低；触发时用户看到 Switch 显示开但实际行为没切换，要刷新或重新点才会自愈
 - **触发时机建议**：下一次动 SkillsPanel（加新 Switch / Setting）时顺手收掉；或独立"settings panel optimistic-toggle 一致化"小 PR 把全 settings 目录扫一遍
 
-### F-024 DiffPanel 与 CanvasPanel 互斥未实现
-
-- **来源**：2026-04-29 文件操作摘要 + 右侧 Diff 面板 feature 实现
-- **现象**：[`src/components/chat/ChatScreen.tsx`](../../src/components/chat/ChatScreen.tsx) 在 useEffect 中实现了"DiffPanel 打开自动关 PlanPanel"互斥，但**没有**与 CanvasPanel 的互斥。三面板同时打开会导致主 chat 区被挤压到不可用宽度。Plan 文件第 18 条原本要求三面板互斥
-- **为什么留**：CanvasPanel 自管 visibility（不像 PlanPanel 暴露 `setShowPanel` API），改动需要先重构 CanvasPanel 的 state ownership。本期落地时为避免冲击 CanvasPanel 现有契约，权衡后只做了 DiffPanel ↔ PlanPanel
-- **改的话要做什么**：
-  1. CanvasPanel 把 `showPanel` state 提到 ChatScreen 上层管理（或暴露 imperative `onClose` ref）
-  2. ChatScreen 的 useEffect 加入第三向互斥：openDiff → close PlanPanel + close CanvasPanel；openCanvas → close DiffPanel + close PlanPanel；openPlan → close DiffPanel + close CanvasPanel
-  3. 或更优：抽 `useExclusivePanel(panelId)` hook 统一管理三面板 mutex（PlanPanel / CanvasPanel / DiffPanel 注册到同 registry）
-- **影响面**：可见 bug。极端场景（用户 Plan + Canvas + Diff 全打开）chat 主区被挤压；日常使用罕见
-- **触发时机建议**：下次动 CanvasPanel state ownership / 新增第四个 side panel 时一并收掉；或独立"side panel mutex 统一"重构 PR
-
 ### F-033 `recapCard` / `openDashboardTab` / `skillFork` 在 ChatScreen 是空 case
 
 - **来源**：2026-05-01 slash command audit `/simplify` review（quality agent）

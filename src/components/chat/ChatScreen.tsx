@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { getTransport } from "@/lib/transport-provider"
 import { save } from "@tauri-apps/plugin-dialog"
@@ -23,7 +23,7 @@ import ChatTitleBar from "@/components/chat/ChatTitleBar"
 import HandoverDialog from "@/components/chat/HandoverDialog"
 import MessageList from "@/components/chat/MessageList"
 import CrashRecoveryBanner from "@/components/common/CrashRecoveryBanner"
-import CanvasPanel from "@/components/chat/CanvasPanel"
+import CanvasPanel, { CLOSE_CANVAS_PANEL_EVENT } from "@/components/chat/CanvasPanel"
 import BrowserPanel from "@/components/chat/BrowserPanel"
 import MacControlPanel from "@/components/chat/MacControlPanel"
 import { TeamPanel } from "@/components/team/TeamPanel"
@@ -80,6 +80,27 @@ interface ChatScreenProps {
   pendingChatInsert?: string
   /** Called once the insert has been consumed so App can clear the pending slot. */
   onChatInsertConsumed?: () => void
+}
+
+type ExclusiveRightPanel = "diff" | "plan" | "browser" | "mac-control" | "canvas" | "team"
+type ExclusiveRightPanelVisibility = Record<ExclusiveRightPanel, boolean>
+
+const EXCLUSIVE_RIGHT_PANEL_ORDER: readonly ExclusiveRightPanel[] = [
+  "diff",
+  "plan",
+  "browser",
+  "mac-control",
+  "canvas",
+  "team",
+]
+
+const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
+  diff: false,
+  plan: false,
+  browser: false,
+  "mac-control": false,
+  canvas: false,
+  team: false,
 }
 
 function clampChatSidebarWidth(width: number): number {
@@ -1333,20 +1354,33 @@ export default function ChatScreen({
     planMode.showPanel &&
     planMode.planState !== "off" &&
     (planMode.planState === "planning" || planMode.planContent.trim().length > 0)
-  const rightPanelKey =
-    diffPanel.showPanel && diffPanel.activeChanges.length > 0
-      ? "diff"
-      : shouldShowPlanPanel
-        ? "plan"
-        : showBrowserPanel
-          ? "browser"
-          : showMacControlPanel
-            ? "mac-control"
-            : canvasPanelOpen
-              ? "canvas"
-              : activeTeamId && showTeamPanel
-                ? "team"
-                : null
+  const isDiffPanelVisible = diffPanel.showPanel && diffPanel.activeChanges.length > 0
+  const [activeExclusiveRightPanel, setActiveExclusiveRightPanel] =
+    useState<ExclusiveRightPanel | null>(null)
+  const closeDiffPanel = diffPanel.closeDiff
+  const setPlanPanelOpen = planMode.setShowPanel
+  const closeCanvasPanel = useCallback(() => {
+    setCanvasPanelOpen(false)
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(CLOSE_CANVAS_PANEL_EVENT))
+    }
+  }, [])
+
+  let renderedExclusiveRightPanel: ExclusiveRightPanel | null = null
+  if (activeExclusiveRightPanel === "diff" && isDiffPanelVisible) {
+    renderedExclusiveRightPanel = "diff"
+  } else if (activeExclusiveRightPanel === "plan" && shouldShowPlanPanel) {
+    renderedExclusiveRightPanel = "plan"
+  } else if (activeExclusiveRightPanel === "browser" && showBrowserPanel) {
+    renderedExclusiveRightPanel = "browser"
+  } else if (activeExclusiveRightPanel === "mac-control" && showMacControlPanel) {
+    renderedExclusiveRightPanel = "mac-control"
+  } else if (activeExclusiveRightPanel === "canvas" && canvasPanelOpen) {
+    renderedExclusiveRightPanel = "canvas"
+  } else if (activeExclusiveRightPanel === "team" && activeTeamId && showTeamPanel) {
+    renderedExclusiveRightPanel = "team"
+  }
+  const rightPanelKey = renderedExclusiveRightPanel
   const lastRightPanelKeyRef = useRef<string | null>(rightPanelKey)
 
   useEffect(() => {
@@ -1356,39 +1390,57 @@ export default function ChatScreen({
     lastRightPanelKeyRef.current = rightPanelKey
   }, [rightPanelKey])
 
-  // Right-side panels (Plan / Diff / Browser / Mac Control / Canvas) are
-  // mutually exclusive at the visual level — opening one closes the others
-  // but keeps their internal state so re-toggling restores the prior view.
-  useEffect(() => {
-    if (diffPanel.showPanel) {
-      planMode.setShowPanel(false)
-      setShowBrowserPanel(false)
-      setShowMacControlPanel(false)
+  // Plan / Diff / Browser / Mac Control / Canvas / Team all occupy the same right
+  // rail. Track rising edges so the panel that just opened wins, then close
+  // the rest through their owning state APIs. `useLayoutEffect` prevents a
+  // one-frame double-panel flash when two sources open in the same render.
+  const previousRightPanelVisibilityRef =
+    useRef<ExclusiveRightPanelVisibility>(EMPTY_RIGHT_PANEL_VISIBILITY)
+  useLayoutEffect(() => {
+    const current: ExclusiveRightPanelVisibility = {
+      diff: isDiffPanelVisible,
+      plan: shouldShowPlanPanel,
+      browser: showBrowserPanel,
+      "mac-control": showMacControlPanel,
+      canvas: canvasPanelOpen,
+      team: !!activeTeamId && showTeamPanel,
     }
-  }, [diffPanel.showPanel, planMode])
+    const previous = previousRightPanelVisibilityRef.current
+    const newlyOpened =
+      EXCLUSIVE_RIGHT_PANEL_ORDER.find((panel) => current[panel] && !previous[panel]) ?? null
+    const stillActive =
+      activeExclusiveRightPanel && current[activeExclusiveRightPanel]
+        ? activeExclusiveRightPanel
+        : null
+    const firstVisible =
+      EXCLUSIVE_RIGHT_PANEL_ORDER.find((panel) => current[panel]) ?? null
+    const active = newlyOpened ?? stillActive ?? firstVisible
 
-  useEffect(() => {
-    if (showBrowserPanel) {
-      planMode.setShowPanel(false)
-      diffPanel.closeDiff?.()
-      setShowMacControlPanel(false)
-      // CanvasPanel owns its own `canvas` state — fire a window event so it
-      // can clear itself. Keeps the mutex contract this whole effect block
-      // is documenting.
-      window.dispatchEvent(new CustomEvent("hope-agent:close-canvas"))
+    previousRightPanelVisibilityRef.current = current
+    if (activeExclusiveRightPanel !== active) {
+      setActiveExclusiveRightPanel(active)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showBrowserPanel])
+    if (!active) return
 
-  useEffect(() => {
-    if (showMacControlPanel) {
-      planMode.setShowPanel(false)
-      diffPanel.closeDiff?.()
-      setShowBrowserPanel(false)
-      window.dispatchEvent(new CustomEvent("hope-agent:close-canvas"))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showMacControlPanel])
+    if (active !== "diff" && current.diff) closeDiffPanel()
+    if (active !== "plan" && current.plan) setPlanPanelOpen(false)
+    if (active !== "browser" && current.browser) setShowBrowserPanel(false)
+    if (active !== "mac-control" && current["mac-control"]) setShowMacControlPanel(false)
+    if (active !== "canvas" && current.canvas) closeCanvasPanel()
+    if (active !== "team" && current.team) setShowTeamPanel(false)
+  }, [
+    activeTeamId,
+    activeExclusiveRightPanel,
+    canvasPanelOpen,
+    closeCanvasPanel,
+    closeDiffPanel,
+    isDiffPanelVisible,
+    setPlanPanelOpen,
+    shouldShowPlanPanel,
+    showBrowserPanel,
+    showTeamPanel,
+    showMacControlPanel,
+  ])
 
   // Reset dismissal flags (and any open panel state) on session switch so each
   // session gets a fresh chance to auto-open live mirror panels.
@@ -1759,8 +1811,8 @@ export default function ChatScreen({
             )}
           </div>
 
-          {/* Diff panel (right side; mutually exclusive with PlanPanel) */}
-          {diffPanel.showPanel && diffPanel.activeChanges.length > 0 && (
+          {/* Diff panel (right side; mutually exclusive with the other primary panels) */}
+          {renderedExclusiveRightPanel === "diff" && (
             <RightPanelShell
               width={diffPanel.panelWidth}
               onWidthChange={diffPanel.setPanelWidth}
@@ -1778,7 +1830,7 @@ export default function ChatScreen({
           )}
 
           {/* Plan workspace (right side, integrated under the shared title bar) */}
-          {shouldShowPlanPanel && (
+          {renderedExclusiveRightPanel === "plan" && (
             <RightPanelShell
               width={planPanelWidth}
               onWidthChange={setPlanPanelWidth}
@@ -1806,11 +1858,12 @@ export default function ChatScreen({
             onPanelWidthChange={setCanvasPanelWidth}
             currentSessionId={currentSessionId}
             onOpenChange={setCanvasPanelOpen}
+            visible={renderedExclusiveRightPanel === "canvas"}
           />
 
           {/* Browser live-mirror panel — open on first `browser:frame` push,
               close-only by user. Mutex with Plan / Diff / Canvas above. */}
-          {showBrowserPanel && (
+          {renderedExclusiveRightPanel === "browser" && (
             <BrowserPanel
               panelWidth={browserPanelWidth}
               onPanelWidthChange={setBrowserPanelWidth}
@@ -1824,7 +1877,7 @@ export default function ChatScreen({
           {/* Mac Control live-mirror panel — open on first `mac_control:frame`
               push. The panel remains read-only while `wait`/target matching
               lands in Phase 2C. */}
-          {showMacControlPanel && (
+          {renderedExclusiveRightPanel === "mac-control" && (
             <MacControlPanel
               panelWidth={macControlPanelWidth}
               onPanelWidthChange={setMacControlPanelWidth}
@@ -1836,7 +1889,7 @@ export default function ChatScreen({
           )}
 
           {/* Team Panel */}
-          {activeTeamId && showTeamPanel && (
+          {renderedExclusiveRightPanel === "team" && activeTeamId && (
             <TeamPanel
               teamId={activeTeamId}
               panelWidth={teamPanelWidth}
