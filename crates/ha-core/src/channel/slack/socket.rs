@@ -3,11 +3,18 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::api::SlackApi;
+use super::SLACK_ACTION_ID_MAX_CHARS;
 use crate::channel::types::*;
 use crate::channel::ws::{backoff_duration, WsConnection};
 
 /// Maximum reconnection attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnvelopeOutcome {
+    Continue,
+    Reconnect,
+}
 
 /// Run the Slack Socket Mode event loop.
 ///
@@ -129,13 +136,17 @@ pub async fn run_socket_mode(
                 msg = ws.recv_text() => {
                     match msg {
                         Some(text) => {
-                            handle_envelope(
+                            let outcome = handle_envelope(
                                 &mut ws,
                                 &text,
                                 &account_id,
                                 &bot_id,
                                 &inbound_tx,
                             ).await;
+                            if outcome == EnvelopeOutcome::Reconnect {
+                                ws.close().await;
+                                break;
+                            }
                         }
                         None => {
                             // Connection closed - need to reconnect with a NEW URL
@@ -196,7 +207,7 @@ async fn handle_envelope(
     account_id: &str,
     bot_id: &str,
     inbound_tx: &mpsc::Sender<InboundEvent>,
-) {
+) -> EnvelopeOutcome {
     let envelope: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(e) => {
@@ -206,7 +217,7 @@ async fn handle_envelope(
                 "Failed to parse envelope: {}",
                 e
             );
-            return;
+            return EnvelopeOutcome::Continue;
         }
     };
 
@@ -261,6 +272,7 @@ async fn handle_envelope(
                 "Received disconnect signal for account '{}'",
                 account_id
             );
+            return EnvelopeOutcome::Reconnect;
         }
         other => {
             app_debug!(
@@ -272,6 +284,8 @@ async fn handle_envelope(
             );
         }
     }
+
+    EnvelopeOutcome::Continue
 }
 
 /// Handle a Slack Events API event.
@@ -436,6 +450,16 @@ async fn handle_interactive_payload(
         let Some(action_id) = action.get("action_id").and_then(|v| v.as_str()) else {
             continue;
         };
+        if action_id.chars().count() > SLACK_ACTION_ID_MAX_CHARS {
+            app_warn!(
+                "channel",
+                "slack::socket",
+                "Ignoring Slack action_id longer than {} characters for account '{}'",
+                SLACK_ACTION_ID_MAX_CHARS,
+                account_id
+            );
+            continue;
+        }
 
         if let Some(rest) = action_id.strip_prefix("slash:") {
             let chat_id = payload

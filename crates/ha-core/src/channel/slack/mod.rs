@@ -23,6 +23,9 @@ use crate::channel::traits::{chunk_text, ChannelPlugin};
 use crate::channel::types::*;
 use api::SlackApi;
 
+/// Slack Block Kit `action_id` fields are limited to 255 characters.
+pub(crate) const SLACK_ACTION_ID_MAX_CHARS: usize = 255;
+
 /// Running account state.
 struct RunningAccount {
     api: Arc<SlackApi>,
@@ -84,6 +87,21 @@ impl SlackPlugin {
             .map(|a| a.api.clone())
             .ok_or_else(|| anyhow::anyhow!("Slack account '{}' is not running", account_id))
     }
+}
+
+fn slack_action_id(button: &InlineButton) -> String {
+    let action_id = button.callback_id();
+    if action_id.chars().count() <= SLACK_ACTION_ID_MAX_CHARS {
+        return action_id.to_string();
+    }
+
+    app_warn!(
+        "channel",
+        "slack",
+        "Slack action_id exceeds {} characters; truncating",
+        SLACK_ACTION_ID_MAX_CHARS
+    );
+    action_id.chars().take(SLACK_ACTION_ID_MAX_CHARS).collect()
 }
 
 #[async_trait]
@@ -245,7 +263,7 @@ impl ChannelPlugin for SlackPlugin {
                         serde_json::json!({
                             "type": "button",
                             "text": {"type": "plain_text", "text": &b.text},
-                            "action_id": b.callback_id(),
+                            "action_id": slack_action_id(b),
                         })
                     })
                     .collect();
@@ -435,5 +453,33 @@ impl ChannelPlugin for SlackPlugin {
         let api = SlackApi::new(&bot_token, None);
         let auth = api.auth_test().await?;
         Ok(auth.user)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slack_action_id_keeps_short_callback() {
+        let button = InlineButton {
+            text: "Pick".to_string(),
+            callback_data: Some("slash:model gpt-5.4".to_string()),
+            url: None,
+        };
+
+        assert_eq!(slack_action_id(&button), "slash:model gpt-5.4");
+    }
+
+    #[test]
+    fn slack_action_id_truncates_to_slack_limit() {
+        let button = InlineButton {
+            text: "x".repeat(SLACK_ACTION_ID_MAX_CHARS + 10),
+            callback_data: None,
+            url: None,
+        };
+        let action_id = slack_action_id(&button);
+
+        assert_eq!(action_id.chars().count(), SLACK_ACTION_ID_MAX_CHARS);
     }
 }
