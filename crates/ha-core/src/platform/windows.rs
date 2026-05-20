@@ -39,6 +39,10 @@ pub(super) async fn current_location() -> Option<(f64, f64)> {
     None
 }
 
+pub(super) fn pdfium_library_candidates() -> &'static [&'static str] {
+    &["pdfium.dll"]
+}
+
 fn probe_system_proxy() -> Option<String> {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;

@@ -38,6 +38,19 @@ pub(super) async fn current_location() -> Option<(f64, f64)> {
     None
 }
 
+#[cfg(target_os = "macos")]
+pub(super) fn pdfium_library_candidates() -> &'static [&'static str] {
+    &[
+        "/usr/local/lib/libpdfium.dylib",
+        "/opt/homebrew/lib/libpdfium.dylib",
+    ]
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn pdfium_library_candidates() -> &'static [&'static str] {
+    &["/usr/lib/libpdfium.so", "/usr/local/lib/libpdfium.so"]
+}
+
 fn probe_system_proxy() -> Option<String> {
     env_proxy_url()
         .or_else(detect_macos_system_proxy)

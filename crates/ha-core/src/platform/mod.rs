@@ -82,6 +82,14 @@ pub async fn current_location() -> Option<(f64, f64)> {
     imp::current_location().await
 }
 
+/// Candidate dynamic-library names/paths for pdfium-render fallback binding.
+///
+/// Callers should try `Pdfium::bind_to_system_library()` first, then these
+/// platform-specific well-known locations.
+pub fn pdfium_library_candidates() -> &'static [&'static str] {
+    imp::pdfium_library_candidates()
+}
+
 /// Build a `std::process::Command` that runs `cmdline` through the
 /// platform default shell.
 ///
