@@ -5,7 +5,7 @@
 //! - **SDK / Reference**: imsg JSON-RPC over stdio 文档见仓库 README
 //! - **Protocol**: 子进程托管 `imsg`，stdio NDJSON JSON-RPC，watch 订阅推送
 //!   事件，send 单条命令；macOS 限定（依赖 Messages.app + chat.db）
-//! - **Last reviewed**: 2026-05-05
+//! - **Last reviewed**: 2026-05-20
 
 pub mod client;
 pub mod format;
@@ -94,7 +94,7 @@ impl ChannelPlugin for IMessagePlugin {
                 MediaType::Voice,
                 MediaType::Animation,
             ],
-            supports_typing: true,
+            supports_typing: false,
             supports_buttons: false,
             streaming_preview_max_bytes: None,
             supports_card_stream: false,
@@ -295,12 +295,10 @@ impl ChannelPlugin for IMessagePlugin {
 
     #[cfg(target_os = "macos")]
     async fn send_typing(&self, account_id: &str, chat_id: &str) -> Result<()> {
-        let accounts = self.accounts.lock().await;
-        let running = accounts
-            .get(account_id)
-            .ok_or_else(|| anyhow::anyhow!("iMessage account '{}' is not running", account_id))?;
-
-        running.client.send_typing(chat_id).await
+        // `imsg rpc` does not expose typing indicators; typing is an advanced
+        // IMCore/bridge feature, so this channel does not advertise support.
+        let _ = (account_id, chat_id);
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

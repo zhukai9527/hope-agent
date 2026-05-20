@@ -387,15 +387,6 @@ impl IMessageClient {
         self.rpc_call("send", params).await
     }
 
-    /// Send a typing indicator to a chat.
-    pub async fn send_typing(&self, chat_id: &str) -> Result<()> {
-        let params = serde_json::json!({
-            "to": chat_id,
-        });
-        self.rpc_call("sendTyping", params).await?;
-        Ok(())
-    }
-
     /// List conversations (used for probe).
     pub async fn list_conversations(&self) -> Result<Value> {
         let params = serde_json::json!({ "limit": 5 });
@@ -459,13 +450,10 @@ impl IMessageClient {
             return None;
         }
 
-        // Determine chat type: group if is_group=true or has multiple participants
-        let is_group = payload.is_group.unwrap_or(false)
-            || payload
-                .participants
-                .as_ref()
-                .map(|p| p.len() > 2)
-                .unwrap_or(false);
+        // `imsg` exposes an explicit public `is_group` boolean. Do not infer
+        // groupness from participants: the local user is implicit and the
+        // participant count is not a stable group/direct discriminator.
+        let is_group = payload.is_group.unwrap_or(false);
 
         let chat_type = if is_group {
             ChatType::Group
@@ -582,7 +570,8 @@ fn build_send_params(
 
 #[cfg(test)]
 mod tests {
-    use super::build_send_params;
+    use super::{build_send_params, IMessageClient};
+    use crate::channel::types::ChatType;
 
     #[test]
     fn build_send_params_uses_chat_id_for_numeric_targets() {
@@ -607,5 +596,56 @@ mod tests {
         assert_eq!(params["to"].as_str(), Some("+14155551212"));
         assert_eq!(params["service"].as_str(), Some("auto"));
         assert_eq!(params["reply_to"].as_str(), Some("GUID"));
+    }
+
+    #[test]
+    fn parse_notification_trusts_explicit_is_group_false() {
+        let msg = IMessageClient::parse_notification(
+            &serde_json::json!({
+                "message": {
+                    "id": 1,
+                    "guid": "MSG-1",
+                    "chat_id": 42,
+                    "sender": "+14155551212",
+                    "is_from_me": false,
+                    "text": "hi",
+                    "created_at": "2026-05-20T08:00:00Z",
+                    "participants": ["a", "b", "c"],
+                    "is_group": false
+                }
+            }),
+            "acc",
+        )
+        .unwrap();
+
+        assert_eq!(msg.chat_type, ChatType::Dm);
+        assert_eq!(msg.chat_id, "42");
+        assert_eq!(msg.chat_title, None);
+    }
+
+    #[test]
+    fn parse_notification_trusts_explicit_is_group_true() {
+        let msg = IMessageClient::parse_notification(
+            &serde_json::json!({
+                "message": {
+                    "id": 2,
+                    "guid": "MSG-2",
+                    "chat_id": 43,
+                    "sender": "+14155551212",
+                    "is_from_me": false,
+                    "text": "hi",
+                    "created_at": "2026-05-20T08:00:00Z",
+                    "participants": ["a"],
+                    "is_group": true,
+                    "chat_name": "Crew"
+                }
+            }),
+            "acc",
+        )
+        .unwrap();
+
+        assert_eq!(msg.chat_type, ChatType::Group);
+        assert_eq!(msg.chat_id, "43");
+        assert_eq!(msg.chat_title.as_deref(), Some("Crew"));
     }
 }
