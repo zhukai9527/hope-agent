@@ -228,11 +228,11 @@ fn format_prompt(group: &AskUserQuestionGroup) -> String {
     out.push_str("❓ Question from AI\n");
     if let Some(ctx) = &group.context {
         out.push('\n');
-        out.push_str(crate::truncate_utf8(ctx, 500));
+        out.push_str(crate::truncate_utf8(ctx.fallback_text(), 500));
         out.push('\n');
     }
     for (qi, q) in group.questions.iter().enumerate() {
-        let qtext = crate::truncate_utf8(&q.text, 500);
+        let qtext = crate::truncate_utf8(q.text.fallback_text(), 500);
         out.push_str(&format!("\n{}. {}", qi + 1, qtext));
         if q.multi_select {
             out.push_str("  (multi-select)");
@@ -241,10 +241,10 @@ fn format_prompt(group: &AskUserQuestionGroup) -> String {
         for (oi, opt) in q.options.iter().enumerate() {
             let marker = option_marker(qi, oi);
             let rec = if opt.recommended { " ★" } else { "" };
-            let label = crate::truncate_utf8(&opt.label, 100);
+            let label = crate::truncate_utf8(opt.label.fallback_text(), 100);
             out.push_str(&format!("  {marker}. {label}{rec}\n"));
             if let Some(desc) = &opt.description {
-                let desc = crate::truncate_utf8(desc, 200);
+                let desc = crate::truncate_utf8(desc.fallback_text(), 200);
                 out.push_str(&format!("     {desc}\n"));
             }
         }
@@ -279,9 +279,9 @@ fn build_buttons(group: &AskUserQuestionGroup) -> Vec<Vec<InlineButton>> {
         for (oi, opt) in q.options.iter().enumerate() {
             let marker = option_marker(qi, oi);
             let text = if opt.recommended {
-                format!("★ {}", opt.label)
+                format!("★ {}", opt.label.fallback_text())
             } else {
-                opt.label.clone()
+                opt.label.fallback_text().to_string()
             };
             row.push(InlineButton {
                 text: format!("[{marker}] {text}"),

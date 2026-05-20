@@ -4501,5 +4501,47 @@
       "errApiKeyRequired": "請填寫 API Key",
       "errExtraFieldRequired": "請填寫必填欄位：{{field}}"
     }
+  },
+  "askUserDialog": {
+    "browserEvaluate": {
+      "context": "瀏覽器 control.evaluate 即將在目前分頁執行任意 JavaScript。只有在你信任這段腳本時才批准。",
+      "text": "要在瀏覽器中執行這段 JavaScript 嗎？\n\n{{preview}}",
+      "header": "瀏覽器執行腳本",
+      "runIt": "執行",
+      "cancel": "取消"
+    },
+    "appUpdate": {
+      "rollback": {
+        "context": "Hope Agent 回滾：從 ~/.hope-agent/updater/backup/ 還原上一個二進位檔並重新啟動服務。",
+        "text": "要回滾到上一個已安裝的 Hope Agent 二進位檔嗎？替換完成後服務會立即重新啟動。",
+        "header": "Hope Agent 回滾",
+        "confirm": "立即回滾",
+        "cancel": "取消"
+      },
+      "install": {
+        "context": "Hope Agent 自我更新確認。安裝來源：{{installSource}}。建議路徑：{{path}}。",
+        "header": "Hope Agent {{from}} → {{to}}",
+        "text": {
+          "packageManager": "要升級 Hope Agent {{from}} → {{to}} 嗎？\n路徑：套件管理器（{{installSource}}）{{notes}}\n\n使用者層級服務會在二進位檔替換後立即重新啟動（通常停機 1-2 秒）。進行中的對話、排程任務或 IM 串流都會被取消，請先暫停重要工作。",
+          "selfContained": "要升級 Hope Agent {{from}} → {{to}} 嗎？\n路徑：下載獨立二進位檔、驗證 Minisign 簽章、原子替換。{{notes}}\n\n使用者層級服務會在二進位檔替換後立即重新啟動（通常停機 1-2 秒）。進行中的對話、排程任務或 IM 串流都會被取消，請先暫停重要工作。",
+          "tauri": "要升級 Hope Agent {{from}} → {{to}} 嗎？\n路徑：Tauri 桌面更新器（已簽名安裝包）。{{notes}}\n\n使用者層級服務會在二進位檔替換後立即重新啟動（通常停機 1-2 秒）。進行中的對話、排程任務或 IM 串流都會被取消，請先暫停重要工作。",
+          "manualPrompt": "要升級 Hope Agent {{from}} → {{to}} 嗎？\n路徑：手動下載（沒有符合的自動升級路徑）。{{notes}}\n\n使用者層級服務會在二進位檔替換後立即重新啟動（通常停機 1-2 秒）。進行中的對話、排程任務或 IM 串流都會被取消，請先暫停重要工作。"
+        },
+        "confirm": "立即升級",
+        "cancel": "暫不升級"
+      },
+      "manual": {
+        "dockerContext": "Hope Agent 正在 Docker 容器中執行。自我更新無法替換映像檔，請拉取新 tag 並重新建立容器。",
+        "dockerText": "Hope Agent 正在 Docker 容器中執行（{{from}} → {{to}}）。\n\n請拉取新映像檔並重新建立容器：\n\n    docker pull ghcr.io/shiwenwen/hope-agent:v{{to}}\n    docker compose up -d\n\n如果 compose 檔使用 latest，也可以固定到 latest。",
+        "dockerHeader": "需要 Docker 升級",
+        "context": "Hope Agent 無法為目前安裝選擇自動升級路徑。請選擇下一步。",
+        "text": "Hope Agent {{from}} → {{to}} 沒有可用的自動升級路徑。偵測到的安裝來源：{{installSource}}。請選擇處理方式：",
+        "header": "需要手動升級",
+        "openReleases": "在瀏覽器中開啟發布頁面",
+        "openReleasesManual": "在瀏覽器中開啟發布頁面（手動下載）",
+        "forceSelfContained": "仍然嘗試獨立二進位檔替換",
+        "abort": "取消升級"
+      }
+    }
   }
 }

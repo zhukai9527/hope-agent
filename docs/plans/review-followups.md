@@ -29,12 +29,3 @@
 ---
 
 ## Open
-
-### F-089 后端 `ask_user_question` payload 仍是字面量英文，未走前端 i18n
-
-- **来源**：2026-05-15 browser / updater 审查
-- **现象**：后端调用 [`ask_user_question::execute`](../../crates/ha-core/src/tools/ask_user_question.rs) 时仍直接拼英文 `context` / `text` / `header` / `options[].label`。当前可确认的 callsite 包括 [`tools/browser/mod.rs::confirm_evaluate`](../../crates/ha-core/src/tools/browser/mod.rs) 和 [`tools/app_update.rs`](../../crates/ha-core/src/tools/app_update.rs) 的 install / rollback / manual prompt；中文或其它 locale 用户会在后端审批弹窗里看到英文。
-- **为什么留**：正确修法不是把这些字符串短期翻成中文，而是改 ask_user 协议，让后端发送 i18n key + params，前端按当前 locale 渲染。协议迁移要兼容旧 payload 并批量替换 callsite，适合独立 PR。
-- **改的话要做什么**：把 `text` / `header` / `options[].label` / `context` 支持 `{ key, params }` 形态，前端 fallback 兼容旧字符串；随后迁移 browser evaluate、app_update install / rollback / manual prompt 等后端弹窗，并补齐 12 语言 key。可给 `sync-i18n.mjs` 加启发式检查，避免新增 ask_user 字面量英文。
-- **影响面**：多语言用户可见 UX 问题；不影响审批功能正确性，但会让本地化体验破功。
-- **触发时机建议**：做权限审批 UX、Browser Phase 后续、或 app_update 弹窗整理时一并处理。
