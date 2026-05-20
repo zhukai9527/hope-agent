@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator found merge suggestions",
+        "autoNoticeBody": "{{proposals}} cluster(s) across {{scanned}} drafts are ready to review below."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Run curator on a schedule",
+          "help": "When on, Hope Agent periodically scans draft skills for overlap and surfaces merge suggestions here."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Curator interval",
+          "help": "Days between automatic draft-consolidation scans. The backend re-reads this setting each cycle."
         }
       }
     },

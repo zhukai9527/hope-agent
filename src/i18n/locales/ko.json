@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator가 병합 제안을 찾았습니다",
+        "autoNoticeBody": "{{scanned}}개의 초안에서 {{proposals}}개의 클러스터를 찾았습니다. 아래에서 검토할 수 있습니다."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Curator를 주기적으로 실행",
+          "help": "켜면 Hope Agent가 초안 스킬의 겹치는 주제를 주기적으로 스캔하고 병합 제안을 여기에 표시합니다."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Curator 실행 간격",
+          "help": "자동 초안 통합 스캔 사이의 일수입니다. 백엔드는 매 주기마다 이 설정을 다시 읽습니다."
         }
       }
     },

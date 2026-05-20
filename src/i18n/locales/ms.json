@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator menemui cadangan gabungan",
+        "autoNoticeBody": "{{proposals}} kelompok dalam {{scanned}} draf sedia untuk disemak di bawah."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Jalankan curator mengikut jadual",
+          "help": "Apabila dihidupkan, Hope Agent mengimbas draf kemahiran secara berkala untuk pertindihan dan memaparkan cadangan gabungan di sini."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Selang curator",
+          "help": "Bilangan hari antara imbasan penyatuan draf automatik. Backend membaca semula tetapan ini pada setiap kitaran."
         }
       }
     },

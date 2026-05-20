@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator encontró sugerencias de fusión",
+        "autoNoticeBody": "Hay {{proposals}} grupo(s) en {{scanned}} borradores listos para revisar abajo."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Ejecutar curator periódicamente",
+          "help": "Al activarlo, Hope Agent escanea periódicamente los borradores de skills para detectar solapamientos y muestra aquí las sugerencias de fusión."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Intervalo del curator",
+          "help": "Días entre escaneos automáticos de consolidación de borradores. El backend vuelve a leer este ajuste en cada ciclo."
         }
       }
     },

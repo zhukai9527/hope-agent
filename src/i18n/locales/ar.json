@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "عثر Auto-curator على اقتراحات دمج",
+        "autoNoticeBody": "هناك {{proposals}} مجموعة ضمن {{scanned}} مسودة جاهزة للمراجعة أدناه."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "تشغيل curator وفق جدول",
+          "help": "عند التفعيل، يفحص Hope Agent مسودات المهارات دوريا لاكتشاف التداخل ويعرض اقتراحات الدمج هنا."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "فاصل تشغيل curator",
+          "help": "عدد الأيام بين فحوصات دمج المسودات التلقائية. يعيد backend قراءة هذا الإعداد في كل دورة."
         }
       }
     },

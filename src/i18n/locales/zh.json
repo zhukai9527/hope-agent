@@ -3690,7 +3690,9 @@
         "noClusters": "已扫描 {{count}} 条草稿，未发现明显重叠。",
         "foundN": "在 {{scanned}} 条草稿中发现 {{proposals}} 组潜在重叠。",
         "clusterMeta": "{{members}} 条草稿 · 最低相似度 {{similarity}}",
-        "apply": "保留这一条、删除其余 {{n}} 条"
+        "apply": "保留这一条、删除其余 {{n}} 条",
+        "autoNoticeTitle": "Auto-curator 发现了合并建议",
+        "autoNoticeBody": "在 {{scanned}} 条草稿中发现 {{proposals}} 组可合并项，下面可以直接审核。"
       },
       "resetAll": {
         "label": "全部恢复默认",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "覆盖审核 Prompt",
           "help": "完全替换内置审核系统提示词；留空则用内置版本。后端硬阈值仍会生效。"
+        },
+        "autoCuratorEnabled": {
+          "label": "定期运行草稿合并扫描",
+          "help": "开启后，Hope Agent 会周期性扫描草稿技能里的主题重叠，并把合并建议显示在这里。"
+        },
+        "autoCuratorIntervalDays": {
+          "label": "合并扫描间隔",
+          "help": "两次自动草稿合并扫描之间的天数。后端每轮都会重新读取这个设置。"
         }
       }
     },

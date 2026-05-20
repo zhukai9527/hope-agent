@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator がマージ候補を見つけました",
+        "autoNoticeBody": "{{scanned}} 件のドラフトから {{proposals}} 個のクラスタが見つかりました。下で確認できます。"
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Curator を定期実行",
+          "help": "オンにすると、Hope Agent がドラフトスキルの重複を定期的にスキャンし、マージ候補をここに表示します。"
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Curator の間隔",
+          "help": "自動ドラフト統合スキャンの間隔日数です。バックエンドは各サイクルでこの設定を読み直します。"
         }
       }
     },

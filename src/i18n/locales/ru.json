@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator нашел предложения по объединению",
+        "autoNoticeBody": "{{proposals}} кластер(ов) среди {{scanned}} черновиков готовы к проверке ниже."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Запускать curator по расписанию",
+          "help": "Если включено, Hope Agent периодически сканирует черновики навыков на пересечения и показывает здесь предложения по объединению."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Интервал curator",
+          "help": "Количество дней между автоматическими проверками консолидации черновиков. Backend перечитывает эту настройку в каждом цикле."
         }
       }
     },

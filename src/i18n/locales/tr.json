@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator birleştirme önerileri buldu",
+        "autoNoticeBody": "{{scanned}} taslak içinde {{proposals}} küme aşağıda incelenmeye hazır."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Curatorı zamanlı çalıştır",
+          "help": "Açıkken Hope Agent taslak becerilerdeki örtüşmeleri düzenli olarak tarar ve birleştirme önerilerini burada gösterir."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Curator aralığı",
+          "help": "Otomatik taslak birleştirme taramaları arasındaki gün sayısı. Backend her döngüde bu ayarı yeniden okur."
         }
       }
     },

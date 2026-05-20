@@ -3690,7 +3690,9 @@
         "noClusters": "Scanned {{count}} drafts. No obvious overlap found.",
         "foundN": "Found {{proposals}} overlap cluster(s) across {{scanned}} drafts.",
         "clusterMeta": "{{members}} drafts · min similarity {{similarity}}",
-        "apply": "Keep this, discard the other {{n}}"
+        "apply": "Keep this, discard the other {{n}}",
+        "autoNoticeTitle": "Auto-curator tìm thấy gợi ý hợp nhất",
+        "autoNoticeBody": "{{proposals}} cụm trong {{scanned}} bản nháp đã sẵn sàng để xem lại bên dưới."
       },
       "resetAll": {
         "label": "Reset everything",
@@ -3795,6 +3797,14 @@
         "reviewSystemOverride": {
           "label": "Override review system prompt",
           "help": "Replaces the built-in review system prompt verbatim; leave empty to use the built-in. Backend hard floors still apply."
+        },
+        "autoCuratorEnabled": {
+          "label": "Chạy curator theo lịch",
+          "help": "Khi bật, Hope Agent định kỳ quét các skill nháp để tìm phần trùng lặp và hiển thị gợi ý hợp nhất tại đây."
+        },
+        "autoCuratorIntervalDays": {
+          "label": "Khoảng chạy curator",
+          "help": "Số ngày giữa các lần quét hợp nhất bản nháp tự động. Backend đọc lại thiết lập này ở mỗi chu kỳ."
         }
       }
     },
