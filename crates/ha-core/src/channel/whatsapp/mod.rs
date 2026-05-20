@@ -253,7 +253,7 @@ impl ChannelPlugin for WhatsAppPlugin {
 
         let text = payload.text.as_deref().map(str::trim).unwrap_or("");
         if text.is_empty() {
-            return Ok(DeliveryResult::ok("empty"));
+            return Ok(DeliveryResult::err("WhatsApp message text is empty"));
         }
 
         let reply_to = payload.reply_to_message_id.as_deref();

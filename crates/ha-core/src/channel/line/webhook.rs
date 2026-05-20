@@ -77,8 +77,8 @@ pub fn create_webhook_handler(
             if signature.is_empty() {
                 app_warn!("channel", "line", "Webhook missing X-Line-Signature header");
                 return WebhookResponse {
-                    status: 400,
-                    body: r#"{"error":"Missing X-Line-Signature header"}"#.to_string(),
+                    status: 404,
+                    body: r#"{"error":"Not found"}"#.to_string(),
                 };
             }
 
@@ -86,8 +86,8 @@ pub fn create_webhook_handler(
             if !verify_signature(&req.body, &signature, &channel_secret) {
                 app_warn!("channel", "line", "Webhook signature verification failed");
                 return WebhookResponse {
-                    status: 403,
-                    body: r#"{"error":"Invalid signature"}"#.to_string(),
+                    status: 404,
+                    body: r#"{"error":"Not found"}"#.to_string(),
                 };
             }
 

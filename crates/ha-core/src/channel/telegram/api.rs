@@ -1,5 +1,6 @@
 use crate::channel::types::InlineButton;
 use anyhow::Result;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use teloxide::adaptors::{throttle::Limits, Throttle};
 use teloxide::prelude::*;
@@ -23,6 +24,7 @@ pub struct TelegramBotApi {
     /// the bytes through [`inbound_media_common::stream_to_disk`] (cap
     /// + cleanup) instead of teloxide's downloader which has neither.
     http_client: reqwest::Client,
+    draft_preview_enabled: AtomicBool,
 }
 
 impl TelegramBotApi {
@@ -71,6 +73,7 @@ impl TelegramBotApi {
             bot,
             proxy_url: proxy_url.map(|s| s.to_string()),
             http_client: client,
+            draft_preview_enabled: AtomicBool::new(true),
         }
     }
 
@@ -201,6 +204,10 @@ impl TelegramBotApi {
         parse_mode: Option<&str>,
         thread_id: Option<i32>,
     ) -> Result<()> {
+        if !self.draft_preview_enabled.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         let token = self.bot.inner().token();
         // Use the bot's API URL base (respects custom apiRoot)
         let api_url_owned = self.bot.inner().api_url();
@@ -228,14 +235,22 @@ impl TelegramBotApi {
             .await
             .map_err(|e| anyhow::anyhow!("sendMessageDraft request failed: {}", e))?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "sendMessageDraft failed ({}): {}",
-                status,
-                crate::truncate_utf8(&text, 200)
-            );
+            let body = crate::truncate_utf8(&text, 200);
+            if send_message_draft_soft_degrades(status) {
+                self.draft_preview_enabled.store(false, Ordering::Relaxed);
+                app_warn!(
+                    "channel",
+                    "telegram::api",
+                    "sendMessageDraft rejected with {}; disabling draft preview until account restart: {}",
+                    status,
+                    body
+                );
+                return Ok(());
+            }
+            anyhow::bail!("sendMessageDraft failed ({}): {}", status, body);
         }
 
         Ok(())
@@ -369,6 +384,97 @@ impl TelegramBotApi {
             .map_err(|e| anyhow::anyhow!("sendPhoto failed: {}", e))
     }
 
+    /// Send a video.
+    pub async fn send_video(
+        &self,
+        chat_id: i64,
+        video: InputFile,
+        caption: Option<&str>,
+        thread_id: Option<i32>,
+    ) -> Result<teloxide::types::Message> {
+        let mut req = self.bot.send_video(ChatId(chat_id), video);
+        if let Some(c) = caption {
+            req = req.caption(c);
+        }
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(telegram_thread_id(tid));
+        }
+        req.await
+            .map_err(|e| anyhow::anyhow!("sendVideo failed: {}", e))
+    }
+
+    /// Send an audio file.
+    pub async fn send_audio(
+        &self,
+        chat_id: i64,
+        audio: InputFile,
+        caption: Option<&str>,
+        thread_id: Option<i32>,
+    ) -> Result<teloxide::types::Message> {
+        let mut req = self.bot.send_audio(ChatId(chat_id), audio);
+        if let Some(c) = caption {
+            req = req.caption(c);
+        }
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(telegram_thread_id(tid));
+        }
+        req.await
+            .map_err(|e| anyhow::anyhow!("sendAudio failed: {}", e))
+    }
+
+    /// Send a voice message.
+    pub async fn send_voice(
+        &self,
+        chat_id: i64,
+        voice: InputFile,
+        caption: Option<&str>,
+        thread_id: Option<i32>,
+    ) -> Result<teloxide::types::Message> {
+        let mut req = self.bot.send_voice(ChatId(chat_id), voice);
+        if let Some(c) = caption {
+            req = req.caption(c);
+        }
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(telegram_thread_id(tid));
+        }
+        req.await
+            .map_err(|e| anyhow::anyhow!("sendVoice failed: {}", e))
+    }
+
+    /// Send an animation.
+    pub async fn send_animation(
+        &self,
+        chat_id: i64,
+        animation: InputFile,
+        caption: Option<&str>,
+        thread_id: Option<i32>,
+    ) -> Result<teloxide::types::Message> {
+        let mut req = self.bot.send_animation(ChatId(chat_id), animation);
+        if let Some(c) = caption {
+            req = req.caption(c);
+        }
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(telegram_thread_id(tid));
+        }
+        req.await
+            .map_err(|e| anyhow::anyhow!("sendAnimation failed: {}", e))
+    }
+
+    /// Send a sticker. Telegram stickers do not support captions.
+    pub async fn send_sticker(
+        &self,
+        chat_id: i64,
+        sticker: InputFile,
+        thread_id: Option<i32>,
+    ) -> Result<teloxide::types::Message> {
+        let mut req = self.bot.send_sticker(ChatId(chat_id), sticker);
+        if let Some(tid) = thread_id {
+            req = req.message_thread_id(telegram_thread_id(tid));
+        }
+        req.await
+            .map_err(|e| anyhow::anyhow!("sendSticker failed: {}", e))
+    }
+
     /// Send a document (file).
     pub async fn send_document(
         &self,
@@ -412,6 +518,14 @@ fn build_send_message_draft_body(
     body
 }
 
+fn telegram_thread_id(tid: i32) -> ThreadId {
+    ThreadId(MessageId(tid))
+}
+
+fn send_message_draft_soft_degrades(status: reqwest::StatusCode) -> bool {
+    status.is_client_error()
+}
+
 /// Convert our `InlineButton` rows into teloxide's `InlineKeyboardMarkup`.
 fn build_inline_keyboard(buttons: &[Vec<InlineButton>]) -> InlineKeyboardMarkup {
     let rows: Vec<Vec<InlineKeyboardButton>> = buttons
@@ -453,7 +567,8 @@ fn strip_html_tags(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_send_message_draft_body;
+    use super::{build_send_message_draft_body, send_message_draft_soft_degrades};
+    use reqwest::StatusCode;
 
     #[test]
     fn send_message_draft_body_only_uses_supported_fields() {
@@ -465,5 +580,14 @@ mod tests {
         assert_eq!(body["parse_mode"], "HTML");
         assert_eq!(body["message_thread_id"], 7);
         assert!(body.get("reply_parameters").is_none());
+    }
+
+    #[test]
+    fn send_message_draft_only_soft_degrades_client_errors() {
+        assert!(send_message_draft_soft_degrades(StatusCode::BAD_REQUEST));
+        assert!(send_message_draft_soft_degrades(StatusCode::NOT_FOUND));
+        assert!(!send_message_draft_soft_degrades(
+            StatusCode::INTERNAL_SERVER_ERROR
+        ));
     }
 }

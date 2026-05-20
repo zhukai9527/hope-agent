@@ -200,7 +200,9 @@ pub async fn run_socket_mode(
 /// }
 /// ```
 ///
-/// We must ACK every envelope immediately by sending `{"envelope_id": "xxx"}`.
+/// We must ACK every envelope immediately. Socket Mode slash commands can
+/// accept an optional response payload in the ACK; Slack documents this via
+/// `accepts_response_payload`.
 async fn handle_envelope(
     ws: &mut WsConnection,
     text: &str,
@@ -221,10 +223,12 @@ async fn handle_envelope(
         }
     };
 
-    // ACK immediately
-    if let Some(envelope_id) = envelope.get("envelope_id").and_then(|v| v.as_str()) {
-        let ack = serde_json::json!({"envelope_id": envelope_id});
+    if let Some(ack) = build_socket_ack(&envelope) {
         if let Err(e) = ws.send_json(&ack).await {
+            let envelope_id = ack
+                .get("envelope_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             app_warn!(
                 "channel",
                 "slack::socket",
@@ -299,12 +303,7 @@ async fn handle_event(
 
     match event_type {
         "message" => {
-            // Skip bot messages, message edits, and subtypes we don't handle
-            if let Some(
-                "bot_message" | "message_changed" | "message_deleted" | "channel_join"
-                | "channel_leave",
-            ) = event.get("subtype").and_then(|v| v.as_str())
-            {
+            if should_skip_message_subtype(event.get("subtype").and_then(|v| v.as_str())) {
                 return;
             }
 
@@ -596,6 +595,35 @@ fn chat_type_from_slack_channel_id(channel_id: &str) -> ChatType {
     }
 }
 
+fn build_socket_ack(envelope: &serde_json::Value) -> Option<serde_json::Value> {
+    let envelope_id = envelope.get("envelope_id").and_then(|v| v.as_str())?;
+    let mut ack = serde_json::json!({ "envelope_id": envelope_id });
+
+    if envelope.get("type").and_then(|v| v.as_str()) == Some("slash_commands")
+        && envelope
+            .get("accepts_response_payload")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        ack["payload"] = serde_json::json!({ "response_type": "in_channel" });
+    }
+
+    Some(ack)
+}
+
+fn should_skip_message_subtype(subtype: Option<&str>) -> bool {
+    matches!(
+        subtype,
+        Some(
+            "bot_message"
+                | "message_changed"
+                | "message_deleted"
+                | "channel_join"
+                | "channel_leave"
+        )
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +634,24 @@ mod tests {
         assert_eq!(chat_type_from_slack_channel_id("C5678"), ChatType::Channel);
         assert_eq!(chat_type_from_slack_channel_id("G9ABC"), ChatType::Group);
         assert_eq!(chat_type_from_slack_channel_id(""), ChatType::Group);
+    }
+
+    #[test]
+    fn socket_ack_includes_payload_for_slash_commands_that_accept_it() {
+        let ack = build_socket_ack(&serde_json::json!({
+            "envelope_id": "env-1",
+            "type": "slash_commands",
+            "accepts_response_payload": true,
+        }))
+        .unwrap();
+
+        assert_eq!(ack["envelope_id"], "env-1");
+        assert_eq!(ack["payload"]["response_type"], "in_channel");
+    }
+
+    #[test]
+    fn file_share_subtype_is_not_skipped() {
+        assert!(!should_skip_message_subtype(Some("file_share")));
+        assert!(should_skip_message_subtype(Some("bot_message")));
     }
 }

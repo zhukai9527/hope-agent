@@ -526,9 +526,10 @@ async fn handle_data_frame(
     bot_open_id: &str,
     inbound_tx: &mpsc::Sender<InboundEvent>,
 ) -> anyhow::Result<()> {
+    let started_at = TokioInstant::now();
     let ty = find_header(&frame, HK_TYPE).unwrap_or("");
     if ty != TY_EVENT && ty != TY_CARD {
-        try_send_ack(conn, frame, 200, account_id).await;
+        try_send_ack(conn, frame, 200, account_id, started_at).await;
         return Ok(());
     }
 
@@ -547,7 +548,7 @@ async fn handle_data_frame(
             return Ok(());
         }
         ResolvedPayload::Drop => {
-            try_send_ack(conn, frame, 200, account_id).await;
+            try_send_ack(conn, frame, 200, account_id, started_at).await;
             return Ok(());
         }
     };
@@ -610,7 +611,7 @@ async fn handle_data_frame(
     };
 
     let code = if dispatch_result.is_ok() { 200 } else { 500 };
-    try_send_ack(conn, frame, code, account_id).await;
+    try_send_ack(conn, frame, code, account_id, started_at).await;
     dispatch_result
 }
 
@@ -618,8 +619,14 @@ async fn handle_data_frame(
 /// here usually means the WS write half is broken, which the receive loop
 /// will pick up as a `None` from `recv_binary` shortly. Logging makes the
 /// causal chain visible to operators / agent self-diagnosis.
-async fn try_send_ack(conn: &mut ws::WsConnection, src: Frame, code: i32, account_id: &str) {
-    if let Err(e) = send_ack(conn, src, code).await {
+async fn try_send_ack(
+    conn: &mut ws::WsConnection,
+    src: Frame,
+    code: i32,
+    account_id: &str,
+    started_at: TokioInstant,
+) {
+    if let Err(e) = send_ack(conn, src, code, started_at).await {
         app_warn!(
             "channel",
             "feishu:gateway",
@@ -633,9 +640,17 @@ async fn try_send_ack(conn: &mut ws::WsConnection, src: Frame, code: i32, accoun
 /// Send a data-frame acknowledgement back to the gateway. Mirrors the official
 /// SDK's response shape: same headers + `biz_rt`, payload `{"code":<n>}`.
 /// Consumes `src` so headers / log_id_new can be moved instead of cloned.
-async fn send_ack(conn: &mut ws::WsConnection, src: Frame, code: i32) -> anyhow::Result<()> {
+async fn send_ack(
+    conn: &mut ws::WsConnection,
+    src: Frame,
+    code: i32,
+    started_at: TokioInstant,
+) -> anyhow::Result<()> {
     let mut headers = src.headers;
-    headers.push(header(HK_BIZ_RT, "0"));
+    headers.push(header(
+        HK_BIZ_RT,
+        started_at.elapsed().as_millis().to_string(),
+    ));
 
     let payload = serde_json::json!({ "code": code }).to_string().into_bytes();
 
@@ -645,8 +660,8 @@ async fn send_ack(conn: &mut ws::WsConnection, src: Frame, code: i32) -> anyhow:
         service: src.service,
         method: METHOD_DATA,
         headers,
-        payload_encoding: String::new(),
-        payload_type: String::new(),
+        payload_encoding: src.payload_encoding,
+        payload_type: src.payload_type,
         payload,
         log_id_new: src.log_id_new,
     };

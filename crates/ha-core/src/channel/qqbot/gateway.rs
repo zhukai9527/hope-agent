@@ -803,13 +803,16 @@ fn strip_mention_tags(content: &str) -> String {
                 // Unclosed tag — output what we skipped
                 result.push('<');
                 result.push('@');
+                continue;
             }
-            // Add a space if the mention was followed by content
-            if !result.is_empty() && !result.ends_with(' ') {
-                // Only add space if there's more content coming
-                if chars.peek().is_some() {
-                    // Don't double space
-                }
+
+            while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                chars.next();
+            }
+
+            let result_ends_with_space = result.chars().last().is_some_and(char::is_whitespace);
+            if !result.is_empty() && !result_ends_with_space && chars.peek().is_some() {
+                result.push(' ');
             }
         } else {
             result.push(ch);
@@ -1083,7 +1086,8 @@ mod tests {
     fn test_strip_mention_tags() {
         assert_eq!(strip_mention_tags("<@!12345> hello"), "hello");
         assert_eq!(strip_mention_tags("<@12345> hello"), "hello");
-        assert_eq!(strip_mention_tags("hello <@!12345> world"), "hello  world");
+        assert_eq!(strip_mention_tags("hello <@!12345> world"), "hello world");
+        assert_eq!(strip_mention_tags("hello<@!12345>world"), "hello world");
         assert_eq!(strip_mention_tags("no mentions here"), "no mentions here");
         assert_eq!(strip_mention_tags(""), "");
     }

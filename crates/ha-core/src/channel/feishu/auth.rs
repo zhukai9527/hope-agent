@@ -98,7 +98,7 @@ impl FeishuAuth {
         }
 
         let url = format!(
-            "{}/open-apis/auth/v3/tenant_access_token/internal/",
+            "{}/open-apis/auth/v3/tenant_access_token/internal",
             self.base_url
         );
         let resp = self
@@ -187,7 +187,7 @@ mod tests {
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/open-apis/auth/v3/tenant_access_token/internal/"))
+            .and(path("/open-apis/auth/v3/tenant_access_token/internal"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(50))
