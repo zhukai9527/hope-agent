@@ -409,6 +409,7 @@ impl ChannelPlugin for IMessagePlugin {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn extract_message_id(result: &serde_json::Value) -> Option<String> {
     result
         .get("messageId")

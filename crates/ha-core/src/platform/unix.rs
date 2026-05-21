@@ -91,6 +91,7 @@ fn detect_macos_system_proxy() -> Option<String> {
     None
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_scutil_proxy(text: &str) -> Option<String> {
     for prefix in ["HTTPS", "HTTP"] {
         let enabled = text

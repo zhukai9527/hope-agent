@@ -4,6 +4,8 @@
 //! `file` with an optional `text` caption. It stages the file into
 //! `~/Library/Messages/Attachments/imsg/` before invoking Messages.app.
 
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
