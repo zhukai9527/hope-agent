@@ -2610,7 +2610,6 @@ fn visual_match_order(
 ) -> std::cmp::Ordering {
     b.contains_point
         .cmp(&a.contains_point)
-        .then_with(|| actionable_element(&b.element).cmp(&actionable_element(&a.element)))
         .then_with(|| {
             a.distance_points
                 .partial_cmp(&b.distance_points)
@@ -2621,6 +2620,7 @@ fn visual_match_order(
                 .partial_cmp(&element_area(&b.element))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
+        .then_with(|| actionable_element(&b.element).cmp(&actionable_element(&a.element)))
         .then_with(|| a.element.id.cmp(&b.element.id))
 }
 
@@ -2939,6 +2939,22 @@ mod tests {
             }],
             elements: vec![
                 MacControlElementSummary {
+                    id: "el_window".to_string(),
+                    window_id: Some("win_1".to_string()),
+                    role: Some("AXWindow".to_string()),
+                    label: Some("Downloads".to_string()),
+                    value: None,
+                    enabled: Some(true),
+                    focused: false,
+                    bounds_points: Some(MacControlBounds {
+                        x: 50.0,
+                        y: 80.0,
+                        width: 400.0,
+                        height: 300.0,
+                    }),
+                    actions: vec!["AXRaise".to_string()],
+                },
+                MacControlElementSummary {
                     id: "el_1".to_string(),
                     window_id: Some("win_1".to_string()),
                     role: Some("AXButton".to_string()),
@@ -3255,6 +3271,25 @@ mod tests {
         assert_eq!(result.nearest_elements.len(), 2);
         assert!(result.nearest_elements[0].distance_points > 0.0);
         assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn visual_point_prefers_smallest_hit_over_actionable_parent() {
+        let snapshot = sample_snapshot();
+        let result = resolve_visual_point(
+            &snapshot,
+            MacControlCoordinateSpace::ScreenPoints,
+            150.0,
+            110.0,
+            5,
+        )
+        .expect("visual point");
+
+        assert_eq!(result.hit_elements[0].element.id, "el_2");
+        assert!(result
+            .hit_elements
+            .iter()
+            .any(|hit| hit.element.id == "el_window"));
     }
 
     #[test]

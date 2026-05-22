@@ -264,7 +264,7 @@ screenPoint.y = boundsPoints.y + imagePoint.y / scale
 Hit-test 规则：
 
 - 先在 cached snapshot 的 AX 元素 bounds 内找包含该 point 的元素。
-- `hitElements[]` 按“包含点、可操作、距离、面积更小、id”排序；第一个候选是最推荐元素。
+- `hitElements[]` 按“包含点、距离、面积更小、可操作、id”排序；第一个候选优先是最小命中元素，避免父级窗口/容器盖过真实控件。
 - 无命中时 `nearestElements[]` 返回最近候选和 `distancePoints`，供模型改点或改用 AX target。
 - `visual.point` 不会把图片像素直接传给点击；模型必须使用返回的 `screenPoint` 或 `suggestedAction.x/y`。
 
