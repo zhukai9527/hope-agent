@@ -834,6 +834,8 @@ mod tests {
             json!({"action": "windows", "op": "list"}),
             json!({"action": "menu", "op": "list"}),
             json!({"action": "dialog", "op": "inspect"}),
+            json!({"action": "visual", "op": "observe"}),
+            json!({"action": "visual", "op": "point", "snapshotId": "macsnap_1", "x": 0, "y": 0}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);
             assert_eq!(resolve(&c), Decision::Allow);
