@@ -221,7 +221,10 @@ Transport 结果类型：
 | `key` / `keys` | string / string[] | `act.hotkey` 单键或组合键 |
 | `deltaX` / `deltaY` | number | `act.scroll` 滚动增量 |
 | `path` | string[] | `menu.click` 菜单路径 |
-| `buttonText` | string | `dialog.accept/dismiss` 指定按钮文案 |
+| `buttonText` | string | `dialog.click/accept/dismiss/file` 指定按钮文案 |
+| `field` / `fieldIndex` | string / number | `dialog.input` 字段标签/元素 id 或 0-based 字段序号 |
+| `filePath` / `fileName` / `selectButton` | string | `dialog.file` 的目录或完整路径、保存文件名、最终点击按钮 |
+| `clear` / `ensureExpanded` / `force` | boolean | `dialog.input` 替换式输入、`dialog.file` best-effort 展开、`dialog.dismiss` 未命中按钮时发送 Escape |
 | `scope` | `"app" \| "system"` | `menu.list/click` 菜单范围，默认 `app` |
 | `includeScreenshot` | boolean | `snapshot` 是否采集 JPEG |
 | `screenshotTarget` | `"display" \| "window"` | `snapshot.includeScreenshot=true` 时选择显示器或窗口 |
@@ -371,9 +374,12 @@ OCR 规则：
 | `clipboard.get` | `action="clipboard"`、`op="get"`；可选 `maxChars` | `op`、`text?`、`textLen`、`truncated`、`changed=false` | 读取 UTF-8 文本剪贴板；隐私敏感，需审批 |
 | `clipboard.set` | `action="clipboard"`、`op="set"`、`text` | `op`、`text=null`、`textLen`、`truncated`、`changed=true` | 写入 UTF-8 文本；结果不回显原文 |
 | `clipboard.clear` | `action="clipboard"`、`op="clear"` | `op`、`text=null`、`textLen=0`、`truncated=false`、`changed=true` | 清空剪贴板 |
-| `dialog.inspect` | `action="dialog"`、`op="inspect"`；可选 `target`、`includeSnapshot`、`maxElements`、`maxDepth` | `op`、`dialogs[]`、`actedButton=null`、`snapshot?`、`execution=null` | 返回当前前台 App dialog/sheet 摘要、文本和按钮 |
+| `dialog.inspect/list` | `action="dialog"`、`op="inspect"` 或 `op="list"`；可选 `target`、`includeSnapshot`、`maxElements`、`maxDepth` | `op`、`dialogs[]`、`actedButton=null`、`actedField=null`、`snapshot?`、`execution=null` | 返回当前前台 App dialog/sheet 摘要、文本、按钮和字段 |
+| `dialog.click` | `action="dialog"`、`op="click"`、`buttonText`；可选 `target`、`includeSnapshot` | `op`、`dialogs[]`、`actedButton?`、`snapshot?`、`execution="AXPressOrCGEvent"` | 按可见按钮文本点击；危险按钮词走高风险审批 |
+| `dialog.input` | `action="dialog"`、`op="input"`、`text`；可选 `field` / `fieldIndex` / `target.elementId`、`clear`、`target` | `actedField?`、`execution="AXSetValue"` 或 paste 状态 | 向 dialog/sheet 内文本字段输入；`clear=true` 直接替换 AXValue，否则聚焦后粘贴追加 |
+| `dialog.file` | `action="dialog"`、`op="file"`；`filePath` / `fileName` / `selectButton` / `buttonText` 至少一个；可选 `ensureExpanded` | `fileDialog?`、`actedButton?`、`execution`、`warnings[]` | 驱动原生 Open/Save panel：用 Go to Folder 输入路径，必要时填写文件名，再点击默认或指定按钮；`selectButton="none"` 只输入不确认 |
 | `dialog.accept` | `action="dialog"`、`op="accept"`；可选 `buttonText` / `target.text`、`target`、`includeSnapshot` | `op`、`dialogs[]`、`actedButton?`、`snapshot?`、`execution="AXPressOrCGEvent"` | 点击 accept 类按钮；高风险 |
-| `dialog.dismiss` | `action="dialog"`、`op="dismiss"`；可选 `buttonText` / `target.text`、`target`、`includeSnapshot` | 同 `dialog.accept` | 点击 cancel/close 类按钮 |
+| `dialog.dismiss` | `action="dialog"`、`op="dismiss"`；可选 `buttonText` / `target.text`、`force`、`target`、`includeSnapshot` | 同 `dialog.accept` | 点击 cancel/close 类按钮；`force=true` 且未解析到按钮时发送 Escape |
 
 `dialog` 默认 `snapshot=null`；需要完整 AX 树时传 `includeSnapshot=true`。
 
@@ -532,8 +538,9 @@ OCR 规则：
 - 命中危险菜单词的 `menu.click` 属于高风险动作。
 - `clipboard.get/set/clear` 均走普通审批；`clipboard.get` 是隐私敏感读取，不作为只读动作自动放行。
 - `clipboard.set` 和 `act.paste` 都不得在结果里回显写入文本；只报告长度、是否截断、是否改变或剪贴板恢复状态。
-- `dialog.inspect` 只读返回 dialog/sheet 文本和按钮摘要。
-- `dialog.accept` 高风险；`dialog.dismiss` 普通突变。
+- `dialog.inspect/list` 只读返回 dialog/sheet 文本、按钮和字段摘要。
+- `dialog.click` 需要显式 `buttonText`；`dialog.input` 需要 `text`；`dialog.file` 需要路径、文件名或选择按钮之一，避免空操作弹审批。
+- `dialog.accept` 高风险；`dialog.dismiss/click/input/file` 普通突变，但 `dialog.click/file` 命中危险按钮词时升级为高风险。
 
 ## 审批与风险分类
 
@@ -543,9 +550,9 @@ OCR 规则：
 
 | 分类 | action/op | 决策 |
 | --- | --- | --- |
-| 只读 | `status`、`permissions`、`snapshot`、`elements.find`、`wait`、`visual.observe/point/ocr/find_text`、`apps.list/frontmost/installed/search`、`dock.list`、`spaces.list`、`windows.list`、`act.dry_run`、`menu.list`、`dialog.inspect` | Allow |
-| 普通/隐私动作 | `apps.activate/launch`、`dock.launch/hide/show`、`spaces.switch/move_window`、`windows.focus/move/resize/minimize`、除 `dry_run` / `perform_action(AXConfirm)` 外的 `act.*`、普通 `menu.click`、`clipboard.get/set/clear`、`dialog.dismiss` | Ask，可 AllowAlways |
-| 高风险突变 | `apps.quit`、`windows.close`、`dialog.accept`、`act.perform_action axAction=AXConfirm`、命中危险词的 `menu.click` | Ask，`forbids_allow_always=true` |
+| 只读 | `status`、`permissions`、`snapshot`、`elements.find`、`wait`、`visual.observe/point/ocr/find_text`、`apps.list/frontmost/installed/search`、`dock.list`、`spaces.list`、`windows.list`、`act.dry_run`、`menu.list`、`dialog.inspect/list` | Allow |
+| 普通/隐私动作 | `apps.activate/launch`、`dock.launch/hide/show`、`spaces.switch/move_window`、`windows.focus/move/resize/minimize`、除 `dry_run` / `perform_action(AXConfirm)` 外的 `act.*`、普通 `menu.click`、`clipboard.get/set/clear`、普通 `dialog.click/input/file/dismiss` | Ask，可 AllowAlways |
+| 高风险突变 | `apps.quit`、`windows.close`、`dialog.accept`、`act.perform_action axAction=AXConfirm`、命中危险词的 `menu.click`、命中危险按钮词的 `dialog.click/file` | Ask，`forbids_allow_always=true` |
 
 权限模式交互：
 

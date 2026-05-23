@@ -779,8 +779,11 @@ pub struct MacControlDialogResult {
     pub op: MacControlDialogOp,
     pub dialogs: Vec<MacControlDialogSummary>,
     pub acted_button: Option<MacControlElementSummary>,
+    pub acted_field: Option<MacControlElementSummary>,
+    pub file_dialog: Option<MacControlDialogFileResult>,
     pub snapshot: Option<MacControlSnapshot>,
     pub execution: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -789,6 +792,16 @@ pub struct MacControlDialogSummary {
     pub window: MacControlWindowSummary,
     pub text: Vec<String>,
     pub buttons: Vec<MacControlElementSummary>,
+    pub fields: Vec<MacControlElementSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlDialogFileResult {
+    pub path: Option<String>,
+    pub name: Option<String>,
+    pub selected_button: Option<String>,
+    pub path_navigation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1171,6 +1184,10 @@ pub fn preflight_tool_args(args: &serde_json::Value) -> Option<String> {
             }
             None
         }
+        "dialog" => match parse_preflight_request::<MacControlDialogRequest>(args, "dialog") {
+            Ok(request) => validate_dialog_request(&request.clamped()),
+            Err(error) => Some(error),
+        },
         _ => None,
     }
 }
@@ -1466,8 +1483,26 @@ pub struct MacControlDialogRequest {
     pub op: MacControlDialogOp,
     #[serde(default)]
     pub target: MacControlTargetQuery,
-    #[serde(default)]
+    #[serde(default, alias = "button")]
     pub button_text: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default, alias = "field_index")]
+    pub field_index: Option<usize>,
+    #[serde(default)]
+    pub clear: bool,
+    #[serde(default, alias = "path")]
+    pub file_path: Option<String>,
+    #[serde(default, alias = "name")]
+    pub file_name: Option<String>,
+    #[serde(default, alias = "select")]
+    pub select_button: Option<String>,
+    #[serde(default, alias = "ensure_expanded")]
+    pub ensure_expanded: bool,
+    #[serde(default)]
+    pub force: bool,
     #[serde(default)]
     pub include_snapshot: bool,
     #[serde(default = "default_snapshot_max_elements")]
@@ -1480,6 +1515,11 @@ impl MacControlDialogRequest {
     pub fn clamped(mut self) -> Self {
         self.target = self.target.normalized();
         self.button_text = normalize_optional_string(self.button_text);
+        self.text = normalize_optional_string(self.text);
+        self.field = normalize_optional_string(self.field);
+        self.file_path = normalize_optional_string(self.file_path);
+        self.file_name = normalize_optional_string(self.file_name);
+        self.select_button = normalize_optional_string(self.select_button);
         if self.max_elements == 0 {
             self.max_elements = DEFAULT_SNAPSHOT_MAX_ELEMENTS;
         }
@@ -1497,6 +1537,10 @@ impl MacControlDialogRequest {
 pub enum MacControlDialogOp {
     #[default]
     Inspect,
+    List,
+    Click,
+    Input,
+    File,
     Accept,
     Dismiss,
 }
@@ -2929,6 +2973,54 @@ fn validate_spaces_request(request: &MacControlSpacesRequest) -> Option<String> 
             }
             None
         }
+    }
+}
+
+fn validate_dialog_request(request: &MacControlDialogRequest) -> Option<String> {
+    match request.op {
+        MacControlDialogOp::Inspect | MacControlDialogOp::List => None,
+        MacControlDialogOp::Click => {
+            if request
+                .button_text
+                .as_deref()
+                .is_none_or(|value| value.is_empty())
+            {
+                return Some("mac_control dialog.click requires buttonText.".to_string());
+            }
+            None
+        }
+        MacControlDialogOp::Input => {
+            if request.text.as_deref().is_none_or(|value| value.is_empty()) {
+                return Some("mac_control dialog.input requires text.".to_string());
+            }
+            None
+        }
+        MacControlDialogOp::File => {
+            let has_file_work = request
+                .file_path
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+                || request
+                    .file_name
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                || request
+                    .select_button
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                || request
+                    .button_text
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty());
+            if !has_file_work {
+                return Some(
+                    "mac_control dialog.file requires filePath, fileName, selectButton, or buttonText."
+                        .to_string(),
+                );
+            }
+            None
+        }
+        MacControlDialogOp::Accept | MacControlDialogOp::Dismiss => None,
     }
 }
 
@@ -5616,8 +5708,13 @@ mod tests {
         .is_some());
 
         let dialog = MacControlDialogRequest {
-            op: MacControlDialogOp::Accept,
+            op: MacControlDialogOp::Input,
             button_text: Some(" OK ".to_string()),
+            text: Some(" hello ".to_string()),
+            field: Some(" Name ".to_string()),
+            file_path: Some(" /tmp ".to_string()),
+            file_name: Some(" out.txt ".to_string()),
+            select_button: Some(" Save ".to_string()),
             include_snapshot: true,
             max_elements: 10_000,
             max_depth: 100,
@@ -5625,9 +5722,40 @@ mod tests {
         }
         .clamped();
         assert_eq!(dialog.button_text.as_deref(), Some("OK"));
+        assert_eq!(dialog.text.as_deref(), Some("hello"));
+        assert_eq!(dialog.field.as_deref(), Some("Name"));
+        assert_eq!(dialog.file_path.as_deref(), Some("/tmp"));
+        assert_eq!(dialog.file_name.as_deref(), Some("out.txt"));
+        assert_eq!(dialog.select_button.as_deref(), Some("Save"));
         assert!(dialog.include_snapshot);
         assert_eq!(dialog.max_elements, HARD_SNAPSHOT_MAX_ELEMENTS);
         assert_eq!(dialog.max_depth, HARD_SNAPSHOT_MAX_DEPTH);
+        assert!(validate_dialog_request(&dialog).is_none());
+        assert!(validate_dialog_request(&MacControlDialogRequest {
+            op: MacControlDialogOp::Click,
+            ..Default::default()
+        })
+        .is_some());
+        assert!(validate_dialog_request(&MacControlDialogRequest {
+            op: MacControlDialogOp::File,
+            ..Default::default()
+        })
+        .is_some());
+        let dialog_aliases: MacControlDialogRequest = serde_json::from_value(serde_json::json!({
+            "op": "file",
+            "button": "Open",
+            "path": "/tmp",
+            "name": "report.pdf",
+            "select": "default",
+            "ensure_expanded": true
+        }))
+        .unwrap();
+        let dialog_aliases = dialog_aliases.clamped();
+        assert_eq!(dialog_aliases.button_text.as_deref(), Some("Open"));
+        assert_eq!(dialog_aliases.file_path.as_deref(), Some("/tmp"));
+        assert_eq!(dialog_aliases.file_name.as_deref(), Some("report.pdf"));
+        assert_eq!(dialog_aliases.select_button.as_deref(), Some("default"));
+        assert!(dialog_aliases.ensure_expanded);
 
         let elements = MacControlElementsRequest {
             target: MacControlTargetQuery {

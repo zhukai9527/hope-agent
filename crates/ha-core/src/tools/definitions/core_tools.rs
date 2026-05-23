@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `dock` list/launch/hide/show, `spaces` list/switch, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/double_click/right_click/type/paste/set_value/hotkey/scroll/drag, `menu` list/click for app menus or system menu bar extras, `clipboard` get/set/clear text, and `dialog` inspect/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
+            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `dock` list/launch/hide/show, `spaces` list/switch, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/double_click/right_click/type/paste/set_value/hotkey/scroll/drag, `menu` list/click for app menus or system menu bar extras, `clipboard` get/set/clear text, and `dialog` list/inspect/click/input/file/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -739,8 +739,8 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "op": {
                         "type": "string",
-                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "hide", "show", "switch", "move_window", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "scroll", "drag", "get", "set", "clear", "inspect", "accept", "dismiss"],
-                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `dock`: list|launch|hide|show. For `spaces`: list|switch; move_window is reserved and currently returns an explicit unsupported error on macOS because stable public APIs do not move windows across Spaces. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, perform_action runs a whitelisted AX action advertised by the target, click for AX target clicks, click_point for raw screen coordinates, double_click|right_click target clicks, type|paste|set_value|hotkey|scroll, drag from target center to x/y. For `menu`: list|click. For `clipboard`: get|set|clear text. For `dialog`: inspect|accept|dismiss."
+                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "hide", "show", "switch", "move_window", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "scroll", "drag", "input", "file", "get", "set", "clear", "inspect", "accept", "dismiss"],
+                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `dock`: list|launch|hide|show. For `spaces`: list|switch; move_window is reserved and currently returns an explicit unsupported error on macOS because stable public APIs do not move windows across Spaces. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, perform_action runs a whitelisted AX action advertised by the target, click for AX target clicks, click_point for raw screen coordinates, double_click|right_click target clicks, type|paste|set_value|hotkey|scroll, drag from target center to x/y. For `menu`: list|click. For `clipboard`: get|set|clear text. For `dialog`: list|inspect|click|input|file|accept|dismiss."
                     },
                     "scope": {
                         "type": "string",
@@ -832,7 +832,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "text": {
                         "type": "string",
-                        "description": "For `visual.find_text`: OCR text query. For `act.type`: text to set/type through Accessibility. For `act.paste`: text to paste via the pasteboard without echoing it in the result. For `clipboard.set`: text to place on the clipboard; the result does not echo it back. For target matching, use target.text."
+                        "description": "For `visual.find_text`: OCR text query. For `act.type`: text to set/type through Accessibility. For `act.paste`: text to paste via the pasteboard without echoing it in the result. For `dialog.input`: text to enter into a dialog field. For `clipboard.set`: text to place on the clipboard; the result does not echo it back. For target matching, use target.text."
                     },
                     "textMatch": {
                         "type": "string",
@@ -888,13 +888,48 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "description": "For `act.scroll`: vertical scroll delta."
                     },
                     "path": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "For `menu.click`: menu path. App menus match titles, e.g. [\"File\", \"New Window\"]; system menu bar extras may match title, description, or value from `menu.list`."
+                        "oneOf": [
+                            { "type": "array", "items": { "type": "string" } },
+                            { "type": "string" }
+                        ],
+                        "description": "For `menu.click`: menu path array. For `dialog.file`, string alias for filePath to match Peekaboo-style args."
                     },
                     "buttonText": {
                         "type": "string",
-                        "description": "For `dialog.accept` or `dialog.dismiss`: preferred button label. If omitted, accept/dismiss use conservative built-in label lists such as OK/Save/Open or Cancel/Close/Don't Save."
+                        "description": "For `dialog.click`, `dialog.accept`, `dialog.dismiss`, or `dialog.file`: preferred button label. `dialog.click` requires this; accept/dismiss/file can use conservative built-in/default labels when omitted."
+                    },
+                    "field": {
+                        "type": "string",
+                        "description": "For `dialog.input`: field label, value, or element id to target. Omit to use the focused/first text field in the dialog."
+                    },
+                    "fieldIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "For `dialog.input`: 0-based text field index within the inspected dialog."
+                    },
+                    "clear": {
+                        "type": "boolean",
+                        "description": "For `dialog.input`: replace the field value through Accessibility instead of appending/pasting at the current insertion point."
+                    },
+                    "filePath": {
+                        "type": "string",
+                        "description": "For `dialog.file`: directory or full file path to enter in a native Open/Save panel using Go to Folder."
+                    },
+                    "fileName": {
+                        "type": "string",
+                        "description": "For `dialog.file`: filename to enter in the file dialog's text field, typically for Save panels."
+                    },
+                    "selectButton": {
+                        "type": "string",
+                        "description": "For `dialog.file`: button to click after entering path/name, such as Open, Save, Choose, Cancel, or default. Omit to click the default accept-style button."
+                    },
+                    "ensureExpanded": {
+                        "type": "boolean",
+                        "description": "For `dialog.file`: best-effort expand/click Show Details before entering path/name."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "For `dialog.dismiss`: when true, send Escape if no dismiss button can be resolved."
                     },
                     "includeScreenshot": {
                         "type": "boolean",
@@ -1613,10 +1648,17 @@ mod tests {
             .iter()
             .any(|value| value.as_str() == Some("perform_action")));
         assert!(op_enum.iter().any(|value| value.as_str() == Some("switch")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("input")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("file")));
         assert!(tool.parameters["properties"].get("snapshotId").is_some());
         assert!(tool.parameters["properties"].get("dockItemId").is_some());
         assert!(tool.parameters["properties"].get("spaceIndex").is_some());
         assert!(tool.parameters["properties"].get("direction").is_some());
+        assert!(tool.parameters["properties"].get("field").is_some());
+        assert!(tool.parameters["properties"].get("fieldIndex").is_some());
+        assert!(tool.parameters["properties"].get("filePath").is_some());
+        assert!(tool.parameters["properties"].get("fileName").is_some());
+        assert!(tool.parameters["properties"].get("selectButton").is_some());
         assert!(tool.parameters["properties"]
             .get("coordinateSpace")
             .is_some());

@@ -477,6 +477,9 @@ fn check_mac_control_action(ctx: &ResolveContext<'_>) -> Option<AskReason> {
         ("act", Some("scroll")) => "act.scroll",
         ("act", Some("drag")) => "act.drag",
         ("act", None) => "act.click",
+        ("dialog", Some("click")) => "dialog.click",
+        ("dialog", Some("input")) => "dialog.input",
+        ("dialog", Some("file")) => "dialog.file",
         ("dialog", Some("dismiss")) => "dialog.dismiss",
         ("menu", Some("click")) => "menu.click",
         ("clipboard", Some("get")) => "clipboard.get",
@@ -499,6 +502,12 @@ fn mac_control_dangerous_label(
         ("apps", Some("quit")) => Some("apps.quit"),
         ("windows", Some("close")) => Some("windows.close"),
         ("dialog", Some("accept")) => Some("dialog.accept"),
+        ("dialog", Some("click")) if mac_control_dialog_button_is_dangerous(args) => {
+            Some("dialog.click.dangerous")
+        }
+        ("dialog", Some("file")) if mac_control_dialog_button_is_dangerous(args) => {
+            Some("dialog.file.dangerous")
+        }
         ("act", Some("perform_action")) if mac_control_ax_action_is_dangerous(args) => {
             Some("act.perform_action.confirm")
         }
@@ -522,6 +531,13 @@ fn mac_control_menu_path_is_dangerous(args: &Value) -> bool {
     };
     path.iter()
         .filter_map(|value| value.as_str())
+        .any(mac_control_text_is_dangerous)
+}
+
+fn mac_control_dialog_button_is_dangerous(args: &Value) -> bool {
+    ["buttonText", "button", "selectButton", "select"]
+        .iter()
+        .filter_map(|key| args.get(*key).and_then(|value| value.as_str()))
         .any(mac_control_text_is_dangerous)
 }
 
@@ -830,6 +846,9 @@ mod tests {
             json!({"action": "act", "op": "right_click", "target": {"text": "Open"}}),
             json!({"action": "act", "op": "paste", "text": "hello"}),
             json!({"action": "act", "op": "drag", "target": {"text": "Open"}, "x": 200, "y": 200}),
+            json!({"action": "dialog", "op": "click", "buttonText": "OK"}),
+            json!({"action": "dialog", "op": "input", "text": "hello"}),
+            json!({"action": "dialog", "op": "file", "filePath": "/tmp", "selectButton": "Open"}),
             json!({"action": "dialog", "op": "dismiss"}),
             json!({"action": "menu", "op": "click", "path": ["File", "New"]}),
             json!({"action": "clipboard", "op": "get"}),
@@ -856,6 +875,7 @@ mod tests {
             json!({"action": "windows", "op": "list"}),
             json!({"action": "menu", "op": "list"}),
             json!({"action": "dialog", "op": "inspect"}),
+            json!({"action": "dialog", "op": "list"}),
             json!({"action": "visual", "op": "observe"}),
             json!({"action": "visual", "op": "point", "snapshotId": "macsnap_1", "x": 0, "y": 0}),
             json!({"action": "visual", "op": "ocr", "snapshotId": "macsnap_1"}),
@@ -876,6 +896,9 @@ mod tests {
             json!({"action": "apps", "op": "quit", "bundleId": "com.apple.TextEdit"}),
             json!({"action": "windows", "op": "close", "target": {"windowTitle": "Untitled"}}),
             json!({"action": "dialog", "op": "accept"}),
+            json!({"action": "dialog", "op": "click", "buttonText": "Don't Save"}),
+            json!({"action": "dialog", "op": "click", "button": "Delete"}),
+            json!({"action": "dialog", "op": "file", "selectButton": "Don't Save"}),
             json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "AXConfirm"}),
             json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "confirm"}),
             json!({"action": "menu", "op": "click", "path": ["File", "Move to Trash"]}),

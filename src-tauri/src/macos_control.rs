@@ -24,18 +24,18 @@ mod imp {
         normalize_perform_ax_action, MacControlActOp, MacControlActRequest, MacControlActResult,
         MacControlAppNameMatch, MacControlAppSummary, MacControlAppsOp, MacControlAppsRequest,
         MacControlAppsResult, MacControlBounds, MacControlBridge, MacControlClipboardOp,
-        MacControlClipboardRequest, MacControlClipboardResult, MacControlDialogOp,
-        MacControlDialogRequest, MacControlDialogResult, MacControlDialogSummary,
-        MacControlDisplaySummary, MacControlDockItem, MacControlDockOp, MacControlDockRequest,
-        MacControlDockResult, MacControlDockSection, MacControlElementCandidate,
-        MacControlElementSummary, MacControlElementsRequest, MacControlElementsResult,
-        MacControlFramePayload, MacControlInstalledApp, MacControlMenuItemSummary,
-        MacControlMenuOp, MacControlMenuRequest, MacControlMenuResult, MacControlMenuScope,
-        MacControlOcrRawTextBlock, MacControlOcrRecognitionLevel, MacControlOcrRequest,
-        MacControlRunningApp, MacControlScreenshotSummary, MacControlScreenshotTarget,
-        MacControlSnapshot, MacControlSnapshotRequest, MacControlSpaceDirection,
-        MacControlSpaceSummary, MacControlSpacesDisplay, MacControlSpacesOp,
-        MacControlSpacesRequest, MacControlSpacesResult, MacControlStringMatch,
+        MacControlClipboardRequest, MacControlClipboardResult, MacControlDialogFileResult,
+        MacControlDialogOp, MacControlDialogRequest, MacControlDialogResult,
+        MacControlDialogSummary, MacControlDisplaySummary, MacControlDockItem, MacControlDockOp,
+        MacControlDockRequest, MacControlDockResult, MacControlDockSection,
+        MacControlElementCandidate, MacControlElementSummary, MacControlElementsRequest,
+        MacControlElementsResult, MacControlFramePayload, MacControlInstalledApp,
+        MacControlMenuItemSummary, MacControlMenuOp, MacControlMenuRequest, MacControlMenuResult,
+        MacControlMenuScope, MacControlOcrRawTextBlock, MacControlOcrRecognitionLevel,
+        MacControlOcrRequest, MacControlRunningApp, MacControlScreenshotSummary,
+        MacControlScreenshotTarget, MacControlSnapshot, MacControlSnapshotRequest,
+        MacControlSpaceDirection, MacControlSpaceSummary, MacControlSpacesDisplay,
+        MacControlSpacesOp, MacControlSpacesRequest, MacControlSpacesResult, MacControlStringMatch,
         MacControlTargetQuery, MacControlWindowSummary, MacControlWindowsOp,
         MacControlWindowsRequest, MacControlWindowsResult, MacControlWindowsScope,
     };
@@ -2706,30 +2706,99 @@ mod imp {
 
         let dialogs = dialog_summaries(&snapshot, &request.target);
         let mut acted_button = None;
+        let mut acted_field = None;
+        let mut file_dialog = None;
         let mut execution = None;
-        if matches!(
-            request.op,
-            MacControlDialogOp::Accept | MacControlDialogOp::Dismiss
-        ) {
-            let button = select_dialog_button(&dialogs, &request).ok_or_else(|| {
-                format!(
-                    "No dialog button matched dialog.{}.",
-                    dialog_op_name(request.op)
-                )
-            })?;
-            let element =
-                resolve_element_by_summary(&button, request.max_elements, request.max_depth)?;
-            press_dialog_button(element.as_ptr() as AXUIElementRef, &button)?;
-            acted_button = Some(button);
-            execution = Some("AXPressOrCGEvent".to_string());
+        let mut warnings = Vec::new();
+        match request.op {
+            MacControlDialogOp::Inspect | MacControlDialogOp::List => {}
+            MacControlDialogOp::Accept
+            | MacControlDialogOp::Dismiss
+            | MacControlDialogOp::Click => {
+                if let Some(button) = select_dialog_button(&dialogs, &request) {
+                    let element = resolve_element_by_summary(
+                        &button,
+                        request.max_elements,
+                        request.max_depth,
+                    )?;
+                    press_dialog_button(element.as_ptr() as AXUIElementRef, &button)?;
+                    acted_button = Some(button);
+                    execution = Some("AXPressOrCGEvent".to_string());
+                } else if request.op == MacControlDialogOp::Dismiss && request.force {
+                    post_hotkey(&["escape".to_string()])?;
+                    execution = Some("CGEventEscape".to_string());
+                } else {
+                    return Err(format!(
+                        "No dialog button matched dialog.{}.",
+                        dialog_op_name(request.op)
+                    ));
+                }
+            }
+            MacControlDialogOp::Input => {
+                let text = request
+                    .text
+                    .as_deref()
+                    .ok_or_else(|| "dialog.input requires text.".to_string())?;
+                let field = select_dialog_field(&dialogs, &request)
+                    .ok_or_else(|| "No dialog text field matched dialog.input.".to_string())?;
+                let element =
+                    resolve_element_by_summary(&field, request.max_elements, request.max_depth)?;
+                let element_ref = element.as_ptr() as AXUIElementRef;
+                let action = if request.clear {
+                    set_ax_string(element_ref, "AXValue", text)?;
+                    "AXSetValue".to_string()
+                } else {
+                    focus_text_element_for_paste(element_ref, &field)?;
+                    paste_text_via_clipboard(text)?
+                };
+                acted_field = Some(field);
+                execution = Some(action);
+            }
+            MacControlDialogOp::File => {
+                let result = handle_file_dialog(&request, &mut warnings)?;
+                execution = Some(
+                    result
+                        .path_navigation
+                        .clone()
+                        .unwrap_or_else(|| "DialogFileNoNavigation".to_string()),
+                );
+                file_dialog = Some(result);
+
+                let post_snapshot = capture_ax_snapshot(MacControlSnapshotRequest {
+                    include_screenshot: false,
+                    max_elements: request.max_elements,
+                    max_depth: request.max_depth,
+                    ..Default::default()
+                })?;
+                let post_dialogs = dialog_summaries(&post_snapshot, &request.target);
+                match select_dialog_file_button(&post_dialogs, &request)? {
+                    DialogFileButtonSelection::Skip => {}
+                    DialogFileButtonSelection::Press(button) => {
+                        let element = resolve_element_by_summary(
+                            &button,
+                            request.max_elements,
+                            request.max_depth,
+                        )?;
+                        press_dialog_button(element.as_ptr() as AXUIElementRef, &button)?;
+                        execution = Some(format!(
+                            "{}+AXPressOrCGEvent",
+                            execution.as_deref().unwrap_or("DialogFile")
+                        ));
+                        acted_button = Some(button);
+                    }
+                }
+            }
         }
 
         Ok(MacControlDialogResult {
             op: request.op,
             dialogs,
             acted_button,
+            acted_field,
+            file_dialog,
             snapshot: request.include_snapshot.then_some(snapshot),
             execution,
+            warnings,
         })
     }
 
@@ -2920,6 +2989,11 @@ mod imp {
             .filter(|element| is_button_element(element))
             .map(|element| (*element).clone())
             .collect::<Vec<_>>();
+        let fields = elements
+            .iter()
+            .filter(|element| is_text_input_element(element))
+            .map(|element| (*element).clone())
+            .collect::<Vec<_>>();
         let text = elements
             .iter()
             .filter(|element| is_dialog_text_element(element))
@@ -2935,6 +3009,7 @@ mod imp {
             window: window.clone(),
             text,
             buttons,
+            fields,
         }
     }
 
@@ -2946,6 +3021,11 @@ mod imp {
         let buttons = elements
             .iter()
             .filter(|element| is_button_element(element))
+            .map(|element| (*element).clone())
+            .collect::<Vec<_>>();
+        let fields = elements
+            .iter()
+            .filter(|element| is_text_input_element(element))
             .map(|element| (*element).clone())
             .collect::<Vec<_>>();
         let text = elements
@@ -2973,6 +3053,7 @@ mod imp {
             },
             text,
             buttons,
+            fields,
         }
     }
 
@@ -3053,6 +3134,9 @@ mod imp {
             .or(request.target.text.as_deref())
             .filter(|value| !value.is_empty());
         if let Some(query) = explicit {
+            if query.eq_ignore_ascii_case("default") {
+                return select_dialog_default_button(dialogs);
+            }
             return dialogs
                 .iter()
                 .flat_map(|dialog| dialog.buttons.iter())
@@ -3064,20 +3148,174 @@ mod imp {
         let patterns = match request.op {
             MacControlDialogOp::Accept => ACCEPT_DIALOG_BUTTONS,
             MacControlDialogOp::Dismiss => DISMISS_DIALOG_BUTTONS,
-            MacControlDialogOp::Inspect => &[],
+            MacControlDialogOp::Click
+            | MacControlDialogOp::File
+            | MacControlDialogOp::Input
+            | MacControlDialogOp::Inspect
+            | MacControlDialogOp::List => &[],
         };
         dialogs
             .iter()
             .flat_map(|dialog| dialog.buttons.iter())
             .filter(|button| button.enabled != Some(false))
             .max_by_key(|button| dialog_button_score(button, patterns))
-            .filter(|button| dialog_button_score(button, patterns) > 0)
+            .filter(|button| dialog_button_has_label_match(button, patterns))
             .cloned()
     }
 
+    fn select_dialog_default_button(
+        dialogs: &[MacControlDialogSummary],
+    ) -> Option<MacControlElementSummary> {
+        dialogs
+            .iter()
+            .flat_map(|dialog| dialog.buttons.iter())
+            .filter(|button| button.enabled != Some(false))
+            .max_by_key(|button| dialog_button_score(button, ACCEPT_DIALOG_BUTTONS))
+            .filter(|button| dialog_button_has_label_match(button, ACCEPT_DIALOG_BUTTONS))
+            .cloned()
+    }
+
+    enum DialogFileButtonSelection {
+        Skip,
+        Press(MacControlElementSummary),
+    }
+
+    fn select_dialog_file_button(
+        dialogs: &[MacControlDialogSummary],
+        request: &MacControlDialogRequest,
+    ) -> Result<DialogFileButtonSelection, String> {
+        let explicit = request
+            .select_button
+            .as_deref()
+            .or(request.button_text.as_deref())
+            .filter(|value| !value.is_empty());
+        if let Some(query) = explicit {
+            if query.eq_ignore_ascii_case("none") {
+                return Ok(DialogFileButtonSelection::Skip);
+            }
+            if query.eq_ignore_ascii_case("default") {
+                return select_dialog_default_button(dialogs)
+                    .map(DialogFileButtonSelection::Press)
+                    .ok_or_else(|| {
+                        "No default accept-style dialog.file button matched.".to_string()
+                    });
+            }
+            return dialogs
+                .iter()
+                .flat_map(|dialog| dialog.buttons.iter())
+                .filter(|button| button.enabled != Some(false))
+                .find(|button| element_label_matches(button, query))
+                .cloned()
+                .map(DialogFileButtonSelection::Press)
+                .ok_or_else(|| format!("No dialog.file button matched explicit label {query:?}."));
+        }
+        select_dialog_default_button(dialogs)
+            .map(DialogFileButtonSelection::Press)
+            .ok_or_else(|| "No default accept-style dialog.file button matched.".to_string())
+    }
+
+    fn select_dialog_field(
+        dialogs: &[MacControlDialogSummary],
+        request: &MacControlDialogRequest,
+    ) -> Option<MacControlElementSummary> {
+        let fields = dialogs
+            .iter()
+            .flat_map(|dialog| dialog.fields.iter())
+            .filter(|field| field.enabled != Some(false))
+            .collect::<Vec<_>>();
+        if let Some(element_id) = request
+            .target
+            .element_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            return fields
+                .iter()
+                .find(|field| field.id == element_id)
+                .map(|field| (*field).clone());
+        }
+        if let Some(index) = request.field_index {
+            return fields.get(index).map(|field| (*field).clone());
+        }
+        if let Some(query) = request.field.as_deref().filter(|value| !value.is_empty()) {
+            return fields
+                .iter()
+                .find(|field| {
+                    field.id == query
+                        || contains_ci(field.label.as_deref(), Some(query))
+                        || contains_ci(field.value.as_deref(), Some(query))
+                })
+                .map(|field| (*field).clone());
+        }
+        fields
+            .iter()
+            .find(|field| field.focused)
+            .copied()
+            .or_else(|| fields.first().copied())
+            .cloned()
+    }
+
+    fn handle_file_dialog(
+        request: &MacControlDialogRequest,
+        warnings: &mut Vec<String>,
+    ) -> Result<MacControlDialogFileResult, String> {
+        if request.ensure_expanded {
+            warnings.push(
+                "dialog.file ensureExpanded is best-effort in this bridge; using Go to Folder navigation when a path is provided."
+                    .to_string(),
+            );
+        }
+        let mut path_navigation = None;
+        if let Some(path) = request
+            .file_path
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            post_hotkey(&["cmd".to_string(), "shift".to_string(), "g".to_string()])?;
+            thread::sleep(Duration::from_millis(180));
+            let paste_execution = paste_text_via_clipboard(path)?;
+            post_key(key_code_for("enter").unwrap_or(36), 0)?;
+            thread::sleep(Duration::from_millis(350));
+            path_navigation = Some(format!("GoToFolder({paste_execution})"));
+        }
+        if let Some(name) = request
+            .file_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            let snapshot = capture_ax_snapshot(MacControlSnapshotRequest {
+                include_screenshot: false,
+                max_elements: request.max_elements,
+                max_depth: request.max_depth,
+                ..Default::default()
+            })?;
+            let dialogs = dialog_summaries(&snapshot, &request.target);
+            let field = select_dialog_field(&dialogs, request)
+                .ok_or_else(|| "dialog.file could not find a filename text field.".to_string())?;
+            let element =
+                resolve_element_by_summary(&field, request.max_elements, request.max_depth)?;
+            set_ax_string(element.as_ptr() as AXUIElementRef, "AXValue", name)?;
+            path_navigation = Some(match path_navigation {
+                Some(existing) => format!("{existing}+AXSetFilename"),
+                None => "AXSetFilename".to_string(),
+            });
+        }
+        Ok(MacControlDialogFileResult {
+            path: request.file_path.clone(),
+            name: request.file_name.clone(),
+            selected_button: request
+                .select_button
+                .clone()
+                .or_else(|| request.button_text.clone())
+                .filter(|value| !value.eq_ignore_ascii_case("none")),
+            path_navigation,
+        })
+    }
+
     const ACCEPT_DIALOG_BUTTONS: &[&str] = &[
-        "ok", "open", "save", "allow", "continue", "done", "yes", "replace", "好", "确定", "打開",
-        "打开", "儲存", "保存", "允许", "允許", "继续", "繼續", "完成", "是",
+        "ok", "open", "save", "choose", "select", "allow", "continue", "done", "yes", "replace",
+        "好", "确定", "打開", "打开", "儲存", "保存", "选择", "選擇", "允许", "允許", "继续",
+        "繼續", "完成", "是",
     ];
     const DISMISS_DIALOG_BUTTONS: &[&str] = &[
         "cancel",
@@ -3099,6 +3337,15 @@ mod imp {
     fn element_label_matches(element: &MacControlElementSummary, query: &str) -> bool {
         contains_ci(element.label.as_deref(), Some(query))
             || contains_ci(element.value.as_deref(), Some(query))
+    }
+
+    fn dialog_button_has_label_match(
+        element: &MacControlElementSummary,
+        patterns: &[&str],
+    ) -> bool {
+        patterns
+            .iter()
+            .any(|pattern| element_label_matches(element, pattern))
     }
 
     fn dialog_button_score(element: &MacControlElementSummary, patterns: &[&str]) -> u8 {
@@ -3129,6 +3376,10 @@ mod imp {
     fn dialog_op_name(op: MacControlDialogOp) -> &'static str {
         match op {
             MacControlDialogOp::Inspect => "inspect",
+            MacControlDialogOp::List => "list",
+            MacControlDialogOp::Click => "click",
+            MacControlDialogOp::Input => "input",
+            MacControlDialogOp::File => "file",
             MacControlDialogOp::Accept => "accept",
             MacControlDialogOp::Dismiss => "dismiss",
         }

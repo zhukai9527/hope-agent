@@ -18,10 +18,10 @@
   - Hope Agent 已完成：`dock.list/launch/hide/show`、`spaces.list/switch`，接入 schema、权限审批、Tauri bridge、文档与测试。
   - 已知边界：`spaces.move_window` 因 macOS 无稳定公开 API 先返回显式 unsupported；后续若找到可靠路径再单独补。
 
-- [ ] 4. Dialog 专项能力细化
+- [x] 4. Dialog 专项能力细化
   - Peekaboo 的 dialog 能做 `list` / `click` / `input` / `file` / `dismiss`。
-  - Hope Agent 现状：已有 `inspect` / `accept` / `dismiss`。
-  - 缺口：文件选择器路径输入、按按钮文本点击、弹窗字段填写等高层封装。
+  - Hope Agent 已完成：`dialog.list/click/input/file`，其中 `list` 返回按钮与字段摘要，`click` 按按钮文本点击，`input` 支持 field/fieldIndex/elementId 填写文本字段，`file` 支持文件选择器路径/文件名输入与指定按钮确认。
+  - 已知边界：`dialog.file` v1 采用 macOS Go to Folder 快捷键 + AX filename field，未实现 Peekaboo 那套 Show Details/路径字段多策略验证。
 
 - [ ] 5. 人类化输入/鼠标动作
   - Peekaboo 有 `press`、`swipe`、move cursor、drag with duration/steps、人类输入 delay/profile。
