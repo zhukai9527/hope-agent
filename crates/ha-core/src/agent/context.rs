@@ -165,6 +165,48 @@ impl AssistantAgent {
             (false, false)
         };
 
+        // PreCompact hook (blocking; design §5.3.1). A hook may `block` to skip
+        // this compaction — but a fill ratio ≥ 0.95 forces it anyway, since
+        // skipping would let the request overflow the context window.
+        if crate::hooks::registry::global()
+            .has_handlers_for(crate::hooks::HookEvent::PreCompact)
+        {
+            let tokens_now =
+                context_compact::estimate_request_tokens(system_prompt, messages, max_tokens);
+            let usage_now = tokens_now as f64 / self.context_window.max(1) as f64;
+            let input = crate::hooks::HookInput::PreCompact {
+                common: self.hook_common_input("PreCompact"),
+                trigger: crate::hooks::CompactTrigger::Auto,
+                usage_ratio: usage_now.min(1.0),
+            };
+            let outcome =
+                crate::hooks::HookDispatcher::dispatch(crate::hooks::HookEvent::PreCompact, input)
+                    .await;
+            let blocked = matches!(
+                outcome.decision,
+                crate::hooks::HookDecision::Deny { .. } | crate::hooks::HookDecision::Block { .. }
+            );
+            if blocked {
+                if usage_now >= CACHE_TTL_EMERGENCY_RATIO {
+                    app_warn!(
+                        "hooks",
+                        "dispatch",
+                        "PreCompact block overridden: usage {:.1}% >= {:.0}%, compacting anyway",
+                        usage_now * 100.0,
+                        CACHE_TTL_EMERGENCY_RATIO * 100.0
+                    );
+                } else {
+                    app_info!(
+                        "hooks",
+                        "dispatch",
+                        "PreCompact hook blocked compaction (usage {:.1}%)",
+                        usage_now * 100.0
+                    );
+                    return;
+                }
+            }
+        }
+
         let ctx = context_compact::CompactionContext {
             system_prompt,
             context_window: self.context_window,

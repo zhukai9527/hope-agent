@@ -248,6 +248,13 @@ pub enum HookInput {
         is_interrupt: bool,
         duration_ms: u64,
     },
+    PreCompact {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        trigger: CompactTrigger,
+        /// Pre-compaction context fill ratio (tokens / window).
+        usage_ratio: f64,
+    },
     PostCompact {
         #[serde(flatten)]
         common: CommonHookInput,
@@ -275,6 +282,7 @@ impl HookInput {
             | Self::PreToolUse { common, .. }
             | Self::PostToolUse { common, .. }
             | Self::PostToolUseFailure { common, .. }
+            | Self::PreCompact { common, .. }
             | Self::PostCompact { common, .. }
             | Self::Notification { common, .. } => common,
         }
@@ -290,7 +298,9 @@ impl HookInput {
             Self::PreToolUse { tool_name, .. }
             | Self::PostToolUse { tool_name, .. }
             | Self::PostToolUseFailure { tool_name, .. } => Some(tool_name.as_str()),
-            Self::PostCompact { trigger, .. } => Some(trigger.as_str()),
+            Self::PreCompact { trigger, .. } | Self::PostCompact { trigger, .. } => {
+                Some(trigger.as_str())
+            }
             Self::Notification {
                 notification_type, ..
             } => Some(notification_type.as_str()),
