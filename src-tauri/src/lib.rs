@@ -722,5 +722,12 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
             }
+            // App is exiting → SessionEnd(other) observation hook (app-global,
+            // one representative event). Best-effort: at hard exit the process
+            // may tear down before a detached command hook finishes — graceful
+            // delivery is the server path's awaited shutdown, not desktop quit.
+            if let tauri::RunEvent::Exit = _event {
+                ha_core::hooks::fire_session_end("", "other");
+            }
         });
 }

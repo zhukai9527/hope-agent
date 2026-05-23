@@ -329,6 +329,20 @@ pub fn fire_session_end(session_id: &str, source: &str) {
     fire_and_forget(HookEvent::SessionEnd, input);
 }
 
+/// Await-able `SessionEnd` dispatch — for shutdown paths that want the hook to
+/// actually finish before the process exits (e.g. the server's graceful
+/// shutdown). Synchronous, fire-and-forget call sites use [`fire_session_end`].
+pub async fn dispatch_session_end(session_id: &str, source: &str) {
+    if !registry::global().has_handlers_for(HookEvent::SessionEnd) {
+        return;
+    }
+    let input = HookInput::SessionEnd {
+        common: observation_common("SessionEnd", session_id),
+        source: source.to_string(),
+    };
+    HookDispatcher::dispatch(HookEvent::SessionEnd, input).await;
+}
+
 /// Initialize the hooks subsystem during `ha-core` startup. Best-effort: never
 /// panics — hooks are an additive capability.
 pub fn init() {

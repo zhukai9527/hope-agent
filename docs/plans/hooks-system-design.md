@@ -2928,25 +2928,27 @@ PR 合并前，逐项手动试：
 
 ## 附录 A：事件 → 埋点位置速查
 
+> **状态标记**：✅ = Phase 0.1 + PR 1.1 已实现，位置为**实际落地代码**（已对齐主对话重构后的 `chat_engine` / `streaming_loop` / `agent::context` 拓扑）；未标记的行仍是设计期占位，落地时以代码为准。
+
 | 事件 | 代码位置 |
 |------|---------|
-| SessionStart (startup/resume) | `crates/ha-core/src/agent/mod.rs::AssistantAgent::chat` 首条消息前 |
-| SessionStart (compact) | `crates/ha-core/src/context_compact/engine::run_compaction` 成功返回前 |
-| SessionStart (clear) | `crates/ha-core/src/session/db.rs` clear 分支 |
-| SessionEnd | 同上 close_session / app shutdown / logout |
-| UserPromptSubmit | `crates/ha-core/src/agent/mod.rs::AssistantAgent::chat` 收到 user msg 后、push 到历史前 |
+| ✅ SessionStart (startup/resume) | `crates/ha-core/src/hooks/mod.rs::fire_session_start_observation`，由 `chat_engine/engine.rs`（desktop/HTTP/IM）与 `acp/agent.rs::run_agent_chat`（ACP）共同调用，首条消息前 |
+| ✅ SessionStart (compact) | `crates/ha-core/src/agent/context.rs::fire_compaction_hooks`（压缩成功返回前） |
+| SessionStart (clear) | 未实现（`/clear` 触发的是 SessionEnd(clear)，非 SessionStart） |
+| ✅ SessionEnd | clear→`slash_commands/handlers/session.rs`；logout→`oauth.rs::clear_token`；shutdown→`src-tauri/src/lib.rs` RunEvent::Exit（desktop，best-effort）+ `crates/ha-server/src/lib.rs` graceful shutdown（server，awaited） |
+| UserPromptSubmit | 四入口统一 `crates/ha-core/src/agent/preflight.rs::user_prompt_preflight`（Phase 0.1 透传，PR 1.2 接 block） |
 | UserPromptExpansion | `crates/ha-core/src/agent/system_prompt.rs` 斜杠命令解析后、push expansion 到历史前 |
-| PreToolUse | `crates/ha-core/src/tools/execution.rs::execute_tool_with_context` visibility 后、approval 前 |
-| PostToolUse | 同上 tool result 返回后、落历史前 |
-| PostToolUseFailure | 同上 `Err` / panic 分支 |
+| PreToolUse | `crates/ha-core/src/tools/execution.rs::execute_tool_with_context` visibility 后、approval 前（PR 1.2） |
+| ✅ PostToolUse | `crates/ha-core/src/agent/streaming_loop.rs::fire_post_tool_use_hook`（并发 + 串行两处 push 点，`is_error==false`） |
+| ✅ PostToolUseFailure | 同上 `fire_post_tool_use_hook`（`is_error==true` 分支） |
 | PostToolBatch | `crates/ha-core/src/agent/streaming_loop.rs` 本轮全部 tool call settle 后、`append_round_to_history` 之前（每 API round 触发一次） |
 | PermissionRequest | `crates/ha-core/src/tools/approval::check_and_request_approval` 弹窗前 |
 | PermissionDenied | approval auto-mode classifier 否决 / Plan Mode allowlist 否决 |
-| Notification | EventBus `approval_required` / 空闲 / auth_success |
+| ✅ Notification | permission_prompt→`tools/approval.rs`（`approval_required` emit 同步插桩）；auth_success→`oauth.rs::start_oauth_flow_with_auth_url` callback 成功处；idle_prompt→`memory/dreaming/triggers.rs::manual_run`（idle 周期启动） |
 | Stop | `crates/ha-core/src/agent/streaming_loop::run` 自然结束、emit_usage 前 |
 | StopFailure | `crates/ha-core/src/failover/executor::execute_with_failover` 终态错误 |
-| PreCompact | `crates/ha-core/src/context_compact/engine::run_compaction` 入口 |
-| PostCompact | 同上成功返回前 |
+| PreCompact | `crates/ha-core/src/agent/context.rs::run_compaction` 入口（PR 1.2） |
+| ✅ PostCompact | `crates/ha-core/src/agent/context.rs::fire_compaction_hooks`（压缩成功返回前；`usage_ratio` = tokens_after / context_window） |
 | SubagentStart | `crates/ha-core/src/subagent/spawn.rs::spawn_subagent` spawned emit 后 |
 | SubagentStop | 同上 terminal 更新后 |
 | TaskCreated / TaskCompleted | 一期复用 subagent；未来 TaskCreate 工具 |
