@@ -292,6 +292,7 @@ mod imp {
         static kCFBooleanTrue: CFTypeRef;
         fn CFRelease(cf: CFTypeRef);
         fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
+        fn CFEqual(cf1: CFTypeRef, cf2: CFTypeRef) -> Boolean;
         fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
         fn CFStringGetTypeID() -> CFTypeID;
         fn CFArrayGetTypeID() -> CFTypeID;
@@ -354,6 +355,11 @@ mod imp {
         truncated: bool,
     }
 
+    struct FocusedOverlayRoot {
+        element: CfOwned,
+        window_id: Option<String>,
+    }
+
     struct CapturedDesktopFrame {
         jpeg: Vec<u8>,
         width_px: u32,
@@ -394,8 +400,13 @@ mod imp {
             truncated: false,
         };
 
+        traverse_focused_overlay_roots(app_ref, &mut state);
+
         if let Some(windows) = copy_attribute(app_ref, "AXWindows") {
             for (idx, window_ref) in cf_array_values(windows.as_ptr()).into_iter().enumerate() {
+                if state.truncated {
+                    break;
+                }
                 let window = window_ref as AXUIElementRef;
                 let window_id = format!("win_{}", idx + 1);
                 snapshot.windows.push(window_summary(window, &window_id));
@@ -2854,9 +2865,11 @@ mod imp {
         role.contains("dialog")
             || role.contains("sheet")
             || role.contains("systemdialog")
+            || role.contains("popover")
             || subrole.contains("dialog")
             || subrole.contains("sheet")
             || subrole.contains("systemdialog")
+            || subrole.contains("popover")
     }
 
     fn window_matches_query(
@@ -2961,7 +2974,10 @@ mod imp {
             .as_deref()
             .unwrap_or_default()
             .to_ascii_lowercase();
-        role.contains("dialog") || role.contains("sheet") || role.contains("systemdialog")
+        role.contains("dialog")
+            || role.contains("sheet")
+            || role.contains("systemdialog")
+            || role.contains("popover")
     }
 
     fn dialog_parent_window<'a>(
@@ -4380,6 +4396,20 @@ mod imp {
             elements: Vec::new(),
             truncated: false,
         };
+        for root in focused_overlay_roots(app.as_ptr() as AXUIElementRef) {
+            if let Some(element) = find_element_by_generated_summary(
+                root.element.as_ptr() as AXUIElementRef,
+                0,
+                root.window_id.as_deref(),
+                &mut state,
+                expected,
+            )? {
+                return Ok(element);
+            }
+            if state.truncated {
+                return Err("Matched AX element became stale before action.".to_string());
+            }
+        }
         if let Some(windows) = copy_attribute(app.as_ptr() as AXUIElementRef, "AXWindows") {
             for (idx, window_ref) in cf_array_values(windows.as_ptr()).into_iter().enumerate() {
                 let window_id = format!("win_{}", idx + 1);
@@ -5778,6 +5808,81 @@ mod imp {
         }
         let app = unsafe { AXUIElementCreateApplication(pid) };
         CfOwned::new(app as CFTypeRef)
+    }
+
+    fn focused_overlay_roots(app: AXUIElementRef) -> Vec<FocusedOverlayRoot> {
+        let Some(mut current) = copy_attribute(app, "AXFocusedUIElement") else {
+            return Vec::new();
+        };
+        let mut dialog_root = None;
+        let mut parent_window = None;
+        for _ in 0..8 {
+            let current_ref = current.as_ptr() as AXUIElementRef;
+            let role = attribute_string(current_ref, "AXRole").unwrap_or_default();
+            if role == "AXWindow" {
+                let retained = unsafe { CFRetain(current_ref as CFTypeRef) };
+                parent_window = CfOwned::new(retained);
+                break;
+            }
+            if role == "AXApplication" {
+                break;
+            }
+            if role_name_is_dialogish(&role) {
+                let retained = unsafe { CFRetain(current_ref as CFTypeRef) };
+                dialog_root = CfOwned::new(retained);
+            }
+            let Some(parent) = copy_attribute(current_ref, "AXParent") else {
+                break;
+            };
+            current = parent;
+        }
+        let Some(element) = dialog_root else {
+            return Vec::new();
+        };
+        let window_id = parent_window
+            .as_ref()
+            .and_then(|window| window_id_for_app_window(app, window.as_ptr() as AXUIElementRef));
+        vec![FocusedOverlayRoot { element, window_id }]
+    }
+
+    fn window_id_for_app_window(
+        app: AXUIElementRef,
+        target_window: AXUIElementRef,
+    ) -> Option<String> {
+        let windows = copy_attribute(app, "AXWindows")?;
+        cf_array_values(windows.as_ptr())
+            .into_iter()
+            .enumerate()
+            .find_map(|(idx, window_ref)| {
+                ax_elements_equal(window_ref as AXUIElementRef, target_window)
+                    .then(|| format!("win_{}", idx + 1))
+            })
+    }
+
+    fn ax_elements_equal(left: AXUIElementRef, right: AXUIElementRef) -> bool {
+        left == right || unsafe { CFEqual(left as CFTypeRef, right as CFTypeRef) != 0 }
+    }
+
+    fn role_name_is_dialogish(role: &str) -> bool {
+        let role = role.to_ascii_lowercase();
+        role.contains("dialog")
+            || role.contains("sheet")
+            || role.contains("systemdialog")
+            || role.contains("popover")
+    }
+
+    fn traverse_focused_overlay_roots(app: AXUIElementRef, state: &mut CaptureState) {
+        for root in focused_overlay_roots(app) {
+            traverse_element(
+                root.element.as_ptr() as AXUIElementRef,
+                0,
+                root.window_id.as_deref(),
+                state,
+            );
+            if state.truncated {
+                break;
+            }
+        }
     }
 
     fn app_summary(app: AXUIElementRef) -> MacControlAppSummary {

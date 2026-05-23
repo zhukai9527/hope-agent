@@ -139,7 +139,7 @@ Rules:
 ### Dialogs and Sheets
 
 - Use `dialog.list` / `dialog.inspect` before mutating dialogs when the button or field label is not already known.
-- macOS sheets may appear as `AXSheet` elements attached to normal `AXWindow`s; inspect with higher `maxElements` when needed.
+- macOS sheets and lightweight prompts may appear as `AXSheet` or `AXPopover` elements attached to normal `AXWindow`s; inspect with higher `maxElements` when needed.
 - When several dialogs are present, target by dialog text/window or use the button id from the inspected result.
 - `dialog.click` requires `buttonText`; use the visible label. Examples: `取消`, `保存`, `删除`, `Cancel`, `Save`, `Don't Save`.
 - `dialog.input` requires `text`; use `field`, `fieldIndex`, or `target.elementId` when more than one dialog field exists. Set `clear=true` to replace the value.
