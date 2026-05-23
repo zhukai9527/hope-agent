@@ -21,19 +21,20 @@ mod imp {
     use async_trait::async_trait;
     use base64::Engine;
     use ha_core::mac_control::{
-        MacControlActOp, MacControlActRequest, MacControlActResult, MacControlAppNameMatch,
-        MacControlAppSummary, MacControlAppsOp, MacControlAppsRequest, MacControlAppsResult,
-        MacControlBounds, MacControlBridge, MacControlClipboardOp, MacControlClipboardRequest,
-        MacControlClipboardResult, MacControlDialogOp, MacControlDialogRequest,
-        MacControlDialogResult, MacControlDialogSummary, MacControlDisplaySummary,
-        MacControlElementCandidate, MacControlElementSummary, MacControlElementsRequest,
-        MacControlElementsResult, MacControlFramePayload, MacControlInstalledApp,
-        MacControlMenuItemSummary, MacControlMenuOp, MacControlMenuRequest, MacControlMenuResult,
-        MacControlMenuScope, MacControlOcrRawTextBlock, MacControlOcrRecognitionLevel,
-        MacControlOcrRequest, MacControlRunningApp, MacControlScreenshotSummary,
-        MacControlScreenshotTarget, MacControlSnapshot, MacControlSnapshotRequest,
-        MacControlStringMatch, MacControlTargetQuery, MacControlWindowSummary, MacControlWindowsOp,
-        MacControlWindowsRequest, MacControlWindowsResult, MacControlWindowsScope,
+        normalize_perform_ax_action, MacControlActOp, MacControlActRequest, MacControlActResult,
+        MacControlAppNameMatch, MacControlAppSummary, MacControlAppsOp, MacControlAppsRequest,
+        MacControlAppsResult, MacControlBounds, MacControlBridge, MacControlClipboardOp,
+        MacControlClipboardRequest, MacControlClipboardResult, MacControlDialogOp,
+        MacControlDialogRequest, MacControlDialogResult, MacControlDialogSummary,
+        MacControlDisplaySummary, MacControlElementCandidate, MacControlElementSummary,
+        MacControlElementsRequest, MacControlElementsResult, MacControlFramePayload,
+        MacControlInstalledApp, MacControlMenuItemSummary, MacControlMenuOp, MacControlMenuRequest,
+        MacControlMenuResult, MacControlMenuScope, MacControlOcrRawTextBlock,
+        MacControlOcrRecognitionLevel, MacControlOcrRequest, MacControlRunningApp,
+        MacControlScreenshotSummary, MacControlScreenshotTarget, MacControlSnapshot,
+        MacControlSnapshotRequest, MacControlStringMatch, MacControlTargetQuery,
+        MacControlWindowSummary, MacControlWindowsOp, MacControlWindowsRequest,
+        MacControlWindowsResult, MacControlWindowsScope,
     };
     use image::codecs::jpeg::JpegEncoder;
     use objc2::rc::Retained;
@@ -844,6 +845,7 @@ mod imp {
     fn handle_act(request: MacControlActRequest) -> Result<MacControlActResult, String> {
         let request = request.clamped();
         let mut target = None;
+        let mut performed_action = None;
         let execution = match request.op {
             MacControlActOp::DryRun => {
                 if target_query_is_empty(&request.target) {
@@ -857,6 +859,39 @@ mod imp {
                 )?;
                 target = Some(summary);
                 "DryRun".to_string()
+            }
+            MacControlActOp::PerformAction => {
+                if target_query_is_empty(&request.target) {
+                    return Err("act.perform_action requires a target.".to_string());
+                }
+                let requested_action = request
+                    .ax_action
+                    .as_deref()
+                    .ok_or_else(|| "act.perform_action requires axAction.".to_string())?;
+                let ax_action = normalize_perform_ax_action(requested_action).ok_or_else(|| {
+                    format!("Unsupported act.perform_action axAction '{requested_action}'.")
+                })?;
+                let (element, summary, _) = resolve_element(
+                    &request.target,
+                    request.max_elements,
+                    request.max_depth,
+                    "act.perform_action",
+                )?;
+                if !summary.actions.iter().any(|action| action == ax_action) {
+                    let available = if summary.actions.is_empty() {
+                        "none".to_string()
+                    } else {
+                        summary.actions.join(", ")
+                    };
+                    return Err(format!(
+                        "act.perform_action target '{}' does not advertise {ax_action}; available actions: {available}.",
+                        summary.id
+                    ));
+                }
+                perform_ax_action(element.as_ptr() as AXUIElementRef, ax_action)?;
+                target = Some(summary);
+                performed_action = Some(ax_action.to_string());
+                ax_action.to_string()
             }
             MacControlActOp::Click => {
                 if target_query_is_empty(&request.target) {
@@ -1031,6 +1066,7 @@ mod imp {
         Ok(MacControlActResult {
             op: request.op,
             execution,
+            performed_action,
             target,
             snapshot,
         })

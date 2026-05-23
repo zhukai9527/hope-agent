@@ -46,6 +46,18 @@ const HARD_CLIPBOARD_SET_CHARS: usize = 200_000;
 const DEFAULT_VISUAL_LIMIT: usize = 5;
 const DEFAULT_UI_MAP_LIMIT: usize = 80;
 const HARD_UI_MAP_LIMIT: usize = 200;
+pub const ALLOWED_PERFORM_AX_ACTIONS: &[&str] = &[
+    "AXPress",
+    "AXShowMenu",
+    "AXConfirm",
+    "AXCancel",
+    "AXIncrement",
+    "AXDecrement",
+    "AXPick",
+    "AXRaise",
+    "AXShowDefaultUI",
+    "AXShowAlternateUI",
+];
 pub const EVENT_MAC_CONTROL_FRAME: &str = "mac_control:frame";
 
 #[async_trait]
@@ -502,6 +514,7 @@ pub struct MacControlActResponse {
 pub struct MacControlActResult {
     pub op: MacControlActOp,
     pub execution: String,
+    pub performed_action: Option<String>,
     pub target: Option<MacControlElementSummary>,
     pub snapshot: Option<MacControlSnapshot>,
 }
@@ -945,6 +958,8 @@ pub struct MacControlActRequest {
     #[serde(default)]
     pub target: MacControlTargetQuery,
     #[serde(default)]
+    pub ax_action: Option<String>,
+    #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
@@ -971,6 +986,7 @@ pub struct MacControlActRequest {
 impl MacControlActRequest {
     pub fn clamped(mut self) -> Self {
         self.target = self.target.normalized();
+        self.ax_action = normalize_optional_string(self.ax_action);
         self.text = normalize_optional_string(self.text);
         self.value = normalize_optional_string(self.value);
         self.key = normalize_optional_string(self.key);
@@ -997,6 +1013,7 @@ pub enum MacControlActOp {
     #[default]
     Click,
     DryRun,
+    PerformAction,
     ClickPoint,
     DoubleClick,
     RightClick,
@@ -1006,6 +1023,26 @@ pub enum MacControlActOp {
     Hotkey,
     Scroll,
     Drag,
+}
+
+pub fn normalize_perform_ax_action(action: &str) -> Option<&'static str> {
+    let action = action.trim();
+    if action.is_empty() {
+        return None;
+    }
+    match action.to_ascii_lowercase().as_str() {
+        "press" | "axpress" => Some("AXPress"),
+        "show_menu" | "showmenu" | "axshowmenu" => Some("AXShowMenu"),
+        "confirm" | "axconfirm" => Some("AXConfirm"),
+        "cancel" | "axcancel" => Some("AXCancel"),
+        "increment" | "axincrement" => Some("AXIncrement"),
+        "decrement" | "axdecrement" => Some("AXDecrement"),
+        "pick" | "axpick" => Some("AXPick"),
+        "raise" | "axraise" => Some("AXRaise"),
+        "show_default_ui" | "showdefaultui" | "axshowdefaultui" => Some("AXShowDefaultUI"),
+        "show_alternate_ui" | "showalternateui" | "axshowalternateui" => Some("AXShowAlternateUI"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -2417,6 +2454,20 @@ fn validate_act_request(request: &MacControlActRequest) -> Option<String> {
                 return Some("mac_control act.dry_run requires a target.".to_string());
             }
         }
+        MacControlActOp::PerformAction => {
+            if request.target.is_empty() {
+                return Some("mac_control act.perform_action requires a target.".to_string());
+            }
+            let Some(ax_action) = request.ax_action.as_deref() else {
+                return Some("mac_control act.perform_action requires axAction.".to_string());
+            };
+            if normalize_perform_ax_action(ax_action).is_none() {
+                return Some(format!(
+                    "mac_control act.perform_action axAction must be one of: {}.",
+                    ALLOWED_PERFORM_AX_ACTIONS.join(", ")
+                ));
+            }
+        }
         MacControlActOp::ClickPoint => {
             if request.x.is_none() || request.y.is_none() {
                 return Some("mac_control act.click_point requires x and y.".to_string());
@@ -2481,6 +2532,7 @@ fn act_op_name(op: MacControlActOp) -> &'static str {
     match op {
         MacControlActOp::Click => "click",
         MacControlActOp::DryRun => "dry_run",
+        MacControlActOp::PerformAction => "perform_action",
         MacControlActOp::ClickPoint => "click_point",
         MacControlActOp::DoubleClick => "double_click",
         MacControlActOp::RightClick => "right_click",
@@ -4670,6 +4722,62 @@ mod tests {
             validate_act_request(&dry_run_without_target).as_deref(),
             Some("mac_control act.dry_run requires a target.")
         );
+
+        let perform_action = MacControlActRequest {
+            op: MacControlActOp::PerformAction,
+            ax_action: Some(" axshowmenu ".to_string()),
+            target: MacControlTargetQuery {
+                element_id: Some("el_20".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(perform_action.ax_action.as_deref(), Some("axshowmenu"));
+        assert_eq!(
+            normalize_perform_ax_action(perform_action.ax_action.as_deref().expect("ax action")),
+            Some("AXShowMenu")
+        );
+        assert!(validate_act_request(&perform_action).is_none());
+
+        let perform_action_without_target = MacControlActRequest {
+            op: MacControlActOp::PerformAction,
+            ax_action: Some("AXPress".to_string()),
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(
+            validate_act_request(&perform_action_without_target).as_deref(),
+            Some("mac_control act.perform_action requires a target.")
+        );
+
+        let perform_action_without_action = MacControlActRequest {
+            op: MacControlActOp::PerformAction,
+            target: MacControlTargetQuery {
+                element_id: Some("el_20".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(
+            validate_act_request(&perform_action_without_action).as_deref(),
+            Some("mac_control act.perform_action requires axAction.")
+        );
+
+        let unsupported_perform_action = MacControlActRequest {
+            op: MacControlActOp::PerformAction,
+            ax_action: Some("AXDelete".to_string()),
+            target: MacControlTargetQuery {
+                element_id: Some("el_20".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .clamped();
+        assert!(validate_act_request(&unsupported_perform_action)
+            .expect("validation error")
+            .contains("AXPress"));
 
         let ambiguous_click_point = MacControlActRequest {
             op: MacControlActOp::ClickPoint,

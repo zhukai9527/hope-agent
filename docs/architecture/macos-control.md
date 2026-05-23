@@ -208,6 +208,7 @@ Transport 结果类型：
 | `minConfidence` | number | `visual.ocr/find_text` OCR 置信度下限，范围 `0..1`，默认 `0` |
 | `recognitionLevel` | `"accurate" \| "fast"` | `visual.ocr/find_text` Vision 识别等级，默认 `accurate` |
 | `value` | string | `act.set_value` 写入值 |
+| `axAction` | string | `act.perform_action` 要执行的白名单 AX action；目标元素必须在 `actions[]` 中声明支持 |
 | `key` / `keys` | string / string[] | `act.hotkey` 单键或组合键 |
 | `deltaX` / `deltaY` | number | `act.scroll` 滚动增量 |
 | `path` | string[] | `menu.click` 菜单路径 |
@@ -326,6 +327,7 @@ OCR 规则：
 | action / op | 入参 | 出参 `result` | 说明 |
 | --- | --- | --- | --- |
 | `act.dry_run` | `action="act"`、`op="dry_run"`、`target` | `op`、`execution="DryRun"`、`target?`、`snapshot=null` | 只解析目标，不执行 UI 操作 |
+| `act.perform_action` | `action="act"`、`op="perform_action"`、`target`、`axAction` | `execution=<AX action>`、`performedAction=<AX action>`、`target?`、`snapshot?` | 对目标元素执行白名单命名 AX action；目标必须在 `actions[]` 中声明支持该 action |
 | `act.click` | `action="act"`、`op="click"`、`target` | `execution="AXPress"` 或 `"CGEventFallback"`、`target?`、`snapshot?` | AX target 点击；不消费裸 `x/y` |
 | `act.click_point` | `action="act"`、`op="click_point"`、`x`、`y`，且不能带 `target` | `execution="CGEventClick"`、`target=null`、`snapshot?` | 裸坐标点击，允许 `(0, 0)` |
 | `act.double_click` | `action="act"`、`op="double_click"`、`target` | `execution="CGEventDoubleClick"`、`target?`、`snapshot?` | 对目标元素中心双击 |
@@ -390,6 +392,7 @@ OCR 规则：
 - `menu.scope` 默认为 `app`；`system` 只访问 macOS 菜单栏 extras/status items，不回退到前台 App 菜单。
 - `clipboard.maxChars` 默认为 4000，硬上限 20000；`clipboard.set` 不修剪空白，但会硬截到 200000 字符。
 - `includeSnapshot` 默认为 `false`；`act` / `wait` / `dialog` 默认只返回摘要字段，显式传 `includeSnapshot=true` 才返回完整 AX snapshot。`act.dry_run` 始终保持轻量。
+- `act.perform_action.axAction` 只允许 `AXPress`、`AXShowMenu`、`AXConfirm`、`AXCancel`、`AXIncrement`、`AXDecrement`、`AXPick`、`AXRaise`、`AXShowDefaultUI`、`AXShowAlternateUI`，并且目标元素的 `actions[]` 必须包含该 action。
 - 合法坐标 `0` 不能被全局吞掉；裸坐标点击只能通过 `act.click_point` 表达。
 - `visual.observe` 默认采集 display 截图；`screenshotTarget="window"` 可采集当前前台窗口或 `windowId` 指定窗口。
 - `visual.observe annotate=true` 默认最多标注 80 个元素，`uiMapLimit` 硬上限 200；标注失败只进入 `warnings[]`，不会影响原始截图和 snapshot。
@@ -453,7 +456,8 @@ OCR 规则：
 - 对多个相似目标，执行层必须返回歧义错误或选择唯一最高置信候选，不应静默随机选择。
 - AX 元素 mutation 会收集候选并按聚焦、可用、可执行、可见 bounds、精确文本等信号打分；若最高分并列且没有精确 `elementId`，直接拒绝执行，并提示模型用 fresh `snapshot` 后补充 `elementId`、`target.windowTitle`、`target.role` 或更具体的 `target.text`。
 - `elements.find` 使用同一套 AX snapshot 与元素匹配规则，只读返回 `totalMatches`、候选 `element`、所在 `window`、`score` 和 `reasons`。模型应先用它确认候选，再把选中的 `element.id` 传给 `act.*`。
-- `act.dry_run` 使用和 `act.click` / `act.set_value` 相同的目标解析、前台 App 校验、歧义拒绝和 stale 检查，但不触发 AX action、CGEvent、键盘、剪贴板或窗口变化；结果 `snapshot=null`，避免把完整 AX 树塞回上下文。
+- `act.dry_run` 使用和 `act.click` / `act.perform_action` / `act.set_value` 相同的目标解析、前台 App 校验、歧义拒绝和 stale 检查，但不触发 AX action、CGEvent、键盘、剪贴板或窗口变化；结果 `snapshot=null`，避免把完整 AX 树塞回上下文。
+- `act.perform_action` 只执行白名单 AX action，并要求目标元素 `actions[]` 显式包含该 action；优先通过 `elements.find` 或 `snapshot` 查看候选支持的 actions 后再调用。
 - mutation 前会刷新 snapshot 并按 target 重新解析，降低 stale element 引用风险。
 - mutation 成功后默认不返回完整后置 snapshot；模型应优先用 `wait`、`elements.find`、`windows.list` 或 `dialog.inspect` 做小结果验证。只有调试或需要完整树时才传 `includeSnapshot=true`。
 - `dialog.inspect/accept/dismiss` 默认返回 dialog/window/button/text 摘要，不返回完整 snapshot；需要调试完整 AX 树时传 `includeSnapshot=true`。
@@ -512,8 +516,8 @@ OCR 规则：
 | 分类 | action/op | 决策 |
 | --- | --- | --- |
 | 只读 | `status`、`permissions`、`snapshot`、`elements.find`、`wait`、`visual.observe/point/ocr/find_text`、`apps.list/frontmost/installed/search`、`windows.list`、`act.dry_run`、`menu.list`、`dialog.inspect` | Allow |
-| 普通/隐私动作 | `apps.activate/launch`、`windows.focus/move/resize/minimize`、除 `dry_run` 外的 `act.*`、普通 `menu.click`、`clipboard.get/set/clear`、`dialog.dismiss` | Ask，可 AllowAlways |
-| 高风险突变 | `apps.quit`、`windows.close`、`dialog.accept`、命中危险词的 `menu.click` | Ask，`forbids_allow_always=true` |
+| 普通/隐私动作 | `apps.activate/launch`、`windows.focus/move/resize/minimize`、除 `dry_run` / `perform_action(AXConfirm)` 外的 `act.*`、普通 `menu.click`、`clipboard.get/set/clear`、`dialog.dismiss` | Ask，可 AllowAlways |
+| 高风险突变 | `apps.quit`、`windows.close`、`dialog.accept`、`act.perform_action axAction=AXConfirm`、命中危险词的 `menu.click` | Ask，`forbids_allow_always=true` |
 
 权限模式交互：
 

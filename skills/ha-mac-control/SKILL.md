@@ -74,6 +74,7 @@ wait or snapshot                       # verify the expected change
 - Use `elements.find op="find"` before clicking or typing into ambiguous UI. Useful examples: `target.role="AXButton"`, `target.text="Save"`, `target.windowTitle="Untitled"`.
 - `elements.find` returns `totalMatches` plus candidate `score`, `reasons`, `element`, and `window`. Prefer high-score candidates whose reasons include the user's intended text/role/window.
 - Use `act.dry_run` when the next mutation should use the exact same target resolver as `act.click` / `act.set_value`, but you want to verify the resolved element first. It returns the resolved `target` without changing the UI; call `snapshot` or `elements.find` when full tree context is needed.
+- Use `act.perform_action` only when the target element advertises the intended AX action in `actions[]`. It requires `target` and `axAction`, and supports only the built-in whitelist such as `AXPress`, `AXShowMenu`, `AXIncrement`, and `AXDecrement`.
 - `act.click` is for AX targets only. It requires `target` and should not consume raw `x/y`.
 - Use `act.click_point` only when the user explicitly wants a coordinate click or AX cannot represent the target. This includes valid coordinates like `(0, 0)`.
 - `act.type` and `act.set_value` should target text input roles (`AXTextArea`, `AXTextField`, `AXSearchField`, etc.).
@@ -140,6 +141,7 @@ Rules:
 - After `apps.launch` / `apps.activate`, verify `frontmost` before menu or input actions.
 - After any action that changes UI, re-snapshot or call the relevant list/inspect command before using old ids.
 - If an element becomes stale, take a fresh snapshot and reselect by role + label/text + window.
+- If `act.perform_action` says the target does not advertise the requested action, do not retry the same call. Use fresh `elements.find` / `snapshot` and choose an action from that element's `actions[]`.
 - If `dialog.inspect` returns empty but the UI visibly has a sheet, retry with `maxElements: 300` or `500` and confirm the frontmost app.
 - If `menu.click` says a path component was not found, check frontmost app and `menu.list`; do not retry the same path blindly.
 - If a mutation succeeds but the expected state did not change, use `wait` or a fresh snapshot to verify before deciding the next action.

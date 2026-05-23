@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/click/click_point/double_click/right_click/type/paste/set_value/hotkey/scroll/drag, `menu` list/click for app menus or system menu bar extras, `clipboard` get/set/clear text, and `dialog` inspect/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
+            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/double_click/right_click/type/paste/set_value/hotkey/scroll/drag, `menu` list/click for app menus or system menu bar extras, `clipboard` get/set/clear text, and `dialog` inspect/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -739,8 +739,8 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "op": {
                         "type": "string",
-                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "focus", "move", "resize", "minimize", "close", "dry_run", "click", "click_point", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "scroll", "drag", "get", "set", "clear", "inspect", "accept", "dismiss"],
-                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, click for AX target clicks, click_point for raw screen coordinates, double_click|right_click target clicks, type|paste|set_value|hotkey|scroll, drag from target center to x/y. For `menu`: list|click. For `clipboard`: get|set|clear text. For `dialog`: inspect|accept|dismiss."
+                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "scroll", "drag", "get", "set", "clear", "inspect", "accept", "dismiss"],
+                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, perform_action runs a whitelisted AX action advertised by the target, click for AX target clicks, click_point for raw screen coordinates, double_click|right_click target clicks, type|paste|set_value|hotkey|scroll, drag from target center to x/y. For `menu`: list|click. For `clipboard`: get|set|clear text. For `dialog`: inspect|accept|dismiss."
                     },
                     "scope": {
                         "type": "string",
@@ -838,6 +838,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "value": {
                         "type": "string",
                         "description": "For `act.set_value`: value to set via Accessibility."
+                    },
+                    "axAction": {
+                        "type": "string",
+                        "enum": crate::mac_control::ALLOWED_PERFORM_AX_ACTIONS,
+                        "description": "For `act.perform_action`: whitelisted Accessibility action to perform on the resolved target. The target must advertise the action in its `actions[]`, e.g. AXPress, AXShowMenu, AXIncrement, or AXDecrement."
                     },
                     "key": {
                         "type": "string",
@@ -1572,6 +1577,9 @@ mod tests {
         assert!(op_enum
             .iter()
             .any(|value| value.as_str() == Some("find_text")));
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("perform_action")));
         assert!(tool.parameters["properties"].get("snapshotId").is_some());
         assert!(tool.parameters["properties"]
             .get("coordinateSpace")
@@ -1581,5 +1589,6 @@ mod tests {
         assert!(tool.parameters["properties"].get("minConfidence").is_some());
         assert!(tool.parameters["properties"].get("annotate").is_some());
         assert!(tool.parameters["properties"].get("uiMapLimit").is_some());
+        assert!(tool.parameters["properties"].get("axAction").is_some());
     }
 }

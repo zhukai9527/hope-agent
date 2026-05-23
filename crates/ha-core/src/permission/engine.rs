@@ -462,6 +462,7 @@ fn check_mac_control_action(ctx: &ResolveContext<'_>) -> Option<AskReason> {
         ("windows", Some("minimize")) => "windows.minimize",
         ("act", Some("click")) => "act.click",
         ("act", Some("click_point")) => "act.click_point",
+        ("act", Some("perform_action")) => "act.perform_action",
         ("act", Some("double_click")) => "act.double_click",
         ("act", Some("right_click")) => "act.right_click",
         ("act", Some("type")) => "act.type",
@@ -493,11 +494,21 @@ fn mac_control_dangerous_label(
         ("apps", Some("quit")) => Some("apps.quit"),
         ("windows", Some("close")) => Some("windows.close"),
         ("dialog", Some("accept")) => Some("dialog.accept"),
+        ("act", Some("perform_action")) if mac_control_ax_action_is_dangerous(args) => {
+            Some("act.perform_action.confirm")
+        }
         ("menu", Some("click")) if mac_control_menu_path_is_dangerous(args) => {
             Some("menu.click.dangerous")
         }
         _ => None,
     }
+}
+
+fn mac_control_ax_action_is_dangerous(args: &Value) -> bool {
+    args.get("axAction")
+        .and_then(|value| value.as_str())
+        .and_then(crate::mac_control::normalize_perform_ax_action)
+        .is_some_and(|action| action == "AXConfirm")
 }
 
 fn mac_control_menu_path_is_dangerous(args: &Value) -> bool {
@@ -809,6 +820,7 @@ mod tests {
             json!({"action": "windows", "op": "focus", "target": {"windowTitle": "Notes"}}),
             json!({"action": "act", "op": "click", "target": {"text": "OK"}}),
             json!({"action": "act", "op": "click_point", "x": 0, "y": 0}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "More"}, "axAction": "AXShowMenu"}),
             json!({"action": "act", "op": "double_click", "target": {"text": "Open"}}),
             json!({"action": "act", "op": "right_click", "target": {"text": "Open"}}),
             json!({"action": "act", "op": "paste", "text": "hello"}),
@@ -852,6 +864,8 @@ mod tests {
             json!({"action": "apps", "op": "quit", "bundleId": "com.apple.TextEdit"}),
             json!({"action": "windows", "op": "close", "target": {"windowTitle": "Untitled"}}),
             json!({"action": "dialog", "op": "accept"}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "AXConfirm"}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "confirm"}),
             json!({"action": "menu", "op": "click", "path": ["File", "Move to Trash"]}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);

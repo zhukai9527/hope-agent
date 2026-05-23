@@ -465,6 +465,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(ops.contains(&"find"));
         assert!(ops.contains(&"dry_run"));
+        assert!(ops.contains(&"perform_action"));
         assert!(ops.contains(&"click"));
         assert!(ops.contains(&"click_point"));
         assert!(ops.contains(&"quit"));
