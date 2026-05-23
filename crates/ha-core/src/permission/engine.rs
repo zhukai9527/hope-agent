@@ -1025,11 +1025,11 @@ mod tests {
 
     #[test]
     fn relative_path_resolves_before_protected_path_check() {
-        let args = json!({"path": "hosts"});
+        let args = json!({"path": "id_rsa"});
         let plan: Vec<String> = vec![];
         let custom: Vec<String> = vec![];
         let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
-        c.default_path = Some("/etc");
+        c.default_path = Some("~/.ssh");
         match resolve(&c) {
             Decision::Ask {
                 reason: AskReason::ProtectedPath { .. },
@@ -1040,12 +1040,12 @@ mod tests {
 
     #[test]
     fn apply_patch_relative_directive_resolves_before_protected_path_check() {
-        let patch = "*** Begin Patch\n*** Update File: hosts\n@@ ...\n*** End Patch\n";
+        let patch = "*** Begin Patch\n*** Update File: id_rsa\n@@ ...\n*** End Patch\n";
         let args = json!({"input": patch});
         let plan: Vec<String> = vec![];
         let custom: Vec<String> = vec![];
         let mut c = ctx("apply_patch", &args, SessionMode::Default, &plan, &custom);
-        c.default_path = Some("/etc");
+        c.default_path = Some("~/.ssh");
         match resolve(&c) {
             Decision::Ask {
                 reason: AskReason::ProtectedPath { .. },
