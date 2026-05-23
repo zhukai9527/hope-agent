@@ -15,6 +15,9 @@ use super::types::{HookDecision, HookOutcome};
 #[derive(Debug, Default, Clone)]
 pub struct HookContribution {
     pub decision: HookDecision,
+    /// Set only for an explicit `permissionDecision:"allow"` (PreToolUse), so a
+    /// deliberate auto-approve is distinguishable from the default `Allow`.
+    pub permission_allow: bool,
     pub continue_execution: bool,
     pub stop_reason: Option<String>,
     pub system_message: Option<String>,
@@ -91,6 +94,7 @@ pub fn aggregate(contributions: Vec<HookContribution>) -> HookOutcome {
         if c.updated_mcp_output.is_some() {
             outcome.updated_mcp_output = c.updated_mcp_output;
         }
+        outcome.permission_allow = outcome.permission_allow || c.permission_allow;
         outcome.retry = outcome.retry || c.retry;
     }
 

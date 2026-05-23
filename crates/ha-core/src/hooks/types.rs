@@ -375,6 +375,11 @@ pub struct PermissionUpdate {
 #[derive(Debug, Clone)]
 pub struct HookOutcome {
     pub decision: HookDecision,
+    /// `true` only when a hook returned an explicit `permissionDecision:"allow"`
+    /// (PreToolUse), letting the tool gate skip the user approval prompt — as
+    /// opposed to the default `Allow` a context-only hook produces, which must
+    /// not skip anything.
+    pub permission_allow: bool,
     pub continue_execution: bool,
     pub stop_reason: Option<String>,
     pub system_message: Option<String>,
@@ -397,6 +402,7 @@ impl HookOutcome {
     pub fn noop() -> Self {
         Self {
             decision: HookDecision::Allow,
+            permission_allow: false,
             continue_execution: true,
             stop_reason: None,
             system_message: None,

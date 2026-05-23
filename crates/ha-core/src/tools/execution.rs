@@ -571,6 +571,54 @@ fn needs_permission_engine(
 }
 
 /// Execute a tool with additional context (model info, etc.)
+/// Outcome of the `PreToolUse` hook gate (design §9.3/§9.4). Fires after the
+/// name-based visibility gate and before the permission engine.
+enum PreToolGate {
+    /// A hook denied/blocked the call — short-circuit (no downstream gate can
+    /// rescue a hook deny; it's a top-level block).
+    Deny(String),
+    /// Proceed. `updated_input` patches the tool args (the engine then re-checks
+    /// the patched values, so an arg-rewrite can't dodge a path/command gate);
+    /// `skip_user_prompt` is set only for an explicit `permissionDecision:"allow"`
+    /// and downgrades an engine `Ask` to allow — it never overrides a hard Deny.
+    Proceed {
+        updated_input: Option<Value>,
+        skip_user_prompt: bool,
+    },
+}
+
+/// Run the `PreToolUse` hook for this call. No-op fast path when no hook listens.
+///
+/// Phase note: a hook `ask`/`defer` does not yet *escalate* an engine `Allow`
+/// into a prompt (that needs a new `AskReason` + its i18n reason-banner, landing
+/// with the GUI phase); the safe directions — deny, arg-rewrite, and
+/// skip-prompt-on-explicit-allow — are honored here.
+async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext) -> PreToolGate {
+    use crate::hooks::{HookDecision, HookDispatcher, HookEvent, HookInput};
+    if !crate::hooks::registry::global().has_handlers_for(HookEvent::PreToolUse) {
+        return PreToolGate::Proceed {
+            updated_input: None,
+            skip_user_prompt: false,
+        };
+    }
+    let input = HookInput::PreToolUse {
+        common: ctx.common_hook_input("PreToolUse"),
+        tool_name: name.to_string(),
+        tool_input: args.clone(),
+        tool_use_id: ctx.tool_call_id.clone().unwrap_or_default(),
+    };
+    let outcome = HookDispatcher::dispatch(HookEvent::PreToolUse, input).await;
+    match outcome.decision {
+        HookDecision::Deny { reason } | HookDecision::Block { reason } => PreToolGate::Deny(reason),
+        _ => PreToolGate::Proceed {
+            updated_input: outcome.updated_input,
+            // Only an explicit `permissionDecision:"allow"` skips the prompt —
+            // never the default `Allow` a context-only hook yields.
+            skip_user_prompt: outcome.permission_allow,
+        },
+    }
+}
+
 pub async fn execute_tool_with_context(
     name: &str,
     args: &Value,
@@ -585,6 +633,37 @@ pub async fn execute_tool_with_context(
     if let Some(err) = ctx.tool_visibility_error(name) {
         return Err(anyhow::anyhow!(err));
     }
+
+    // ── PreToolUse hook (blocking; design §9.3/§9.4) ──────────────
+    // Runs after the name-based hard-deny gate (visibility) and before the
+    // permission engine. A hook deny short-circuits here; `updatedInput`
+    // shadows `args` so every downstream gate (engine arg checks, plan-mode
+    // path glob) and the tool itself see the patched value.
+    let pre_skip_prompt: bool;
+    let patched_args_holder: Option<Value> = match fire_pre_tool_use_hook(name, args, ctx).await {
+        PreToolGate::Deny(reason) => {
+            return Err(super::rejection::ToolRejection::denied_by_policy(
+                name, reason,
+            ));
+        }
+        PreToolGate::Proceed {
+            updated_input,
+            skip_user_prompt,
+        } => {
+            pre_skip_prompt = skip_user_prompt;
+            if updated_input.is_some() {
+                app_info!(
+                    "hooks",
+                    "dispatch",
+                    "PreToolUse rewrote tool_input for '{}'",
+                    name
+                );
+            }
+            updated_input
+        }
+    };
+    // `args` now points at the patched value (if any) for the rest of the call.
+    let args: &Value = patched_args_holder.as_ref().unwrap_or(args);
 
     // Async-tool decision is computed up front but acted on after the
     // approval + plan-mode gates have run (so user-facing safeguards apply
@@ -627,6 +706,19 @@ pub async fn execute_tool_with_context(
                 return Err(super::rejection::ToolRejection::denied_by_policy(
                     name, reason,
                 ));
+            }
+            crate::permission::Decision::Ask { reason } if pre_skip_prompt => {
+                // A PreToolUse hook returned an explicit `permissionDecision:
+                // "allow"`: skip the user-facing prompt. Hard denies already
+                // short-circuited above (engine `Deny` returns before this), so
+                // this only suppresses the *prompt*, never a hard red-line.
+                app_info!(
+                    "hooks",
+                    "dispatch",
+                    "PreToolUse allow skipped approval prompt for '{}' (reason was {:?})",
+                    name,
+                    reason
+                );
             }
             crate::permission::Decision::Ask { reason } => {
                 let desc = format!("tool: {} {}", name, {

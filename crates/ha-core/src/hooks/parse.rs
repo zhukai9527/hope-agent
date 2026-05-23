@@ -52,19 +52,41 @@ fn parse_stdout(stdout: &str, event: HookEvent) -> HookContribution {
 }
 
 fn contribution_from_output(out: HookOutput) -> HookContribution {
-    let decision = match out.decision.as_deref() {
-        Some("block") => HookDecision::Block {
-            reason: out.reason.clone().unwrap_or_default(),
-        },
+    let hso = out.hook_specific_output.unwrap_or_default();
+    // `PreToolUse` carries its verdict in `hookSpecificOutput.permissionDecision`
+    // (allow / deny / ask); the top-level `decision` (block / deny / ask) covers
+    // the other events. The PreToolUse field takes precedence when present.
+    // `permission_allow` is set ONLY for an explicit `permissionDecision:"allow"`
+    // so the tool gate can tell a deliberate auto-approve apart from the default
+    // `Allow` a context-only hook produces — never silently skipping a prompt.
+    let mut permission_allow = false;
+    let decision = match hso.permission_decision.as_deref() {
         Some("deny") => HookDecision::Deny {
-            reason: out.reason.clone().unwrap_or_default(),
+            reason: hso
+                .permission_decision_reason
+                .clone()
+                .or_else(|| out.reason.clone())
+                .unwrap_or_default(),
         },
         Some("ask") => HookDecision::Ask,
-        _ => HookDecision::Allow,
+        Some("allow") => {
+            permission_allow = true;
+            HookDecision::Allow
+        }
+        _ => match out.decision.as_deref() {
+            Some("block") => HookDecision::Block {
+                reason: out.reason.clone().unwrap_or_default(),
+            },
+            Some("deny") => HookDecision::Deny {
+                reason: out.reason.clone().unwrap_or_default(),
+            },
+            Some("ask") => HookDecision::Ask,
+            _ => HookDecision::Allow,
+        },
     };
-    let hso = out.hook_specific_output.unwrap_or_default();
     HookContribution {
         decision,
+        permission_allow,
         continue_execution: out.continue_execution,
         stop_reason: out.stop_reason,
         system_message: out.system_message,
@@ -173,5 +195,66 @@ mod tests {
         let c = parse(&raw(Some(0), "   ", ""), HookEvent::SessionStart);
         assert_eq!(c.decision, HookDecision::Allow);
         assert!(c.additional_context.is_none());
+    }
+
+    #[test]
+    fn pretooluse_permission_decision_deny() {
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"blocked path"}}"#,
+                "",
+            ),
+            HookEvent::PreToolUse,
+        );
+        assert_eq!(
+            c.decision,
+            HookDecision::Deny {
+                reason: "blocked path".into()
+            }
+        );
+        assert!(!c.permission_allow);
+    }
+
+    #[test]
+    fn pretooluse_permission_decision_ask() {
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"permissionDecision":"ask"}}"#,
+                "",
+            ),
+            HookEvent::PreToolUse,
+        );
+        assert_eq!(c.decision, HookDecision::Ask);
+        assert!(!c.permission_allow);
+    }
+
+    #[test]
+    fn explicit_allow_sets_permission_allow_but_context_only_does_not() {
+        // Explicit permissionDecision:"allow" → permission_allow = true.
+        let explicit = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"permissionDecision":"allow"}}"#,
+                "",
+            ),
+            HookEvent::PreToolUse,
+        );
+        assert_eq!(explicit.decision, HookDecision::Allow);
+        assert!(explicit.permission_allow);
+
+        // A context-only hook (no decision field) is also Allow, but must NOT
+        // set permission_allow — otherwise it would silently skip a prompt.
+        let ctx_only = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"additionalContext":"fyi"}}"#,
+                "",
+            ),
+            HookEvent::PreToolUse,
+        );
+        assert_eq!(ctx_only.decision, HookDecision::Allow);
+        assert!(!ctx_only.permission_allow);
     }
 }
