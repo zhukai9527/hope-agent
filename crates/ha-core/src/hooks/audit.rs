@@ -67,7 +67,13 @@ pub fn write_overflow(event: HookEvent, session_id: &str, content: &str) -> Opti
     } else {
         safe_sid
     };
-    let path = dir.join(format!("{}-{}-{}-{}.txt", event.as_str(), safe_sid, ts, seq));
+    let path = dir.join(format!(
+        "{}-{}-{}-{}.txt",
+        event.as_str(),
+        safe_sid,
+        ts,
+        seq
+    ));
     std::fs::write(&path, content).ok()?;
     // Hook output can contain content the user wouldn't want world-readable on a
     // multi-user host; restrict to owner-only.

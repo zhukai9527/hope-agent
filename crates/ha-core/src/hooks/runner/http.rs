@@ -2,11 +2,12 @@
 //! JSON response body as the hook's output (design §7.3).
 //!
 //! The outbound URL is SSRF-gated through `security::ssrf::check_url` (the
-//! shared policy + trusted-host allowlist) before any network touch — new
-//! outbound entries must never self-validate IPs (AGENTS.md red line). The
-//! HTTP status is mapped to a synthetic exit code so the existing output
-//! parser handles the body unchanged: 2xx → exit 0 (parse JSON body), any
-//! other status → exit 1 (non-blocking).
+//! shared policy + trusted-host allowlist) before any network touch, and every
+//! redirect hop is re-checked — new outbound entries must never self-validate
+//! IPs (AGENTS.md red line). Any delivered response (regardless of status) maps
+//! to exit 0 so the shared parser handles the body — a hook can deny via a
+//! non-2xx + decision JSON, and a non-JSON error page parses inert. Only a
+//! transport/timeout failure is a non-blocking error.
 
 use std::time::{Duration, Instant};
 
@@ -70,22 +71,52 @@ impl HookHandler for HttpHandler {
             }
         };
 
-        let timeout = deadline.saturating_duration_since(Instant::now());
+        // Remaining budget. The SSRF check above did DNS, which can eat the
+        // deadline — floor to 1s so a slow lookup doesn't collapse the request
+        // to an instant 0-duration timeout that never dials.
+        let timeout = deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_secs(1));
+        // Re-check every redirect hop against SSRF (mirrors web_fetch): the
+        // initial check_url only validated the first URL, so without this a
+        // 3xx to a metadata/private IP would punch through.
+        let redirect_hosts = trusted.clone();
+        let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.error("too many redirects");
+            }
+            if let Some(host) = attempt.url().host_str() {
+                if crate::security::ssrf::check_host_blocking_sync(
+                    host,
+                    crate::security::ssrf::SsrfPolicy::Default,
+                    &redirect_hosts,
+                ) {
+                    return attempt.stop();
+                }
+            }
+            attempt.follow()
+        });
         let builder = reqwest::Client::builder()
             .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::limited(5));
+            .redirect(redirect_policy);
         // Honor the app proxy policy (matches every other outbound site).
         let client = match crate::provider::apply_proxy(builder).build() {
             Ok(c) => c,
-            Err(e) => {
-                return RawHookResult::non_blocking_error(format!("build http client: {e}"))
-            }
+            Err(e) => return RawHookResult::non_blocking_error(format!("build http client: {e}")),
         };
 
-        let mut req = client
-            .post(&self.config.url)
-            .header("content-type", "application/json")
-            .body(body);
+        let mut req = client.post(&self.config.url).body(body);
+        // Default content-type only when the user didn't configure one (reqwest
+        // `.header()` appends, so a configured content-type would otherwise be
+        // sent twice).
+        if !self
+            .config
+            .headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("content-type"))
+        {
+            req = req.header("content-type", "application/json");
+        }
         // Static configured headers.
         for (k, v) in &self.config.headers {
             req = req.header(k, v);
@@ -123,10 +154,13 @@ impl HookHandler for HttpHandler {
             }
         };
 
-        // Map the HTTP status to a synthetic exit code so the shared parser
-        // handles the body: 2xx → exit 0 (parse JSON), else → exit 1 (inert).
+        // A response was received → exit 0 so the shared parser handles the
+        // body REGARDLESS of status, letting a hook deny via a non-2xx +
+        // decision JSON (a 5xx error page is non-JSON → parsed inert, which is
+        // safe). Transport / timeout failures are the non-blocking errors
+        // (handled above); a delivered HTTP error must not silently fail open.
         RawHookResult {
-            exit_code: Some(if status.is_success() { 0 } else { 1 }),
+            exit_code: Some(0),
             stdout: text,
             stderr: if status.is_success() {
                 String::new()

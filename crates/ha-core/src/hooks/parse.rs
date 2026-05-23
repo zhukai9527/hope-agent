@@ -35,7 +35,7 @@ fn parse_stdout(stdout: &str, event: HookEvent) -> HookContribution {
         return HookContribution::inert();
     }
     match serde_json::from_str::<HookOutput>(trimmed) {
-        Ok(out) => contribution_from_output(out),
+        Ok(out) => contribution_from_output(out, event),
         Err(_) => {
             // Plaintext mode: only SessionStart / UserPromptSubmit treat raw
             // stdout as additionalContext (§8.5). Others ignore it.
@@ -51,38 +51,45 @@ fn parse_stdout(stdout: &str, event: HookEvent) -> HookContribution {
     }
 }
 
-fn contribution_from_output(out: HookOutput) -> HookContribution {
+fn contribution_from_output(out: HookOutput, event: HookEvent) -> HookContribution {
     let hso = out.hook_specific_output.unwrap_or_default();
-    // `PreToolUse` carries its verdict in `hookSpecificOutput.permissionDecision`
-    // (allow / deny / ask); the top-level `decision` (block / deny / ask) covers
-    // the other events. The PreToolUse field takes precedence when present.
-    // `permission_allow` is set ONLY for an explicit `permissionDecision:"allow"`
-    // so the tool gate can tell a deliberate auto-approve apart from the default
-    // `Allow` a context-only hook produces — never silently skipping a prompt.
-    let mut permission_allow = false;
-    let decision = match hso.permission_decision.as_deref() {
+    // `permissionDecision` (allow / deny / ask) is a **PreToolUse-only** field —
+    // it must NOT drive a verdict for other events (e.g. a PreCompact hook's
+    // permissionDecision must not be read as a compaction block). For PreToolUse
+    // it takes precedence over the top-level `decision`; everywhere else only
+    // the top-level `decision` (block / deny / ask) applies. `permission_allow`
+    // is set ONLY for an explicit PreToolUse `permissionDecision:"allow"` so the
+    // tool gate can tell a deliberate auto-approve from the default `Allow` a
+    // context-only hook produces — never silently skipping a prompt.
+    let top_level_decision = || match out.decision.as_deref() {
+        Some("block") => HookDecision::Block {
+            reason: out.reason.clone().unwrap_or_default(),
+        },
         Some("deny") => HookDecision::Deny {
-            reason: hso
-                .permission_decision_reason
-                .clone()
-                .or_else(|| out.reason.clone())
-                .unwrap_or_default(),
+            reason: out.reason.clone().unwrap_or_default(),
         },
         Some("ask") => HookDecision::Ask,
-        Some("allow") => {
-            permission_allow = true;
-            HookDecision::Allow
-        }
-        _ => match out.decision.as_deref() {
-            Some("block") => HookDecision::Block {
-                reason: out.reason.clone().unwrap_or_default(),
-            },
+        _ => HookDecision::Allow,
+    };
+    let mut permission_allow = false;
+    let decision = if matches!(event, HookEvent::PreToolUse) {
+        match hso.permission_decision.as_deref() {
             Some("deny") => HookDecision::Deny {
-                reason: out.reason.clone().unwrap_or_default(),
+                reason: hso
+                    .permission_decision_reason
+                    .clone()
+                    .or_else(|| out.reason.clone())
+                    .unwrap_or_default(),
             },
             Some("ask") => HookDecision::Ask,
-            _ => HookDecision::Allow,
-        },
+            Some("allow") => {
+                permission_allow = true;
+                HookDecision::Allow
+            }
+            _ => top_level_decision(),
+        }
+    } else {
+        top_level_decision()
     };
     HookContribution {
         decision,
@@ -228,6 +235,34 @@ mod tests {
         );
         assert_eq!(c.decision, HookDecision::Ask);
         assert!(!c.permission_allow);
+    }
+
+    #[test]
+    fn permission_decision_is_pretooluse_only() {
+        // permissionDecision is a PreToolUse-only field: for any other event it
+        // must NOT drive a verdict (a PreCompact deny here would wrongly skip
+        // compaction).
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"permissionDecision":"deny"}}"#,
+                "",
+            ),
+            HookEvent::PreCompact,
+        );
+        assert_eq!(c.decision, HookDecision::Allow);
+        assert!(!c.permission_allow);
+        // The top-level `decision` still applies to non-PreToolUse events.
+        let c2 = parse(
+            &raw(Some(0), r#"{"decision":"block","reason":"stop"}"#, ""),
+            HookEvent::PreCompact,
+        );
+        assert_eq!(
+            c2.decision,
+            HookDecision::Block {
+                reason: "stop".into()
+            }
+        );
     }
 
     #[test]

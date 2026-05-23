@@ -298,10 +298,11 @@ impl ToolExecContext {
 
     /// Build the shared hook-input fields for a tool-event hook (design §5.4).
     ///
-    /// `permission_mode` is a Phase 1.1 approximation: the ctx carries the Plan
-    /// Mode allow-list but not the full `SessionMode` / `PlanModeState` pair, so
-    /// a non-empty plan allow-list maps to `Plan`, otherwise `Default`. YOLO /
-    /// Smart aren't distinguishable here yet (hooks design §2.4 known gap).
+    /// `permission_mode` reflects the live posture so a policy hook can see the
+    /// most dangerous state: global dangerous-skip or a YOLO session →
+    /// `BypassPermissions`; a non-empty plan allow-list → `Plan`; Smart →
+    /// `Other`; else `Default`. The ctx lacks the full `PlanModeState`, so plan
+    /// detection is allow-list-based.
     pub fn common_hook_input(&self, event: &str) -> crate::hooks::CommonHookInput {
         let session_id = self.session_id.clone().unwrap_or_default();
         // Empty session_id → no transcript path, rather than a bogus shared
@@ -313,10 +314,16 @@ impl ToolExecContext {
                 .map(|d| d.join("transcript.jsonl"))
                 .unwrap_or_default()
         };
-        let permission_mode = if self.plan_mode_allowed_tools.is_empty() {
-            crate::hooks::PermissionMode::Default
-        } else {
+        let permission_mode = if crate::security::dangerous::is_dangerous_skip_active()
+            || matches!(self.session_mode, crate::permission::SessionMode::Yolo)
+        {
+            crate::hooks::PermissionMode::BypassPermissions
+        } else if !self.plan_mode_allowed_tools.is_empty() {
             crate::hooks::PermissionMode::Plan
+        } else if matches!(self.session_mode, crate::permission::SessionMode::Smart) {
+            crate::hooks::PermissionMode::Other
+        } else {
+            crate::hooks::PermissionMode::Default
         };
         crate::hooks::CommonHookInput {
             session_id,
@@ -610,11 +617,18 @@ async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext)
     let outcome = HookDispatcher::dispatch(HookEvent::PreToolUse, input).await;
     match outcome.decision {
         HookDecision::Deny { reason } | HookDecision::Block { reason } => PreToolGate::Deny(reason),
-        _ => PreToolGate::Proceed {
+        // Skip the prompt only when the *aggregate* verdict is an explicit
+        // allow. `permission_allow` is OR-folded across hooks, so honoring it
+        // under an `Ask` aggregate would let one hook's allow suppress another
+        // hook's deliberate `ask` — gate it on the winning decision being Allow.
+        HookDecision::Allow => PreToolGate::Proceed {
             updated_input: outcome.updated_input,
-            // Only an explicit `permissionDecision:"allow"` skips the prompt —
-            // never the default `Allow` a context-only hook yields.
             skip_user_prompt: outcome.permission_allow,
+        },
+        // Ask / Defer: a hook asked for the prompt — never skip it.
+        HookDecision::Ask | HookDecision::Defer => PreToolGate::Proceed {
+            updated_input: outcome.updated_input,
+            skip_user_prompt: false,
         },
     }
 }
@@ -639,27 +653,37 @@ pub async fn execute_tool_with_context(
     // permission engine. A hook deny short-circuits here; `updatedInput`
     // shadows `args` so every downstream gate (engine arg checks, plan-mode
     // path glob) and the tool itself see the patched value.
+    //
+    // Fire only on the OUTER call. Async-tool re-entry (`bypass_async_dispatch`,
+    // set by the auto-background / explicit-background dispatch) already carries
+    // the outer call's patched args and pre-approval, so re-firing here would
+    // double a hook's side effects and re-apply an arg rewrite to its own output.
     let pre_skip_prompt: bool;
-    let patched_args_holder: Option<Value> = match fire_pre_tool_use_hook(name, args, ctx).await {
-        PreToolGate::Deny(reason) => {
-            return Err(super::rejection::ToolRejection::denied_by_policy(
-                name, reason,
-            ));
-        }
-        PreToolGate::Proceed {
-            updated_input,
-            skip_user_prompt,
-        } => {
-            pre_skip_prompt = skip_user_prompt;
-            if updated_input.is_some() {
-                app_info!(
-                    "hooks",
-                    "dispatch",
-                    "PreToolUse rewrote tool_input for '{}'",
-                    name
-                );
+    let patched_args_holder: Option<Value> = if ctx.bypass_async_dispatch {
+        pre_skip_prompt = false;
+        None
+    } else {
+        match fire_pre_tool_use_hook(name, args, ctx).await {
+            PreToolGate::Deny(reason) => {
+                return Err(super::rejection::ToolRejection::denied_by_policy(
+                    name, reason,
+                ));
             }
-            updated_input
+            PreToolGate::Proceed {
+                updated_input,
+                skip_user_prompt,
+            } => {
+                pre_skip_prompt = skip_user_prompt;
+                if updated_input.is_some() {
+                    app_info!(
+                        "hooks",
+                        "dispatch",
+                        "PreToolUse rewrote tool_input for '{}'",
+                        name
+                    );
+                }
+                updated_input
+            }
         }
     };
     // `args` now points at the patched value (if any) for the rest of the call.

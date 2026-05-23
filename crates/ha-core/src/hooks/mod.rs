@@ -540,7 +540,8 @@ mod tests {
             ]}]}"#,
         );
         let out =
-            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Bash")).await;
+            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Bash"))
+                .await;
         assert_eq!(out.decision, HookDecision::Allow);
         assert!(out.continue_execution);
     }

@@ -100,6 +100,9 @@ impl HookEvent {
                 | Self::PostToolUse
                 | Self::PostToolUseFailure
                 | Self::PostCompact
+                | Self::PostToolBatch
+                | Self::SubagentStart
+                | Self::SubagentStop
         )
     }
 }

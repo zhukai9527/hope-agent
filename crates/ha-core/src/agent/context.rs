@@ -168,41 +168,48 @@ impl AssistantAgent {
         // PreCompact hook (blocking; design §5.3.1). A hook may `block` to skip
         // this compaction — but a fill ratio ≥ 0.95 forces it anyway, since
         // skipping would let the request overflow the context window.
-        if crate::hooks::registry::global()
-            .has_handlers_for(crate::hooks::HookEvent::PreCompact)
-        {
+        if crate::hooks::registry::global().has_handlers_for(crate::hooks::HookEvent::PreCompact) {
             let tokens_now =
                 context_compact::estimate_request_tokens(system_prompt, messages, max_tokens);
             let usage_now = tokens_now as f64 / self.context_window.max(1) as f64;
-            let input = crate::hooks::HookInput::PreCompact {
-                common: self.hook_common_input("PreCompact"),
-                trigger: crate::hooks::CompactTrigger::Auto,
-                usage_ratio: usage_now.min(1.0),
-            };
-            let outcome =
-                crate::hooks::HookDispatcher::dispatch(crate::hooks::HookEvent::PreCompact, input)
-                    .await;
-            let blocked = matches!(
-                outcome.decision,
-                crate::hooks::HookDecision::Deny { .. } | crate::hooks::HookDecision::Block { .. }
-            );
-            if blocked {
-                if usage_now >= CACHE_TTL_EMERGENCY_RATIO {
-                    app_warn!(
+            // `run_compaction` runs every turn but is a no-op far below the
+            // reactive trigger — only consult the PreCompact hook when a
+            // compaction is actually plausible, so it precedes a real
+            // compaction instead of firing every idle turn.
+            if usage_now >= self.compact_config.reactive_trigger_ratio {
+                let input = crate::hooks::HookInput::PreCompact {
+                    common: self.hook_common_input("PreCompact"),
+                    trigger: crate::hooks::CompactTrigger::Auto,
+                    usage_ratio: usage_now.min(1.0),
+                };
+                let outcome = crate::hooks::HookDispatcher::dispatch(
+                    crate::hooks::HookEvent::PreCompact,
+                    input,
+                )
+                .await;
+                let blocked = matches!(
+                    outcome.decision,
+                    crate::hooks::HookDecision::Deny { .. }
+                        | crate::hooks::HookDecision::Block { .. }
+                );
+                if blocked {
+                    if usage_now >= CACHE_TTL_EMERGENCY_RATIO {
+                        app_warn!(
                         "hooks",
                         "dispatch",
                         "PreCompact block overridden: usage {:.1}% >= {:.0}%, compacting anyway",
                         usage_now * 100.0,
                         CACHE_TTL_EMERGENCY_RATIO * 100.0
                     );
-                } else {
-                    app_info!(
-                        "hooks",
-                        "dispatch",
-                        "PreCompact hook blocked compaction (usage {:.1}%)",
-                        usage_now * 100.0
-                    );
-                    return;
+                    } else {
+                        app_info!(
+                            "hooks",
+                            "dispatch",
+                            "PreCompact hook blocked compaction (usage {:.1}%)",
+                            usage_now * 100.0
+                        );
+                        return;
+                    }
                 }
             }
         }
