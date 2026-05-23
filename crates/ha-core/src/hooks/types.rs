@@ -84,6 +84,24 @@ impl HookEvent {
             Self::WorktreeRemove => "WorktreeRemove",
         }
     }
+
+    /// Whether this event is observation-only — it cannot gate execution, so a
+    /// hook returning `block`/`deny` for it is downgraded to non-blocking +
+    /// logged (design §5.1.1). Lists exactly the events fired this phase;
+    /// blocking-capable events (PreToolUse / Stop / PreCompact / …) land with
+    /// their decision semantics in later phases and are deliberately absent so
+    /// their decisions are never neutralized here.
+    pub fn is_observation_only(&self) -> bool {
+        matches!(
+            self,
+            Self::SessionStart
+                | Self::SessionEnd
+                | Self::Notification
+                | Self::PostToolUse
+                | Self::PostToolUseFailure
+                | Self::PostCompact
+        )
+    }
 }
 
 /// Protocol-facing permission mode string.

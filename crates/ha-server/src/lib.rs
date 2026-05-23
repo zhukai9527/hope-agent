@@ -79,41 +79,15 @@ pub async fn start_server(config: ServerConfig, ctx: Arc<AppContext>) -> anyhow:
     eprintln!("[ha-server] listening on {}", actual_addr);
     banner::print_launch_banner(&actual_addr.to_string(), config.api_key.as_deref());
 
-    let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
-    if let Err(e) = serve.await {
+    // SessionEnd(shutdown) is fired from `crash_flush::run_clean_shutdown` — the
+    // single signal-path chokepoint that actually runs on SIGTERM/SIGINT (it
+    // `process::exit`s, so a graceful-shutdown future here would never win the
+    // race). Plain serve; the signal handler terminates this future.
+    if let Err(e) = axum::serve(listener, router).await {
         ha_core::server_status::mark_failed(format!("serve: {}", e));
         return Err(e.into());
     }
-    // Graceful shutdown (SIGTERM / Ctrl-C) → SessionEnd(other) observation hook,
-    // awaited so a command hook actually runs before the process exits. Still in
-    // the async runtime here; app-global representative event.
-    ha_core::hooks::dispatch_session_end("", "other").await;
     Ok(())
-}
-
-/// Resolve when the process should shut down gracefully: Ctrl-C on any
-/// platform, plus SIGTERM on Unix (the signal `docker stop` / systemd send).
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut sig) => {
-                sig.recv().await;
-            }
-            // No SIGTERM handler available — fall back to Ctrl-C only.
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {}
-        _ = terminate => {}
-    }
 }
 
 // ── Internal Helpers ────────────────────────────────────────────

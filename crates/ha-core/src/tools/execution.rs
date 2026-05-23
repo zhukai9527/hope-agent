@@ -304,9 +304,15 @@ impl ToolExecContext {
     /// Smart aren't distinguishable here yet (hooks design §2.4 known gap).
     pub fn common_hook_input(&self, event: &str) -> crate::hooks::CommonHookInput {
         let session_id = self.session_id.clone().unwrap_or_default();
-        let transcript_path = crate::paths::session_dir(&session_id)
-            .map(|d| d.join("transcript.jsonl"))
-            .unwrap_or_default();
+        // Empty session_id → no transcript path, rather than a bogus shared
+        // `sessions/transcript.jsonl` (mirrors hooks::observation_common).
+        let transcript_path = if session_id.is_empty() {
+            std::path::PathBuf::default()
+        } else {
+            crate::paths::session_dir(&session_id)
+                .map(|d| d.join("transcript.jsonl"))
+                .unwrap_or_default()
+        };
         let permission_mode = if self.plan_mode_allowed_tools.is_empty() {
             crate::hooks::PermissionMode::Default
         } else {
@@ -319,11 +325,10 @@ impl ToolExecContext {
             permission_mode,
             hook_event_name: event.to_string(),
             agent_id: self.agent_id.clone(),
-            agent_type: if self.subagent_depth > 0 {
-                self.agent_id.clone()
-            } else {
-                None
-            },
+            // `agent_type` is the agent's *type/role*, which the exec context
+            // doesn't carry — leave it unset rather than duplicating agent_id.
+            // (A real subagent-type field lands with the subagent hook phase.)
+            agent_type: None,
         }
     }
 

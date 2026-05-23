@@ -37,8 +37,11 @@ impl CommandHandler {
     /// `(program, args)` for the configured shell.
     fn shell_invocation(&self) -> (String, Vec<String>) {
         match self.config.shell {
+            // Resolve `bash` via PATH rather than hardcoding `/bin/bash`, which
+            // doesn't exist on NixOS/Guix and some BSDs. The child inherits the
+            // resolved login-shell PATH (HookEnv), so this finds the user's bash.
             Some(HookShell::Bash) => (
-                "/bin/bash".to_string(),
+                "bash".to_string(),
                 vec!["-c".to_string(), self.config.command.clone()],
             ),
             Some(HookShell::Powershell) => (
@@ -121,15 +124,35 @@ impl HookHandler for CommandHandler {
 
         // `async: true` — fire-and-forget, doesn't affect the decision (§7.1).
         if self.config.async_run == Some(true) {
+            // The output is discarded anyway, so send stdout/stderr to
+            // /dev/null rather than piping: the kernel drops it, so a chatty or
+            // long-running hook (`yes`, a daemon, verbose logs) can neither
+            // deadlock on a full ~64 KiB stdout pipe nor grow hope-agent's
+            // memory unboundedly (which buffering the output to discard it
+            // would). Overrides the piped stdout/stderr `build_command` set.
+            cmd.stdout(Stdio::null()).stderr(Stdio::null());
             if let Ok(mut child) = cmd.spawn() {
-                let mut stdin = child.stdin.take();
-                tokio::spawn(async move {
-                    if let Some(s) = stdin.as_mut() {
-                        let _ = s.write_all(stdin_data.as_bytes()).await;
-                    }
-                    drop(stdin); // close → EOF
-                    let _ = child.wait().await;
-                });
+                let stdin = child.stdin.take();
+                let task = async move {
+                    // Write stdin CONCURRENTLY with the wait so a large hook
+                    // input can't deadlock the stdin pipe against a hook that
+                    // reads it lazily.
+                    let write = async move {
+                        if let Some(mut s) = stdin {
+                            let _ = s.write_all(stdin_data.as_bytes()).await;
+                            // `s` dropped here → EOF on the child's stdin.
+                        }
+                    };
+                    let _ = tokio::join!(write, child.wait());
+                };
+                // Spawn on the process-lived runtime so the detached child
+                // survives a short-lived caller runtime (e.g. ACP's per-turn
+                // current-thread rt, which would otherwise abort it on drop).
+                if let Some(rt) = crate::hooks::fire_and_forget_runtime() {
+                    rt.spawn(task);
+                } else if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::spawn(task);
+                }
             }
             return RawHookResult::noop();
         }

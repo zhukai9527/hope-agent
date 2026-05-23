@@ -471,9 +471,16 @@ impl AssistantAgent {
     /// working dir (falling back to home); `permission_mode` defaults.
     fn hook_common_input(&self, event: &str) -> crate::hooks::CommonHookInput {
         let session_id = self.session_id.clone().unwrap_or_default();
-        let transcript_path = crate::paths::session_dir(&session_id)
-            .map(|d| d.join("transcript.jsonl"))
-            .unwrap_or_default();
+        // Empty session_id (a session-less agent) → no transcript path, rather
+        // than a bogus shared `sessions/transcript.jsonl` (mirrors the guard in
+        // hooks::observation_common).
+        let transcript_path = if session_id.is_empty() {
+            std::path::PathBuf::default()
+        } else {
+            crate::paths::session_dir(&session_id)
+                .map(|d| d.join("transcript.jsonl"))
+                .unwrap_or_default()
+        };
         let cwd = crate::session::effective_session_working_dir(self.session_id.as_deref())
             .map(std::path::PathBuf::from)
             .or_else(dirs::home_dir)
@@ -495,19 +502,23 @@ impl AssistantAgent {
     async fn fire_compaction_hooks(&self, tier: u8, tokens_after: u32, model: &str) {
         use crate::hooks::{HookDispatcher, HookEvent, HookInput};
 
-        // Failover rebuilds the agent and re-runs compaction per retry; fire
-        // the user-facing compaction hooks only once per actual compaction.
+        // Failover rebuilds the agent and re-runs compaction per retry from the
+        // same history (identical tier + tokens_after → identical key, deduped);
+        // a genuinely distinct compaction differs in tier or tokens_after and
+        // fires even within the window.
         let sid = self.session_id.clone().unwrap_or_default();
-        if !crate::hooks::claim_compaction_hooks(&sid) {
+        let dedup_key = format!("{sid}:{tier}:{tokens_after}");
+        if !crate::hooks::claim_compaction_hooks(&dedup_key) {
             return;
         }
 
         // `usage_ratio` is the post-compaction context *fill* ratio (tokens /
         // window), matching the protocol field hooks branch on (design §5.3.1,
         // the same ≥0.95 metric that forces compaction) — not a before/after
-        // compression ratio.
+        // compression ratio. Clamped to [0,1] so a hook expecting a ratio never
+        // sees >1.0 when an estimate (incl. the output reservation) overshoots.
         let usage_ratio = if self.context_window > 0 {
-            tokens_after as f64 / self.context_window as f64
+            (tokens_after as f64 / self.context_window as f64).min(1.0)
         } else {
             0.0
         };

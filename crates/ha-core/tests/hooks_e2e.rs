@@ -112,6 +112,34 @@ async fn config_driven_hooks_dispatch_end_to_end() {
     .await;
     assert!(nz.merged_additional_context().is_none());
 
+    // Overflow: a hook emitting far more than the 10 000-char inject cap keeps a
+    // head slice + a truncation pointer (not just a bare pointer), and the
+    // injected text stays within the cap. Emits JSON additionalContext of
+    // 15 000 'X's via PostToolUse (whose additionalContext is honored).
+    ha_core::config::mutate_config(("hooks", "test"), |c| {
+        c.hooks = serde_json::from_str(
+            r#"{"PostToolUse":[{"matcher":"Write","hooks":[
+                {"type":"command","shell":"bash","command":"printf '{\"hookSpecificOutput\":{\"additionalContext\":\"%s\"}}' \"$(printf 'X%.0s' $(seq 1 15000))\""}
+            ]}]}"#,
+        )
+        .unwrap();
+        Ok(())
+    })
+    .expect("write overflow hook config");
+    hooks::registry::reload_from_config();
+    let big =
+        HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("Write", "c-big")).await;
+    let injected = big
+        .merged_additional_context()
+        .expect("overflow hook injects context");
+    assert!(injected.starts_with('X'), "head slice preserved");
+    assert!(injected.contains("truncated"), "truncation pointer present");
+    assert!(
+        injected.chars().count() <= 10_000,
+        "injected stays within the cap, got {}",
+        injected.chars().count()
+    );
+
     // Clearing hooks in config + reloading the registry → dispatch is a no-op
     // (hot-reload removes handlers, not just adds them).
     ha_core::config::mutate_config(("hooks", "test"), |c| {

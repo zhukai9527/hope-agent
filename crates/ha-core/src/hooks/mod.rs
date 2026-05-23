@@ -36,8 +36,16 @@ static SESSION_START_SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 /// (and records it), `false` afterwards. Used to fire `SessionStart`
 /// (startup/resume) once per session rather than once per turn.
 pub fn claim_session_start(session_id: &str) -> bool {
+    // Hard cap so a long-running server/desktop process that touches many
+    // sessions doesn't grow this set unboundedly. On overflow we clear it: the
+    // worst case is an old, still-active session re-firing SessionStart once —
+    // harmless and vanishingly rare versus the leak.
+    const CAP: usize = 8192;
     let seen = SESSION_START_SEEN.get_or_init(|| Mutex::new(HashSet::new()));
     let mut guard = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.len() >= CAP {
+        guard.clear();
+    }
     guard.insert(session_id.to_string())
 }
 
@@ -46,22 +54,23 @@ static COMPACTION_HOOKS_FIRED: OnceLock<Mutex<HashMap<String, Instant>>> = OnceL
 
 /// De-dupe compaction hooks (`PostCompact` / `SessionStart(compact)`) across
 /// failover retries: each retry rebuilds the agent and re-runs compaction from
-/// the un-compacted DB history, but the user-facing hooks should fire once per
-/// actual compaction. Returns `true` if no compaction-hook fire happened for
-/// this session within the dedup window (and records it). The window is far
-/// below the compaction throttle (`compact.cacheTtlSecs`, default 300s) so a
-/// legitimate second compaction is never suppressed, and far above failover's
-/// sub-second retries.
-pub fn claim_compaction_hooks(session_id: &str) -> bool {
+/// the same un-compacted DB history, producing an identical `key` (the caller
+/// passes `session:tier:tokens_after`). A genuinely distinct compaction —
+/// different tier or post-compaction token count — has a different `key` and
+/// fires even within the window, so an emergency second compaction (which can
+/// bypass the `compact.cacheTtlSecs` throttle) is no longer suppressed. The
+/// time window only bounds the map and lets the same key recur much later.
+/// Returns `true` the first time `key` is seen within the window.
+pub fn claim_compaction_hooks(key: &str) -> bool {
     const WINDOW: Duration = Duration::from_secs(60);
     let map = COMPACTION_HOOKS_FIRED.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
     guard.retain(|_, t| now.duration_since(*t) < WINDOW);
-    if guard.contains_key(session_id) {
+    if guard.contains_key(key) {
         return false;
     }
-    guard.insert(session_id.to_string(), now);
+    guard.insert(key.to_string(), now);
     true
 }
 
@@ -119,34 +128,39 @@ impl HookDispatcher {
         let env = env::HookEnv::build_for_command(input.common());
         let start = Instant::now();
 
-        // Concurrent execution with a total circuit-breaker: the longest
-        // per-handler timeout + 5s (design §7.8). If it trips, treat the whole
-        // dispatch as a non-blocking no-op.
-        let breaker = handlers
-            .iter()
-            .map(|h| h.default_timeout())
-            .max()
-            .unwrap_or_else(|| Duration::from_secs(30))
-            + Duration::from_secs(5);
+        // Concurrent execution, each handler INDIVIDUALLY bounded (its own
+        // timeout + 5s backstop, design §7.8). A laggard yields its own
+        // non-blocking timed-out result rather than discarding every sibling's
+        // already-completed output — so a fast hook's context / decision is
+        // never lost to a slow neighbor.
         let runs = handlers.iter().map(|h| {
-            let deadline = Instant::now() + h.default_timeout();
-            h.run(&input, &env, deadline)
-        });
-        let raws = match tokio::time::timeout(breaker, futures_util::future::join_all(runs)).await {
-            Ok(r) => r,
-            Err(_) => {
-                app_warn!(
-                    "hooks",
-                    "dispatch",
-                    "event={} hit the total circuit-breaker — treating as no-op",
-                    event.as_str()
-                );
-                return HookOutcome::noop();
+            let timeout = h.default_timeout();
+            let deadline = Instant::now() + timeout;
+            let backstop = timeout + Duration::from_secs(5);
+            // Borrow (not move) the shared input/env so each future only holds a
+            // reference and `input` stays usable after `join_all`.
+            let input = &input;
+            let env = &env;
+            async move {
+                match tokio::time::timeout(backstop, h.run(input, env, deadline)).await {
+                    Ok(r) => r,
+                    Err(_) => {
+                        app_warn!(
+                            "hooks",
+                            "dispatch",
+                            "event={} a handler exceeded its timeout backstop — treating it as non-blocking",
+                            event.as_str()
+                        );
+                        runner::RawHookResult::non_blocking_error("hook exceeded dispatch backstop")
+                    }
+                }
             }
-        };
+        });
+        let raws = futures_util::future::join_all(runs).await;
 
         let contributions = raws.iter().map(|r| parse::parse(r, event)).collect();
         let mut outcome = decision::aggregate(contributions);
+        downgrade_block_on_observation(&mut outcome, event);
         apply_overflow(&mut outcome, event, input.common());
         audit::log_dispatch(event, handlers.len(), &outcome, start.elapsed());
         outcome
@@ -174,8 +188,34 @@ fn build_handler(cfg: &HookHandlerConfig) -> Option<Box<dyn HookHandler>> {
     }
 }
 
-/// Enforce the 10 000-char injection cap: spill oversized merged context to an
-/// overflow file and replace it inline with a pointer (design §8.6).
+/// Observation events can't gate execution (design §5.1.1): if a hook returns
+/// `block`/`deny` for one, keep its `additionalContext` but neutralize the
+/// decision and log — so a future caller that honors `outcome.decision` can't
+/// be made to block by an observation hook.
+fn downgrade_block_on_observation(outcome: &mut HookOutcome, event: HookEvent) {
+    if !event.is_observation_only() {
+        return;
+    }
+    if matches!(
+        outcome.decision,
+        HookDecision::Block { .. } | HookDecision::Deny { .. }
+    ) {
+        app_warn!(
+            "hooks",
+            "dispatch",
+            "event={} hook returned a blocking decision on an observation event — downgraded to non-blocking",
+            event.as_str()
+        );
+        outcome.decision = HookDecision::Allow;
+        outcome.continue_execution = true;
+        outcome.stop_reason = None;
+    }
+}
+
+/// Enforce the 10 000-char injection cap: spill the full merged context to an
+/// overflow file, but keep an inline head slice (+ a pointer to the rest)
+/// rather than discarding everything — so the model still sees the beginning of
+/// the smaller contributions instead of only a pointer (design §8.6).
 fn apply_overflow(outcome: &mut HookOutcome, event: HookEvent, common: &CommonHookInput) {
     let Some(merged) = outcome.merged_additional_context() else {
         return;
@@ -184,14 +224,17 @@ fn apply_overflow(outcome: &mut HookOutcome, event: HookEvent, common: &CommonHo
         return;
     }
     let pointer = match audit::write_overflow(event, &common.session_id, &merged) {
-        Some(p) => format!("<hook output truncated; full content at {}>", p.display()),
-        None => "<hook output truncated>".to_string(),
+        Some(p) => format!("\n\n[…truncated; full hook output at {}]", p.display()),
+        None => "\n\n[…truncated]".to_string(),
     };
-    outcome.additional_context = vec![pointer];
+    // Keep as much of the head as fits under the cap once the pointer is added.
+    let budget = audit::MAX_INJECT_CHARS.saturating_sub(pointer.chars().count());
+    let head: String = merged.chars().take(budget).collect();
+    outcome.additional_context = vec![format!("{head}{pointer}")];
     app_warn!(
         "hooks",
         "dispatch",
-        "event={} injected context exceeded {} chars; spilled to overflow file",
+        "event={} injected context exceeded {} chars; kept head + spilled rest to overflow file",
         event.as_str(),
         audit::MAX_INJECT_CHARS
     );
@@ -203,7 +246,7 @@ fn apply_overflow(outcome: &mut HookOutcome, event: HookEvent, common: &CommonHo
 /// task — runs to completion instead of being killed when a throwaway runtime
 /// drops. `None` only if runtime construction fails (then fire-and-forget is a
 /// no-op rather than a panic).
-fn fire_and_forget_runtime() -> Option<&'static tokio::runtime::Runtime> {
+pub(crate) fn fire_and_forget_runtime() -> Option<&'static tokio::runtime::Runtime> {
     static FIRE_RT: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
     FIRE_RT
         .get_or_init(|| {
@@ -463,6 +506,21 @@ mod tests {
         let out =
             HookDispatcher::dispatch_with(&reg, HookEvent::PreToolUse, pre_tool_use("Bash")).await;
         assert!(matches!(out.decision, HookDecision::Block { .. }));
+    }
+
+    #[tokio::test]
+    async fn block_on_observation_event_is_downgraded() {
+        // A PostToolUse hook (observation) exiting 2 would aggregate to Block;
+        // dispatch must downgrade it to a non-blocking Allow.
+        let reg = registry_from(
+            r#"{"PostToolUse":[{"matcher":"Bash","hooks":[
+                {"type":"command","shell":"bash","command":"echo nope 1>&2; exit 2"}
+            ]}]}"#,
+        );
+        let out =
+            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Bash")).await;
+        assert_eq!(out.decision, HookDecision::Allow);
+        assert!(out.continue_execution);
     }
 
     #[tokio::test]
