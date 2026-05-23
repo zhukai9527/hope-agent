@@ -13,6 +13,7 @@ use super::env::HookEnv;
 use super::types::HookInput;
 
 pub mod command;
+pub mod http;
 
 /// Raw output of running one handler, before protocol parsing.
 #[derive(Debug, Clone)]

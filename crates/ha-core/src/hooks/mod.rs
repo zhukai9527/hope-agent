@@ -174,14 +174,14 @@ fn build_handler(cfg: &HookHandlerConfig) -> Option<Box<dyn HookHandler>> {
         HookHandlerConfig::Command(c) => {
             Some(Box::new(runner::command::CommandHandler::new(c.clone())))
         }
-        HookHandlerConfig::Http(_)
-        | HookHandlerConfig::McpTool(_)
+        HookHandlerConfig::Http(c) => Some(Box::new(runner::http::HttpHandler::new(c.clone()))),
+        HookHandlerConfig::McpTool(_)
         | HookHandlerConfig::Prompt(_)
         | HookHandlerConfig::Agent(_) => {
             app_debug!(
                 "hooks",
                 "dispatch",
-                "skipping non-command handler (not supported this phase)"
+                "skipping mcp_tool/prompt/agent handler (not supported yet)"
             );
             None
         }
