@@ -386,6 +386,28 @@ pub async fn dispatch_session_end(session_id: &str, source: &str) {
     HookDispatcher::dispatch(HookEvent::SessionEnd, input).await;
 }
 
+/// Fire a `SubagentStart` observation hook (sub-agent spawned). `session_id` is
+/// the parent session; `subagent_id` is the spawned agent's id (matcher target).
+pub fn fire_subagent_start(session_id: &str, subagent_id: &str, run_id: &str) {
+    let input = HookInput::SubagentStart {
+        common: observation_common("SubagentStart", session_id),
+        subagent_id: subagent_id.to_string(),
+        run_id: run_id.to_string(),
+    };
+    fire_and_forget(HookEvent::SubagentStart, input);
+}
+
+/// Fire a `SubagentStop` observation hook (sub-agent reached a terminal state).
+pub fn fire_subagent_stop(session_id: &str, subagent_id: &str, run_id: &str, status: &str) {
+    let input = HookInput::SubagentStop {
+        common: observation_common("SubagentStop", session_id),
+        subagent_id: subagent_id.to_string(),
+        run_id: run_id.to_string(),
+        status: status.to_string(),
+    };
+    fire_and_forget(HookEvent::SubagentStop, input);
+}
+
 /// Initialize the hooks subsystem during `ha-core` startup. Best-effort: never
 /// panics — hooks are an additive capability.
 pub fn init() {

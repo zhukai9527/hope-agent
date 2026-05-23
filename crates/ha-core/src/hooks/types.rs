@@ -270,6 +270,21 @@ pub enum HookInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
     },
+    SubagentStart {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        /// The spawned sub-agent's id (also the matcher target).
+        subagent_id: String,
+        run_id: String,
+    },
+    SubagentStop {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        subagent_id: String,
+        run_id: String,
+        /// Terminal status: `completed` / `failed` / `cancelled` / …
+        status: String,
+    },
 }
 
 impl HookInput {
@@ -284,7 +299,9 @@ impl HookInput {
             | Self::PostToolUseFailure { common, .. }
             | Self::PreCompact { common, .. }
             | Self::PostCompact { common, .. }
-            | Self::Notification { common, .. } => common,
+            | Self::Notification { common, .. }
+            | Self::SubagentStart { common, .. }
+            | Self::SubagentStop { common, .. } => common,
         }
     }
 
@@ -304,6 +321,9 @@ impl HookInput {
             Self::Notification {
                 notification_type, ..
             } => Some(notification_type.as_str()),
+            Self::SubagentStart { subagent_id, .. } | Self::SubagentStop { subagent_id, .. } => {
+                Some(subagent_id.as_str())
+            }
             Self::UserPromptSubmit { .. } => None,
         }
     }

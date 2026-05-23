@@ -103,6 +103,10 @@ pub async fn spawn_subagent(
         skill_name: params.skill_name.clone(),
     });
 
+    // SubagentStart observation hook (sub-agent spawned). Parent session is the
+    // hook session; the spawned agent id is the matcher target.
+    crate::hooks::fire_subagent_start(&params.parent_session_id, &params.agent_id, &run_id);
+
     // 8. Spawn async task
     let run_id_clone = run_id.clone();
     let db = session_db.clone();
@@ -251,6 +255,15 @@ pub async fn spawn_subagent(
         // Emit completion event — guaranteed to fire
         let result_preview = result_text.as_ref().map(|r| truncate_str(r, 200));
         // Clone values needed after the move into SubagentEvent
+        // SubagentStop observation hook (terminal state) — fired before the
+        // values are moved into the completion event below.
+        crate::hooks::fire_subagent_stop(
+            &parent_session_id,
+            &agent_id,
+            &run_id_clone,
+            status.as_str(),
+        );
+
         let status_for_inject = status.clone();
         let agent_id_for_inject = agent_id.clone();
         let result_text_for_inject = result_text.clone();
