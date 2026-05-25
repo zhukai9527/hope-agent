@@ -114,6 +114,8 @@ impl HookEvent {
                 | Self::ConfigChange
                 | Self::CwdChanged
                 | Self::FileChanged
+                | Self::PermissionRequest
+                | Self::PermissionDenied
         )
     }
 }
@@ -367,6 +369,21 @@ pub enum HookInput {
         /// `create` / `edit` / `delete` / `patch`.
         action: String,
     },
+    PermissionRequest {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        /// The command / tool being approved (matcher target). For `exec` this
+        /// is the shell command; for the tool gate, a `tool: <name> <args>` desc.
+        command: String,
+    },
+    PermissionDenied {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        /// The command / tool that was denied (matcher target).
+        command: String,
+        /// Why: `user_declined` (the user said no) / `policy` (engine auto-deny).
+        reason: String,
+    },
 }
 
 impl HookInput {
@@ -391,7 +408,9 @@ impl HookInput {
             | Self::TaskCompleted { common, .. }
             | Self::ConfigChange { common, .. }
             | Self::CwdChanged { common, .. }
-            | Self::FileChanged { common, .. } => common,
+            | Self::FileChanged { common, .. }
+            | Self::PermissionRequest { common, .. }
+            | Self::PermissionDenied { common, .. } => common,
         }
     }
 
@@ -420,6 +439,10 @@ impl HookInput {
             Self::ConfigChange { category, .. } => Some(category.as_str()),
             // FileChanged matches on the file path (regex matcher → file pattern).
             Self::FileChanged { path, .. } => Some(path.as_str()),
+            // Permission events match on the command / tool being gated.
+            Self::PermissionRequest { command, .. } | Self::PermissionDenied { command, .. } => {
+                Some(command.as_str())
+            }
             // No matcher target → only wildcard matchers fire. Task content is
             // freeform, so Task events match wildcard only.
             Self::UserPromptSubmit { .. }

@@ -563,6 +563,33 @@ pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
     fire_and_forget(HookEvent::FileChanged, input);
 }
 
+/// Fire a `PermissionRequest` observation hook (a tool approval prompt was
+/// raised). `command` is the matcher target (the command / tool being gated).
+pub fn fire_permission_request(session_id: Option<&str>, command: &str) {
+    if !registry::global().has_handlers_for(HookEvent::PermissionRequest) {
+        return;
+    }
+    let input = HookInput::PermissionRequest {
+        common: observation_common("PermissionRequest", session_id.unwrap_or("")),
+        command: command.to_string(),
+    };
+    fire_and_forget(HookEvent::PermissionRequest, input);
+}
+
+/// Fire a `PermissionDenied` observation hook (a tool was denied). `reason` is
+/// `user_declined` (the user said no to a prompt) or `policy` (engine auto-deny).
+pub fn fire_permission_denied(session_id: Option<&str>, command: &str, reason: &str) {
+    if !registry::global().has_handlers_for(HookEvent::PermissionDenied) {
+        return;
+    }
+    let input = HookInput::PermissionDenied {
+        common: observation_common("PermissionDenied", session_id.unwrap_or("")),
+        command: command.to_string(),
+        reason: reason.to_string(),
+    };
+    fire_and_forget(HookEvent::PermissionDenied, input);
+}
+
 /// Initialize the hooks subsystem during `ha-core` startup. Best-effort: never
 /// panics — hooks are an additive capability.
 pub fn init() {

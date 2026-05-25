@@ -835,6 +835,10 @@ pub async fn execute_tool_with_context(
                 }
             }
             crate::permission::Decision::Deny { reason } => {
+                // PermissionDenied hook (observation): engine policy auto-denied
+                // this tool (no user prompt — that decline path fires from the
+                // approval layer instead).
+                crate::hooks::fire_permission_denied(ctx.session_id.as_deref(), name, "policy");
                 return Err(super::rejection::ToolRejection::denied_by_policy(
                     name, reason,
                 ));
