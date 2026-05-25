@@ -342,11 +342,43 @@ impl AcpAgent {
             Ok(rt) => match rt.block_on(crate::agent::preflight::user_prompt_preflight(
                 crate::agent::preflight::PreflightArgs {
                     session_id: &session_id,
+                    agent_id: None,
                     raw_prompt: &text,
                 },
             )) {
                 crate::agent::preflight::PreflightOutcome::Proceed { effective_prompt } => {
                     effective_prompt
+                }
+                crate::agent::preflight::PreflightOutcome::Block { reason } => {
+                    // A UserPromptSubmit hook blocked the prompt: record a
+                    // UI-only event marker (excluded from LLM context), surface
+                    // the reason as an agent message, and return without
+                    // running a turn.
+                    let notice = format!("🚫 {reason}");
+                    let _ = self
+                        .session_db
+                        .append_message(&session_id, &session::NewMessage::event(&notice));
+                    let update = serde_json::json!({
+                        "sessionId": session_id,
+                        "sessionUpdate": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": { "type": "text", "text": notice }
+                        },
+                        "final": true,
+                    });
+                    let _ = self
+                        .transport
+                        .write_notification(&JsonRpcNotification::new("session/update", update));
+                    if let Some(s) = self.sessions.get_mut(&session_id) {
+                        s.active_prompt = false;
+                    }
+                    let response = PromptResponse {
+                        stop_reason: "refusal".to_string(),
+                    };
+                    return JsonRpcResponse::success(
+                        id.clone(),
+                        serde_json::to_value(&response).unwrap(),
+                    );
                 }
             },
             Err(_) => text.clone(),
@@ -701,7 +733,7 @@ impl AcpAgent {
         // only releases once); the resulting additionalContext is re-applied to
         // each rebuilt agent so it survives retries, mirroring how the engine
         // threads it through `extra_system_context`.
-        let session_start_ctx = rt.block_on(crate::hooks::fire_session_start_observation(
+        let mut session_start_ctx = rt.block_on(crate::hooks::fire_session_start_observation(
             &session_id_owned,
             &agent_id,
             model_chain
@@ -709,6 +741,16 @@ impl AcpAgent {
                 .map(|m| m.model_id.as_str())
                 .unwrap_or_default(),
         ));
+        // Fold in any UserPromptSubmit hook context the preflight chokepoint
+        // stashed for this turn, so the ACP entry injects it identically to
+        // `run_chat_engine`. Drained once; re-applied to each rebuilt agent
+        // below alongside the SessionStart context.
+        if let Some(extra) = crate::hooks::take_user_prompt_context(&session_id_owned) {
+            session_start_ctx = Some(match session_start_ctx.take() {
+                Some(e) => format!("{e}\n\n{extra}"),
+                None => extra,
+            });
+        }
 
         for model_ref in &model_chain {
             let prov = match provider::find_provider(&store.providers, &model_ref.provider_id) {

@@ -371,6 +371,18 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         });
     }
 
+    // UserPromptSubmit hook context: the preflight chokepoint stashed any
+    // `additionalContext` from the UserPromptSubmit hook keyed by session;
+    // drain it here so it rides this turn's system prompt next to SessionStart
+    // (and survives failover for the same reason — it lives in this run-local).
+    // Drained exactly once per turn.
+    if let Some(extra) = crate::hooks::take_user_prompt_context(&session_id) {
+        extra_system_context = Some(match extra_system_context.take() {
+            Some(e) => format!("{e}\n\n{extra}"),
+            None => extra,
+        });
+    }
+
     // IM-mirror prefers the friendly `display_text` (e.g. `Using skill **X**...`
     // rendered for `/skill` invocations) so attached IM chats see what the
     // desktop user saw, not the raw `[SYSTEM:...]` prompt fed to the model.

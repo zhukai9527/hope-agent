@@ -74,6 +74,47 @@ pub fn claim_compaction_hooks(key: &str) -> bool {
     true
 }
 
+/// Pending `UserPromptSubmit` `additionalContext` per session. The preflight
+/// chokepoint sets this after the hook runs; the turn drains it once at start
+/// and folds it into `extra_system_context` next to `SessionStart`. Keyed by
+/// session so concurrent sessions never cross-contaminate, and preflight always
+/// overwrites/clears its session's slot before the turn runs — so a turn that
+/// never reaches the engine (rare persist failure between preflight and the
+/// engine) cannot leak stale context into the next turn.
+static PENDING_PROMPT_CONTEXT: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+/// Set (non-empty `Some`) or clear (`None` / empty) the pending
+/// `UserPromptSubmit` context for `session_id`. Called by the preflight
+/// chokepoint after the hook runs, exactly once per turn.
+pub fn set_user_prompt_context(session_id: &str, ctx: Option<String>) {
+    let map = PENDING_PROMPT_CONTEXT.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    match ctx {
+        Some(c) if !c.is_empty() => {
+            // Bound the map so a pathological never-drained case can't grow it
+            // unboundedly (the normal path clears each entry as its turn drains
+            // it). On overflow, clearing only loses pending context for a few
+            // in-flight turns — harmless versus the leak.
+            const CAP: usize = 4096;
+            if guard.len() >= CAP {
+                guard.clear();
+            }
+            guard.insert(session_id.to_string(), c);
+        }
+        _ => {
+            guard.remove(session_id);
+        }
+    }
+}
+
+/// Take (and clear) the pending `UserPromptSubmit` context for `session_id`.
+/// Called once at the start of the turn the prompt belongs to.
+pub fn take_user_prompt_context(session_id: &str) -> Option<String> {
+    let map = PENDING_PROMPT_CONTEXT.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    guard.remove(session_id)
+}
+
 pub use config::{
     AgentHookConfig, CommandHookConfig, HookHandlerConfig, HookMatcherGroup, HookShell,
     HooksConfig, HttpHookConfig, McpToolHookConfig, PromptHookConfig,
@@ -321,6 +362,28 @@ pub fn fire_notification(session_id: &str, notification_type: &str, message: &st
     fire_and_forget(HookEvent::Notification, input);
 }
 
+/// Fire the `UserPromptSubmit` hook (blocking) and hand back the full outcome
+/// so the preflight chokepoint can map it to block / proceed and stash any
+/// injected context for the turn. Returns `noop()` early when no hook is
+/// configured. `prompt` is the raw user text about to be persisted; `agent_id`
+/// is the agent that will run the turn (lets scripts gate per agent).
+pub async fn fire_user_prompt_submit(
+    session_id: &str,
+    agent_id: Option<&str>,
+    prompt: &str,
+) -> HookOutcome {
+    if !registry::global().has_handlers_for(HookEvent::UserPromptSubmit) {
+        return HookOutcome::noop();
+    }
+    let mut common = observation_common("UserPromptSubmit", session_id);
+    common.agent_id = agent_id.map(|s| s.to_string());
+    let input = HookInput::UserPromptSubmit {
+        common,
+        prompt: prompt.to_string(),
+    };
+    HookDispatcher::dispatch(HookEvent::UserPromptSubmit, input).await
+}
+
 /// Fire the `SessionStart` observation hook (startup/resume) and return any
 /// merged `additionalContext` to fold into this turn's system prompt. Fires
 /// once per session per process (`claim_session_start`); later turns return
@@ -440,6 +503,24 @@ mod guard_tests {
         // A different session is independent.
         assert!(claim_compaction_hooks("guard-test-compact-B"));
     }
+
+    #[test]
+    fn pending_prompt_context_set_take_and_clear() {
+        // Set then take → returns once, cleared after.
+        set_user_prompt_context("guard-test-ups-A", Some("CTX".into()));
+        assert_eq!(
+            take_user_prompt_context("guard-test-ups-A").as_deref(),
+            Some("CTX")
+        );
+        assert!(take_user_prompt_context("guard-test-ups-A").is_none());
+        // Explicit None clears a previously-set slot.
+        set_user_prompt_context("guard-test-ups-B", Some("X".into()));
+        set_user_prompt_context("guard-test-ups-B", None);
+        assert!(take_user_prompt_context("guard-test-ups-B").is_none());
+        // Empty string is treated as "no context" → clears.
+        set_user_prompt_context("guard-test-ups-C", Some(String::new()));
+        assert!(take_user_prompt_context("guard-test-ups-C").is_none());
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -476,6 +557,13 @@ mod tests {
             tool_name: tool.into(),
             tool_input: serde_json::json!({}),
             tool_use_id: "c1".into(),
+        }
+    }
+
+    fn user_prompt_submit(prompt: &str) -> HookInput {
+        HookInput::UserPromptSubmit {
+            common: common("UserPromptSubmit"),
+            prompt: prompt.into(),
         }
     }
 
@@ -544,6 +632,47 @@ mod tests {
                 .await;
         assert_eq!(out.decision, HookDecision::Allow);
         assert!(out.continue_execution);
+    }
+
+    #[tokio::test]
+    async fn user_prompt_submit_block_is_not_downgraded() {
+        // UserPromptSubmit is a blocking event (NOT observation-only), so a
+        // `decision:block` must survive aggregation rather than be neutralized.
+        let reg = registry_from(
+            r#"{"UserPromptSubmit":[{"hooks":[
+                {"type":"command","shell":"bash","command":"printf '%s' '{\"decision\":\"block\",\"reason\":\"nope\"}'"}
+            ]}]}"#,
+        );
+        let out = HookDispatcher::dispatch_with(
+            &reg,
+            HookEvent::UserPromptSubmit,
+            user_prompt_submit("hi"),
+        )
+        .await;
+        assert_eq!(
+            out.decision,
+            HookDecision::Block {
+                reason: "nope".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn user_prompt_submit_injects_context() {
+        // A non-blocking UserPromptSubmit hook contributes additionalContext.
+        let reg = registry_from(
+            r#"{"UserPromptSubmit":[{"hooks":[
+                {"type":"command","shell":"bash","command":"printf '%s' '{\"hookSpecificOutput\":{\"additionalContext\":\"CTX\"}}'"}
+            ]}]}"#,
+        );
+        let out = HookDispatcher::dispatch_with(
+            &reg,
+            HookEvent::UserPromptSubmit,
+            user_prompt_submit("hi"),
+        )
+        .await;
+        assert_eq!(out.merged_additional_context().as_deref(), Some("CTX"));
+        assert_eq!(out.decision, HookDecision::Allow);
     }
 
     #[tokio::test]

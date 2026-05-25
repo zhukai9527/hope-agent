@@ -346,6 +346,7 @@ pub async fn chat(
     let effective_prompt = match ha_core::agent::preflight::user_prompt_preflight(
         ha_core::agent::preflight::PreflightArgs {
             session_id: &sid,
+            agent_id: Some(current_agent_id.as_str()),
             raw_prompt,
         },
     )
@@ -353,6 +354,17 @@ pub async fn chat(
     {
         ha_core::agent::preflight::PreflightOutcome::Proceed { effective_prompt } => {
             effective_prompt
+        }
+        ha_core::agent::preflight::PreflightOutcome::Block { reason } => {
+            // A UserPromptSubmit hook blocked the prompt: record a UI-only event
+            // marker (visible in history but excluded from LLM context) and
+            // surface it. The prompt is neither persisted as a user message nor
+            // run as a turn.
+            let notice = format!("🚫 {reason}");
+            let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
+            let _ = on_event
+                .send(serde_json::json!({ "type": "text", "text": notice }).to_string());
+            return Ok(notice);
         }
     };
 
