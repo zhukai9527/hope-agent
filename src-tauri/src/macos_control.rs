@@ -389,6 +389,13 @@ mod imp {
         window_id: Option<String>,
     }
 
+    struct WebAreaCandidate {
+        element: CfOwned,
+        area: f64,
+        focused: bool,
+        has_text_input: bool,
+    }
+
     struct CapturedDesktopFrame {
         jpeg: Vec<u8>,
         width_px: u32,
@@ -421,6 +428,37 @@ mod imp {
             Err(error) => snapshot.warnings.push(error),
         }
 
+        populate_ax_snapshot_tree(app_ref, &request, &mut snapshot);
+        maybe_focus_web_area_and_repopulate(app_ref, &request, &mut snapshot);
+        if snapshot.truncated {
+            snapshot.warnings.push(
+                "AX snapshot was truncated; increase maxElements/maxDepth for more context."
+                    .to_string(),
+            );
+        }
+        if request.include_screenshot {
+            match capture_desktop_frame_with_id(&snapshot, &request) {
+                Ok((frame, screenshot)) => {
+                    snapshot.screenshot = Some(screenshot);
+                    ha_core::mac_control::emit_frame(&frame);
+                }
+                Err(error) => snapshot.warnings.push(format!(
+                    "Screenshot capture failed; returning AX-only snapshot: {error}"
+                )),
+            }
+        }
+        Ok(snapshot)
+    }
+
+    fn populate_ax_snapshot_tree(
+        app_ref: AXUIElementRef,
+        request: &MacControlSnapshotRequest,
+        snapshot: &mut MacControlSnapshot,
+    ) {
+        snapshot.windows.clear();
+        snapshot.elements.clear();
+        snapshot.truncated = false;
+
         let mut state = CaptureState {
             max_elements: request.max_elements,
             max_depth: request.max_depth,
@@ -452,24 +490,120 @@ mod imp {
 
         snapshot.elements = state.elements;
         snapshot.truncated = state.truncated;
-        if snapshot.truncated {
-            snapshot.warnings.push(
-                "AX snapshot was truncated; increase maxElements/maxDepth for more context."
-                    .to_string(),
-            );
+    }
+
+    fn maybe_focus_web_area_and_repopulate(
+        app_ref: AXUIElementRef,
+        request: &MacControlSnapshotRequest,
+        snapshot: &mut MacControlSnapshot,
+    ) {
+        if !snapshot.elements.iter().any(element_role_is_web_area) {
+            return;
         }
-        if request.include_screenshot {
-            match capture_desktop_frame_with_id(&snapshot, &request) {
-                Ok((frame, screenshot)) => {
-                    snapshot.screenshot = Some(screenshot);
-                    ha_core::mac_control::emit_frame(&frame);
-                }
-                Err(error) => snapshot.warnings.push(format!(
-                    "Screenshot capture failed; returning AX-only snapshot: {error}"
-                )),
+        if snapshot.elements.iter().any(focused_text_input_element) {
+            return;
+        }
+        let Some(candidate) = dominant_web_area(app_ref, request.max_depth) else {
+            return;
+        };
+        if candidate.focused || candidate.has_text_input {
+            return;
+        }
+        match set_ax_bool(
+            candidate.element.as_ptr() as AXUIElementRef,
+            "AXFocused",
+            true,
+        ) {
+            Ok(()) => {
+                thread::sleep(Duration::from_millis(80));
+                populate_ax_snapshot_tree(app_ref, request, snapshot);
+                snapshot.warnings.push(
+                    "Focused dominant AXWebArea and re-traversed Accessibility tree because web content did not expose text inputs."
+                        .to_string(),
+                );
+            }
+            Err(error) => snapshot.warnings.push(format!(
+                "AXWebArea focus fallback was skipped because focusing failed: {error}"
+            )),
+        }
+    }
+
+    fn dominant_web_area(app_ref: AXUIElementRef, max_depth: usize) -> Option<WebAreaCandidate> {
+        let mut best = None;
+        let search_depth = max_depth.max(8);
+        if let Some(windows) = copy_attribute(app_ref, "AXWindows") {
+            for window_ref in cf_array_values(windows.as_ptr()) {
+                collect_dominant_web_area(window_ref as AXUIElementRef, 0, search_depth, &mut best);
             }
         }
-        Ok(snapshot)
+        if best.is_none() {
+            collect_dominant_web_area(app_ref, 0, search_depth, &mut best);
+        }
+        best
+    }
+
+    fn collect_dominant_web_area(
+        element: AXUIElementRef,
+        depth: usize,
+        max_depth: usize,
+        best: &mut Option<WebAreaCandidate>,
+    ) {
+        let summary = element_summary(element, None, 0);
+        if element_role_is_web_area(&summary) {
+            let area = summary
+                .bounds_points
+                .map(|bounds| bounds.width.max(0.0) * bounds.height.max(0.0))
+                .unwrap_or(0.0);
+            let score = area + if summary.focused { 1_000_000.0 } else { 0.0 };
+            let best_score = best
+                .as_ref()
+                .map(|candidate| candidate.area + if candidate.focused { 1_000_000.0 } else { 0.0 })
+                .unwrap_or(-1.0);
+            if score > best_score {
+                if let Some(retained) = CfOwned::new(unsafe { CFRetain(element as CFTypeRef) }) {
+                    *best = Some(WebAreaCandidate {
+                        element: retained,
+                        area,
+                        focused: summary.focused,
+                        has_text_input: web_area_has_text_input(
+                            element,
+                            0,
+                            max_depth.saturating_sub(depth),
+                        ),
+                    });
+                }
+            }
+        }
+        if depth >= max_depth {
+            return;
+        }
+        let Some(children) = copy_attribute(element, "AXChildren")
+            .or_else(|| copy_attribute(element, "AXVisibleChildren"))
+        else {
+            return;
+        };
+        for child_ref in cf_array_values(children.as_ptr()) {
+            collect_dominant_web_area(child_ref as AXUIElementRef, depth + 1, max_depth, best);
+        }
+    }
+
+    fn web_area_has_text_input(element: AXUIElementRef, depth: usize, max_depth: usize) -> bool {
+        if depth > 0 && is_text_input_element(&element_summary(element, None, 0)) {
+            return true;
+        }
+        if depth >= max_depth {
+            return false;
+        }
+        let Some(children) = copy_attribute(element, "AXChildren")
+            .or_else(|| copy_attribute(element, "AXVisibleChildren"))
+        else {
+            return false;
+        };
+        cf_array_values(children.as_ptr())
+            .into_iter()
+            .any(|child_ref| {
+                web_area_has_text_input(child_ref as AXUIElementRef, depth + 1, max_depth)
+            })
     }
 
     fn handle_apps(request: MacControlAppsRequest) -> Result<MacControlAppsResult, String> {
@@ -4470,6 +4604,17 @@ mod imp {
             || role.contains("combobox")
     }
 
+    fn element_role_is_web_area(element: &MacControlElementSummary) -> bool {
+        element
+            .role
+            .as_deref()
+            .is_some_and(|role| role.eq_ignore_ascii_case("AXWebArea"))
+    }
+
+    fn focused_text_input_element(element: &MacControlElementSummary) -> bool {
+        element.focused && is_text_input_element(element)
+    }
+
     fn resolve_element_by_summary(
         expected: &MacControlElementSummary,
         max_elements: usize,
@@ -6598,7 +6743,7 @@ mod imp {
             .to_ascii_lowercase();
         let interesting_role = [
             "button", "checkbox", "combobox", "dialog", "link", "menu", "outline", "pop", "radio",
-            "row", "search", "sheet", "slider", "tab", "text",
+            "row", "search", "sheet", "slider", "tab", "text", "webarea",
         ]
         .iter()
         .any(|needle| role.contains(needle));

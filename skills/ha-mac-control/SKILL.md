@@ -81,6 +81,7 @@ wait or snapshot                       # verify the expected change
 
 - Use `elements.find op="find"` before clicking or typing into ambiguous UI. Useful examples: `target.role="AXButton"`, `target.text="Save"`, `target.windowTitle="Untitled"`.
 - `elements.find` returns `totalMatches` plus candidate `score`, `reasons`, `element`, and `window`. Prefer high-score candidates whose reasons include the user's intended text/role/window.
+- Browser/WebView snapshots may focus the dominant `AXWebArea` and re-traverse when no text input is exposed. If a result warning mentions this fallback, use the refreshed candidates first; if it still exposes only web/canvas content, switch to `visual.observe annotate=true`, OCR, or `visual.point`.
 - Use `act.dry_run` when the next mutation should use the exact same target resolver as `act.click` / `act.set_value`, but you want to verify the resolved element first. It returns the resolved `target` without changing the UI; call `snapshot` or `elements.find` when full tree context is needed.
 - Use `act.perform_action` only when the target element advertises the intended AX action in `actions[]`. It requires `target` and `axAction`, and supports only the built-in whitelist such as `AXPress`, `AXShowMenu`, `AXIncrement`, and `AXDecrement`.
 - `act.click` is for AX targets only. It requires `target` and should not consume raw `x/y`.

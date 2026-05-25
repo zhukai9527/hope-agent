@@ -496,6 +496,7 @@ OCR 规则：
 - 对多个相似目标，执行层必须返回歧义错误或选择唯一最高置信候选，不应静默随机选择。
 - AX 元素 mutation 会收集候选并按聚焦、可用、可执行、可见 bounds、精确文本等信号打分；若最高分并列且没有精确 `elementId`，直接拒绝执行，并提示模型用 fresh `snapshot` 后补充 `elementId`、`target.windowTitle`、`target.role` 或更具体的 `target.text`。
 - `elements.find` 使用同一套 AX snapshot 与元素匹配规则，只读返回 `totalMatches`、候选 `element`、所在 `window`、`score` 和 `reasons`。模型应先用它确认候选，再把选中的 `element.id` 传给 `act.*`。
+- 浏览器或复杂 WebView 的 AX 树若包含 `AXWebArea` 但没有暴露文本输入控件，snapshot 采集会 best-effort 聚焦面积最大的 `AXWebArea` 后重遍历一次，并在 `warnings[]` 记录该 fallback；`snapshot`、`visual.observe`、`elements.find` 和 mutation 前 target 解析共享这一路径。
 - `act.dry_run` 使用和 `act.click` / `act.perform_action` / `act.set_value` 相同的目标解析、前台 App 校验、歧义拒绝和 stale 检查，但不触发 AX action、CGEvent、键盘、剪贴板或窗口变化；结果 `snapshot=null`，避免把完整 AX 树塞回上下文。
 - `act.perform_action` 只执行白名单 AX action，并要求目标元素 `actions[]` 显式包含该 action；优先通过 `elements.find` 或 `snapshot` 查看候选支持的 actions 后再调用。
 - mutation 前会刷新 snapshot 并按 target 重新解析，降低 stale element 引用风险。
@@ -637,6 +638,7 @@ status -> snapshot/elements.find/wait -> apps/windows/act/menu/clipboard/dialog 
 - 不要一开始猜坐标。
 - 有副作用操作前尽量先确认前台 App 和目标窗口。
 - 相似按钮或输入框较多时先用 `elements.find` 选候选，再用 `elementId` 执行。
+- 浏览器/WebView 返回 `AXWebArea` fallback warning 时，优先重新查看 `elements.find` 或 `snapshot` 的新候选；如果仍没有文本输入控件，用 `visual.observe annotate=true` / OCR / `visual.point` 走视觉定位。
 - 对高不确定性的点击/设置值，先用 `act.dry_run` 验证目标解析结果。
 - 视觉定位优先走 `visual.observe annotate=true -> uiMap elementId`；没有清晰 AX id 时走 `visual.ocr/find_text` 或读取图片选 image pixel -> `visual.point` -> `act.click_point` -> verify。不要把截图像素坐标直接传给 `act.click_point`。
 - App 名称找不到时先用 `apps.search` / `apps.installed` 查候选。

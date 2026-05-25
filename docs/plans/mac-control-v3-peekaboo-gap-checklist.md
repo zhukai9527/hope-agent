@@ -28,9 +28,10 @@
   - Hope Agent 已完成：`act.move_cursor`、`act.press`、`act.swipe`、`act.drag`/`act.move_cursor`/`act.swipe` 的 `durationMs` + `steps` + `motionProfile=linear|human` 轨迹控制，drag/swipe 坐标或 AX 元素双端点、拖拽期间 `modifiers`，以及 `act.type` 的 `typingProfile` / `typingDelayMs` 逐字符 CGEvent 输入。
   - 已知边界：默认 `act.type` 仍保持 `AXSetValue` 语义，只有显式传 typing profile/delay 才走真实键盘事件；swipe 是鼠标拖拽语义，不模拟触控板惯性手势。
 
-- [ ] 6. Web 内容聚焦 fallback
+- [x] 6. Web 内容聚焦 fallback
   - Peekaboo `see` 对浏览器页面没有暴露 text field 时，会尝试聚焦 dominant `AXWebArea` 后重新遍历。
-  - Hope Agent 现状：还没有面向浏览器/复杂 WebView 的自动修复逻辑。
+  - Hope Agent 已完成：snapshot/visual/elements/act target 解析共享 AX 采集路径；当树里有 `AXWebArea` 但没有文本输入控件时，会 best-effort 聚焦面积最大的 WebArea 后重新遍历，并在 `warnings[]` 记录 fallback。
+  - 已知边界：只使用 Accessibility focus，不做坐标点击 WebArea；如果应用不允许 `AXFocused`，会保留 warning 并让模型回退到视觉/OCR。
 
 - [ ] 7. 菜单栏 popover 专项识别
   - Peekaboo 对 menubar popover 有专门路径：窗口列表 + OCR + app hint。
