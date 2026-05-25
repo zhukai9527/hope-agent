@@ -585,27 +585,27 @@ enum PreToolGate {
     /// rescue a hook deny; it's a top-level block).
     Deny(String),
     /// Proceed. `updated_input` patches the tool args (the engine then re-checks
-    /// the patched values, so an arg-rewrite can't dodge a path/command gate);
-    /// `skip_user_prompt` is set only for an explicit `permissionDecision:"allow"`
-    /// and downgrades an engine `Ask` to allow — it never overrides a hard Deny.
+    /// the patched values, so an arg-rewrite can't dodge a path/command gate).
+    /// `skip_user_prompt` (explicit `permissionDecision:"allow"`) downgrades a
+    /// *soft* engine `Ask` to allow — never a hard Deny, and never a strict
+    /// prompt (protected path / dangerous command / Plan ask). `force_prompt`
+    /// (`ask`/`defer`) forces the approval prompt even when the engine would
+    /// allow, so a hook's request for confirmation can't silently fail open.
     Proceed {
         updated_input: Option<Value>,
         skip_user_prompt: bool,
+        force_prompt: bool,
     },
 }
 
 /// Run the `PreToolUse` hook for this call. No-op fast path when no hook listens.
-///
-/// Phase note: a hook `ask`/`defer` does not yet *escalate* an engine `Allow`
-/// into a prompt (that needs a new `AskReason` + its i18n reason-banner, landing
-/// with the GUI phase); the safe directions — deny, arg-rewrite, and
-/// skip-prompt-on-explicit-allow — are honored here.
 async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext) -> PreToolGate {
     use crate::hooks::{HookDecision, HookDispatcher, HookEvent, HookInput};
     if !crate::hooks::registry::global().has_handlers_for(HookEvent::PreToolUse) {
         return PreToolGate::Proceed {
             updated_input: None,
             skip_user_prompt: false,
+            force_prompt: false,
         };
     }
     let input = HookInput::PreToolUse {
@@ -624,12 +624,109 @@ async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext)
         HookDecision::Allow => PreToolGate::Proceed {
             updated_input: outcome.updated_input,
             skip_user_prompt: outcome.permission_allow,
+            force_prompt: false,
         },
-        // Ask / Defer: a hook asked for the prompt — never skip it.
+        // Ask / Defer: the hook wants human confirmation — force the prompt.
         HookDecision::Ask | HookDecision::Defer => PreToolGate::Proceed {
             updated_input: outcome.updated_input,
             skip_user_prompt: false,
+            force_prompt: true,
         },
+    }
+}
+
+/// Show the user approval prompt and map the response to a result. `Ok(())`
+/// means proceed (approved, or timed-out-with-`proceed` policy); `Err` blocks
+/// the call. `reason_payload` drives the dialog's reason banner (`None` =
+/// no banner, used for a hook-forced prompt); `allow_always_forbidden` reflects
+/// whether the reason bars an "Allow Always".
+async fn run_tool_approval(
+    name: &str,
+    args: &Value,
+    ctx: &ToolExecContext,
+    reason_payload: Option<approval::ApprovalReasonPayload>,
+    allow_always_forbidden: bool,
+) -> anyhow::Result<()> {
+    let desc = format!("tool: {} {}", name, {
+        let s = args.to_string();
+        if s.len() > 200 {
+            format!("{}...", crate::truncate_utf8(&s, 200))
+        } else {
+            s
+        }
+    });
+    let cwd = ctx.default_path();
+    match approval::check_and_request_approval(
+        &desc,
+        cwd,
+        ctx.session_id.as_deref(),
+        reason_payload,
+    )
+    .await
+    {
+        Ok(approval::ApprovalResponse::AllowOnce) => {
+            app_info!("tool", "approval", "Tool '{}' approved (once)", name);
+            Ok(())
+        }
+        Ok(approval::ApprovalResponse::AllowAlways) => {
+            if allow_always_forbidden {
+                app_info!(
+                    "tool",
+                    "approval",
+                    "Tool '{}' approved once (AllowAlways unavailable for this reason)",
+                    name
+                );
+            } else {
+                // Multi-scope AllowAlways persistence is wired in by the
+                // approval dialog upgrade; `exec` still uses the legacy
+                // command-prefix store inside `tool_exec`.
+                app_info!("tool", "approval", "Tool '{}' approved (always)", name);
+            }
+            Ok(())
+        }
+        Ok(approval::ApprovalResponse::Deny) => {
+            Err(super::rejection::ToolRejection::denied_by_user(name))
+        }
+        Err(approval::ApprovalCheckError::TimedOut { timeout_secs }) => {
+            match approval::approval_timeout_action() {
+                crate::config::ApprovalTimeoutAction::Deny => {
+                    app_warn!(
+                        "tool",
+                        "approval",
+                        "Tool '{}' approval timed out after {}s; blocking execution",
+                        name,
+                        timeout_secs
+                    );
+                    Err(super::rejection::ToolRejection::approval_timeout(
+                        name,
+                        timeout_secs,
+                    ))
+                }
+                crate::config::ApprovalTimeoutAction::Proceed => {
+                    app_warn!(
+                        "tool",
+                        "approval",
+                        "Tool '{}' approval timed out after {}s; proceeding by config",
+                        name,
+                        timeout_secs
+                    );
+                    Ok(())
+                }
+            }
+        }
+        Err(e) => {
+            app_warn!(
+                "tool",
+                "approval",
+                "Tool approval check failed for '{}' ({}); blocking execution",
+                name,
+                e
+            );
+            Err(super::rejection::ToolRejection::approval_failed(
+                name,
+                e.to_string(),
+            ))
+        }
     }
 }
 
@@ -659,8 +756,10 @@ pub async fn execute_tool_with_context(
     // the outer call's patched args and pre-approval, so re-firing here would
     // double a hook's side effects and re-apply an arg rewrite to its own output.
     let pre_skip_prompt: bool;
+    let pre_force_prompt: bool;
     let patched_args_holder: Option<Value> = if ctx.bypass_async_dispatch {
         pre_skip_prompt = false;
+        pre_force_prompt = false;
         None
     } else {
         match fire_pre_tool_use_hook(name, args, ctx).await {
@@ -672,8 +771,10 @@ pub async fn execute_tool_with_context(
             PreToolGate::Proceed {
                 updated_input,
                 skip_user_prompt,
+                force_prompt,
             } => {
                 pre_skip_prompt = skip_user_prompt;
+                pre_force_prompt = force_prompt;
                 if updated_input.is_some() {
                     app_info!(
                         "hooks",
@@ -725,110 +826,53 @@ pub async fn execute_tool_with_context(
         let decision =
             resolve_tool_permission(name, args, ctx, super::is_internal_tool(name)).await;
         match decision {
-            crate::permission::Decision::Allow => {}
+            crate::permission::Decision::Allow => {
+                // Engine would allow without a prompt. A PreToolUse hook that
+                // returned `ask`/`defer` still wants human confirmation — force
+                // the prompt (no reason banner) so its request can't fail open.
+                if pre_force_prompt {
+                    run_tool_approval(name, args, ctx, None, false).await?;
+                }
+            }
             crate::permission::Decision::Deny { reason } => {
                 return Err(super::rejection::ToolRejection::denied_by_policy(
                     name, reason,
                 ));
             }
-            crate::permission::Decision::Ask { reason } if pre_skip_prompt => {
-                // A PreToolUse hook returned an explicit `permissionDecision:
-                // "allow"`: skip the user-facing prompt. Hard denies already
-                // short-circuited above (engine `Deny` returns before this), so
-                // this only suppresses the *prompt*, never a hard red-line.
-                app_info!(
-                    "hooks",
-                    "dispatch",
-                    "PreToolUse allow skipped approval prompt for '{}' (reason was {:?})",
-                    name,
-                    reason
-                );
-            }
             crate::permission::Decision::Ask { reason } => {
-                let desc = format!("tool: {} {}", name, {
-                    let s = args.to_string();
-                    if s.len() > 200 {
-                        format!("{}...", crate::truncate_utf8(&s, 200))
-                    } else {
-                        s
-                    }
-                });
-                let cwd = ctx.default_path();
-                let reason_payload = Some(approval::ApprovalReasonPayload::from(&reason));
-                match approval::check_and_request_approval(
-                    &desc,
-                    cwd,
-                    ctx.session_id.as_deref(),
-                    reason_payload,
-                )
-                .await
-                {
-                    Ok(approval::ApprovalResponse::AllowOnce) => {
-                        app_info!("tool", "approval", "Tool '{}' approved (once)", name);
-                    }
-                    Ok(approval::ApprovalResponse::AllowAlways) => {
-                        if reason.forbids_allow_always() {
-                            app_info!(
-                                "tool",
-                                "approval",
-                                "Tool '{}' approved once (AllowAlways unavailable: {:?})",
-                                name,
-                                reason
-                            );
-                        } else {
-                            // Multi-scope (project / session / agent_home /
-                            // global) AllowAlways persistence is wired in by
-                            // the approval dialog upgrade. For now `exec`
-                            // still uses the legacy command-prefix store
-                            // inside `tool_exec`.
-                            app_info!("tool", "approval", "Tool '{}' approved (always)", name);
-                        }
-                    }
-                    Ok(approval::ApprovalResponse::Deny) => {
-                        return Err(super::rejection::ToolRejection::denied_by_user(name));
-                    }
-                    Err(approval::ApprovalCheckError::TimedOut { timeout_secs }) => {
-                        match approval::approval_timeout_action() {
-                            crate::config::ApprovalTimeoutAction::Deny => {
-                                app_warn!(
-                                    "tool",
-                                    "approval",
-                                    "Tool '{}' approval timed out after {}s; blocking execution",
-                                    name,
-                                    timeout_secs
-                                );
-                                return Err(super::rejection::ToolRejection::approval_timeout(
-                                    name,
-                                    timeout_secs,
-                                ));
-                            }
-                            crate::config::ApprovalTimeoutAction::Proceed => {
-                                app_warn!(
-                                    "tool",
-                                    "approval",
-                                    "Tool '{}' approval timed out after {}s; proceeding by config",
-                                    name,
-                                    timeout_secs
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        app_warn!(
-                            "tool",
-                            "approval",
-                            "Tool approval check failed for '{}' ({}); blocking execution",
-                            name,
-                            e
-                        );
-                        return Err(super::rejection::ToolRejection::approval_failed(
-                            name,
-                            e.to_string(),
-                        ));
-                    }
+                // A hook `allow` may skip only a *soft* prompt — never a strict
+                // one (protected path / dangerous command / mac-dangerous / Plan
+                // ask), which always requires per-call human confirmation and
+                // is exactly the boundary a hook must not be able to auto-bypass.
+                let strict = reason.forbids_allow_always()
+                    || matches!(reason, crate::permission::AskReason::PlanModeAsk);
+                if pre_skip_prompt && !strict {
+                    app_info!(
+                        "hooks",
+                        "dispatch",
+                        "PreToolUse allow skipped soft approval prompt for '{}' (reason {:?})",
+                        name,
+                        reason
+                    );
+                } else {
+                    let forbidden = reason.forbids_allow_always();
+                    run_tool_approval(
+                        name,
+                        args,
+                        ctx,
+                        Some(approval::ApprovalReasonPayload::from(&reason)),
+                        forbidden,
+                    )
+                    .await?;
                 }
             }
         }
+    } else if pre_force_prompt && !is_skill_read(name, args) {
+        // The engine gate was skipped (auto-approve / exec's own gate), but a
+        // PreToolUse hook explicitly asked for confirmation — honor it rather
+        // than letting the request through silently. SKILL.md reads are exempt
+        // so skill bootstrap never blocks on a prompt.
+        run_tool_approval(name, args, ctx, None, false).await?;
     }
 
     // Log tool execution start

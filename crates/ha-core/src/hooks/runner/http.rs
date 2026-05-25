@@ -2,9 +2,10 @@
 //! JSON response body as the hook's output (design §7.3).
 //!
 //! The outbound URL is SSRF-gated through `security::ssrf::check_url` (the
-//! shared policy + trusted-host allowlist) before any network touch, and every
-//! redirect hop is re-checked — new outbound entries must never self-validate
-//! IPs (AGENTS.md red line). Any delivered response (regardless of status) maps
+//! shared policy + trusted-host allowlist) before any network touch, and
+//! redirects are NOT followed (a redirect would escape that DNS-level check) —
+//! new outbound entries must never self-validate IPs (AGENTS.md red line). Any
+//! delivered response (regardless of status) maps
 //! to exit 0 so the shared parser handles the body — a hook can deny via a
 //! non-2xx + decision JSON, and a non-JSON error page parses inert. Only a
 //! transport/timeout failure is a non-blocking error.
@@ -77,28 +78,16 @@ impl HookHandler for HttpHandler {
         let timeout = deadline
             .saturating_duration_since(Instant::now())
             .max(Duration::from_secs(1));
-        // Re-check every redirect hop against SSRF (mirrors web_fetch): the
-        // initial check_url only validated the first URL, so without this a
-        // 3xx to a metadata/private IP would punch through.
-        let redirect_hosts = trusted.clone();
-        let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() >= 5 {
-                return attempt.error("too many redirects");
-            }
-            if let Some(host) = attempt.url().host_str() {
-                if crate::security::ssrf::check_host_blocking_sync(
-                    host,
-                    crate::security::ssrf::SsrfPolicy::Default,
-                    &redirect_hosts,
-                ) {
-                    return attempt.stop();
-                }
-            }
-            attempt.follow()
-        });
+        // Do NOT follow redirects. `check_url` above only SSRF-validated the
+        // initial URL with a DNS resolve; a redirect would be followed by
+        // reqwest with only the sync host check (which can't resolve a hostname
+        // and so lets an unknown name through), letting a public endpoint 3xx
+        // to a name that resolves to a metadata/private IP. A hook endpoint is
+        // a configured webhook — it should be a stable canonical URL — so the
+        // safe posture is no redirects at all (a 3xx body just parses inert).
         let builder = reqwest::Client::builder()
             .timeout(timeout)
-            .redirect(redirect_policy);
+            .redirect(reqwest::redirect::Policy::none());
         // Honor the app proxy policy (matches every other outbound site).
         let client = match crate::provider::apply_proxy(builder).build() {
             Ok(c) => c,
