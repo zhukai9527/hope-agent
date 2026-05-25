@@ -590,6 +590,49 @@ pub fn fire_permission_denied(session_id: Option<&str>, command: &str, reason: &
     fire_and_forget(HookEvent::PermissionDenied, input);
 }
 
+/// Fire a `UserPromptExpansion` observation hook (a slash command ran).
+/// `command` is the matcher target (the command name); `command_text` is the
+/// full raw text including args. No-op fast path when nothing is configured.
+pub fn fire_user_prompt_expansion(
+    session_id: Option<&str>,
+    agent_id: &str,
+    command: &str,
+    command_text: &str,
+) {
+    if !registry::global().has_handlers_for(HookEvent::UserPromptExpansion) {
+        return;
+    }
+    let mut common = observation_common("UserPromptExpansion", session_id.unwrap_or(""));
+    common.agent_id = Some(agent_id.to_string());
+    let input = HookInput::UserPromptExpansion {
+        common,
+        command: command.to_string(),
+        command_text: command_text.to_string(),
+    };
+    fire_and_forget(HookEvent::UserPromptExpansion, input);
+}
+
+/// Fire an `Elicitation` observation hook (`ask_user_question` raised a prompt).
+pub fn fire_elicitation(session_id: &str, request_id: &str, question_count: usize) {
+    let input = HookInput::Elicitation {
+        common: observation_common("Elicitation", session_id),
+        request_id: request_id.to_string(),
+        question_count,
+    };
+    fire_and_forget(HookEvent::Elicitation, input);
+}
+
+/// Fire an `ElicitationResult` observation hook (an `ask_user_question` group
+/// reached a terminal state). `status` is `answered` / `cancelled` / `timeout`.
+pub fn fire_elicitation_result(session_id: &str, request_id: &str, status: &str) {
+    let input = HookInput::ElicitationResult {
+        common: observation_common("ElicitationResult", session_id),
+        request_id: request_id.to_string(),
+        status: status.to_string(),
+    };
+    fire_and_forget(HookEvent::ElicitationResult, input);
+}
+
 /// Initialize the hooks subsystem during `ha-core` startup. Best-effort: never
 /// panics — hooks are an additive capability.
 pub fn init() {

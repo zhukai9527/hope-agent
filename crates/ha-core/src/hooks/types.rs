@@ -116,6 +116,9 @@ impl HookEvent {
                 | Self::FileChanged
                 | Self::PermissionRequest
                 | Self::PermissionDenied
+                | Self::UserPromptExpansion
+                | Self::Elicitation
+                | Self::ElicitationResult
         )
     }
 }
@@ -384,6 +387,28 @@ pub enum HookInput {
         /// Why: `user_declined` (the user said no) / `policy` (engine auto-deny).
         reason: String,
     },
+    UserPromptExpansion {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        /// The slash command name (matcher target, e.g. `plan`, `deploy`).
+        command: String,
+        /// The full raw command text including args.
+        command_text: String,
+    },
+    Elicitation {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        /// `ask_user_question` group id (correlates with ElicitationResult).
+        request_id: String,
+        question_count: usize,
+    },
+    ElicitationResult {
+        #[serde(flatten)]
+        common: CommonHookInput,
+        request_id: String,
+        /// `answered` / `cancelled` / `timeout`.
+        status: String,
+    },
 }
 
 impl HookInput {
@@ -410,7 +435,10 @@ impl HookInput {
             | Self::CwdChanged { common, .. }
             | Self::FileChanged { common, .. }
             | Self::PermissionRequest { common, .. }
-            | Self::PermissionDenied { common, .. } => common,
+            | Self::PermissionDenied { common, .. }
+            | Self::UserPromptExpansion { common, .. }
+            | Self::Elicitation { common, .. }
+            | Self::ElicitationResult { common, .. } => common,
         }
     }
 
@@ -443,14 +471,18 @@ impl HookInput {
             Self::PermissionRequest { command, .. } | Self::PermissionDenied { command, .. } => {
                 Some(command.as_str())
             }
+            // UserPromptExpansion matches on the slash command name.
+            Self::UserPromptExpansion { command, .. } => Some(command.as_str()),
             // No matcher target → only wildcard matchers fire. Task content is
-            // freeform, so Task events match wildcard only.
+            // freeform; elicitation ids are UUIDs — all match wildcard only.
             Self::UserPromptSubmit { .. }
             | Self::PostToolBatch { .. }
             | Self::Stop { .. }
             | Self::TaskCreated { .. }
             | Self::TaskCompleted { .. }
-            | Self::CwdChanged { .. } => None,
+            | Self::CwdChanged { .. }
+            | Self::Elicitation { .. }
+            | Self::ElicitationResult { .. } => None,
         }
     }
 }
