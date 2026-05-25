@@ -52,6 +52,8 @@ const HARD_TYPING_DELAY_MS: u64 = 1_000;
 const HARD_PRESS_REPEAT: usize = 100;
 const HARD_PRESS_INTERVAL_MS: u64 = 5_000;
 const HARD_PRESS_HOLD_MS: u64 = 10_000;
+const DEFAULT_MENU_POPOVER_LIMIT: usize = 5;
+const HARD_MENU_POPOVER_LIMIT: usize = 20;
 pub const ALLOWED_PERFORM_AX_ACTIONS: &[&str] = &[
     "AXPress",
     "AXShowMenu",
@@ -755,6 +757,9 @@ pub struct MacControlMenuResult {
     pub path: Vec<String>,
     pub items: Vec<MacControlMenuItemSummary>,
     pub clicked: Option<MacControlMenuItemSummary>,
+    pub popovers: Vec<MacControlMenuPopoverCandidate>,
+    pub screenshot: Option<MacControlScreenshotSummary>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -767,6 +772,16 @@ pub struct MacControlMenuItemSummary {
     pub enabled: Option<bool>,
     pub actions: Vec<String>,
     pub children: Vec<MacControlMenuItemSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacControlMenuPopoverCandidate {
+    pub window: MacControlWindowSummary,
+    pub app: Option<MacControlAppSummary>,
+    pub score: u8,
+    pub reasons: Vec<String>,
+    pub ocr_text: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1454,7 +1469,7 @@ pub fn normalize_perform_ax_action(action: &str) -> Option<&'static str> {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MacControlMenuRequest {
     #[serde(default)]
@@ -1465,6 +1480,35 @@ pub struct MacControlMenuRequest {
     pub path: Vec<String>,
     #[serde(default = "default_menu_max_depth")]
     pub max_depth: usize,
+    #[serde(default)]
+    pub app_hint: Option<String>,
+    #[serde(default = "default_menu_include_ocr")]
+    pub include_ocr: bool,
+    #[serde(default = "default_menu_popover_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub min_confidence: Option<f32>,
+    #[serde(default)]
+    pub recognition_level: MacControlOcrRecognitionLevel,
+}
+
+impl Default for MacControlMenuRequest {
+    fn default() -> Self {
+        Self {
+            op: MacControlMenuOp::default(),
+            scope: MacControlMenuScope::default(),
+            path: Vec::new(),
+            max_depth: default_menu_max_depth(),
+            app_hint: None,
+            include_ocr: default_menu_include_ocr(),
+            limit: default_menu_popover_limit(),
+            languages: Vec::new(),
+            min_confidence: None,
+            recognition_level: MacControlOcrRecognitionLevel::default(),
+        }
+    }
 }
 
 impl MacControlMenuRequest {
@@ -1474,10 +1518,25 @@ impl MacControlMenuRequest {
             .into_iter()
             .filter_map(|value| normalize_optional_string(Some(value)))
             .collect();
+        self.app_hint = normalize_optional_string(self.app_hint);
+        self.languages = self
+            .languages
+            .into_iter()
+            .filter_map(|language| normalize_optional_string(Some(language)))
+            .take(16)
+            .collect();
+        self.min_confidence = self
+            .min_confidence
+            .filter(|value| value.is_finite())
+            .map(|value| value.clamp(0.0, 1.0));
         if self.max_depth == 0 {
             self.max_depth = default_menu_max_depth();
         }
+        if self.limit == 0 {
+            self.limit = default_menu_popover_limit();
+        }
         self.max_depth = self.max_depth.min(8);
+        self.limit = self.limit.min(HARD_MENU_POPOVER_LIMIT);
         self
     }
 }
@@ -1486,12 +1545,21 @@ fn default_menu_max_depth() -> usize {
     3
 }
 
+fn default_menu_include_ocr() -> bool {
+    true
+}
+
+fn default_menu_popover_limit() -> usize {
+    DEFAULT_MENU_POPOVER_LIMIT
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MacControlMenuOp {
     #[default]
     List,
     Click,
+    Popover,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -5960,11 +6028,26 @@ mod tests {
             scope: MacControlMenuScope::System,
             path: vec![" File ".to_string(), "".to_string(), "New".to_string()],
             max_depth: 100,
+            ..Default::default()
         }
         .clamped();
         assert_eq!(menu.scope, MacControlMenuScope::System);
         assert_eq!(menu.path, vec!["File".to_string(), "New".to_string()]);
         assert_eq!(menu.max_depth, 8);
+
+        let popover_menu = MacControlMenuRequest {
+            op: MacControlMenuOp::Popover,
+            app_hint: Some(" Control Center ".to_string()),
+            limit: 100,
+            languages: vec![" ".to_string(), "zh-Hans".to_string()],
+            min_confidence: Some(2.0),
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(popover_menu.app_hint.as_deref(), Some("Control Center"));
+        assert_eq!(popover_menu.limit, HARD_MENU_POPOVER_LIMIT);
+        assert_eq!(popover_menu.languages, vec!["zh-Hans".to_string()]);
+        assert_eq!(popover_menu.min_confidence, Some(1.0));
 
         assert_eq!(
             MacControlMenuRequest::default().scope,

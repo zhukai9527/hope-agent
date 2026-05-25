@@ -873,6 +873,7 @@ mod tests {
             json!({"action": "act", "op": "dry_run", "target": {"text": "Open"}}),
             json!({"action": "windows", "op": "list"}),
             json!({"action": "menu", "op": "list"}),
+            json!({"action": "menu", "op": "popover", "appHint": "Control Center"}),
             json!({"action": "dialog", "op": "inspect"}),
             json!({"action": "dialog", "op": "list"}),
             json!({"action": "visual", "op": "observe"}),

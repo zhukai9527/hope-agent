@@ -216,9 +216,9 @@ Transport 结果类型：
 | `text` | string | `visual.find_text` OCR 查询、`act.type` / `act.paste` 输入文本、`clipboard.set` 写入文本；目标文本匹配放在 `target.text` |
 | `typingProfile` / `typingDelayMs` | string / number | `act.type` 显式走逐字符 CGEvent 输入时的节奏配置；`instant/steady/human` 或每字符延迟 |
 | `textMatch` | `"exact" \| "contains"` | `visual.find_text` OCR 文本匹配策略，默认 `exact` |
-| `languages` | string[] | `visual.ocr/find_text` 可选 Vision 识别语言，例如 `zh-Hans`、`en-US`；省略时自动检测 |
-| `minConfidence` | number | `visual.ocr/find_text` OCR 置信度下限，范围 `0..1`，默认 `0` |
-| `recognitionLevel` | `"accurate" \| "fast"` | `visual.ocr/find_text` Vision 识别等级，默认 `accurate` |
+| `languages` | string[] | `visual.ocr/find_text` 与 `menu.popover includeOcr=true` 可选 Vision 识别语言，例如 `zh-Hans`、`en-US`；省略时自动检测 |
+| `minConfidence` | number | `visual.ocr/find_text` 与 `menu.popover includeOcr=true` OCR 置信度下限，范围 `0..1`，默认 `0` |
+| `recognitionLevel` | `"accurate" \| "fast"` | `visual.ocr/find_text` 与 `menu.popover includeOcr=true` Vision 识别等级，默认 `accurate` |
 | `value` | string | `act.set_value` 写入值 |
 | `axAction` | string | `act.perform_action` 要执行的白名单 AX action；目标元素必须在 `actions[]` 中声明支持 |
 | `key` / `keys` | string / string[] | `act.hotkey` 单键或组合键；`act.press` 单键或顺序按键 |
@@ -231,6 +231,7 @@ Transport 结果类型：
 | `filePath` / `fileName` / `selectButton` | string | `dialog.file` 的目录或完整路径、保存文件名、最终点击按钮 |
 | `clear` / `ensureExpanded` / `force` | boolean | `dialog.input` 替换式输入、`dialog.file` best-effort 展开、`dialog.dismiss` 未命中按钮时发送 Escape |
 | `scope` | `"app" \| "system"` | `menu.list/click` 菜单范围，默认 `app` |
+| `appHint` | string | `menu.popover` 可选状态栏 App/菜单项 hint，用于按 App 名、bundle id、窗口标题或 OCR 文本提高候选排序 |
 | `includeScreenshot` | boolean | `snapshot` 是否采集 JPEG |
 | `screenshotTarget` | `"display" \| "window"` | `snapshot.includeScreenshot=true` 时选择显示器或窗口 |
 | `displayId` | number | `snapshot` display 截图目标显示器 |
@@ -377,8 +378,9 @@ OCR 规则：
 
 | action / op | 入参 | 出参 `result` | 说明 |
 | --- | --- | --- | --- |
-| `menu.list` | `action="menu"`、`op="list"`；可选 `scope`、`maxDepth` | `op`、`scope`、`path=[]`、`items[]`、`clicked=null` | 只读菜单树；`scope="app"` 是前台 App 菜单，`system` 是菜单栏 extras/status items |
-| `menu.click` | `action="menu"`、`op="click"`、`path[]` 非空；可选 `scope`、`maxDepth` | `op`、`scope`、`path`、`items[]`、`clicked?` | 按 path 逐级点击菜单项；危险菜单词走高风险审批 |
+| `menu.list` | `action="menu"`、`op="list"`；可选 `scope`、`maxDepth` | `op`、`scope`、`path=[]`、`items[]`、`clicked=null`、`popovers=[]` | 只读菜单树；`scope="app"` 是前台 App 菜单，`system` 是菜单栏 extras/status items |
+| `menu.click` | `action="menu"`、`op="click"`、`path[]` 非空；可选 `scope`、`maxDepth` | `op`、`scope`、`path`、`items[]`、`clicked?`、`popovers=[]` | 按 path 逐级点击菜单项；危险菜单词走高风险审批 |
+| `menu.popover` | `action="menu"`、`op="popover"`；可选 `appHint`、`includeOcr`、`languages`、`minConfidence`、`recognitionLevel`、`limit` | `popovers[]`、`screenshot?`、`warnings[]` | 只读识别当前已展开的菜单栏/状态栏 popover；综合所有 App 的 AX window、靠近菜单栏/面板形态、App hint 与 OCR 文本打分 |
 | `clipboard.get` | `action="clipboard"`、`op="get"`；可选 `maxChars` | `op`、`text?`、`textLen`、`truncated`、`changed=false` | 读取 UTF-8 文本剪贴板；隐私敏感，需审批 |
 | `clipboard.set` | `action="clipboard"`、`op="set"`、`text` | `op`、`text=null`、`textLen`、`truncated`、`changed=true` | 写入 UTF-8 文本；结果不回显原文 |
 | `clipboard.clear` | `action="clipboard"`、`op="clear"` | `op`、`text=null`、`textLen=0`、`truncated=false`、`changed=true` | 清空剪贴板 |
@@ -415,6 +417,7 @@ OCR 规则：
 | `MacControlSpacesDisplay` | `displayIdentifier?`、`currentSpace?`、`spaces[]`、`collapsedSpace?` |
 | `MacControlSpaceSummary` | `id?`、`uuid?`、`index`、`kind?`、`current` |
 | `MacControlMenuItemSummary` | `title?`、`description?`、`value?`、`role?`、`enabled?`、`actions[]`、`children[]` |
+| `MacControlMenuPopoverCandidate` | `window`、`app?`、`score`、`reasons[]`、`ocrText[]` |
 | `MacControlClipboardResult` | `op`、`text?`、`textLen`、`truncated`、`changed` |
 | `MacControlDialogSummary` | `window`、`text[]`、`buttons[]` |
 | `MacControlBounds` | `x`、`y`、`width`、`height`，单位是 macOS point |
@@ -545,6 +548,7 @@ OCR 规则：
 
 - `menu.list` 默认返回前台 App 菜单树，可按深度截断；传 `scope=system` 返回系统菜单栏 extras/status items。
 - `menu.click` 按 path 逐级解析并点击。App 菜单按 title 匹配；system extras 可按 title、description 或 value 匹配，且优先精确匹配再包含匹配。
+- `menu.popover` 不点击菜单项；用于状态栏 App / Control Center / 系统 extras 点击后出现的浮层识别。它先列所有运行 App 的 AX windows，再按靠近菜单栏、窗口 subrole/尺寸、host App、`appHint` 和 OCR 文本排序。
 - 命中危险菜单词的 `menu.click` 属于高风险动作。
 - `clipboard.get/set/clear` 均走普通审批；`clipboard.get` 是隐私敏感读取，不作为只读动作自动放行。
 - `clipboard.set` 和 `act.paste` 都不得在结果里回显写入文本；只报告长度、是否截断、是否改变或剪贴板恢复状态。
@@ -560,7 +564,7 @@ OCR 规则：
 
 | 分类 | action/op | 决策 |
 | --- | --- | --- |
-| 只读 | `status`、`permissions`、`snapshot`、`elements.find`、`wait`、`visual.observe/point/ocr/find_text`、`apps.list/frontmost/installed/search`、`dock.list`、`spaces.list`、`windows.list`、`act.dry_run`、`menu.list`、`dialog.inspect/list` | Allow |
+| 只读 | `status`、`permissions`、`snapshot`、`elements.find`、`wait`、`visual.observe/point/ocr/find_text`、`apps.list/frontmost/installed/search`、`dock.list`、`spaces.list`、`windows.list`、`act.dry_run`、`menu.list/popover`、`dialog.inspect/list` | Allow |
 | 普通/隐私动作 | `apps.activate/launch`、`dock.launch/hide/show`、`spaces.switch/move_window`、`windows.focus/move/resize/minimize`、除 `dry_run` / `perform_action(AXConfirm)` 外的 `act.*`、普通 `menu.click`、`clipboard.get/set/clear`、普通 `dialog.click/input/file/dismiss` | Ask，可 AllowAlways |
 | 高风险突变 | `apps.quit`、`windows.close`、`dialog.accept`、`act.perform_action axAction=AXConfirm`、命中危险词的 `menu.click`、命中危险按钮词的 `dialog.click/file` | Ask，`forbids_allow_always=true` |
 

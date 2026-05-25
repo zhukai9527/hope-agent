@@ -30,15 +30,16 @@ mod imp {
         MacControlDockRequest, MacControlDockResult, MacControlDockSection,
         MacControlElementCandidate, MacControlElementSummary, MacControlElementsRequest,
         MacControlElementsResult, MacControlFramePayload, MacControlInstalledApp,
-        MacControlMenuItemSummary, MacControlMenuOp, MacControlMenuRequest, MacControlMenuResult,
-        MacControlMenuScope, MacControlMotionProfile, MacControlOcrRawTextBlock,
-        MacControlOcrRecognitionLevel, MacControlOcrRequest, MacControlRunningApp,
-        MacControlScreenshotSummary, MacControlScreenshotTarget, MacControlSnapshot,
-        MacControlSnapshotRequest, MacControlSpaceDirection, MacControlSpaceSummary,
-        MacControlSpacesDisplay, MacControlSpacesOp, MacControlSpacesRequest,
-        MacControlSpacesResult, MacControlStringMatch, MacControlTargetQuery,
-        MacControlTypingProfile, MacControlWindowSummary, MacControlWindowsOp,
-        MacControlWindowsRequest, MacControlWindowsResult, MacControlWindowsScope,
+        MacControlMenuItemSummary, MacControlMenuOp, MacControlMenuPopoverCandidate,
+        MacControlMenuRequest, MacControlMenuResult, MacControlMenuScope, MacControlMotionProfile,
+        MacControlOcrRawTextBlock, MacControlOcrRecognitionLevel, MacControlOcrRequest,
+        MacControlRunningApp, MacControlScreenshotSummary, MacControlScreenshotTarget,
+        MacControlSnapshot, MacControlSnapshotRequest, MacControlSpaceDirection,
+        MacControlSpaceSummary, MacControlSpacesDisplay, MacControlSpacesOp,
+        MacControlSpacesRequest, MacControlSpacesResult, MacControlStringMatch,
+        MacControlTargetQuery, MacControlTypingProfile, MacControlWindowSummary,
+        MacControlWindowsOp, MacControlWindowsRequest, MacControlWindowsResult,
+        MacControlWindowsScope,
     };
     use image::codecs::jpeg::JpegEncoder;
     use objc2::rc::Retained;
@@ -406,6 +407,12 @@ mod imp {
         window_title: Option<String>,
         bounds_points: Option<MacControlBounds>,
         scale: Option<f64>,
+    }
+
+    #[derive(Clone)]
+    struct MenuPopoverOcrBlock {
+        text: String,
+        screen_bounds: MacControlBounds,
     }
 
     fn capture_ax_snapshot(
@@ -2713,6 +2720,10 @@ mod imp {
 
     fn handle_menu(request: MacControlMenuRequest) -> Result<MacControlMenuResult, String> {
         let request = request.clamped();
+        if request.op == MacControlMenuOp::Popover {
+            return handle_menu_popover(request);
+        }
+
         let menu_bar = menu_root_for_scope(request.scope)?;
         let menu_bar_ref = menu_bar.as_ptr() as AXUIElementRef;
         let items = menu_children(menu_bar_ref, request.max_depth);
@@ -2728,7 +2739,377 @@ mod imp {
             path: request.path,
             items,
             clicked,
+            popovers: Vec::new(),
+            screenshot: None,
+            warnings: Vec::new(),
         })
+    }
+
+    fn handle_menu_popover(request: MacControlMenuRequest) -> Result<MacControlMenuResult, String> {
+        let mut warnings = Vec::new();
+        let displays = match display_summaries() {
+            Ok(displays) => displays,
+            Err(error) => {
+                warnings.push(error);
+                Vec::new()
+            }
+        };
+        let (screenshot, ocr_blocks) = capture_menu_popover_ocr_blocks(&request, &mut warnings);
+
+        let workspace = NSWorkspace::sharedWorkspace();
+        let mut running = workspace.runningApplications().to_vec();
+        if let Some(frontmost) = workspace.frontmostApplication() {
+            if running
+                .iter()
+                .all(|app| app.processIdentifier() != frontmost.processIdentifier())
+            {
+                running.insert(0, frontmost);
+            }
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut popovers = Vec::new();
+        for app in running {
+            let running_summary = running_app_summary(&app);
+            if !seen.insert(running_summary.pid) {
+                continue;
+            }
+            let Some(app_element) = app_element_for_pid(running_summary.pid) else {
+                continue;
+            };
+            let Some(ax_windows) =
+                copy_attribute(app_element.as_ptr() as AXUIElementRef, "AXWindows")
+            else {
+                continue;
+            };
+            let app_summary = MacControlAppSummary {
+                pid: running_summary.pid,
+                bundle_id: running_summary.bundle_id.clone(),
+                name: running_summary.name.clone(),
+            };
+            for (idx, window_ref) in cf_array_values(ax_windows.as_ptr()).into_iter().enumerate() {
+                let id = format!("win_{}_{}", running_summary.pid, idx + 1);
+                let summary = window_summary_for_app(
+                    window_ref as AXUIElementRef,
+                    &id,
+                    Some(running_summary.pid),
+                );
+                if let Some(candidate) = score_menu_popover_window(
+                    summary,
+                    Some(app_summary.clone()),
+                    &displays,
+                    &ocr_blocks,
+                    request.app_hint.as_deref(),
+                ) {
+                    popovers.push(candidate);
+                }
+            }
+        }
+
+        popovers.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| right.window.focused.cmp(&left.window.focused))
+                .then_with(|| left.window.id.cmp(&right.window.id))
+        });
+        if popovers.len() > request.limit {
+            warnings.push(format!(
+                "menu.popover matched {} candidates; returning top {}.",
+                popovers.len(),
+                request.limit
+            ));
+            popovers.truncate(request.limit);
+        }
+        if popovers.is_empty() {
+            warnings.push(
+                "No likely menu bar popover windows were found. Open a status item popover and retry, or pass appHint for a specific menu bar app.".to_string(),
+            );
+        }
+
+        Ok(MacControlMenuResult {
+            op: request.op,
+            scope: request.scope,
+            path: request.path,
+            items: Vec::new(),
+            clicked: None,
+            popovers,
+            screenshot,
+            warnings,
+        })
+    }
+
+    fn capture_menu_popover_ocr_blocks(
+        request: &MacControlMenuRequest,
+        warnings: &mut Vec<String>,
+    ) -> (
+        Option<MacControlScreenshotSummary>,
+        Vec<MenuPopoverOcrBlock>,
+    ) {
+        if !request.include_ocr {
+            return (None, Vec::new());
+        }
+
+        let captured = match capture_display_frame_bytes(None) {
+            Ok(captured) => captured,
+            Err(error) => {
+                warnings.push(format!("menu.popover OCR screenshot failed: {error}"));
+                return (None, Vec::new());
+            }
+        };
+        let snapshot_id = ha_core::mac_control::new_snapshot_id();
+        let mut screenshot = match ha_core::mac_control::store_screenshot_jpeg(
+            &snapshot_id,
+            &captured.jpeg,
+            captured.width_px,
+            captured.height_px,
+        ) {
+            Ok(screenshot) => screenshot,
+            Err(error) => {
+                warnings.push(format!("menu.popover OCR screenshot write failed: {error}"));
+                return (None, Vec::new());
+            }
+        };
+        apply_capture_metadata_to_screenshot(&mut screenshot, &captured);
+
+        let raw_blocks = match handle_ocr(MacControlOcrRequest {
+            screenshot: screenshot.clone(),
+            languages: request.languages.clone(),
+            recognition_level: request.recognition_level,
+        }) {
+            Ok(blocks) => blocks,
+            Err(error) => {
+                warnings.push(format!("menu.popover OCR failed: {error}"));
+                return (Some(screenshot), Vec::new());
+            }
+        };
+
+        let min_confidence = request.min_confidence.unwrap_or(0.0);
+        let blocks = raw_blocks
+            .into_iter()
+            .filter(|block| block.confidence.is_finite() && block.confidence >= min_confidence)
+            .filter_map(|block| menu_popover_ocr_block_to_screen(block, &captured))
+            .collect();
+        (Some(screenshot), blocks)
+    }
+
+    fn menu_popover_ocr_block_to_screen(
+        block: MacControlOcrRawTextBlock,
+        captured: &CapturedDesktopFrame,
+    ) -> Option<MenuPopoverOcrBlock> {
+        let frame = captured.bounds_points?;
+        let scale = captured.scale.filter(|value| *value > 0.0).unwrap_or(1.0);
+        Some(MenuPopoverOcrBlock {
+            text: block.text,
+            screen_bounds: MacControlBounds {
+                x: frame.x + block.image_bounds.x / scale,
+                y: frame.y + block.image_bounds.y / scale,
+                width: block.image_bounds.width / scale,
+                height: block.image_bounds.height / scale,
+            },
+        })
+    }
+
+    fn score_menu_popover_window(
+        window: MacControlWindowSummary,
+        app: Option<MacControlAppSummary>,
+        displays: &[MacControlDisplaySummary],
+        ocr_blocks: &[MenuPopoverOcrBlock],
+        app_hint: Option<&str>,
+    ) -> Option<MacControlMenuPopoverCandidate> {
+        let bounds = window.bounds_points?;
+        if bounds.width < 40.0 || bounds.height < 20.0 {
+            return None;
+        }
+
+        let ocr_text = menu_popover_ocr_text_for_bounds(ocr_blocks, bounds);
+        let mut score: i32 = 0;
+        let mut reasons = Vec::new();
+        let role = window
+            .role
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let subrole = window
+            .subrole
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let title = window.title.as_deref().unwrap_or_default();
+        let app_name = app
+            .as_ref()
+            .and_then(|summary| summary.name.as_deref())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let bundle_id = app
+            .as_ref()
+            .and_then(|summary| summary.bundle_id.as_deref())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if role.contains("window") {
+            score += 5;
+        }
+        if role.contains("popover") || subrole.contains("popover") {
+            score += 35;
+            reasons.push("popoverRole".to_string());
+        }
+        if subrole.contains("floating")
+            || subrole.contains("systemdialog")
+            || subrole.contains("dialog")
+            || subrole.contains("unknown")
+        {
+            score += 18;
+            reasons.push("panelSubrole".to_string());
+        }
+        if window.focused {
+            score += 12;
+            reasons.push("focused".to_string());
+        }
+        if title.trim().is_empty() {
+            score += 8;
+            reasons.push("untitledPanel".to_string());
+        }
+
+        if let Some(display) = menu_popover_display_for_bounds(bounds, displays) {
+            let display_frame = display.frame_points;
+            let display_area = display_frame.width.max(1.0) * display_frame.height.max(1.0);
+            let area_ratio = (bounds.width * bounds.height) / display_area;
+            if bounds.y >= display_frame.y - 8.0 && bounds.y <= display_frame.y + 220.0 {
+                score += 25;
+                reasons.push("nearMenuBar".to_string());
+            }
+            if bounds.x + bounds.width / 2.0 >= display_frame.x + display_frame.width * 0.45 {
+                score += 6;
+                reasons.push("rightMenuBarArea".to_string());
+            }
+            if area_ratio <= 0.35
+                && (60.0..=1100.0).contains(&bounds.width)
+                && (30.0..=900.0).contains(&bounds.height)
+            {
+                score += 14;
+                reasons.push("popoverSized".to_string());
+            } else if area_ratio > 0.55 {
+                score -= 25;
+            }
+        } else if bounds.y <= 220.0 {
+            score += 18;
+            reasons.push("nearMenuBar".to_string());
+        }
+
+        if menu_popover_host_app_likely(&app_name, &bundle_id) {
+            score += 22;
+            reasons.push("menuBarHostApp".to_string());
+        }
+        if !ocr_text.is_empty() {
+            score += 10;
+            reasons.push("ocrText".to_string());
+        }
+        if app_hint
+            .is_some_and(|hint| menu_popover_hint_matches(hint, &window, app.as_ref(), &ocr_text))
+        {
+            score += 30;
+            reasons.push("appHint".to_string());
+        }
+
+        let normal_app_window = !title.trim().is_empty()
+            && !reasons.iter().any(|reason| reason == "nearMenuBar")
+            && !reasons.iter().any(|reason| reason == "popoverRole");
+        if normal_app_window && score < 55 {
+            return None;
+        }
+        if score < 30 {
+            return None;
+        }
+
+        Some(MacControlMenuPopoverCandidate {
+            window,
+            app,
+            score: score.clamp(0, 100) as u8,
+            reasons,
+            ocr_text,
+        })
+    }
+
+    fn menu_popover_ocr_text_for_bounds(
+        ocr_blocks: &[MenuPopoverOcrBlock],
+        bounds: MacControlBounds,
+    ) -> Vec<String> {
+        let mut text = Vec::new();
+        for block in ocr_blocks {
+            let block_bounds = block.screen_bounds;
+            let center_x = block_bounds.x + block_bounds.width / 2.0;
+            let center_y = block_bounds.y + block_bounds.height / 2.0;
+            if point_in_bounds(center_x, center_y, bounds) || bounds_intersect(block_bounds, bounds)
+            {
+                let trimmed = block.text.trim();
+                if !trimmed.is_empty() && !text.iter().any(|existing| existing == trimmed) {
+                    text.push(trimmed.to_string());
+                }
+            }
+        }
+        text
+    }
+
+    fn menu_popover_display_for_bounds<'a>(
+        bounds: MacControlBounds,
+        displays: &'a [MacControlDisplaySummary],
+    ) -> Option<&'a MacControlDisplaySummary> {
+        let center_x = bounds.x + bounds.width / 2.0;
+        let center_y = bounds.y + bounds.height / 2.0;
+        displays
+            .iter()
+            .find(|display| point_in_bounds(center_x, center_y, display.frame_points))
+            .or_else(|| {
+                displays
+                    .iter()
+                    .find(|display| bounds_intersect(bounds, display.frame_points))
+            })
+    }
+
+    fn menu_popover_host_app_likely(app_name: &str, bundle_id: &str) -> bool {
+        const HINTS: &[&str] = &[
+            "systemuiserver",
+            "controlcenter",
+            "control center",
+            "notificationcenter",
+            "notification center",
+            "bartender",
+            "istat",
+            "menubar",
+            "menu bar",
+            "wifi",
+            "bluetooth",
+            "battery",
+            "clock",
+        ];
+        HINTS
+            .iter()
+            .any(|hint| app_name.contains(hint) || bundle_id.contains(hint))
+    }
+
+    fn menu_popover_hint_matches(
+        hint: &str,
+        window: &MacControlWindowSummary,
+        app: Option<&MacControlAppSummary>,
+        ocr_text: &[String],
+    ) -> bool {
+        let hint = hint.to_ascii_lowercase();
+        if hint.trim().is_empty() {
+            return false;
+        }
+        let string_matches = |value: Option<&str>| {
+            value
+                .map(|value| value.to_ascii_lowercase().contains(&hint))
+                .unwrap_or(false)
+        };
+        string_matches(window.title.as_deref())
+            || app.is_some_and(|app| {
+                string_matches(app.name.as_deref()) || string_matches(app.bundle_id.as_deref())
+            })
+            || ocr_text
+                .iter()
+                .any(|text| text.to_ascii_lowercase().contains(&hint))
     }
 
     fn menu_root_for_scope(scope: MacControlMenuScope) -> Result<CfOwned, String> {

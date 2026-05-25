@@ -19,7 +19,7 @@ Use this loop unless the user explicitly asks for a single read-only query:
 ```
 1. mac_control(action="status")
 2. mac_control(action="apps", op="frontmost" | "search" | "installed")
-3. observe: snapshot / visual.observe / elements.find / windows.list / dock.list / spaces.list / menu.list / dialog.inspect
+3. observe: snapshot / visual.observe / elements.find / windows.list / dock.list / spaces.list / menu.list / menu.popover / dialog.inspect
 4. act: apps.activate/launch, dock.launch, spaces.switch, windows.*, act.*, menu.click, dialog.*
 5. verify: wait, snapshot, windows.list, or dialog.inspect
 ```
@@ -131,6 +131,7 @@ Rules:
 - Prefer `menu.click` over hotkeys for app commands.
 - `menu.scope` defaults to `app`, which targets the current frontmost app menu bar.
 - Use `menu.list scope="system"` before operating macOS menu bar extras/status items. System menu entries may expose useful `description`, `value`, and `actions` even when `title` is empty.
+- After opening a status item or menu bar extra popover, use `menu.popover appHint="..."` to identify the floating panel. It ranks all-app AX windows with menu-bar geometry, host app hints, and optional OCR text; it does not click anything.
 - If a menu path fails, call `menu.list` with the same `scope` and check the localized titles/descriptions of the current menu surface.
 - If the user says "do not use shortcuts", never call `act.hotkey`. Use menus or AX actions.
 
