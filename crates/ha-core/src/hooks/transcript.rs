@@ -45,6 +45,51 @@ fn text_block(text: &str) -> serde_json::Value {
     serde_json::json!({ "type": "text", "text": text })
 }
 
+/// Core line builder shared by the DB-row mapping and the live append path.
+#[allow(clippy::too_many_arguments)]
+fn build_line(
+    id: i64,
+    session_id: &str,
+    role: MessageRole,
+    content: &str,
+    tool_call_id: Option<&str>,
+    tool_result: Option<&str>,
+    is_error: bool,
+    timestamp: &str,
+    cwd: &str,
+    parent_uuid: Option<String>,
+) -> TranscriptLine {
+    let (line_type, role_str, blocks) = match role {
+        MessageRole::User => ("user", "user", vec![text_block(content)]),
+        MessageRole::Assistant | MessageRole::TextBlock | MessageRole::ThinkingBlock => {
+            ("assistant", "assistant", vec![text_block(content)])
+        }
+        MessageRole::Tool => {
+            let block = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": tool_call_id.unwrap_or_default(),
+                "content": tool_result.unwrap_or_default(),
+                "is_error": is_error,
+            });
+            ("tool_result", "tool", vec![block])
+        }
+        MessageRole::Event => ("system", "system", vec![text_block(content)]),
+    };
+    TranscriptLine {
+        line_type: line_type.to_string(),
+        message: TranscriptMessage {
+            role: role_str.to_string(),
+            content: blocks,
+        },
+        timestamp: timestamp.to_string(),
+        uuid: format!("msg_{id}"),
+        parent_uuid,
+        session_id: session_id.to_string(),
+        cwd: cwd.to_string(),
+        version: "1".to_string(),
+    }
+}
+
 /// Map one flat [`SessionMessage`] to a transcript line. Returns `None` only
 /// for rows that carry no useful content.
 pub fn session_message_to_line(
@@ -52,36 +97,18 @@ pub fn session_message_to_line(
     cwd: &str,
     parent_uuid: Option<String>,
 ) -> Option<TranscriptLine> {
-    let (line_type, role, content) = match msg.role {
-        MessageRole::User => ("user", "user", vec![text_block(&msg.content)]),
-        MessageRole::Assistant | MessageRole::TextBlock | MessageRole::ThinkingBlock => {
-            ("assistant", "assistant", vec![text_block(&msg.content)])
-        }
-        MessageRole::Tool => {
-            let block = serde_json::json!({
-                "type": "tool_result",
-                "tool_use_id": msg.tool_call_id.clone().unwrap_or_default(),
-                "content": msg.tool_result.clone().unwrap_or_default(),
-                "is_error": msg.is_error.unwrap_or(false),
-            });
-            ("tool_result", "tool", vec![block])
-        }
-        MessageRole::Event => ("system", "system", vec![text_block(&msg.content)]),
-    };
-
-    Some(TranscriptLine {
-        line_type: line_type.to_string(),
-        message: TranscriptMessage {
-            role: role.to_string(),
-            content,
-        },
-        timestamp: msg.timestamp.clone(),
-        uuid: format!("msg_{}", msg.id),
+    Some(build_line(
+        msg.id,
+        &msg.session_id,
+        msg.role,
+        &msg.content,
+        msg.tool_call_id.as_deref(),
+        msg.tool_result.as_deref(),
+        msg.is_error.unwrap_or(false),
+        &msg.timestamp,
+        cwd,
         parent_uuid,
-        session_id: msg.session_id.clone(),
-        cwd: cwd.to_string(),
-        version: "1".to_string(),
-    })
+    ))
 }
 
 /// Render an ordered message slice to a JSONL string (one line per message,
@@ -121,12 +148,54 @@ impl TranscriptMirror {
         Ok(())
     }
 
+    /// Live-append a just-persisted message so a hook reading
+    /// `transcript_path` sees current state. Best-effort — the caller gates on
+    /// "hooks configured" and "non-incognito" (an incognito session must leave
+    /// no on-disk trace). `id` is the row id; `timestamp` is the resolved
+    /// (non-empty) timestamp the row was stored with.
+    pub fn append_persisted(
+        session_id: &str,
+        id: i64,
+        msg: &crate::session::NewMessage,
+        timestamp: &str,
+        cwd: &str,
+    ) {
+        let line = build_line(
+            id,
+            session_id,
+            msg.role,
+            &msg.content,
+            msg.tool_call_id.as_deref(),
+            msg.tool_result.as_deref(),
+            msg.is_error.unwrap_or(false),
+            timestamp,
+            cwd,
+            None,
+        );
+        if let Err(e) = Self::append_line(session_id, &line) {
+            app_warn!(
+                "hooks",
+                "transcript",
+                "live transcript append failed for session {}: {}",
+                session_id,
+                e
+            );
+        }
+    }
+
     /// Backfill a single session's transcript from the DB if it doesn't exist
-    /// yet. Returns `true` when a file was written.
+    /// yet. Returns `true` when a file was written. Skips incognito sessions —
+    /// they must leave no on-disk trace.
     pub fn backfill_session(db: &SessionDB, session_id: &str) -> anyhow::Result<bool> {
         let dir = crate::paths::session_dir(session_id)?;
         let path = dir.join("transcript.jsonl");
         if path.exists() {
+            return Ok(false);
+        }
+        if crate::session::lookup_session_meta(Some(session_id))
+            .map(|m| m.incognito)
+            .unwrap_or(false)
+        {
             return Ok(false);
         }
         let messages = db.load_session_messages(session_id)?;

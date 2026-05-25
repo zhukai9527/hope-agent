@@ -1597,6 +1597,29 @@ impl SessionDB {
             "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
             params![now, session_id],
         )?;
+        let resolved_ts = timestamp.to_string();
+        drop(conn);
+
+        // Live transcript mirror for hook scripts (design §10): only when hooks
+        // are configured (cheap in-memory gate) and never for incognito
+        // sessions — they must leave no on-disk trace. Best-effort: a mirror
+        // failure must not fail the message persist. Runs after the conn lock
+        // is released because the incognito lookup re-locks it.
+        if !crate::hooks::registry::global().is_empty()
+            && !crate::session::lookup_session_meta(Some(session_id))
+                .map(|m| m.incognito)
+                .unwrap_or(false)
+        {
+            let cwd =
+                crate::session::effective_session_working_dir(Some(session_id)).unwrap_or_default();
+            crate::hooks::transcript::TranscriptMirror::append_persisted(
+                session_id,
+                msg_id,
+                msg,
+                &resolved_ts,
+                &cwd,
+            );
+        }
 
         Ok(msg_id)
     }
