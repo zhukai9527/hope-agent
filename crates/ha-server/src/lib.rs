@@ -511,6 +511,8 @@ fn build_router_with_cors(
         )
         .route("/config/compact", get(routes::config::get_compact_config))
         .route("/config/compact", put(routes::config::save_compact_config))
+        .route("/config/hooks", get(routes::config::get_hooks_config))
+        .route("/config/hooks", put(routes::config::save_hooks_config))
         .route(
             "/config/session-title",
             get(routes::config::get_session_title_config),

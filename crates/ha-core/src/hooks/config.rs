@@ -309,6 +309,19 @@ pub struct AgentHookConfig {
     pub once: Option<bool>,
 }
 
+/// Combined hooks settings payload for the Settings → Hooks GUI: the
+/// `disable_all_hooks` master switch (a top-level `AppConfig` field) plus the
+/// user-scope `hooks` map. Read via `get_hooks_config`, written via
+/// `save_hooks_config` (user scope only — project / local / managed are
+/// file-based and never written from the GUI).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HooksSettings {
+    #[serde(rename = "disableAllHooks", default)]
+    pub disable_all_hooks: bool,
+    #[serde(default)]
+    pub hooks: HooksConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
