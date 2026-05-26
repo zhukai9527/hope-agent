@@ -4147,6 +4147,8 @@
       "intro": "Jalankan arahan tersuai / HTTP / gesaan / sub-ejen pada peristiwa kitaran hayat. Serasi peringkat medan dengan hooks Claude Code.",
       "disableAll": "Lumpuhkan semua hooks",
       "disableAllDesc": "Suis utama — mematikan setiap hook merentas semua scope.",
+      "allowProjectScope": "Benarkan hook projek & tempatan",
+      "allowProjectScopeDesc": "Membolehkan .hope-agent/hooks.json dan hooks.local.json dalam direktori kerja menambah hook — sesuai untuk dikongsi dengan pasukan anda. Dimatikan secara lalai kerana ia boleh menjalankan perintah sendiri, jadi hidupkan hanya untuk projek yang anda percayai.",
       "scopeNote": "Panel ini menyunting hooks scope user. Scope project (.hope-agent/hooks.json, dikongsi repo), local (hooks.local.json) dan managed (/etc/hope-agent/hooks.json) berasaskan fail dan digabungkan di atas.",
       "pickEvent": "Pilih peristiwa…",
       "addHook": "Tambah hook",

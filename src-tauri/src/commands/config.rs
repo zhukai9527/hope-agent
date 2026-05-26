@@ -905,6 +905,7 @@ pub async fn get_hooks_config() -> Result<ha_core::hooks::config::HooksSettings,
     let cfg = ha_core::config::cached_config();
     Ok(ha_core::hooks::config::HooksSettings {
         disable_all_hooks: cfg.disable_all_hooks,
+        allow_project_scope: cfg.hooks_allow_project_scope,
         hooks: cfg.hooks.clone(),
     })
 }
@@ -919,6 +920,7 @@ pub async fn save_hooks_config(
 ) -> Result<(), CmdError> {
     ha_core::config::mutate_config(("hooks", "settings-ui"), |store| {
         store.disable_all_hooks = config.disable_all_hooks;
+        store.hooks_allow_project_scope = config.allow_project_scope;
         store.hooks = config.hooks;
         Ok(())
     })

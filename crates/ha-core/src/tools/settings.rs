@@ -480,6 +480,7 @@ fn read_category(category: &str) -> Result<Value> {
             let hooks = redact_hooks_value(serde_json::to_value(&cfg.hooks)?);
             Ok(json!({
                 "disableAllHooks": cfg.disable_all_hooks,
+                "allowProjectScope": cfg.hooks_allow_project_scope,
                 "hooks": hooks,
             }))
         }

@@ -247,10 +247,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: None,
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         let r = h.run(&dummy_input(), &HookEnv::empty(), deadline(10)).await;
         assert_eq!(r.exit_code, Some(0));
@@ -265,10 +261,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: None,
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         let r = h.run(&dummy_input(), &HookEnv::empty(), deadline(10)).await;
         assert_eq!(r.exit_code, Some(2));
@@ -283,10 +275,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: None,
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         let r = h.run(&dummy_input(), &HookEnv::empty(), deadline(10)).await;
         assert_eq!(r.exit_code, Some(0));
@@ -301,10 +289,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: Some(1),
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         // 1s deadline against a 5s sleep.
         let r = h.run(&dummy_input(), &HookEnv::empty(), deadline(1)).await;
@@ -330,10 +314,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: None,
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         let r = h.run(&dummy_input(), &env, deadline(10)).await;
         let _ = std::fs::remove_dir_all(&dir);
@@ -352,10 +332,6 @@ mod tests {
             shell: Some(HookShell::Bash),
             timeout: None,
             async_run: None,
-            async_rewake: None,
-            status_message: None,
-            if_rule: None,
-            once: None,
         };
         let mut diff_shell = base.clone();
         diff_shell.shell = Some(HookShell::Powershell);

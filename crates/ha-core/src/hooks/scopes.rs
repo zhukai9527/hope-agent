@@ -107,11 +107,32 @@ fn cwd_cache() -> &'static Mutex<HashMap<PathBuf, CwdEntry>> {
 /// project/local files exist (the common case — cheap, after up to two
 /// `stat`s). Cached per cwd, invalidated by file mtime + the global generation.
 pub fn resolve_for_cwd(working_dir: Option<&Path>) -> Arc<HookRegistry> {
+    let cfg = crate::config::cached_config();
+    resolve_for_cwd_inner(
+        working_dir,
+        cfg.disable_all_hooks,
+        cfg.hooks_allow_project_scope,
+    )
+}
+
+/// Inner resolution with the two config flags injected, so unit tests can
+/// exercise the project-scope gate without touching the global cached config.
+fn resolve_for_cwd_inner(
+    working_dir: Option<&Path>,
+    disable_all_hooks: bool,
+    allow_project_scope: bool,
+) -> Arc<HookRegistry> {
     let Some(cwd) = working_dir else {
         return registry::global();
     };
     // Master kill switch disables every scope (global registry is empty too).
-    if crate::config::cached_config().disable_all_hooks {
+    if disable_all_hooks {
+        return registry::global();
+    }
+    // Project/local scope is opt-in (supply-chain guard): a repo's checked-in
+    // hooks must not auto-execute just because the session cwd points at it.
+    // Off (the default) → only the global user/managed scope applies.
+    if !allow_project_scope {
         return registry::global();
     }
     let project = cwd.join(".hope-agent").join("hooks.json");
@@ -187,9 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn project_scope_file_merges_into_resolution() {
-        // A `.hope-agent/hooks.json` in the working dir contributes hooks even
-        // when the global (user+managed) scope has none for that event.
+    fn project_scope_loads_when_allowed() {
+        // With project scope allowed, a `.hope-agent/hooks.json` in the working
+        // dir contributes hooks even when the global (user+managed) scope has
+        // none for that event.
         let dir = std::env::temp_dir().join(format!("ha-hooks-scope-{}", uuid::Uuid::new_v4()));
         let proj = dir.join(".hope-agent");
         std::fs::create_dir_all(&proj).unwrap();
@@ -200,15 +222,39 @@ mod tests {
         .unwrap();
 
         // Start from an empty global config so the match must come from project.
+        // `allow_project_scope = true` (last arg) is injected directly so the
+        // test never mutates the process-global cached config.
         set_global_config(HooksConfig::default());
-        let reg = resolve_for_cwd(Some(&dir));
+        let reg = resolve_for_cwd_inner(Some(&dir), false, true);
         assert!(reg.has_handlers_for(HookEvent::PreToolUse));
-        assert_eq!(
-            reg.matching_handlers(HookEvent::PreToolUse, Some("Bash"))
-                .len(),
-            1
+        assert!(
+            !reg.matching_handlers(HookEvent::PreToolUse, Some("Bash"))
+                .is_empty(),
+            "project Bash matcher contributes a handler"
         );
-        assert!(any_handlers_for(HookEvent::PreToolUse, Some(&dir)));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn project_scope_gated_off_returns_global() {
+        // The default (`allow_project_scope = false`) must ignore a repo's
+        // checked-in hooks entirely — the supply-chain guard. Resolution returns
+        // the global registry Arc unchanged, without ever reading the file.
+        let dir = std::env::temp_dir().join(format!("ha-hooks-gate-{}", uuid::Uuid::new_v4()));
+        let proj = dir.join(".hope-agent");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(
+            proj.join("hooks.json"),
+            r#"{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"rm -rf /"}]}]}"#,
+        )
+        .unwrap();
+
+        let reg = resolve_for_cwd_inner(Some(&dir), false, false);
+        assert!(
+            Arc::ptr_eq(&reg, &registry::global()),
+            "gated-off resolution returns the global registry, not a merged one"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -4147,6 +4147,8 @@
       "intro": "Yaşam döngüsü olaylarında özel komutlar / HTTP / istemler / alt ajanlar çalıştırın. Claude Code hooks ile alan düzeyinde uyumlu.",
       "disableAll": "Tüm hook'ları devre dışı bırak",
       "disableAllDesc": "Ana anahtar — tüm scope'lardaki her hook'u kapatır.",
+      "allowProjectScope": "Proje ve yerel hook'lara izin ver",
+      "allowProjectScopeDesc": "Çalışma dizinindeki .hope-agent/hooks.json ve hooks.local.json dosyalarının hook eklemesine izin verir — ekibinizle paylaşmak için kullanışlı. Kendi başlarına komut çalıştırabildikleri için varsayılan kapalıdır; yalnızca güvendiğiniz projeler için açın.",
       "scopeNote": "Bu panel user kapsamındaki hook'ları düzenler. project (.hope-agent/hooks.json, depoyla paylaşılır), local (hooks.local.json) ve managed (/etc/hope-agent/hooks.json) kapsamları dosya tabanlıdır ve üste birleştirilir.",
       "pickEvent": "Bir olay seçin…",
       "addHook": "Hook ekle",

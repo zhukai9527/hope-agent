@@ -4147,6 +4147,8 @@
       "intro": "Execute comandos personalizados / HTTP / prompts / subagentes em eventos do ciclo de vida. Compatível em nível de campo com os hooks do Claude Code.",
       "disableAll": "Desativar todos os hooks",
       "disableAllDesc": "Interruptor mestre — desliga todos os hooks em todos os escopos.",
+      "allowProjectScope": "Permitir hooks de projeto e locais",
+      "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json e hooks.local.json no diretório de trabalho adicionem hooks — útil para compartilhar com sua equipe. Desativado por padrão porque podem executar comandos sozinhos, então ative apenas para projetos em que você confia.",
       "scopeNote": "Este painel edita hooks do escopo user. Os escopos project (.hope-agent/hooks.json, compartilhado pelo repositório), local (hooks.local.json) e managed (/etc/hope-agent/hooks.json) são baseados em arquivo e mesclados por cima.",
       "pickEvent": "Selecione um evento…",
       "addHook": "Adicionar hook",

@@ -706,6 +706,14 @@ pub struct AppConfig {
     /// Master kill switch for all hooks (`disableAllHooks` in the protocol).
     #[serde(default)]
     pub disable_all_hooks: bool,
+    /// Whether project/local scope hooks (`<cwd>/.hope-agent/hooks.json` and
+    /// `hooks.local.json`) are loaded at all. Off by default: a repository's
+    /// checked-in hooks must not auto-execute shell / HTTP / LLM / sub-agents
+    /// just because a session's working dir points at it (supply-chain guard).
+    /// User opts in globally via Settings → Hooks; user/managed scopes are
+    /// unaffected.
+    #[serde(default)]
+    pub hooks_allow_project_scope: bool,
 }
 
 // ── Local LLM (Ollama) auto-maintenance ─────────────────────────────
@@ -805,6 +813,7 @@ impl Default for AppConfig {
             stt: crate::stt::SttConfig::default(),
             hooks: crate::hooks::HooksConfig::default(),
             disable_all_hooks: false,
+            hooks_allow_project_scope: false,
         }
     }
 }

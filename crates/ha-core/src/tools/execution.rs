@@ -601,7 +601,20 @@ enum PreToolGate {
 /// Run the `PreToolUse` hook for this call. No-op fast path when no hook listens.
 async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext) -> PreToolGate {
     use crate::hooks::{HookDecision, HookDispatcher, HookEvent, HookInput};
-    if !crate::hooks::registry::global().has_handlers_for(HookEvent::PreToolUse) {
+    // Resolve the same per-cwd scope the dispatcher will: project/local hooks
+    // live under the session working dir, so this fast-path gate must use
+    // `any_handlers_for(event, cwd)` (not the global-only registry) or a
+    // project-only `PreToolUse` hook is silently skipped while `dispatch` would
+    // have run it. Mirrors `hooks::session_working_dir` (empty sid → no cwd).
+    let wd = ctx
+        .session_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(|sid| crate::session::effective_session_working_dir(Some(sid)));
+    if !crate::hooks::scopes::any_handlers_for(
+        HookEvent::PreToolUse,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
         return PreToolGate::Proceed {
             updated_input: None,
             skip_user_prompt: false,

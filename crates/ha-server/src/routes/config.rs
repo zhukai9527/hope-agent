@@ -976,6 +976,7 @@ pub async fn get_hooks_config() -> Result<Json<ha_core::hooks::config::HooksSett
     let store = load_config()?;
     Ok(Json(ha_core::hooks::config::HooksSettings {
         disable_all_hooks: store.disable_all_hooks,
+        allow_project_scope: store.hooks_allow_project_scope,
         hooks: store.hooks,
     }))
 }
@@ -987,6 +988,7 @@ pub async fn save_hooks_config(
 ) -> Result<Json<Value>, AppError> {
     ha_core::config::mutate_config(("hooks", "http"), |store| {
         store.disable_all_hooks = body.config.disable_all_hooks;
+        store.hooks_allow_project_scope = body.config.allow_project_scope;
         store.hooks = body.config.hooks;
         Ok(())
     })?;

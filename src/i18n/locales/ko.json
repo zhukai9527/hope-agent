@@ -4147,6 +4147,8 @@
       "intro": "수명 주기 이벤트에서 사용자 정의 명령 / HTTP / 프롬프트 / 서브에이전트를 실행합니다. Claude Code hooks와 필드 수준 호환.",
       "disableAll": "모든 hooks 비활성화",
       "disableAllDesc": "마스터 스위치 — 모든 scope의 hook을 끕니다.",
+      "allowProjectScope": "프로젝트 & 로컬 Hook 허용",
+      "allowProjectScopeDesc": "작업 디렉터리의 .hope-agent/hooks.json 및 hooks.local.json에서 Hook을 추가할 수 있습니다(팀과 공유하기 편리). 스스로 명령을 실행할 수 있어 기본은 꺼짐 — 신뢰하는 프로젝트에서만 켜세요.",
       "scopeNote": "이 패널은 user 범위 hooks를 편집합니다. project(.hope-agent/hooks.json, 저장소 공유), local(hooks.local.json), managed(/etc/hope-agent/hooks.json)는 파일 기반이며 위에 병합됩니다.",
       "pickEvent": "이벤트 선택…",
       "addHook": "hook 추가",

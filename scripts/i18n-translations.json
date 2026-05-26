@@ -485,7 +485,9 @@
         "matcherPlaceholder": "ツール名 / ソース（正規表現可）、空 = すべて",
         "addHandler": "ハンドラーを追加",
         "advanced": "詳細",
-        "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。"
+        "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。",
+        "allowProjectScope": "プロジェクト & ローカル Hook を許可",
+        "allowProjectScopeDesc": "作業ディレクトリの .hope-agent/hooks.json と hooks.local.json から Hook を追加できます（チームでの共有に便利）。コマンドを自分で実行できるため既定はオフ。信頼できるプロジェクトでのみオンにしてください。"
       }
     },
     "subagent": {
@@ -1363,7 +1365,9 @@
         "matcherPlaceholder": "도구 이름 / 소스(정규식 가능), 비어 있음 = 전체",
         "addHandler": "핸들러 추가",
         "advanced": "고급",
-        "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요."
+        "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요.",
+        "allowProjectScope": "프로젝트 & 로컬 Hook 허용",
+        "allowProjectScopeDesc": "작업 디렉터리의 .hope-agent/hooks.json 및 hooks.local.json에서 Hook을 추가할 수 있습니다(팀과 공유하기 편리). 스스로 명령을 실행할 수 있어 기본은 꺼짐 — 신뢰하는 프로젝트에서만 켜세요."
       }
     },
     "subagent": {
@@ -2241,7 +2245,9 @@
         "matcherPlaceholder": "工具名 / 來源（支援正規表示式），留空 = 全部",
         "addHandler": "新增處理器",
         "advanced": "進階",
-        "slowHandlerWarning": "此處理器會內聯執行 LLM / 子 Agent，每次該阻斷事件觸發都會拖慢。建議這裡改用 command / http，或移至觀察型事件（如 PostToolUse）。"
+        "slowHandlerWarning": "此處理器會內聯執行 LLM / 子 Agent，每次該阻斷事件觸發都會拖慢。建議這裡改用 command / http，或移至觀察型事件（如 PostToolUse）。",
+        "allowProjectScope": "允許專案與本機 Hook",
+        "allowProjectScopeDesc": "允許工作目錄下的 .hope-agent/hooks.json 與 hooks.local.json 新增 Hook，方便與團隊共享。由於它們會自行執行命令，預設關閉——僅對你信任的專案開啟即可。"
       }
     },
     "subagent": {
@@ -3119,7 +3125,9 @@
         "matcherPlaceholder": "araç adı / kaynak (regex olabilir), boş = tümü",
         "addHandler": "İşleyici ekle",
         "advanced": "Gelişmiş",
-        "slowHandlerWarning": "Bu işleyici LLM / alt ajanı satır içi çalıştırır ve bu engelleyici olay her tetiklendiğinde gecikmeye yol açar. Burada command / http tercih edin veya bir gözlem olayına (örn. PostToolUse) taşıyın."
+        "slowHandlerWarning": "Bu işleyici LLM / alt ajanı satır içi çalıştırır ve bu engelleyici olay her tetiklendiğinde gecikmeye yol açar. Burada command / http tercih edin veya bir gözlem olayına (örn. PostToolUse) taşıyın.",
+        "allowProjectScope": "Proje ve yerel hook'lara izin ver",
+        "allowProjectScopeDesc": "Çalışma dizinindeki .hope-agent/hooks.json ve hooks.local.json dosyalarının hook eklemesine izin verir — ekibinizle paylaşmak için kullanışlı. Kendi başlarına komut çalıştırabildikleri için varsayılan kapalıdır; yalnızca güvendiğiniz projeler için açın."
       }
     },
     "subagent": {
@@ -3997,7 +4005,9 @@
         "matcherPlaceholder": "tên công cụ / nguồn (regex được), trống = tất cả",
         "addHandler": "Thêm trình xử lý",
         "advanced": "Nâng cao",
-        "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse)."
+        "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse).",
+        "allowProjectScope": "Cho phép hook dự án & cục bộ",
+        "allowProjectScopeDesc": "Cho phép .hope-agent/hooks.json và hooks.local.json trong thư mục làm việc thêm hook — tiện để chia sẻ với nhóm của bạn. Mặc định tắt vì chúng có thể tự chạy lệnh, nên chỉ bật cho các dự án bạn tin tưởng."
       }
     },
     "subagent": {
@@ -4875,7 +4885,9 @@
         "matcherPlaceholder": "nome da ferramenta / origem (regex ok), vazio = todos",
         "addHandler": "Adicionar handler",
         "advanced": "Avançado",
-        "slowHandlerWarning": "Este handler executa um LLM / subagente em linha e atrasará cada vez que este evento de bloqueio disparar. Prefira command / http aqui, ou mova-o para um evento de observação (ex.: PostToolUse)."
+        "slowHandlerWarning": "Este handler executa um LLM / subagente em linha e atrasará cada vez que este evento de bloqueio disparar. Prefira command / http aqui, ou mova-o para um evento de observação (ex.: PostToolUse).",
+        "allowProjectScope": "Permitir hooks de projeto e locais",
+        "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json e hooks.local.json no diretório de trabalho adicionem hooks — útil para compartilhar com sua equipe. Desativado por padrão porque podem executar comandos sozinhos, então ative apenas para projetos em que você confia."
       }
     },
     "subagent": {
@@ -5753,7 +5765,9 @@
         "matcherPlaceholder": "имя инструмента / источник (regex), пусто = все",
         "addHandler": "Добавить обработчик",
         "advanced": "Дополнительно",
-        "slowHandlerWarning": "Этот обработчик запускает LLM / субагента встроенно и будет замедлять каждый раз, когда срабатывает это блокирующее событие. Здесь предпочтите command / http или перенесите его на событие наблюдения (например, PostToolUse)."
+        "slowHandlerWarning": "Этот обработчик запускает LLM / субагента встроенно и будет замедлять каждый раз, когда срабатывает это блокирующее событие. Здесь предпочтите command / http или перенесите его на событие наблюдения (например, PostToolUse).",
+        "allowProjectScope": "Разрешить проектные и локальные хуки",
+        "allowProjectScopeDesc": "Позволяет файлам .hope-agent/hooks.json и hooks.local.json в рабочем каталоге добавлять хуки — удобно для общего доступа в команде. По умолчанию выключено, потому что они могут сами выполнять команды; включайте только для проектов, которым доверяете."
       }
     },
     "subagent": {
@@ -6631,7 +6645,9 @@
         "matcherPlaceholder": "اسم الأداة / المصدر (regex مقبول)، فارغ = الكل",
         "addHandler": "إضافة معالج",
         "advanced": "متقدم",
-        "slowHandlerWarning": "يشغّل هذا المعالج نموذج LLM / وكيلًا فرعيًا بشكل مضمّن وسيبطئ في كل مرة يُطلق فيها هذا الحدث الحاجب. يُفضّل استخدام command / http هنا، أو نقله إلى حدث مراقبة (مثل PostToolUse)."
+        "slowHandlerWarning": "يشغّل هذا المعالج نموذج LLM / وكيلًا فرعيًا بشكل مضمّن وسيبطئ في كل مرة يُطلق فيها هذا الحدث الحاجب. يُفضّل استخدام command / http هنا، أو نقله إلى حدث مراقبة (مثل PostToolUse).",
+        "allowProjectScope": "السماح بخطافات المشروع والمحلية",
+        "allowProjectScopeDesc": "يسمح لملفّي .hope-agent/hooks.json و hooks.local.json في دليل العمل بإضافة خطافات — مفيد للمشاركة مع فريقك. مُعطَّل افتراضيًا لأنها قد تنفِّذ أوامر من تلقاء نفسها، لذا فعِّله فقط للمشاريع التي تثق بها."
       }
     },
     "subagent": {
@@ -7509,7 +7525,9 @@
         "matcherPlaceholder": "nombre de herramienta / origen (regex ok), vacío = todos",
         "addHandler": "Añadir handler",
         "advanced": "Avanzado",
-        "slowHandlerWarning": "Este handler ejecuta un LLM / subagente en línea y ralentizará cada vez que se dispare este evento de bloqueo. Prefiere command / http aquí, o muévelo a un evento de observación (p. ej., PostToolUse)."
+        "slowHandlerWarning": "Este handler ejecuta un LLM / subagente en línea y ralentizará cada vez que se dispare este evento de bloqueo. Prefiere command / http aquí, o muévelo a un evento de observación (p. ej., PostToolUse).",
+        "allowProjectScope": "Permitir hooks de proyecto y locales",
+        "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json y hooks.local.json del directorio de trabajo añadan hooks — práctico para compartir con tu equipo. Desactivado por defecto porque pueden ejecutar comandos por su cuenta, así que actívalo solo para proyectos en los que confíes."
       }
     },
     "subagent": {
@@ -8387,7 +8405,9 @@
         "matcherPlaceholder": "nama alat / sumber (regex ok), kosong = semua",
         "addHandler": "Tambah pengendali",
         "advanced": "Lanjutan",
-        "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse)."
+        "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse).",
+        "allowProjectScope": "Benarkan hook projek & tempatan",
+        "allowProjectScopeDesc": "Membolehkan .hope-agent/hooks.json dan hooks.local.json dalam direktori kerja menambah hook — sesuai untuk dikongsi dengan pasukan anda. Dimatikan secara lalai kerana ia boleh menjalankan perintah sendiri, jadi hidupkan hanya untuk projek yang anda percayai."
       }
     },
     "subagent": {

@@ -228,14 +228,6 @@ pub struct CommandHookConfig {
     pub timeout: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "async")]
     pub async_run: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub async_rewake: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "if")]
-    pub if_rule: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub once: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,12 +240,6 @@ pub struct HttpHookConfig {
     pub headers: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_env_vars: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "if")]
-    pub if_rule: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub once: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,12 +251,6 @@ pub struct McpToolHookConfig {
     pub input: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "if")]
-    pub if_rule: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub once: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,12 +261,6 @@ pub struct PromptHookConfig {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "if")]
-    pub if_rule: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub once: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,12 +275,6 @@ pub struct AgentHookConfig {
     pub timeout: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "async")]
     pub async_run: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "if")]
-    pub if_rule: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub once: Option<bool>,
 }
 
 /// Combined hooks settings payload for the Settings → Hooks GUI: the
@@ -318,6 +286,11 @@ pub struct AgentHookConfig {
 pub struct HooksSettings {
     #[serde(rename = "disableAllHooks", default)]
     pub disable_all_hooks: bool,
+    /// Mirrors `AppConfig::hooks_allow_project_scope`: opt-in for loading
+    /// `<cwd>/.hope-agent/hooks.json` / `hooks.local.json` (off by default, a
+    /// supply-chain guard so a repo's checked-in hooks don't auto-execute).
+    #[serde(rename = "allowProjectScope", default)]
+    pub allow_project_scope: bool,
     #[serde(default)]
     pub hooks: HooksConfig,
 }
@@ -351,7 +324,7 @@ mod tests {
                 {
                     "matcher": "Bash",
                     "hooks": [
-                        { "type": "command", "command": "./block-rm.sh", "if": "Bash(rm *)", "timeout": 10 }
+                        { "type": "command", "command": "./block-rm.sh", "timeout": 10 }
                     ]
                 },
                 {
@@ -365,7 +338,7 @@ mod tests {
                 {
                     "matcher": "Write|Edit",
                     "hooks": [
-                        { "type": "command", "command": "./fmt.sh", "async": true, "statusMessage": "Formatting..." }
+                        { "type": "command", "command": "./fmt.sh", "async": true }
                     ]
                 }
             ],
@@ -381,7 +354,6 @@ mod tests {
         match &g0.hooks[0] {
             HookHandlerConfig::Command(c) => {
                 assert_eq!(c.command, "./block-rm.sh");
-                assert_eq!(c.if_rule.as_deref(), Some("Bash(rm *)"));
                 assert_eq!(c.timeout, Some(10));
             }
             _ => panic!("expected command"),
@@ -398,7 +370,6 @@ mod tests {
         match &cfg.post_tool_use[0].hooks[0] {
             HookHandlerConfig::Command(c) => {
                 assert_eq!(c.async_run, Some(true));
-                assert_eq!(c.status_message.as_deref(), Some("Formatting..."));
             }
             _ => panic!("expected command"),
         }

@@ -27,6 +27,7 @@ interface MatcherGroup {
 type HooksMap = Record<string, MatcherGroup[]>
 interface HooksSettings {
   disableAllHooks: boolean
+  allowProjectScope: boolean
   hooks: HooksMap
 }
 
@@ -106,12 +107,7 @@ const FIELDS_BY_TYPE: Record<HandlerType, FieldDef[]> = {
 }
 
 // Shared across every handler type (rendered under "advanced").
-const COMMON_FIELDS: FieldDef[] = [
-  { key: "timeout", label: "timeout (s)", kind: "number" },
-  { key: "if", label: "if (matcher DSL)", kind: "text" },
-  { key: "statusMessage", label: "statusMessage", kind: "text" },
-  { key: "once", label: "once", kind: "switch" },
-]
+const COMMON_FIELDS: FieldDef[] = [{ key: "timeout", label: "timeout (s)", kind: "number" }]
 
 function defaultHandler(type: HandlerType): Handler {
   switch (type) {
@@ -413,7 +409,11 @@ export default function HooksPanel() {
     getTransport()
       .call<HooksSettings>("get_hooks_config")
       .then((s) => {
-        const norm: HooksSettings = { disableAllHooks: !!s.disableAllHooks, hooks: s.hooks ?? {} }
+        const norm: HooksSettings = {
+          disableAllHooks: !!s.disableAllHooks,
+          allowProjectScope: !!s.allowProjectScope,
+          hooks: s.hooks ?? {},
+        }
         setSettings(norm)
         setSavedJson(JSON.stringify(norm))
       })
@@ -517,6 +517,19 @@ export default function HooksPanel() {
         <Switch
           checked={settings.disableAllHooks}
           onCheckedChange={(c) => setSettings({ ...settings, disableAllHooks: c })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between rounded-md border border-border/60 p-3">
+        <div>
+          <div className="text-sm font-medium">{t("settings.hooks.allowProjectScope")}</div>
+          <div className="text-xs text-muted-foreground">
+            {t("settings.hooks.allowProjectScopeDesc")}
+          </div>
+        </div>
+        <Switch
+          checked={settings.allowProjectScope}
+          onCheckedChange={(c) => setSettings({ ...settings, allowProjectScope: c })}
         />
       </div>
 

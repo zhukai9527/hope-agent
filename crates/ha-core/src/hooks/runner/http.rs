@@ -195,9 +195,6 @@ mod tests {
             timeout: Some(5),
             headers: Default::default(),
             allowed_env_vars: vec![],
-            status_message: None,
-            if_rule: None,
-            once: None,
         });
         let r = h
             .run(

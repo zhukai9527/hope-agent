@@ -25,11 +25,12 @@
 |-------|------|------|
 | **user** | `~/.hope-agent/config.json` 的 `hooks` | 全局，编进 `registry::global()` |
 | **managed** | `/etc/hope-agent/hooks.json`（Win: `%PROGRAMDATA%\hope-agent\hooks.json`）| 全局（企业下发），合进 `registry::global()` |
-| **project** | `<会话工作目录>/.hope-agent/hooks.json` | 随仓库共享，按 cwd 解析 |
+| **project** | `<会话工作目录>/.hope-agent/hooks.json` | 随仓库共享，按 cwd 解析（默认关，需开 `allowProjectScope`）|
 | **local** | `<会话工作目录>/.hope-agent/hooks.local.json` | git-ignored 开发者私有，按 cwd 解析 |
 
 - **UNION 语义**：所有 scope 命中的 hook 都跑，无覆盖。
 - project/local 依赖会话工作目录（`sessions.working_dir`，无 home 回退），在 dispatch 时经 [`scopes::resolve_for_cwd`](../../crates/ha-core/src/hooks/scopes.rs) 合并到全局之上，**per-cwd 缓存**（mtime + 全局 reload generation 失效）；无 project/local 文件时直接返回全局 registry（≤2 次 stat）。
+- **project/local 默认关闭**（`hooks_allow_project_scope`，`AppConfig` 字段，默认 `false`）：仓库 check-in 的 hooks 不应因会话 cwd 指向就自动执行 shell / HTTP / LLM / 子 Agent（供应链防护）。`resolve_for_cwd` 在开关为 `false` 时直接返回全局 registry、**绝不读取** project/local 文件；用户在 Settings → Hooks 显式开启才加载。`ha-settings` 技能只读此开关（与 `hooks` 同属 `BLOCKED_UPDATE_CATEGORIES`）。
 - 每条 fire 路径（dispatch / `fire_and_forget` / 各 gate）统一走 `scopes::any_handlers_for(event, cwd)`，所以 project-only hook 在 user/managed 为空时也能触发。
 - `disable_all_hooks` 主开关关闭**所有** scope。
 

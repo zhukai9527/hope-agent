@@ -4147,6 +4147,8 @@
       "intro": "شغّل أوامر مخصصة / HTTP / مطالبات / وكلاء فرعيين عند أحداث دورة الحياة. متوافق على مستوى الحقول مع hooks في Claude Code.",
       "disableAll": "تعطيل جميع الـ hooks",
       "disableAllDesc": "مفتاح رئيسي — يوقف كل hook في جميع النطاقات.",
+      "allowProjectScope": "السماح بخطافات المشروع والمحلية",
+      "allowProjectScopeDesc": "يسمح لملفّي .hope-agent/hooks.json و hooks.local.json في دليل العمل بإضافة خطافات — مفيد للمشاركة مع فريقك. مُعطَّل افتراضيًا لأنها قد تنفِّذ أوامر من تلقاء نفسها، لذا فعِّله فقط للمشاريع التي تثق بها.",
       "scopeNote": "تحرّر هذه اللوحة hooks نطاق user. نطاقات project (.hope-agent/hooks.json، مشتركة عبر المستودع) وlocal (hooks.local.json) وmanaged (/etc/hope-agent/hooks.json) قائمة على الملفات وتُدمج فوقها.",
       "pickEvent": "اختر حدثًا…",
       "addHook": "إضافة hook",
