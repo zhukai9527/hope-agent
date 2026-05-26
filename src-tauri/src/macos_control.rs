@@ -188,6 +188,7 @@ mod imp {
     const AX_ERROR_SUCCESS: AXError = 0;
     const K_CFSTRING_ENCODING_UTF8: u32 = 0x0800_0100;
     const K_CF_PROPERTY_LIST_XML_FORMAT_V1_0: u32 = 100;
+    const K_CFNUMBER_SINT64_TYPE: i32 = 4;
     const K_AXVALUE_CGPOINT_TYPE: i32 = 1;
     const K_AXVALUE_CGSIZE_TYPE: i32 = 2;
     const K_AXVALUE_CGRECT_TYPE: i32 = 3;
@@ -232,6 +233,15 @@ mod imp {
     struct CGRect {
         origin: CGPoint,
         size: CGSize,
+    }
+
+    #[repr(C)]
+    struct CFArrayCallBacks {
+        version: CFIndex,
+        retain: *const c_void,
+        release: *const c_void,
+        copy_description: *const c_void,
+        equal: *const c_void,
     }
 
     #[derive(Clone, Copy)]
@@ -320,6 +330,7 @@ mod imp {
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
         static kCFBooleanTrue: CFTypeRef;
+        static kCFTypeArrayCallBacks: CFArrayCallBacks;
         fn CFRelease(cf: CFTypeRef);
         fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
         fn CFEqual(cf1: CFTypeRef, cf2: CFTypeRef) -> Boolean;
@@ -327,6 +338,7 @@ mod imp {
         fn CFStringGetTypeID() -> CFTypeID;
         fn CFArrayGetTypeID() -> CFTypeID;
         fn CFBooleanGetTypeID() -> CFTypeID;
+        fn CFNumberGetTypeID() -> CFTypeID;
         fn CFStringCreateWithCString(
             alloc: *const c_void,
             c_str: *const c_char,
@@ -342,6 +354,18 @@ mod imp {
         ) -> Boolean;
         fn CFArrayGetCount(the_array: CFArrayRef) -> CFIndex;
         fn CFArrayGetValueAtIndex(the_array: CFArrayRef, idx: CFIndex) -> *const c_void;
+        fn CFArrayCreate(
+            allocator: *const c_void,
+            values: *const CFTypeRef,
+            num_values: CFIndex,
+            callbacks: *const CFArrayCallBacks,
+        ) -> CFArrayRef;
+        fn CFNumberCreate(
+            allocator: *const c_void,
+            the_type: i32,
+            value_ptr: *const c_void,
+        ) -> CFTypeRef;
+        fn CFNumberGetValue(number: CFTypeRef, the_type: i32, value_ptr: *mut c_void) -> Boolean;
         fn CFBooleanGetValue(boolean: CFTypeRef) -> Boolean;
         fn CFPropertyListCreateData(
             allocator: *const c_void,
@@ -733,6 +757,8 @@ mod imp {
         let request = request.clamped();
         let mut dock = read_dock_state()?;
         let mut launched = None;
+        let mut menu_items = Vec::new();
+        let mut selected_menu_item = None;
         let mut execution = None;
         let mut warnings = Vec::new();
 
@@ -745,6 +771,30 @@ mod imp {
                 launched = Some(item);
                 dock = read_dock_state().unwrap_or_else(|error| {
                     warnings.push(format!("Unable to refresh Dock after launch: {error}"));
+                    dock
+                });
+            }
+            MacControlDockOp::Menu => {
+                let item = resolve_dock_item(&dock.items, &request)?.clone();
+                let element = resolve_dock_ax_item(&item, &request)?;
+                let (opened_items, method) =
+                    open_dock_context_menu(element.as_ptr() as AXUIElementRef)?;
+                execution = Some(method);
+                menu_items = opened_items;
+            }
+            MacControlDockOp::SelectMenu => {
+                let item = resolve_dock_item(&dock.items, &request)?.clone();
+                let element = resolve_dock_ax_item(&item, &request)?;
+                let (opened_items, method) =
+                    open_dock_context_menu(element.as_ptr() as AXUIElementRef)?;
+                let selected = select_dock_context_menu_item(&request)?;
+                execution = Some(format!("{method}+AXPress"));
+                menu_items = opened_items;
+                selected_menu_item = Some(selected);
+                dock = read_dock_state().unwrap_or_else(|error| {
+                    warnings.push(format!(
+                        "Unable to refresh Dock after context menu selection: {error}"
+                    ));
                     dock
                 });
             }
@@ -773,6 +823,8 @@ mod imp {
             orientation: dock.orientation,
             items,
             launched,
+            menu_items,
+            selected_menu_item,
             execution,
             warnings,
         })
@@ -799,6 +851,7 @@ mod imp {
         let request = request.clamped();
         let mut spaces = read_spaces_state()?;
         let mut switched = None;
+        let mut moved_window = None;
         let mut execution = None;
         let mut warnings = std::mem::take(&mut spaces.warnings);
 
@@ -931,10 +984,52 @@ mod imp {
                 }
             }
             MacControlSpacesOp::MoveWindow => {
-                return Err(
-                    "mac_control spaces.move_window is not implemented: macOS does not provide a stable public API for moving windows between Spaces. Use spaces.switch plus window focus/manual confirmation for now."
-                        .to_string(),
-                );
+                let target = resolve_spaces_switch_target(&request, &spaces.displays)?;
+                let target_space_id = target.space.id.ok_or_else(|| {
+                    format!(
+                        "Target Space index={} has no ManagedSpaceID; spaces.move_window requires live CGS Spaces state.",
+                        target.space.index
+                    )
+                })?;
+                let window_request = MacControlWindowsRequest {
+                    op: MacControlWindowsOp::List,
+                    window_scope: MacControlWindowsScope::All,
+                    target: request.target.clone(),
+                    window_id: request.window_id.clone(),
+                    max_elements: request.max_elements,
+                    max_depth: request.max_depth,
+                    ..Default::default()
+                };
+                let (window, summary) = resolve_window(&window_request)?;
+                let cg_window_id = ax_window_number(window.as_ptr() as AXUIElementRef)
+                    .map_or_else(
+                        || {
+                            let cg_window = find_xcap_window_for_summary(&summary)?;
+                            cg_window.id().map_err(|error| {
+                                format!("Unable to read CGWindowID for '{}': {error}", summary.id)
+                            })
+                        },
+                        Ok,
+                    )?;
+                let previous_spaces = move_window_to_space_with_cgs(cg_window_id, target_space_id)?;
+                thread::sleep(Duration::from_millis(150));
+                match cgs_spaces_for_window(cg_window_id) {
+                    Ok(space_ids) if space_ids.contains(&target_space_id) => {}
+                    Ok(space_ids) => warnings.push(format!(
+                        "CGS moved window {}, but post-move verification reported Spaces {:?} instead of target Space {}.",
+                        cg_window_id, space_ids, target_space_id
+                    )),
+                    Err(error) => warnings.push(format!(
+                        "CGS moved window {}, but post-move verification failed: {error}",
+                        cg_window_id
+                    )),
+                }
+                execution = Some(format!(
+                    "CGSRemoveWindowsFromSpaces+CGSAddWindowsToSpaces window={} from={:?} to={}",
+                    cg_window_id, previous_spaces, target_space_id
+                ));
+                moved_window = Some(summary);
+                refresh_spaces_after_action(&mut spaces, &mut switched, &mut warnings);
             }
         }
 
@@ -942,7 +1037,7 @@ mod imp {
             op: request.op,
             displays: spaces.displays,
             switched,
-            moved_window: None,
+            moved_window,
             execution,
             warnings,
         })
@@ -1076,10 +1171,10 @@ mod imp {
             .filter(|item| dock_item_matches_request(item, request))
             .collect::<Vec<_>>();
         match matches.as_slice() {
-            [] => Err("No Dock item matched the launch request.".to_string()),
+            [] => Err("No Dock item matched the request.".to_string()),
             [item] => Ok(item),
             _ => Err(format!(
-                "Dock launch request matched {} items; retry with dockItemId or bundleId.",
+                "Dock request matched {} items; retry with dockItemId or bundleId.",
                 matches.len()
             )),
         }
@@ -1125,6 +1220,176 @@ mod imp {
             );
         }
         true
+    }
+
+    fn resolve_dock_ax_item(
+        item: &MacControlDockItem,
+        request: &MacControlDockRequest,
+    ) -> Result<CfOwned, String> {
+        let mut elements = dock_ax_items()?;
+        let mut best: Option<(i64, usize)> = None;
+        for (idx, element) in elements.iter().enumerate() {
+            let score = dock_ax_item_score(element.as_ptr() as AXUIElementRef, item, request);
+            if score <= 0 {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score > *best_score)
+            {
+                best = Some((score, idx));
+            }
+        }
+        if let Some((_, idx)) = best {
+            return Ok(elements.remove(idx));
+        }
+        let fallback_index = item.index.saturating_sub(1);
+        if fallback_index < elements.len() {
+            return Ok(elements.remove(fallback_index));
+        }
+        Err(format!(
+            "Unable to match Dock item '{}'{} to the live Dock AX list.",
+            item.id,
+            item.label
+                .as_deref()
+                .map(|label| format!(" ({label})"))
+                .unwrap_or_default()
+        ))
+    }
+
+    fn dock_ax_items() -> Result<Vec<CfOwned>, String> {
+        let app = running_apps_with_bundle_id("com.apple.dock")
+            .into_iter()
+            .next()
+            .ok_or_else(|| "Dock application is not running.".to_string())?;
+        let app_element = app_element_for_pid(app.processIdentifier())
+            .ok_or_else(|| "Unable to create Accessibility element for Dock.".to_string())?;
+        let dock_list = direct_menu_children(app_element.as_ptr() as AXUIElementRef)
+            .into_iter()
+            .find(|child| {
+                attribute_string(child.as_ptr() as AXUIElementRef, "AXRole").as_deref()
+                    == Some("AXList")
+            })
+            .ok_or_else(|| "Dock AXList was not found.".to_string())?;
+        Ok(direct_menu_children(dock_list.as_ptr() as AXUIElementRef))
+    }
+
+    fn dock_ax_item_score(
+        element: AXUIElementRef,
+        item: &MacControlDockItem,
+        request: &MacControlDockRequest,
+    ) -> i64 {
+        let values = menu_item_match_strings(element);
+        let mut score = 0_i64;
+        for expected in [
+            item.label.as_deref(),
+            request.app_name.as_deref(),
+            item.path
+                .as_deref()
+                .and_then(|path| app_bundle_name(Path::new(path)))
+                .as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if values
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(expected))
+            {
+                score = score.max(1_000);
+            } else if values
+                .iter()
+                .any(|value| contains_ci(Some(value), Some(expected)))
+            {
+                score = score.max(500);
+            }
+        }
+        score
+    }
+
+    fn open_dock_context_menu(
+        element: AXUIElementRef,
+    ) -> Result<(Vec<MacControlMenuItemSummary>, String), String> {
+        let method = if action_names(element)
+            .iter()
+            .any(|action| action == "AXShowMenu")
+            && perform_ax_action(element, "AXShowMenu").is_ok()
+        {
+            "AXShowMenu".to_string()
+        } else {
+            let bounds = element_bounds(element)
+                .ok_or_else(|| "Dock item has no bounds for right-click fallback.".to_string())?;
+            post_mouse_click(center_point(bounds, "Dock item")?, MouseButton::Right)?;
+            "CGEventRightClick".to_string()
+        };
+        thread::sleep(Duration::from_millis(300));
+        let menu = dock_context_menu(element)?;
+        let mut items = menu_children(menu.as_ptr() as AXUIElementRef, 2);
+        assign_menu_item_metadata(&mut items, "dock_menu");
+        Ok((items, method))
+    }
+
+    fn select_dock_context_menu_item(
+        request: &MacControlDockRequest,
+    ) -> Result<MacControlMenuItemSummary, String> {
+        let menu = dock_context_menu(ptr::null())?;
+        let item_elements = direct_menu_children(menu.as_ptr() as AXUIElementRef);
+        let (idx, item) = if let Some(menu_item) = request.menu_item.as_deref() {
+            let (idx, item) = item_elements
+                .iter()
+                .enumerate()
+                .find(|(_, item)| {
+                    menu_item_matches_exact(item.as_ptr() as AXUIElementRef, menu_item)
+                })
+                .or_else(|| {
+                    item_elements.iter().enumerate().find(|(_, item)| {
+                        menu_item_matches_contains(item.as_ptr() as AXUIElementRef, menu_item)
+                    })
+                })
+                .ok_or_else(|| format!("Dock context menu item '{menu_item}' was not found."))?;
+            (idx, item.as_ptr() as AXUIElementRef)
+        } else if let Some(index) = request.menu_index {
+            let item = item_elements.get(index).ok_or_else(|| {
+                format!(
+                    "Dock context menu index {index} was not found; valid range is 0..{}.",
+                    item_elements.len().saturating_sub(1)
+                )
+            })?;
+            (index, item.as_ptr() as AXUIElementRef)
+        } else {
+            return Err("dock.select_menu requires menuItem or menuIndex.".to_string());
+        };
+        let mut summary = menu_item_summary(item, 2);
+        summary.index = Some(idx);
+        summary.id = Some(format!("dock_menu_{}", idx + 1));
+        perform_menu_click_action(item)?;
+        Ok(summary)
+    }
+
+    fn dock_context_menu(preferred_parent: AXUIElementRef) -> Result<CfOwned, String> {
+        if !preferred_parent.is_null() {
+            if let Some(menu) = direct_menu_children(preferred_parent)
+                .into_iter()
+                .find(|child| {
+                    attribute_string(child.as_ptr() as AXUIElementRef, "AXRole").as_deref()
+                        == Some("AXMenu")
+                })
+            {
+                return Ok(menu);
+            }
+        }
+        let system = unsafe { AXUIElementCreateSystemWide() };
+        let system = CfOwned::new(system as CFTypeRef)
+            .ok_or_else(|| "Unable to create system Accessibility element.".to_string())?;
+        direct_menu_children(system.as_ptr() as AXUIElementRef)
+            .into_iter()
+            .find(|child| {
+                attribute_string(child.as_ptr() as AXUIElementRef, "AXRole").as_deref()
+                    == Some("AXMenu")
+            })
+            .ok_or_else(|| {
+                "Dock context menu was not found after opening the Dock item menu.".to_string()
+            })
     }
 
     fn launch_dock_item(item: &MacControlDockItem) -> Result<(), String> {
@@ -1449,6 +1714,7 @@ mod imp {
         dict.get("ManagedSpaceID")
             .or_else(|| dict.get("id64"))
             .or_else(|| dict.get("wsid"))
+            .or_else(|| dict.get("id"))
             .and_then(plist_integer)
             .and_then(|value| u64::try_from(value).ok())
     }
@@ -1720,6 +1986,100 @@ mod imp {
             set_current_space(connection, display, space_id);
         }
         Ok(())
+    }
+
+    fn cgs_spaces_for_window(window_id: u32) -> Result<Vec<u64>, String> {
+        type CGSDefaultConnectionFn = unsafe extern "C" fn() -> u32;
+
+        let handle = load_private_framework(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+        )?;
+        let connection_fn: CGSDefaultConnectionFn =
+            unsafe { load_private_symbol(handle.0, "_CGSDefaultConnection")? };
+        let connection = unsafe { connection_fn() };
+        let window_array = cf_number_array(&[i64::from(window_id)], "CGWindowID")?;
+        cgs_spaces_for_window_array(handle.0, connection, window_array.as_ptr() as CFArrayRef)
+    }
+
+    fn move_window_to_space_with_cgs(
+        window_id: u32,
+        target_space_id: u64,
+    ) -> Result<Vec<u64>, String> {
+        type CGSDefaultConnectionFn = unsafe extern "C" fn() -> u32;
+        type CGSRemoveWindowsFromSpacesFn = unsafe extern "C" fn(u32, CFArrayRef, CFArrayRef);
+        type CGSAddWindowsToSpacesFn = unsafe extern "C" fn(u32, CFArrayRef, CFArrayRef);
+
+        let handle = load_private_framework(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+        )?;
+        let connection_fn: CGSDefaultConnectionFn =
+            unsafe { load_private_symbol(handle.0, "_CGSDefaultConnection")? };
+        let remove_windows: CGSRemoveWindowsFromSpacesFn =
+            unsafe { load_private_symbol(handle.0, "CGSRemoveWindowsFromSpaces")? };
+        let add_windows: CGSAddWindowsToSpacesFn =
+            unsafe { load_private_symbol(handle.0, "CGSAddWindowsToSpaces")? };
+        let connection = unsafe { connection_fn() };
+        let window_array = cf_number_array(&[i64::from(window_id)], "CGWindowID")?;
+        let target_space = i64::try_from(target_space_id)
+            .map_err(|_| format!("Space id {target_space_id} does not fit in CFNumber."))?;
+        let target_space_array = cf_number_array(&[target_space], "CGSSpaceID")?;
+        let current_spaces =
+            cgs_spaces_for_window_array(handle.0, connection, window_array.as_ptr() as CFArrayRef)?;
+        if !current_spaces.is_empty() {
+            let previous_space_values = current_spaces
+                .iter()
+                .map(|space_id| {
+                    i64::try_from(*space_id)
+                        .map_err(|_| format!("Space id {space_id} does not fit in CFNumber."))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let previous_space_array = cf_number_array(&previous_space_values, "CGSSpaceID")?;
+            unsafe {
+                remove_windows(
+                    connection,
+                    window_array.as_ptr() as CFArrayRef,
+                    previous_space_array.as_ptr() as CFArrayRef,
+                );
+            }
+        }
+        unsafe {
+            add_windows(
+                connection,
+                window_array.as_ptr() as CFArrayRef,
+                target_space_array.as_ptr() as CFArrayRef,
+            );
+        }
+        Ok(current_spaces)
+    }
+
+    fn cgs_spaces_for_window_array(
+        handle: *mut c_void,
+        connection: u32,
+        window_array: CFArrayRef,
+    ) -> Result<Vec<u64>, String> {
+        type CGSCopySpacesForWindowsFn = unsafe extern "C" fn(u32, usize, CFArrayRef) -> CFArrayRef;
+
+        let copy_spaces_for_windows: CGSCopySpacesForWindowsFn =
+            unsafe { load_private_symbol(handle, "CGSCopySpacesForWindows")? };
+        let spaces_ref =
+            unsafe { copy_spaces_for_windows(connection, K_CGS_ALL_SPACES_MASK, window_array) };
+        let spaces = CfOwned::new(spaces_ref as CFTypeRef)
+            .ok_or_else(|| "CGSCopySpacesForWindows returned null.".to_string())?;
+        cgs_space_ids_from_cf_array(spaces.as_ptr())
+    }
+
+    fn cgs_space_ids_from_cf_array(value: CFTypeRef) -> Result<Vec<u64>, String> {
+        let root = plist_from_cf_property_list(value)?;
+        let items = plist_array(&root)
+            .ok_or_else(|| "CGSCopySpacesForWindows did not return an array.".to_string())?;
+        Ok(items
+            .iter()
+            .filter_map(|item| match item {
+                PlistValue::Integer(id) => u64::try_from(*id).ok(),
+                PlistValue::Dict(dict) => space_summary_id(dict),
+                _ => None,
+            })
+            .collect())
     }
 
     struct DlHandle(*mut c_void);
@@ -2465,21 +2825,10 @@ mod imp {
                     request.max_depth,
                     "act.perform_action",
                 )?;
-                if !summary.actions.iter().any(|action| action == ax_action) {
-                    let available = if summary.actions.is_empty() {
-                        "none".to_string()
-                    } else {
-                        summary.actions.join(", ")
-                    };
-                    return Err(format!(
-                        "act.perform_action target '{}' does not advertise {ax_action}; available actions: {available}.",
-                        summary.id
-                    ));
-                }
-                perform_ax_action(element.as_ptr() as AXUIElementRef, ax_action)?;
+                perform_ax_action(element.as_ptr() as AXUIElementRef, &ax_action)?;
                 target = Some(summary);
-                performed_action = Some(ax_action.to_string());
-                ax_action.to_string()
+                performed_action = Some(ax_action.clone());
+                ax_action
             }
             MacControlActOp::Click => {
                 if target_query_is_empty(&request.target) {
@@ -2726,9 +3075,49 @@ mod imp {
 
         let menu_bar = menu_root_for_scope(request.scope)?;
         let menu_bar_ref = menu_bar.as_ptr() as AXUIElementRef;
-        let items = menu_children(menu_bar_ref, request.max_depth);
+        let items = menu_items_for_scope(menu_bar_ref, request.scope, request.max_depth);
+        let mut warnings = Vec::new();
+        let mut popovers = Vec::new();
+        let mut screenshot = None;
         let clicked = if request.op == MacControlMenuOp::Click {
-            Some(click_menu_path(menu_bar_ref, &request.path)?)
+            let clicked = if !request.path.is_empty() {
+                click_menu_path(menu_bar_ref, &request.path)?
+            } else if let Some(index) = request.menu_index {
+                click_menu_index(menu_bar_ref, request.scope, index)?
+            } else {
+                return Err("menu.click requires path or menuIndex.".to_string());
+            };
+            if request.verify {
+                if request.scope == MacControlMenuScope::System {
+                    let mut verify_request = request.clone();
+                    verify_request.op = MacControlMenuOp::Popover;
+                    if verify_request.app_hint.is_none() {
+                        verify_request.app_hint = menu_item_primary_text(&clicked);
+                    }
+                    match handle_menu_popover(verify_request) {
+                        Ok(result) => {
+                            warnings.extend(result.warnings);
+                            popovers = result.popovers;
+                            screenshot = result.screenshot;
+                            if popovers.is_empty() {
+                                warnings.push(
+                                    "menu.click verify did not find a likely status-item popover."
+                                        .to_string(),
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            warnings.push(format!("menu.click verify failed: {error}"));
+                        }
+                    }
+                } else {
+                    warnings.push(
+                        "menu.click verify is only supported for scope=\"system\" status items."
+                            .to_string(),
+                    );
+                }
+            }
+            Some(clicked)
         } else {
             None
         };
@@ -2739,9 +3128,9 @@ mod imp {
             path: request.path,
             items,
             clicked,
-            popovers: Vec::new(),
-            screenshot: None,
-            warnings: Vec::new(),
+            popovers,
+            screenshot,
+            warnings,
         })
     }
 
@@ -3368,14 +3757,14 @@ mod imp {
                 execution = Some(action);
             }
             MacControlDialogOp::File => {
-                let result = handle_file_dialog(&request, &mut warnings)?;
+                let mut result = handle_file_dialog(&request, &mut warnings)?;
+                acted_field = result.name_field.clone();
                 execution = Some(
                     result
                         .path_navigation
                         .clone()
                         .unwrap_or_else(|| "DialogFileNoNavigation".to_string()),
                 );
-                file_dialog = Some(result);
 
                 let post_snapshot = capture_ax_snapshot(MacControlSnapshotRequest {
                     include_screenshot: false,
@@ -3387,19 +3776,26 @@ mod imp {
                 match select_dialog_file_button(&post_dialogs, &request)? {
                     DialogFileButtonSelection::Skip => {}
                     DialogFileButtonSelection::Press(button) => {
+                        let should_verify_close =
+                            dialog_file_button_should_close(&request, &button);
                         let element = resolve_element_by_summary(
                             &button,
                             request.max_elements,
                             request.max_depth,
                         )?;
                         press_dialog_button(element.as_ptr() as AXUIElementRef, &button)?;
+                        result.selected_button = element_display_text(&button);
                         execution = Some(format!(
                             "{}+AXPressOrCGEvent",
                             execution.as_deref().unwrap_or("DialogFile")
                         ));
+                        if should_verify_close {
+                            verify_dialog_file_closed(&request, &mut warnings);
+                        }
                         acted_button = Some(button);
                     }
                 }
+                file_dialog = Some(result);
             }
         }
 
@@ -3832,6 +4228,45 @@ mod imp {
             .ok_or_else(|| "No default accept-style dialog.file button matched.".to_string())
     }
 
+    fn dialog_file_button_should_close(
+        request: &MacControlDialogRequest,
+        button: &MacControlElementSummary,
+    ) -> bool {
+        let explicit = request
+            .select_button
+            .as_deref()
+            .or(request.button_text.as_deref())
+            .filter(|value| !value.is_empty());
+        match explicit {
+            Some(value) if value.eq_ignore_ascii_case("none") => false,
+            Some(value) if value.eq_ignore_ascii_case("default") => true,
+            Some(_) => dialog_button_has_label_match(button, ACCEPT_DIALOG_BUTTONS),
+            None => true,
+        }
+    }
+
+    fn verify_dialog_file_closed(request: &MacControlDialogRequest, warnings: &mut Vec<String>) {
+        thread::sleep(Duration::from_millis(250));
+        match capture_ax_snapshot(MacControlSnapshotRequest {
+            include_screenshot: false,
+            max_elements: request.max_elements,
+            max_depth: request.max_depth,
+            ..Default::default()
+        }) {
+            Ok(snapshot) => {
+                if !dialog_summaries(&snapshot, &request.target).is_empty() {
+                    warnings.push(
+                        "dialog.file clicked an accept-style button, but a dialog/sheet is still visible; the path/name may need another confirmation or validation failed."
+                            .to_string(),
+                    );
+                }
+            }
+            Err(error) => warnings.push(format!(
+                "dialog.file could not verify whether the dialog closed: {error}"
+            )),
+        }
+    }
+
     fn select_dialog_field(
         dialogs: &[MacControlDialogSummary],
         request: &MacControlDialogRequest,
@@ -3884,6 +4319,7 @@ mod imp {
             );
         }
         let mut path_navigation = None;
+        let mut name_field = None;
         if let Some(path) = request
             .file_path
             .as_deref()
@@ -3913,19 +4349,22 @@ mod imp {
             let element =
                 resolve_element_by_summary(&field, request.max_elements, request.max_depth)?;
             set_ax_string(element.as_ptr() as AXUIElementRef, "AXValue", name)?;
+            name_field = Some(field);
             path_navigation = Some(match path_navigation {
                 Some(existing) => format!("{existing}+AXSetFilename"),
                 None => "AXSetFilename".to_string(),
             });
         }
+        let requested_button = request
+            .select_button
+            .clone()
+            .or_else(|| request.button_text.clone());
         Ok(MacControlDialogFileResult {
             path: request.file_path.clone(),
             name: request.file_name.clone(),
-            selected_button: request
-                .select_button
-                .clone()
-                .or_else(|| request.button_text.clone())
-                .filter(|value| !value.eq_ignore_ascii_case("none")),
+            requested_button,
+            selected_button: None,
+            name_field,
             path_navigation,
         })
     }
@@ -3955,6 +4394,14 @@ mod imp {
     fn element_label_matches(element: &MacControlElementSummary, query: &str) -> bool {
         contains_ci(element.label.as_deref(), Some(query))
             || contains_ci(element.value.as_deref(), Some(query))
+    }
+
+    fn element_display_text(element: &MacControlElementSummary) -> Option<String> {
+        element
+            .label
+            .clone()
+            .or_else(|| element.value.clone())
+            .filter(|value| !value.trim().is_empty())
     }
 
     fn dialog_button_has_label_match(
@@ -6286,16 +6733,80 @@ mod imp {
             .collect()
     }
 
+    fn menu_items_for_scope(
+        menu_root: AXUIElementRef,
+        scope: MacControlMenuScope,
+        max_depth: usize,
+    ) -> Vec<MacControlMenuItemSummary> {
+        let mut items = if scope == MacControlMenuScope::System {
+            system_menu_extra_elements(menu_root)
+                .into_iter()
+                .map(|item| menu_item_summary(item.as_ptr() as AXUIElementRef, max_depth))
+                .collect()
+        } else {
+            menu_children(menu_root, max_depth)
+        };
+        assign_menu_item_metadata(&mut items, "menu");
+        items
+    }
+
+    fn assign_menu_item_metadata(items: &mut [MacControlMenuItemSummary], prefix: &str) {
+        for (idx, item) in items.iter_mut().enumerate() {
+            item.index = Some(idx);
+            item.id = Some(format!("{prefix}_{}", idx + 1));
+            if !item.children.is_empty() {
+                let child_prefix = item.id.clone().unwrap_or_else(|| prefix.to_string());
+                assign_menu_item_metadata(&mut item.children, &child_prefix);
+            }
+        }
+    }
+
     fn menu_item_summary(element: AXUIElementRef, max_depth: usize) -> MacControlMenuItemSummary {
         MacControlMenuItemSummary {
+            id: None,
+            index: None,
             title: attribute_string(element, "AXTitle"),
             description: attribute_string(element, "AXDescription"),
             value: attribute_string(element, "AXValue"),
             role: attribute_string(element, "AXRole"),
             enabled: attribute_bool(element, "AXEnabled"),
+            bounds_points: element_bounds(element),
             actions: action_names(element),
             children: menu_children(element, max_depth),
         }
+    }
+
+    fn menu_item_primary_text(item: &MacControlMenuItemSummary) -> Option<String> {
+        item.title
+            .clone()
+            .or_else(|| item.description.clone())
+            .or_else(|| item.value.clone())
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    fn click_menu_index(
+        menu_root: AXUIElementRef,
+        scope: MacControlMenuScope,
+        index: usize,
+    ) -> Result<MacControlMenuItemSummary, String> {
+        let items = if scope == MacControlMenuScope::System {
+            system_menu_extra_elements(menu_root)
+        } else {
+            direct_menu_children(menu_root)
+        };
+        let item = items.get(index).ok_or_else(|| {
+            format!(
+                "Menu index {index} was not found; valid range is 0..{}.",
+                items.len().saturating_sub(1)
+            )
+        })?;
+        let item_ref = item.as_ptr() as AXUIElementRef;
+        let mut summary = menu_item_summary(item_ref, 2);
+        summary.index = Some(index);
+        summary.id = Some(format!("menu_{}", index + 1));
+        perform_menu_click_action(item_ref)?;
+        thread::sleep(Duration::from_millis(180));
+        Ok(summary)
     }
 
     fn click_menu_path(
@@ -6309,7 +6820,7 @@ mod imp {
             let child = find_menu_child(current, part)
                 .ok_or_else(|| format!("Menu path component '{part}' was not found."))?;
             let child_ref = child.as_ptr() as AXUIElementRef;
-            perform_ax_action(child_ref, "AXPress")?;
+            perform_menu_click_action(child_ref)?;
             thread::sleep(Duration::from_millis(120));
             last = Some(menu_item_summary(child_ref, 2));
             retained_path.push(child);
@@ -6319,6 +6830,64 @@ mod imp {
                 .as_ptr() as AXUIElementRef;
         }
         last.ok_or_else(|| "menu.click requires a non-empty path.".to_string())
+    }
+
+    fn system_menu_extra_elements(menu_root: AXUIElementRef) -> Vec<CfOwned> {
+        let children = direct_menu_children(menu_root);
+        if let Some(group) = children.iter().rev().find(|child| {
+            attribute_string(child.as_ptr() as AXUIElementRef, "AXRole").as_deref()
+                == Some("AXGroup")
+        }) {
+            let group_children = direct_menu_children(group.as_ptr() as AXUIElementRef);
+            if !group_children.is_empty() {
+                return group_children;
+            }
+        }
+        children
+            .into_iter()
+            .flat_map(|child| {
+                let child_ref = child.as_ptr() as AXUIElementRef;
+                if attribute_string(child_ref, "AXRole").as_deref() == Some("AXGroup") {
+                    let nested = direct_menu_children(child_ref);
+                    if !nested.is_empty() {
+                        return nested;
+                    }
+                }
+                vec![child]
+            })
+            .filter(|child| is_likely_menu_extra(child.as_ptr() as AXUIElementRef))
+            .collect()
+    }
+
+    fn direct_menu_children(element: AXUIElementRef) -> Vec<CfOwned> {
+        let Some(children) = copy_attribute(element, "AXChildren")
+            .or_else(|| copy_attribute(element, "AXMenuItems"))
+        else {
+            return Vec::new();
+        };
+        cf_array_values(children.as_ptr())
+            .into_iter()
+            .filter_map(|child| CfOwned::new(unsafe { CFRetain(child as CFTypeRef) }))
+            .collect()
+    }
+
+    fn is_likely_menu_extra(element: AXUIElementRef) -> bool {
+        let role = attribute_string(element, "AXRole").unwrap_or_default();
+        if matches!(role.as_str(), "AXMenuBarItem" | "AXButton" | "AXMenuItem") {
+            return true;
+        }
+        element_bounds(element).is_some()
+            && (!menu_item_match_strings(element).is_empty() || !action_names(element).is_empty())
+    }
+
+    fn perform_menu_click_action(element: AXUIElementRef) -> Result<(), String> {
+        let actions = action_names(element);
+        if actions.iter().any(|action| action == "AXShowMenu") {
+            if perform_ax_action(element, "AXShowMenu").is_ok() {
+                return Ok(());
+            }
+        }
+        perform_ax_action(element, "AXPress")
     }
 
     fn find_menu_child(element: AXUIElementRef, title: &str) -> Option<CfOwned> {
@@ -6788,6 +7357,12 @@ mod imp {
         })
     }
 
+    fn ax_window_number(window: AXUIElementRef) -> Option<u32> {
+        let value = copy_attribute(window, "AXWindowNumber")?;
+        let raw = cf_value_i64(value.as_ptr())?;
+        u32::try_from(raw).ok().filter(|id| *id != 0)
+    }
+
     fn xcap_window_score(window: &Window, summary: &MacControlWindowSummary) -> Option<i64> {
         let mut score = 0_i64;
         if let Some(pid) = summary.app_pid {
@@ -7244,6 +7819,55 @@ mod imp {
         };
         CfOwned::new(ptr as CFTypeRef)
             .ok_or_else(|| "CFStringCreateWithCString returned null".to_string())
+    }
+
+    fn cf_number(value: i64) -> Result<CfOwned, String> {
+        let ptr = unsafe {
+            CFNumberCreate(
+                ptr::null(),
+                K_CFNUMBER_SINT64_TYPE,
+                &value as *const i64 as *const c_void,
+            )
+        };
+        CfOwned::new(ptr).ok_or_else(|| "CFNumberCreate returned null.".to_string())
+    }
+
+    fn cf_number_array(values: &[i64], label: &str) -> Result<CfOwned, String> {
+        let mut numbers = Vec::with_capacity(values.len());
+        for value in values {
+            numbers.push(cf_number(*value)?);
+        }
+        let refs = numbers
+            .iter()
+            .map(CfOwned::as_ptr)
+            .collect::<Vec<CFTypeRef>>();
+        let count = CFIndex::try_from(refs.len())
+            .map_err(|_| format!("Too many {label} values for CFArray."))?;
+        let array = unsafe {
+            CFArrayCreate(
+                ptr::null(),
+                refs.as_ptr(),
+                count,
+                &raw const kCFTypeArrayCallBacks,
+            )
+        };
+        CfOwned::new(array as CFTypeRef)
+            .ok_or_else(|| format!("CFArrayCreate returned null for {label} values."))
+    }
+
+    fn cf_value_i64(value: CFTypeRef) -> Option<i64> {
+        if value.is_null() || unsafe { CFGetTypeID(value) } != unsafe { CFNumberGetTypeID() } {
+            return None;
+        }
+        let mut result = 0_i64;
+        let ok = unsafe {
+            CFNumberGetValue(
+                value,
+                K_CFNUMBER_SINT64_TYPE,
+                &mut result as *mut i64 as *mut c_void,
+            )
+        };
+        (ok != 0).then_some(result)
     }
 
     fn cf_value_string(value: CFTypeRef) -> Option<String> {

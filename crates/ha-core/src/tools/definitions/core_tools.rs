@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `dock` list/launch/hide/show, `spaces` list/switch, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/move_cursor/double_click/right_click/type/paste/set_value/hotkey/press/scroll/drag/swipe, `menu` list/click for app menus or system menu bar extras plus `menu.popover` for menu bar status popover detection, `clipboard` get/set/clear text, and `dialog` list/inspect/click/input/file/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
+            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `dock` list/launch/hide/show/menu/select_menu, `spaces` list/switch/move_window, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/move_cursor/double_click/right_click/type/paste/set_value/hotkey/press/scroll/drag/swipe, `menu` list/click for app menus or system menu bar extras plus `menu.popover` for menu bar status popover detection, `clipboard` get/set/clear text, and `dialog` list/inspect/click/input/file/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -739,8 +739,8 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "op": {
                         "type": "string",
-                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "hide", "show", "switch", "move_window", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "move_cursor", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "press", "scroll", "drag", "swipe", "popover", "input", "file", "get", "set", "clear", "inspect", "accept", "dismiss"],
-                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `dock`: list|launch|hide|show. For `spaces`: list|switch; move_window is reserved and currently returns an explicit unsupported error on macOS because stable public APIs do not move windows across Spaces. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, perform_action runs a whitelisted AX action advertised by the target, click for AX target clicks, click_point for raw screen coordinates, move_cursor to x/y or target center, double_click|right_click target clicks, type|paste|set_value|hotkey|press|scroll, drag/swipe between coordinate or AX element endpoints. For `menu`: list|click|popover. For `clipboard`: get|set|clear text. For `dialog`: list|inspect|click|input|file|accept|dismiss."
+                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "hide", "show", "menu", "select_menu", "switch", "move_window", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "move_cursor", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "press", "scroll", "drag", "swipe", "popover", "input", "file", "get", "set", "clear", "inspect", "accept", "dismiss"],
+                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `dock`: list|launch|hide|show|menu|select_menu. For `spaces`: list|switch|move_window. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, perform_action runs a named AX action after basic format validation, click for AX target clicks, click_point for raw screen coordinates, move_cursor to x/y or target center, double_click|right_click target clicks, type|paste|set_value|hotkey|press|scroll, drag/swipe between coordinate or AX element endpoints. For `menu`: list|click|popover. For `clipboard`: get|set|clear text. For `dialog`: list|inspect|click|input|file|accept|dismiss."
                     },
                     "scope": {
                         "type": "string",
@@ -765,6 +765,15 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "type": "string",
                         "description": "For `menu.popover`: optional app/status item hint used to rank menu bar popover candidates by app name, bundle id, window title, or OCR text."
                     },
+                    "menuIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "For `menu.click scope=system`: 0-based status item index from `menu.list scope=system`; ignored when a non-empty `path` is also provided. For `dock.select_menu`: 0-based Dock context menu item index from `dock.menu`; use only when `menuItem` is unavailable, because index-only Dock menu selections require strict approval."
+                    },
+                    "menuItem": {
+                        "type": "string",
+                        "description": "For `dock.select_menu`: Dock context menu item title to click, such as `Options` or `Remove from Dock`. Prefer this over `menuIndex`; when both are provided, `menuItem` is treated as the intended target."
+                    },
                     "bundleId": {
                         "type": "string",
                         "description": "For `apps` or `dock.launch`: case-insensitive substring match against the app bundle id."
@@ -785,11 +794,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "dockItemId": {
                         "type": "string",
-                        "description": "For `dock.launch`: exact Dock item id from `dock.list`, e.g. dock_123456789. Prefer this over appName when launching a Dock item."
+                        "description": "For `dock.launch`, `dock.menu`, or `dock.select_menu`: exact Dock item id from `dock.list`, e.g. dock_123456789. Prefer this over appName when mutating a Dock item."
                     },
                     "itemPath": {
                         "type": "string",
-                        "description": "For `dock.launch`: exact filesystem path or file:// URL from a Dock item. Prefer dockItemId or bundleId for app launches."
+                        "description": "For `dock.launch`, `dock.menu`, or `dock.select_menu`: exact filesystem path or file:// URL from a Dock item. Prefer dockItemId or bundleId for app launches."
                     },
                     "spaceId": {
                         "type": "integer",
@@ -898,8 +907,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "axAction": {
                         "type": "string",
-                        "enum": crate::mac_control::ALLOWED_PERFORM_AX_ACTIONS,
-                        "description": "For `act.perform_action`: whitelisted Accessibility action to perform on the resolved target. The target must advertise the action in its `actions[]`, e.g. AXPress, AXShowMenu, AXIncrement, or AXDecrement."
+                        "description": "For `act.perform_action`: Accessibility action name to perform on the resolved target. Common aliases normalize to AX names; other names are accepted if non-empty, <=128 chars, and only ASCII letters/digits/_/-. The target does not have to advertise the action in `actions[]`; unsupported actions fail at execution."
                     },
                     "key": {
                         "type": "string",
@@ -1013,6 +1021,10 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "includeOcr": {
                         "type": "boolean",
                         "description": "For `menu.popover`: run a best-effort display OCR pass and attach visible text inside candidate popover windows. Defaults to true; set false for AX-window-only detection."
+                    },
+                    "verify": {
+                        "type": "boolean",
+                        "description": "For `menu.click scope=system`: after clicking a status item, attempt to verify/opened popover by returning `menu.popover` candidates and screenshot metadata."
                     },
                     "annotate": {
                         "type": "boolean",
@@ -1783,11 +1795,16 @@ mod tests {
         assert!(op_enum
             .iter()
             .any(|value| value.as_str() == Some("popover")));
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("select_menu")));
         assert!(op_enum.iter().any(|value| value.as_str() == Some("switch")));
         assert!(op_enum.iter().any(|value| value.as_str() == Some("input")));
         assert!(op_enum.iter().any(|value| value.as_str() == Some("file")));
         assert!(tool.parameters["properties"].get("snapshotId").is_some());
         assert!(tool.parameters["properties"].get("dockItemId").is_some());
+        assert!(tool.parameters["properties"].get("menuItem").is_some());
+        assert!(tool.parameters["properties"].get("menuIndex").is_some());
         assert!(tool.parameters["properties"].get("appHint").is_some());
         assert!(tool.parameters["properties"].get("includeOcr").is_some());
         assert!(tool.parameters["properties"].get("spaceIndex").is_some());

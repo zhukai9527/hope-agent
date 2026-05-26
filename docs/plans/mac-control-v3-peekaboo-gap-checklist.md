@@ -10,13 +10,12 @@
 
 - [x] 2. 更完整的 AX action
   - Peekaboo 有 `perform-action --action AXPress/AXShowMenu/...`，可以对元素执行命名 AX action。
-  - Hope Agent 现状：主要是 `click` / `set_value` / `type` / `paste` / `hotkey` / `scroll` / `drag` 等封装动作。
-  - Hope Agent 已完成：`act.perform_action` + `axAction`，白名单 AX action，要求目标 `actions[]` 声明支持，已接入权限审批、schema、Tauri bridge、文档与测试。
+  - Hope Agent 已完成：`act.perform_action` + `axAction`，对常用别名规范化，其它合法 AX action 字符串直接尝试执行，不再依赖不可靠的 `actions[]` 广告；已接入权限审批、schema、Tauri bridge、文档与测试。
 
 - [x] 3. Dock / Spaces
   - Peekaboo 有 Dock 和 Space 能力：列 Dock、启动 Dock app、隐藏/显示 Dock、切换 Space、移动窗口到 Space。
-  - Hope Agent 已完成：`dock.list/launch/hide/show`、`spaces.list/switch`，接入 schema、权限审批、Tauri bridge、文档与测试。
-  - 已知边界：`spaces.move_window` 因 macOS 无稳定公开 API 先返回显式 unsupported；后续若找到可靠路径再单独补。
+  - Hope Agent 已完成：`dock.list/launch/hide/show/menu/select_menu`、`spaces.list/switch/move_window`，接入 schema、权限审批、Tauri bridge、文档与测试。
+  - 已知边界：`spaces.move_window` 依赖 SkyLight/CGS 私有 API；CGS 不可用或系统行为变化时会返回错误/verification warning。
 
 - [x] 4. Dialog 专项能力细化
   - Peekaboo 的 dialog 能做 `list` / `click` / `input` / `file` / `dismiss`。

@@ -57,10 +57,11 @@ wait or snapshot                       # verify the expected change
 ### Dock and Spaces
 
 - Use `dock.list` before `dock.launch`; prefer `dockItemId` or `bundleId` over a loose app name.
+- Use `dock.menu` to open a Dock item's context menu and inspect `menuItems`; use `dock.select_menu` with `menuItem` when possible, or `menuIndex` only when titles are unavailable. If both are present, `menuItem` is treated as the intended target.
 - `dock.hide` and `dock.show` change the user's Dock autohide setting and restart Dock, so be explicit before approval.
 - Use `spaces.list` before `spaces.switch` when targeting a numbered Space. `spaceIndex` is 1-based.
 - `spaces.switch direction="left"|"right"` / `spaceIndex` / `spaceId` pass exactly one selector. Direction and adjacent targets use Mission Control Control+Left/Right first; non-adjacent exact targets may fall back to Control+number or SkyLight/CGS. Verify with `spaces.list` or a fresh screenshot after switching.
-- `spaces.move_window` is currently a documented unsupported edge: macOS has no stable public API for moving windows between Spaces. Do not call it unless the user specifically asks to confirm that limitation.
+- `spaces.move_window` moves one explicit window to `spaceIndex` / `spaceId` through SkyLight/CGS. Resolve the window first with `windows.list windowScope="all"` and prefer `windowId`; if post-move verification warns, use `spaces.list` or a fresh screenshot to confirm.
 
 ### Windows
 
@@ -83,7 +84,7 @@ wait or snapshot                       # verify the expected change
 - `elements.find` returns `totalMatches` plus candidate `score`, `reasons`, `element`, and `window`. Prefer high-score candidates whose reasons include the user's intended text/role/window.
 - Browser/WebView snapshots may focus the dominant `AXWebArea` and re-traverse when no text input is exposed. If a result warning mentions this fallback, use the refreshed candidates first; if it still exposes only web/canvas content, switch to `visual.observe annotate=true`, OCR, or `visual.point`.
 - Use `act.dry_run` when the next mutation should use the exact same target resolver as `act.click` / `act.set_value`, but you want to verify the resolved element first. It returns the resolved `target` without changing the UI; call `snapshot` or `elements.find` when full tree context is needed.
-- Use `act.perform_action` only when the target element advertises the intended AX action in `actions[]`. It requires `target` and `axAction`, and supports only the built-in whitelist such as `AXPress`, `AXShowMenu`, `AXIncrement`, and `AXDecrement`.
+- Use `act.perform_action` for a named AX action when a higher-level op is not enough. It requires `target` and `axAction`; common aliases such as `press` and `show_menu` normalize to AX names, while other valid AX action strings are attempted directly even if the target did not advertise them in `actions[]`.
 - `act.click` is for AX targets only. It requires `target` and should not consume raw `x/y`.
 - Use `act.click_point` only when the user explicitly wants a coordinate click or AX cannot represent the target. This includes valid coordinates like `(0, 0)`.
 - Use `act.move_cursor` when the user wants the pointer moved without clicking. It accepts either `x/y` or a target, and can smooth the path with `durationMs` / `steps` / `motionProfile`.
@@ -130,7 +131,8 @@ Rules:
 
 - Prefer `menu.click` over hotkeys for app commands.
 - `menu.scope` defaults to `app`, which targets the current frontmost app menu bar.
-- Use `menu.list scope="system"` before operating macOS menu bar extras/status items. System menu entries may expose useful `description`, `value`, and `actions` even when `title` is empty.
+- Use `menu.list scope="system"` before operating macOS menu bar extras/status items. System menu entries include 0-based `index`, optional `boundsPoints`, and may expose useful `description`, `value`, and `actions` even when `title` is empty.
+- For status items, prefer `menu.click scope="system" menuIndex=<index> verify=true` after listing when the title is empty or localized. Verification returns likely popovers and OCR screenshot metadata when available.
 - After opening a status item or menu bar extra popover, use `menu.popover appHint="..."` to identify the floating panel. It ranks all-app AX windows with menu-bar geometry, host app hints, and optional OCR text; it does not click anything.
 - If a menu path fails, call `menu.list` with the same `scope` and check the localized titles/descriptions of the current menu surface.
 - If the user says "do not use shortcuts", never call `act.hotkey`. Use menus or AX actions.
@@ -149,7 +151,7 @@ Rules:
 - When several dialogs are present, target by dialog text/window or use the button id from the inspected result.
 - `dialog.click` requires `buttonText`; use the visible label. Examples: `取消`, `保存`, `删除`, `Cancel`, `Save`, `Don't Save`.
 - `dialog.input` requires `text`; use `field`, `fieldIndex`, or `target.elementId` when more than one dialog field exists. Set `clear=true` to replace the value.
-- `dialog.file` can enter `filePath`, set `fileName`, then click `selectButton` (or the default accept button). Use `selectButton="none"` when you only want to fill path/name.
+- `dialog.file` can enter `filePath`, set `fileName`, then click `selectButton` (or the default accept button). It returns `fileDialog.nameField`, `requestedButton`, and the actual `selectedButton` when clicked. Use `selectButton="none"` when you only want to fill path/name.
 - `dialog.dismiss` means a cancel/close-style action. If the user wants to discard changes, choose the explicit discard button such as `删除` or `Don't Save`, not a generic dismiss guess.
 
 ## Verification and Recovery
@@ -158,7 +160,7 @@ Rules:
 - After any action that changes UI, re-snapshot or call the relevant list/inspect command before using old ids.
 - Tool approval restores the previously frontmost app before the approved `mac_control` mutation runs, but treat it as best-effort. After an approval, verify `frontmost` or take a fresh observation before chaining another focus-sensitive action.
 - If an element becomes stale, take a fresh snapshot and reselect by role + label/text + window.
-- If `act.perform_action` says the target does not advertise the requested action, do not retry the same call. Use fresh `elements.find` / `snapshot` and choose an action from that element's `actions[]`.
+- If `act.perform_action` returns an AX unsupported/action error, do not retry the same call blindly. Use fresh `elements.find` / `snapshot` and choose a supported action, or switch to `act.click` / `act.click_point` fallback.
 - If `dialog.inspect` returns empty but the UI visibly has a sheet, retry with `maxElements: 300` or `500` and confirm the frontmost app.
 - If `menu.click` says a path component was not found, check frontmost app and `menu.list`; do not retry the same path blindly.
 - If a mutation succeeds but the expected state did not change, use `wait` or a fresh snapshot to verify before deciding the next action.

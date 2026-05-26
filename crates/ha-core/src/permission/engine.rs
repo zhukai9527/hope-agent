@@ -451,6 +451,8 @@ fn check_mac_control_action(ctx: &ResolveContext<'_>) -> Option<AskReason> {
         ("dock", Some("launch")) => "dock.launch",
         ("dock", Some("hide")) => "dock.hide",
         ("dock", Some("show")) => "dock.show",
+        ("dock", Some("menu")) => "dock.menu",
+        ("dock", Some("select_menu")) => "dock.select_menu",
         ("spaces", Some("switch")) => "spaces.switch",
         ("spaces", Some("move_window")) => "spaces.move_window",
         ("windows", Some("focus")) => "windows.focus",
@@ -509,6 +511,9 @@ fn mac_control_dangerous_label(
         ("menu", Some("click")) if mac_control_menu_path_is_dangerous(args) => {
             Some("menu.click.dangerous")
         }
+        ("dock", Some("select_menu")) if mac_control_dock_menu_selection_is_dangerous(args) => {
+            Some("dock.select_menu.dangerous")
+        }
         _ => None,
     }
 }
@@ -534,6 +539,18 @@ fn mac_control_dialog_button_is_dangerous(args: &Value) -> bool {
         .iter()
         .filter_map(|key| args.get(*key).and_then(|value| value.as_str()))
         .any(mac_control_text_is_dangerous)
+}
+
+fn mac_control_dock_menu_selection_is_dangerous(args: &Value) -> bool {
+    if args
+        .get("menuItem")
+        .and_then(|value| value.as_str())
+        .is_some_and(mac_control_text_is_dangerous)
+    {
+        return true;
+    }
+
+    args.get("menuIndex").is_some() && args.get("menuItem").is_none()
 }
 
 fn mac_control_text_is_dangerous(value: &str) -> bool {
@@ -856,6 +873,8 @@ mod tests {
             json!({"action": "dock", "op": "launch", "bundleId": "com.apple.TextEdit"}),
             json!({"action": "dock", "op": "hide"}),
             json!({"action": "dock", "op": "show"}),
+            json!({"action": "dock", "op": "menu", "bundleId": "com.apple.TextEdit"}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuItem": "Show in Finder"}),
             json!({"action": "spaces", "op": "switch", "direction": "right"}),
             json!({"action": "spaces", "op": "move_window", "windowId": "win_1", "spaceIndex": 2}),
         ] {
@@ -902,6 +921,8 @@ mod tests {
             json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "AXConfirm"}),
             json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "confirm"}),
             json!({"action": "menu", "op": "click", "path": ["File", "Move to Trash"]}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuItem": "Remove from Dock"}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuIndex": 0}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);
             assert!(matches!(

@@ -512,6 +512,8 @@ pub struct MacControlDockResult {
     pub orientation: Option<String>,
     pub items: Vec<MacControlDockItem>,
     pub launched: Option<MacControlDockItem>,
+    pub menu_items: Vec<MacControlMenuItemSummary>,
+    pub selected_menu_item: Option<MacControlMenuItemSummary>,
     pub execution: Option<String>,
     pub warnings: Vec<String>,
 }
@@ -765,11 +767,14 @@ pub struct MacControlMenuResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MacControlMenuItemSummary {
+    pub id: Option<String>,
+    pub index: Option<usize>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub value: Option<String>,
     pub role: Option<String>,
     pub enabled: Option<bool>,
+    pub bounds_points: Option<MacControlBounds>,
     pub actions: Vec<String>,
     pub children: Vec<MacControlMenuItemSummary>,
 }
@@ -821,7 +826,9 @@ pub struct MacControlDialogSummary {
 pub struct MacControlDialogFileResult {
     pub path: Option<String>,
     pub name: Option<String>,
+    pub requested_button: Option<String>,
     pub selected_button: Option<String>,
+    pub name_field: Option<MacControlElementSummary>,
     pub path_navigation: Option<String>,
 }
 
@@ -1023,6 +1030,10 @@ pub struct MacControlDockRequest {
     pub bundle_id: Option<String>,
     #[serde(default)]
     pub item_path: Option<String>,
+    #[serde(default)]
+    pub menu_item: Option<String>,
+    #[serde(default)]
+    pub menu_index: Option<usize>,
     #[serde(default = "default_dock_limit")]
     pub limit: usize,
 }
@@ -1033,6 +1044,8 @@ impl MacControlDockRequest {
         self.app_name = normalize_optional_string(self.app_name);
         self.bundle_id = normalize_optional_string(self.bundle_id);
         self.item_path = normalize_optional_string(self.item_path);
+        self.menu_item = normalize_optional_string(self.menu_item);
+        self.menu_index = self.menu_index.filter(|index| *index < 10_000);
         if self.limit == 0 {
             self.limit = default_dock_limit();
         }
@@ -1053,6 +1066,8 @@ pub enum MacControlDockOp {
     Launch,
     Hide,
     Show,
+    Menu,
+    SelectMenu,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -1103,10 +1118,47 @@ pub fn sanitize_tool_args(args: &serde_json::Value) -> serde_json::Value {
         return args.clone();
     };
     let mut sanitized = args.clone();
-    if action == "spaces" {
-        sanitize_spaces_tool_args(&mut sanitized);
+    match action {
+        "dock" => sanitize_dock_tool_args(&mut sanitized),
+        "menu" => sanitize_menu_tool_args(&mut sanitized),
+        "spaces" => sanitize_spaces_tool_args(&mut sanitized),
+        _ => {}
     }
     sanitized
+}
+
+fn sanitize_dock_tool_args(args: &mut serde_json::Value) {
+    let Some(object) = args.as_object_mut() else {
+        return;
+    };
+    let op = object.get("op").and_then(|value| value.as_str());
+    if op != Some("select_menu") {
+        return;
+    }
+    if object.get("menuItem").is_some_and(has_non_empty_string) {
+        object.remove("menuIndex");
+    }
+}
+
+fn sanitize_menu_tool_args(args: &mut serde_json::Value) {
+    let Some(object) = args.as_object_mut() else {
+        return;
+    };
+    let op = object.get("op").and_then(|value| value.as_str());
+    if op != Some("click") {
+        return;
+    }
+    let has_path = object
+        .get("path")
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| items.iter().any(has_non_empty_string));
+    if has_path {
+        object.remove("menuIndex");
+    }
+}
+
+fn has_non_empty_string(value: &serde_json::Value) -> bool {
+    value.as_str().is_some_and(|text| !text.trim().is_empty())
 }
 
 fn sanitize_spaces_tool_args(args: &mut serde_json::Value) {
@@ -1169,13 +1221,7 @@ pub fn preflight_tool_args(args: &serde_json::Value) -> Option<String> {
                 Ok(request) => request.clamped(),
                 Err(error) => return Some(error),
             };
-            if request.op == MacControlDockOp::Launch && !dock_request_has_target(&request) {
-                return Some(
-                    "mac_control dock.launch requires dockItemId, bundleId, appName, or itemPath."
-                        .to_string(),
-                );
-            }
-            None
+            validate_dock_request(&request)
         }
         "spaces" => match parse_preflight_request::<MacControlSpacesRequest>(args, "spaces") {
             Ok(request) => validate_spaces_request(&request.clamped()),
@@ -1200,10 +1246,7 @@ pub fn preflight_tool_args(args: &serde_json::Value) -> Option<String> {
                 Ok(request) => request.clamped(),
                 Err(error) => return Some(error),
             };
-            if request.op == MacControlMenuOp::Click && request.path.is_empty() {
-                return Some("mac_control menu.click requires a non-empty path.".to_string());
-            }
-            None
+            validate_menu_request(&request)
         }
         "dialog" => match parse_preflight_request::<MacControlDialogRequest>(args, "dialog") {
             Ok(request) => validate_dialog_request(&request.clamped()),
@@ -1449,12 +1492,19 @@ pub enum MacControlActOp {
     Swipe,
 }
 
-pub fn normalize_perform_ax_action(action: &str) -> Option<&'static str> {
+pub fn normalize_perform_ax_action(action: &str) -> Option<String> {
     let action = action.trim();
     if action.is_empty() {
         return None;
     }
-    match action.to_ascii_lowercase().as_str() {
+    if action.len() > 128
+        || !action
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+    let canonical = match action.to_ascii_lowercase().as_str() {
         "press" | "axpress" => Some("AXPress"),
         "show_menu" | "showmenu" | "axshowmenu" => Some("AXShowMenu"),
         "confirm" | "axconfirm" => Some("AXConfirm"),
@@ -1466,7 +1516,8 @@ pub fn normalize_perform_ax_action(action: &str) -> Option<&'static str> {
         "show_default_ui" | "showdefaultui" | "axshowdefaultui" => Some("AXShowDefaultUI"),
         "show_alternate_ui" | "showalternateui" | "axshowalternateui" => Some("AXShowAlternateUI"),
         _ => None,
-    }
+    };
+    Some(canonical.unwrap_or(action).to_string())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1478,6 +1529,10 @@ pub struct MacControlMenuRequest {
     pub scope: MacControlMenuScope,
     #[serde(default)]
     pub path: Vec<String>,
+    #[serde(default)]
+    pub menu_index: Option<usize>,
+    #[serde(default)]
+    pub verify: bool,
     #[serde(default = "default_menu_max_depth")]
     pub max_depth: usize,
     #[serde(default)]
@@ -1500,6 +1555,8 @@ impl Default for MacControlMenuRequest {
             op: MacControlMenuOp::default(),
             scope: MacControlMenuScope::default(),
             path: Vec::new(),
+            menu_index: None,
+            verify: false,
             max_depth: default_menu_max_depth(),
             app_hint: None,
             include_ocr: default_menu_include_ocr(),
@@ -1519,6 +1576,7 @@ impl MacControlMenuRequest {
             .filter_map(|value| normalize_optional_string(Some(value)))
             .collect();
         self.app_hint = normalize_optional_string(self.app_hint);
+        self.menu_index = self.menu_index.filter(|index| *index < 10_000);
         self.languages = self
             .languages
             .into_iter()
@@ -2128,14 +2186,11 @@ pub async fn dock(request: MacControlDockRequest) -> MacControlDockResponse {
             error: Some("macOS control is unsupported in this runtime.".to_string()),
         };
     }
-    if request.op == MacControlDockOp::Launch && !dock_request_has_target(&request) {
+    if let Some(error) = validate_dock_request(&request) {
         return MacControlDockResponse {
             status,
             result: None,
-            error: Some(
-                "mac_control dock.launch requires dockItemId, bundleId, appName, or itemPath."
-                    .to_string(),
-            ),
+            error: Some(error),
         };
     }
 
@@ -2396,11 +2451,11 @@ pub async fn menu(request: MacControlMenuRequest) -> MacControlMenuResponse {
             error: Some("mac_control menu requires Accessibility permission.".to_string()),
         };
     }
-    if request.op == MacControlMenuOp::Click && request.path.is_empty() {
+    if let Some(error) = validate_menu_request(&request) {
         return MacControlMenuResponse {
             status,
             result: None,
-            error: Some("mac_control menu.click requires a non-empty path.".to_string()),
+            error: Some(error),
         };
     }
 
@@ -3086,6 +3141,38 @@ fn dock_request_has_target(request: &MacControlDockRequest) -> bool {
             .is_some_and(|value| !value.is_empty())
 }
 
+fn validate_dock_request(request: &MacControlDockRequest) -> Option<String> {
+    match request.op {
+        MacControlDockOp::Launch | MacControlDockOp::Menu | MacControlDockOp::SelectMenu => {
+            if !dock_request_has_target(request) {
+                return Some(format!(
+                    "mac_control dock.{} requires dockItemId, bundleId, appName, or itemPath.",
+                    dock_op_label(request.op)
+                ));
+            }
+        }
+        MacControlDockOp::List | MacControlDockOp::Hide | MacControlDockOp::Show => {}
+    }
+    if request.op == MacControlDockOp::SelectMenu
+        && request.menu_item.is_none()
+        && request.menu_index.is_none()
+    {
+        return Some("mac_control dock.select_menu requires menuItem or menuIndex.".to_string());
+    }
+    None
+}
+
+fn dock_op_label(op: MacControlDockOp) -> &'static str {
+    match op {
+        MacControlDockOp::List => "list",
+        MacControlDockOp::Launch => "launch",
+        MacControlDockOp::Hide => "hide",
+        MacControlDockOp::Show => "show",
+        MacControlDockOp::Menu => "menu",
+        MacControlDockOp::SelectMenu => "select_menu",
+    }
+}
+
 fn validate_spaces_request(request: &MacControlSpacesRequest) -> Option<String> {
     match request.op {
         MacControlSpacesOp::List => None,
@@ -3217,6 +3304,16 @@ fn validate_clipboard_request(request: &MacControlClipboardRequest) -> Option<St
     None
 }
 
+fn validate_menu_request(request: &MacControlMenuRequest) -> Option<String> {
+    if request.op != MacControlMenuOp::Click {
+        return None;
+    }
+    if request.path.is_empty() && request.menu_index.is_none() {
+        return Some("mac_control menu.click requires path or menuIndex.".to_string());
+    }
+    None
+}
+
 fn validate_act_request(request: &MacControlActRequest) -> Option<String> {
     match request.op {
         MacControlActOp::Click => {
@@ -3240,10 +3337,10 @@ fn validate_act_request(request: &MacControlActRequest) -> Option<String> {
                 return Some("mac_control act.perform_action requires axAction.".to_string());
             };
             if normalize_perform_ax_action(ax_action).is_none() {
-                return Some(format!(
-                    "mac_control act.perform_action axAction must be one of: {}.",
-                    ALLOWED_PERFORM_AX_ACTIONS.join(", ")
-                ));
+                return Some(
+                    "mac_control act.perform_action axAction must be non-empty, at most 128 characters, and contain only ASCII letters, digits, '_' or '-'."
+                        .to_string(),
+                );
             }
         }
         MacControlActOp::ClickPoint => {
@@ -5513,6 +5610,8 @@ mod tests {
             app_name: Some(" TextEdit ".to_string()),
             bundle_id: Some(" com.apple.TextEdit ".to_string()),
             item_path: Some(" /Applications/TextEdit.app ".to_string()),
+            menu_item: Some(" Options ".to_string()),
+            menu_index: Some(1),
             limit: 0,
             ..Default::default()
         }
@@ -5525,12 +5624,48 @@ mod tests {
             request.item_path.as_deref(),
             Some("/Applications/TextEdit.app")
         );
+        assert_eq!(request.menu_item.as_deref(), Some("Options"));
+        assert_eq!(request.menu_index, Some(1));
         assert_eq!(request.limit, 100);
         assert!(dock_request_has_target(&request));
+        assert!(validate_dock_request(&request).is_none());
         assert!(!dock_request_has_target(&MacControlDockRequest {
             op: MacControlDockOp::Launch,
             ..Default::default()
         }));
+        assert_eq!(
+            validate_dock_request(&MacControlDockRequest {
+                op: MacControlDockOp::SelectMenu,
+                dock_item_id: Some("dock_1".to_string()),
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("mac_control dock.select_menu requires menuItem or menuIndex.")
+        );
+    }
+
+    #[test]
+    fn sanitize_dock_select_menu_prefers_menu_item_over_index_noise() {
+        let args = serde_json::json!({
+            "action": "dock",
+            "op": "select_menu",
+            "bundleId": "com.apple.TextEdit",
+            "menuItem": "Show in Finder",
+            "menuIndex": 0
+        });
+
+        let sanitized = sanitize_tool_args(&args);
+        assert!(sanitized.get("menuIndex").is_none());
+        assert_eq!(
+            sanitized.get("menuItem").and_then(|value| value.as_str()),
+            Some("Show in Finder")
+        );
+        assert!(preflight_tool_args(&sanitized).is_none());
+
+        let request: MacControlDockRequest = serde_json::from_value(sanitized).unwrap();
+        let request = request.clamped();
+        assert_eq!(request.menu_item.as_deref(), Some("Show in Finder"));
+        assert_eq!(request.menu_index, None);
     }
 
     #[test]
@@ -5833,7 +5968,7 @@ mod tests {
         assert_eq!(perform_action.ax_action.as_deref(), Some("axshowmenu"));
         assert_eq!(
             normalize_perform_ax_action(perform_action.ax_action.as_deref().expect("ax action")),
-            Some("AXShowMenu")
+            Some("AXShowMenu".to_string())
         );
         assert!(validate_act_request(&perform_action).is_none());
 
@@ -5862,7 +5997,7 @@ mod tests {
             Some("mac_control act.perform_action requires axAction.")
         );
 
-        let unsupported_perform_action = MacControlActRequest {
+        let custom_perform_action = MacControlActRequest {
             op: MacControlActOp::PerformAction,
             ax_action: Some("AXDelete".to_string()),
             target: MacControlTargetQuery {
@@ -5872,9 +6007,30 @@ mod tests {
             ..Default::default()
         }
         .clamped();
-        assert!(validate_act_request(&unsupported_perform_action)
+        assert_eq!(
+            normalize_perform_ax_action(
+                custom_perform_action
+                    .ax_action
+                    .as_deref()
+                    .expect("ax action")
+            ),
+            Some("AXDelete".to_string())
+        );
+        assert!(validate_act_request(&custom_perform_action).is_none());
+
+        let invalid_perform_action = MacControlActRequest {
+            op: MacControlActOp::PerformAction,
+            ax_action: Some("AX Delete".to_string()),
+            target: MacControlTargetQuery {
+                element_id: Some("el_20".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .clamped();
+        assert!(validate_act_request(&invalid_perform_action)
             .expect("validation error")
-            .contains("AXPress"));
+            .contains("ASCII letters"));
 
         let ambiguous_click_point = MacControlActRequest {
             op: MacControlActOp::ClickPoint,
@@ -6027,13 +6183,46 @@ mod tests {
             op: MacControlMenuOp::Click,
             scope: MacControlMenuScope::System,
             path: vec![" File ".to_string(), "".to_string(), "New".to_string()],
+            menu_index: Some(2),
+            verify: true,
             max_depth: 100,
             ..Default::default()
         }
         .clamped();
         assert_eq!(menu.scope, MacControlMenuScope::System);
         assert_eq!(menu.path, vec!["File".to_string(), "New".to_string()]);
+        assert_eq!(menu.menu_index, Some(2));
+        assert!(menu.verify);
         assert_eq!(menu.max_depth, 8);
+        assert!(validate_menu_request(&menu).is_none());
+
+        let menu_args = serde_json::json!({
+            "action": "menu",
+            "op": "click",
+            "scope": "system",
+            "path": ["File", "New"],
+            "menuIndex": 0
+        });
+        let sanitized_menu = sanitize_tool_args(&menu_args);
+        assert!(sanitized_menu.get("menuIndex").is_none());
+        assert_eq!(
+            sanitized_menu
+                .get("path")
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(2)
+        );
+        assert!(preflight_tool_args(&sanitized_menu).is_none());
+
+        let menu_without_target = MacControlMenuRequest {
+            op: MacControlMenuOp::Click,
+            ..Default::default()
+        }
+        .clamped();
+        assert_eq!(
+            validate_menu_request(&menu_without_target).as_deref(),
+            Some("mac_control menu.click requires path or menuIndex.")
+        );
 
         let popover_menu = MacControlMenuRequest {
             op: MacControlMenuOp::Popover,
