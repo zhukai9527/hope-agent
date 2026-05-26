@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "도구 이름 / 소스(정규식 가능), 비어 있음 = 전체",
       "addHandler": "핸들러 추가",
-      "advanced": "고급"
+      "advanced": "고급",
+      "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요."
     }
   },
   "shortcuts": {

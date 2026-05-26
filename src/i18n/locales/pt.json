@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "nome da ferramenta / origem (regex ok), vazio = todos",
       "addHandler": "Adicionar handler",
-      "advanced": "Avançado"
+      "advanced": "Avançado",
+      "slowHandlerWarning": "Este handler executa um LLM / subagente em linha e atrasará cada vez que este evento de bloqueio disparar. Prefira command / http aqui, ou mova-o para um evento de observação (ex.: PostToolUse)."
     }
   },
   "shortcuts": {

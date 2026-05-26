@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "工具名 / 来源（支持正则），留空 = 全部",
       "addHandler": "添加处理器",
-      "advanced": "高级"
+      "advanced": "高级",
+      "slowHandlerWarning": "此处理器会内联运行 LLM / 子 Agent，每次该阻断事件触发都会拖慢。建议这里改用 command / http，或挪到观察型事件（如 PostToolUse）。"
     }
   },
   "shortcuts": {

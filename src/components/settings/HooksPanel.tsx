@@ -62,6 +62,12 @@ const FIREABLE_EVENTS: string[] = [
 
 const HANDLER_TYPES: HandlerType[] = ["command", "http", "mcp_tool", "prompt", "agent"]
 
+// Blocking events are awaited inline before the turn proceeds, so a slow
+// handler (LLM side-query / sub-agent) stalls every fire. PreToolUse is the
+// worst (once per tool call). Warn when these combine.
+const BLOCKING_EVENTS = new Set(["PreToolUse", "UserPromptSubmit", "PreCompact"])
+const SLOW_HANDLERS = new Set<HandlerType>(["prompt", "agent"])
+
 type FieldKind = "text" | "textarea" | "number" | "switch" | "csv" | "json" | "shell"
 interface FieldDef {
   key: string
@@ -257,15 +263,18 @@ function FieldRow({
 
 function HandlerCard({
   handler,
+  event,
   onChange,
   onRemove,
 }: {
   handler: Handler
+  event: string
   onChange: (h: Handler) => void
   onRemove: () => void
 }) {
   const { t } = useTranslation()
   const [adv, setAdv] = useState(false)
+  const slowOnHotPath = BLOCKING_EVENTS.has(event) && SLOW_HANDLERS.has(handler.type)
   const setField = (key: string, v: unknown) => {
     const next: Handler = { ...handler }
     if (v === undefined) delete next[key]
@@ -297,6 +306,11 @@ function HandlerCard({
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       </div>
+      {slowOnHotPath && (
+        <p className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-600 dark:text-amber-500">
+          {t("settings.hooks.slowHandlerWarning")}
+        </p>
+      )}
       {FIELDS_BY_TYPE[handler.type].map((def) => (
         <FieldRow key={def.key} def={def} value={handler[def.key]} onChange={(v) => setField(def.key, v)} />
       ))}
@@ -321,10 +335,12 @@ function HandlerCard({
 
 function GroupCard({
   group,
+  event,
   onChange,
   onRemove,
 }: {
   group: MatcherGroup
+  event: string
   onChange: (g: MatcherGroup) => void
   onRemove: () => void
 }) {
@@ -364,6 +380,7 @@ function GroupCard({
         <HandlerCard
           key={i}
           handler={h}
+          event={event}
           onChange={(nh) => setHandler(i, nh)}
           onRemove={() => removeHandler(i)}
         />
@@ -559,6 +576,7 @@ export default function HooksPanel() {
                     <GroupCard
                       key={i}
                       group={g}
+                      event={ev}
                       onChange={(ng) => setGroup(ev, i, ng)}
                       onRemove={() => removeGroup(ev, i)}
                     />

@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "ツール名 / ソース（正規表現可）、空 = すべて",
       "addHandler": "ハンドラーを追加",
-      "advanced": "詳細"
+      "advanced": "詳細",
+      "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。"
     }
   },
   "shortcuts": {

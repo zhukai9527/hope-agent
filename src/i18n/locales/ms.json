@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "nama alat / sumber (regex ok), kosong = semua",
       "addHandler": "Tambah pengendali",
-      "advanced": "Lanjutan"
+      "advanced": "Lanjutan",
+      "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse)."
     }
   },
   "shortcuts": {

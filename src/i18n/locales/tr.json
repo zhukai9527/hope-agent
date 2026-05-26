@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "araç adı / kaynak (regex olabilir), boş = tümü",
       "addHandler": "İşleyici ekle",
-      "advanced": "Gelişmiş"
+      "advanced": "Gelişmiş",
+      "slowHandlerWarning": "Bu işleyici LLM / alt ajanı satır içi çalıştırır ve bu engelleyici olay her tetiklendiğinde gecikmeye yol açar. Burada command / http tercih edin veya bir gözlem olayına (örn. PostToolUse) taşıyın."
     }
   },
   "shortcuts": {

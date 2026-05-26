@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "tên công cụ / nguồn (regex được), trống = tất cả",
       "addHandler": "Thêm trình xử lý",
-      "advanced": "Nâng cao"
+      "advanced": "Nâng cao",
+      "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse)."
     }
   },
   "shortcuts": {

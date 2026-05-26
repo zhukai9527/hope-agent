@@ -4155,7 +4155,8 @@
       "matcher": "matcher",
       "matcherPlaceholder": "tool name / source (regex ok), empty = all",
       "addHandler": "Add handler",
-      "advanced": "Advanced"
+      "advanced": "Advanced",
+      "slowHandlerWarning": "This handler runs an LLM / sub-agent inline and will delay every time this blocking event fires. Prefer command / http here, or move it to an observation event (e.g. PostToolUse)."
     }
   },
   "shortcuts": {
