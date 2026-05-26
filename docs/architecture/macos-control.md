@@ -209,6 +209,7 @@ Transport 结果类型：
 | `spaceIndex` | number | `spaces.switch` 的 1-based Space 序号，映射到 Control+数字 |
 | `direction` | `"left" \| "right"` | `spaces.switch` 的相邻 Space 方向，映射到 Control+Left/Right |
 | `snapshotId` | string | `visual.point/ocr/find_text` 要解析的 snapshot id，来自 `visual.observe` 或 `snapshot includeScreenshot=true`；`ocr/find_text` 可省略以立即采集新截图 |
+| `target.snapshotId` | string | 与 `target.elementId` 搭配使用，指向产生该 `elementId` 的 snapshot / visual.observe / elements.find 结果；mutation 会用旧元素指纹校验并重定位，避免 stale `el_N` 误点 |
 | `coordinateSpace` | `"image_pixels" \| "screen_points"` | `visual.point` 的坐标空间，默认 `image_pixels` |
 | `x` / `y` | number | `visual.point` 待解析坐标、`windows.move` 目标位置、`act.click_point` 点击位置、`act.move_cursor` 目标位置、`act.swipe` 起点、`act.drag` 终点；合法 `0` 不得当缺省 |
 | `fromX` / `fromY` / `toX` / `toY` | number | `act.drag` / `act.swipe` 的原始起点/终点坐标，用于无需 AX target 的端点 |
@@ -302,7 +303,7 @@ Annotated UI Map 规则：
 
 - `visual.observe annotate=true` 会在 `~/.hope-agent/mac-control/snapshots/` 下额外写一张标注 JPEG，`annotatedScreenshot` 复用原截图的 target、bounds 和 scale 元数据。
 - 标注图只画经过过滤的可操作/聚焦/常见控件元素，默认最多 80 个，避免把整棵 AX 树画满屏；`uiMapLimit` 可调，硬上限 200。
-- `uiMap[]` 项包含 `id`、`role`、可读 `text`、`enabled`、`focused`、`boundsPoints`、`imageBounds` 和 `actions`。模型看到清晰 element id 时应优先用 `act.click target.elementId`，不清晰时再走 `visual.point`。
+- `uiMap[]` 项包含 `id`、`role`、可读 `text`、`enabled`、`focused`、`boundsPoints`、`imageBounds` 和 `actions`。模型看到清晰 element id 时应优先用 `act.click target.elementId + target.snapshotId`，不清晰时再走 `visual.point`。
 - 标注只改变模型看到的图片，不改变坐标系；标注截图与原截图尺寸一致，`visual.point coordinateSpace="image_pixels"` 仍按原始截图像素解释。
 
 OCR 规则：
@@ -492,6 +493,7 @@ OCR 规则：
   "windowTitle": "Downloads",
   "windowTitleMatch": "exact",
   "elementId": "el_7",
+  "snapshotId": "macsnap_...",
   "text": "Open",
   "role": "AXButton",
   "enabled": true,
@@ -501,11 +503,12 @@ OCR 规则：
 
 匹配原则：
 
-- `bundleId` / `pid` / `elementId` 优先于名称和文本。
+- `bundleId` / `pid` / `elementId` 优先于名称和文本；模型从 `snapshot`、`visual.observe` 或 `elements.find` 复用 `elementId` 时应同时传 `snapshotId`。
 - 名称和窗口标题默认精确匹配；包含匹配必须显式声明。
 - 对多个相似目标，执行层必须返回歧义错误或选择唯一最高置信候选，不应静默随机选择。
 - AX 元素 mutation 会收集候选并按聚焦、可用、可执行、可见 bounds、精确文本等信号打分；若最高分并列且没有精确 `elementId`，直接拒绝执行，并提示模型用 fresh `snapshot` 后补充 `elementId`、`target.windowTitle`、`target.role` 或更具体的 `target.text`。
-- `elements.find` 使用同一套 AX snapshot 与元素匹配规则，只读返回 `totalMatches`、候选 `element`、所在 `window`、`score` 和 `reasons`。模型应先用它确认候选，再把选中的 `element.id` 传给 `act.*`。
+- 当 mutation 同时收到 `target.snapshotId + target.elementId` 时，执行层会从短生命周期 snapshot cache 取出旧元素的 role/label/value/window/bounds/actions 指纹，在当前 AX 树中重新定位唯一匹配；若 target 没有显式 `appName/bundleId`，还会要求当前前台 App 与旧 snapshot 前台 App 一致，避免跨 App 复用相似按钮；若 snapshot 已过期、旧 id 不存在、前台 App 已变化或指纹无法唯一匹配，会拒绝执行并要求 fresh observe。
+- `elements.find` 使用同一套 AX snapshot 与元素匹配规则，只读返回 `snapshotId`、`totalMatches`、候选 `element`、所在 `window`、`score` 和 `reasons`。模型应先用它确认候选，再把选中的 `element.id` 和结果 `snapshotId` 一起传给 `act.*`。
 - 浏览器或复杂 WebView 的 AX 树若包含 `AXWebArea` 但没有暴露文本输入控件，snapshot 采集会 best-effort 聚焦面积最大的 `AXWebArea` 后重遍历一次，并在 `warnings[]` 记录该 fallback；`snapshot`、`visual.observe`、`elements.find` 和 mutation 前 target 解析共享这一路径。
 - `act.dry_run` 使用和 `act.click` / `act.perform_action` / `act.set_value` 相同的目标解析、前台 App 校验、歧义拒绝和 stale 检查，但不触发 AX action、CGEvent、键盘、剪贴板或窗口变化；结果 `snapshot=null`，避免把完整 AX 树塞回上下文。
 - `act.perform_action` 不再做固定白名单或 `actions[]` 包含校验；优先通过 `elements.find` 或 `snapshot` 查看候选支持的 actions，但允许对未列出的合法 AX action 做一次执行尝试。
@@ -648,10 +651,10 @@ status -> snapshot/elements.find/wait -> apps/windows/act/menu/clipboard/dialog 
 
 - 不要一开始猜坐标。
 - 有副作用操作前尽量先确认前台 App 和目标窗口。
-- 相似按钮或输入框较多时先用 `elements.find` 选候选，再用 `elementId` 执行。
+- 相似按钮或输入框较多时先用 `elements.find` 选候选，再用 `elementId + snapshotId` 执行。
 - 浏览器/WebView 返回 `AXWebArea` fallback warning 时，优先重新查看 `elements.find` 或 `snapshot` 的新候选；如果仍没有文本输入控件，用 `visual.observe annotate=true` / OCR / `visual.point` 走视觉定位。
 - 对高不确定性的点击/设置值，先用 `act.dry_run` 验证目标解析结果。
-- 视觉定位优先走 `visual.observe annotate=true -> uiMap elementId`；没有清晰 AX id 时走 `visual.ocr/find_text` 或读取图片选 image pixel -> `visual.point` -> `act.click_point` -> verify。不要把截图像素坐标直接传给 `act.click_point`。
+- 视觉定位优先走 `visual.observe annotate=true -> uiMap elementId + snapshotId`；没有清晰 AX id 时走 `visual.ocr/find_text` 或读取图片选 image pixel -> `visual.point` -> `act.click_point` -> verify。不要把截图像素坐标直接传给 `act.click_point`。
 - App 名称找不到时先用 `apps.search` / `apps.installed` 查候选。
 - 名称匹配不稳定时改用 `bundleId`、`pid`、`windowId` 或 `elementId`。
 - 点击 AX 元素用 `act.click`；点击屏幕坐标用 `act.click_point`。

@@ -1817,6 +1817,8 @@ pub struct MacControlTargetQuery {
     #[serde(default)]
     pub element_id: Option<String>,
     #[serde(default)]
+    pub snapshot_id: Option<String>,
+    #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
@@ -1832,6 +1834,7 @@ impl MacControlTargetQuery {
         self.bundle_id = normalize_optional_string(self.bundle_id);
         self.window_title = normalize_optional_string(self.window_title);
         self.element_id = normalize_optional_string(self.element_id);
+        self.snapshot_id = normalize_optional_string(self.snapshot_id);
         self.text = normalize_optional_string(self.text);
         self.role = normalize_optional_string(self.role);
         if self.enabled == Some(false) {
@@ -3731,7 +3734,7 @@ fn record_error(operation: &str, message: &str) {
     }
 }
 
-fn record_snapshot(snapshot: MacControlSnapshot) {
+pub fn record_snapshot(snapshot: MacControlSnapshot) {
     let Ok(mut cache) = snapshot_cache().lock() else {
         return;
     };
@@ -5500,6 +5503,7 @@ mod tests {
                 window_title: Some("".to_string()),
                 window_title_match: MacControlStringMatch::Exact,
                 element_id: Some("".to_string()),
+                snapshot_id: Some("".to_string()),
                 text: Some("".to_string()),
                 role: Some("".to_string()),
                 enabled: Some(false),
@@ -5510,6 +5514,7 @@ mod tests {
         .clamped();
 
         assert!(request.target.is_empty());
+        assert_eq!(request.target.snapshot_id, None);
         assert_eq!(request.target.enabled, None);
         assert_eq!(request.target.focused, None);
     }
@@ -5921,6 +5926,7 @@ mod tests {
             op: MacControlActOp::Click,
             target: MacControlTargetQuery {
                 element_id: Some(" el_20 ".to_string()),
+                snapshot_id: Some(" macsnap_123 ".to_string()),
                 ..Default::default()
             },
             x: Some(0.0),
@@ -5929,6 +5935,10 @@ mod tests {
         }
         .clamped();
         assert_eq!(targeted_click.target.element_id.as_deref(), Some("el_20"));
+        assert_eq!(
+            targeted_click.target.snapshot_id.as_deref(),
+            Some("macsnap_123")
+        );
         assert_eq!(targeted_click.x, Some(0.0));
         assert_eq!(targeted_click.y, Some(0.0));
         assert!(validate_act_request(&targeted_click).is_none());

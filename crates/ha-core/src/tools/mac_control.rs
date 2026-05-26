@@ -158,7 +158,7 @@ fn format_visual_response(
     });
     let compact_json = serde_json::to_string_pretty(&compact)?;
     let annotation_hint = if result.annotated_screenshot.is_some() {
-        " This image is annotated with AX element ids; prefer act.click target.elementId when a label is clear, or use visual.point for raw image pixels."
+        " This image is annotated with AX element ids; prefer act.click target.elementId plus target.snapshotId when a label is clear, or use visual.point for raw image pixels."
     } else {
         " Use visual.point with coordinateSpace=\"image_pixels\" to convert a point from this image before clicking."
     };

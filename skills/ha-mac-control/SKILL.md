@@ -40,8 +40,8 @@ wait or snapshot                       # verify the expected change
 - `appNameMatch` defaults to `exact`. Use `contains` only for read-only discovery or when the user clearly gave a partial name.
 - Prefer `windowId` from the latest `windows.list` or `snapshot` for window mutations.
 - `target.windowTitleMatch` defaults to `exact`. Use `contains` only after listing windows and confirming a partial title is intentional.
-- Prefer `elementId` from the latest `snapshot` for precise clicks and set-value actions.
-- Use `elements.find` when a full snapshot is too noisy or when an action target is ambiguous. It is read-only and returns scored candidates with reasons; retry mutations with `target.elementId` from the chosen candidate.
+- Prefer `elementId` from the latest `snapshot` / `visual.observe` / `elements.find` for precise clicks and set-value actions, and pass the matching `target.snapshotId` with it. `snapshotId + elementId` lets the runtime verify the original AX fingerprint and re-resolve stale `el_N` ids instead of blindly trusting a new traversal.
+- Use `elements.find` when a full snapshot is too noisy or when an action target is ambiguous. It is read-only and returns scored candidates with reasons; retry mutations with `target.elementId` from the chosen candidate plus the result `snapshotId`.
 - If two windows, dialogs, text fields, or buttons match, do not guess. Use a more specific target or ask the user.
 - Element mutations reject equally ranked AX candidates instead of choosing the first match. When this happens, take a fresh `snapshot` and retry with `elementId`, `target.windowTitle`, `target.role`, or more specific `target.text`.
 
@@ -104,7 +104,7 @@ Standard visual loop:
 
 ```
 visual.observe screenshotTarget="window" | "display" annotate=true
-act.click target.elementId="el_..."          # when the annotated id is clear
+act.click target.elementId="el_..." target.snapshotId="macsnap_..."  # when the annotated id is clear
 visual.ocr or visual.find_text text="..."      # when the target is visible text
 read the returned image and choose an image pixel point # when OCR is not enough
 visual.point snapshotId=... coordinateSpace="image_pixels" x=... y=...
@@ -115,7 +115,7 @@ verify with snapshot, visual.observe, wait, or elements.find
 Rules:
 
 - `visual.observe` is read-only. It returns an image file marker for model vision plus a compact JSON payload with `snapshotId`, screenshot metadata, displays, and windows.
-- Prefer `visual.observe annotate=true` for ambiguous visual UI. The returned image is labeled with AX element ids and includes `uiMap`; when an id clearly identifies the target, use `act.click target.elementId=...` instead of a coordinate click.
+- Prefer `visual.observe annotate=true` for ambiguous visual UI. The returned image is labeled with AX element ids and includes `uiMap`; when an id clearly identifies the target, use `act.click target.elementId=... target.snapshotId=<observe snapshotId>` instead of a coordinate click.
 - If the annotated id is unclear or the target is not in `uiMap`, use OCR or image-pixel positioning.
 - `visual.ocr` is read-only. Use it when visible text matters but you do not need to filter for one phrase yet.
 - `visual.find_text` is read-only. Use it before coordinate clicking visible words or text-only buttons; pass `textMatch="contains"` only for intentional partial text.
@@ -123,7 +123,7 @@ Rules:
 - Image pixel coordinates use the screenshot top-left as origin. `(0, 0)` is valid. Never pass image pixels directly to `act.click_point`.
 - Always call `visual.point` before coordinate clicks chosen from a screenshot. It converts image pixels to macOS screen points and returns AX `hitElements` / `nearestElements`.
 - Prefer `suggestedAction.x/y` from `visual.point` or `visual.find_text` for `act.click_point`. If `insideFrame=false`, do not click; adjust the point or observe again.
-- If `hitElements[0]` is a clear AX target, prefer `act.click target.elementId=...` over raw `act.click_point`.
+- If `hitElements[0]` is a clear AX target, prefer `act.click target.elementId=... target.snapshotId=<point/observe snapshotId>` over raw `act.click_point`.
 - If OCR returns no match, do not click blindly. Retry with `textMatch="contains"`, OCR `languages`, a fresh window screenshot, or use image-pixel visual positioning.
 - If the snapshot expired or lacks screenshot metadata, call `visual.observe` again instead of reusing old points.
 

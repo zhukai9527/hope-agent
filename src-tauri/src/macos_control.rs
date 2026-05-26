@@ -2545,6 +2545,7 @@ mod imp {
             ..Default::default()
         })?;
         let mut warnings = snapshot.warnings.clone();
+        ha_core::mac_control::record_snapshot(snapshot.clone());
         let (total_matches, elements) = if frontmost_app_matches_act_target(
             &snapshot,
             &request.target,
@@ -5131,29 +5132,14 @@ mod imp {
         max_depth: usize,
         op_label: &str,
     ) -> Result<(CfOwned, MacControlElementSummary, MacControlSnapshot), String> {
-        let snapshot = capture_ax_snapshot(MacControlSnapshotRequest {
-            include_screenshot: false,
+        resolve_target_element(
+            target,
             max_elements,
             max_depth,
-            ..Default::default()
-        })?;
-        if !frontmost_app_matches_act_target(&snapshot, target) {
-            return Err(format!(
-                "Frontmost app did not match the {op_label} target."
-            ));
-        }
-        let candidates = snapshot
-            .elements
-            .iter()
-            .filter(|element| element_matches_query(element, target, &snapshot))
-            .map(|element| ScoredElementMatch {
-                score: element_target_score(element, target),
-                summary: element.clone(),
-            })
-            .collect();
-        let summary = select_element_match(candidates, target, op_label, "AX element")?;
-        let element = resolve_element_by_summary(&summary, max_elements, max_depth)?;
-        Ok((element, summary, snapshot))
+            op_label,
+            ElementResolveMode::Any,
+            "AX element",
+        )
     }
 
     fn resolve_type_element(
@@ -5161,6 +5147,30 @@ mod imp {
         max_elements: usize,
         max_depth: usize,
         op_label: &str,
+    ) -> Result<(CfOwned, MacControlElementSummary, MacControlSnapshot), String> {
+        resolve_target_element(
+            target,
+            max_elements,
+            max_depth,
+            op_label,
+            ElementResolveMode::TextInput,
+            "text input element",
+        )
+    }
+
+    #[derive(Clone, Copy)]
+    enum ElementResolveMode {
+        Any,
+        TextInput,
+    }
+
+    fn resolve_target_element(
+        target: &MacControlTargetQuery,
+        max_elements: usize,
+        max_depth: usize,
+        op_label: &str,
+        mode: ElementResolveMode,
+        target_label: &str,
     ) -> Result<(CfOwned, MacControlElementSummary, MacControlSnapshot), String> {
         let snapshot = capture_ax_snapshot(MacControlSnapshotRequest {
             include_screenshot: false,
@@ -5173,18 +5183,340 @@ mod imp {
                 "Frontmost app did not match the {op_label} target."
             ));
         }
-        let candidates = snapshot
-            .elements
-            .iter()
-            .filter(|element| text_element_matches_query(element, target, &snapshot))
-            .map(|element| ScoredElementMatch {
-                score: type_target_score(element, target),
-                summary: element.clone(),
-            })
-            .collect();
-        let summary = select_element_match(candidates, target, op_label, "text input element")?;
+        let summary = if let Some(summary) =
+            select_snapshot_anchored_element(target, &snapshot, op_label, mode, target_label)?
+        {
+            summary
+        } else {
+            let candidates = snapshot
+                .elements
+                .iter()
+                .filter(|element| element_matches_for_mode(element, target, &snapshot, mode))
+                .map(|element| ScoredElementMatch {
+                    score: element_target_score_for_mode(element, target, mode),
+                    summary: element.clone(),
+                })
+                .collect();
+            select_element_match(candidates, target, op_label, target_label)?
+        };
         let element = resolve_element_by_summary(&summary, max_elements, max_depth)?;
         Ok((element, summary, snapshot))
+    }
+
+    fn element_matches_for_mode(
+        element: &MacControlElementSummary,
+        target: &MacControlTargetQuery,
+        snapshot: &MacControlSnapshot,
+        mode: ElementResolveMode,
+    ) -> bool {
+        match mode {
+            ElementResolveMode::Any => element_matches_query(element, target, snapshot),
+            ElementResolveMode::TextInput => text_element_matches_query(element, target, snapshot),
+        }
+    }
+
+    fn element_target_score_for_mode(
+        element: &MacControlElementSummary,
+        target: &MacControlTargetQuery,
+        mode: ElementResolveMode,
+    ) -> u8 {
+        match mode {
+            ElementResolveMode::Any => element_target_score(element, target),
+            ElementResolveMode::TextInput => type_target_score(element, target),
+        }
+    }
+
+    fn select_snapshot_anchored_element(
+        target: &MacControlTargetQuery,
+        snapshot: &MacControlSnapshot,
+        op_label: &str,
+        mode: ElementResolveMode,
+        target_label: &str,
+    ) -> Result<Option<MacControlElementSummary>, String> {
+        let Some(snapshot_id) = target
+            .snapshot_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let Some(element_id) = target
+            .element_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let previous = ha_core::mac_control::cached_snapshot(snapshot_id).ok_or_else(|| {
+            format!(
+                "{op_label} target.snapshotId '{snapshot_id}' was not found or expired; take a fresh snapshot or visual.observe before acting."
+            )
+        })?;
+        let expected = previous
+            .elements
+            .iter()
+            .find(|element| element.id == element_id)
+            .ok_or_else(|| {
+                format!(
+                    "{op_label} target.elementId '{element_id}' was not found in target.snapshotId '{snapshot_id}'; retry with a fresh snapshot."
+                )
+            })?;
+        ensure_snapshot_anchor_app_matches(target, snapshot, &previous, op_label)?;
+        let target_without_ids = target_without_snapshot_ids(target);
+        let mut candidates = snapshot
+            .elements
+            .iter()
+            .filter(|element| {
+                element_matches_for_mode(element, &target_without_ids, snapshot, mode)
+            })
+            .filter_map(|element| {
+                anchored_element_score(element, expected, snapshot, &previous).map(|score| {
+                    ScoredAnchoredElementMatch {
+                        score,
+                        summary: element.clone(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Err(format!(
+                "{op_label} target.elementId '{element_id}' from snapshotId '{snapshot_id}' no longer matched a stable {target_label}; take a fresh snapshot and retry."
+            ));
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| left.summary.id.cmp(&right.summary.id))
+        });
+        let top_score = candidates[0].score;
+        let equal_top_count = candidates
+            .iter()
+            .take_while(|candidate| candidate.score == top_score)
+            .count();
+        if equal_top_count > 1 {
+            let preview = candidates
+                .iter()
+                .take(equal_top_count.min(5))
+                .map(|candidate| element_candidate_hint(&candidate.summary))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(format!(
+                "{equal_top_count} {target_label}s matched the {op_label} snapshot anchor equally; retry with a fresh snapshot plus target.windowTitle, target.role, or more specific target.text. Candidates: {preview}"
+            ));
+        }
+        Ok(Some(candidates.remove(0).summary))
+    }
+
+    fn ensure_snapshot_anchor_app_matches(
+        target: &MacControlTargetQuery,
+        snapshot: &MacControlSnapshot,
+        previous: &MacControlSnapshot,
+        op_label: &str,
+    ) -> Result<(), String> {
+        if target_has_app_filter(target) {
+            return Ok(());
+        }
+        let Some(previous_app) = previous.frontmost_app.as_ref() else {
+            return Ok(());
+        };
+        let Some(current_app) = snapshot.frontmost_app.as_ref() else {
+            return Err(format!(
+                "{op_label} target.snapshotId '{}' had frontmost app '{}', but the current frontmost app could not be resolved; observe again before acting.",
+                previous.snapshot_id,
+                app_anchor_label(previous_app)
+            ));
+        };
+        if app_summaries_match_anchor(current_app, previous_app) {
+            return Ok(());
+        }
+        Err(format!(
+            "{op_label} target.snapshotId '{}' was captured from '{}', but the current frontmost app is '{}'; observe again or pass an explicit target.bundleId/appName.",
+            previous.snapshot_id,
+            app_anchor_label(previous_app),
+            app_anchor_label(current_app)
+        ))
+    }
+
+    fn app_summaries_match_anchor(
+        current: &MacControlAppSummary,
+        previous: &MacControlAppSummary,
+    ) -> bool {
+        if current.pid == previous.pid {
+            return true;
+        }
+        match (
+            non_empty(current.bundle_id.as_deref()),
+            non_empty(previous.bundle_id.as_deref()),
+        ) {
+            (Some(current_bundle), Some(previous_bundle))
+                if current_bundle.eq_ignore_ascii_case(previous_bundle) =>
+            {
+                true
+            }
+            _ => match (
+                non_empty(current.name.as_deref()),
+                non_empty(previous.name.as_deref()),
+            ) {
+                (Some(current_name), Some(previous_name)) => {
+                    current_name.eq_ignore_ascii_case(previous_name)
+                }
+                _ => false,
+            },
+        }
+    }
+
+    fn app_anchor_label(app: &MacControlAppSummary) -> String {
+        if let Some(bundle_id) = non_empty(app.bundle_id.as_deref()) {
+            format!(
+                "{} ({bundle_id}, pid {})",
+                app.name.as_deref().unwrap_or("unknown"),
+                app.pid
+            )
+        } else if let Some(name) = non_empty(app.name.as_deref()) {
+            format!("{name} (pid {})", app.pid)
+        } else {
+            format!("pid {}", app.pid)
+        }
+    }
+
+    fn target_without_snapshot_ids(target: &MacControlTargetQuery) -> MacControlTargetQuery {
+        let mut target = target.clone();
+        target.element_id = None;
+        target.snapshot_id = None;
+        target
+    }
+
+    #[derive(Clone)]
+    struct ScoredAnchoredElementMatch {
+        score: u16,
+        summary: MacControlElementSummary,
+    }
+
+    fn anchored_element_score(
+        actual: &MacControlElementSummary,
+        expected: &MacControlElementSummary,
+        actual_snapshot: &MacControlSnapshot,
+        expected_snapshot: &MacControlSnapshot,
+    ) -> Option<u16> {
+        let mut score = 0_u16;
+        if let Some(expected_role) = non_empty(expected.role.as_deref()) {
+            if !optional_eq_ci(actual.role.as_deref(), expected_role) {
+                return None;
+            }
+            score += 35;
+        }
+
+        if let Some(expected_window_title) = element_window_title(expected, expected_snapshot) {
+            let actual_window_title = element_window_title(actual, actual_snapshot)?;
+            if !actual_window_title.eq_ignore_ascii_case(&expected_window_title) {
+                return None;
+            }
+            score += 20;
+        } else if actual.window_id.is_some()
+            && expected.window_id.is_some()
+            && actual.window_id == expected.window_id
+        {
+            score += 8;
+        }
+
+        if actual.id == expected.id {
+            score += 10;
+        }
+
+        if let Some(expected_label) = non_empty(expected.label.as_deref()) {
+            if !optional_eq_ci(actual.label.as_deref(), expected_label) {
+                return None;
+            }
+            score += 45;
+        } else if let Some(expected_value) = non_empty(expected.value.as_deref()) {
+            if !is_text_input_element(expected) {
+                if !optional_eq_ci(actual.value.as_deref(), expected_value) {
+                    return None;
+                }
+                score += 35;
+            } else if optional_eq_ci(actual.value.as_deref(), expected_value) {
+                score += 8;
+            }
+        }
+
+        let bounds_score = anchored_bounds_score(actual.bounds_points, expected.bounds_points);
+        if bounds_score == 0
+            && non_empty(expected.label.as_deref()).is_none()
+            && non_empty(expected.value.as_deref()).is_none()
+        {
+            return None;
+        }
+        score += bounds_score;
+
+        if expected.enabled.is_some() && actual.enabled == expected.enabled {
+            score += 3;
+        }
+        score += shared_action_score(&actual.actions, &expected.actions);
+
+        (score >= 45).then_some(score)
+    }
+
+    fn element_window_title(
+        element: &MacControlElementSummary,
+        snapshot: &MacControlSnapshot,
+    ) -> Option<String> {
+        let window_id = element.window_id.as_deref()?;
+        snapshot
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .and_then(|window| non_empty(window.title.as_deref()))
+            .map(str::to_string)
+    }
+
+    fn anchored_bounds_score(
+        actual: Option<MacControlBounds>,
+        expected: Option<MacControlBounds>,
+    ) -> u16 {
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return 0;
+        };
+        let center_dx = (bounds_center_x(actual) - bounds_center_x(expected)).abs();
+        let center_dy = (bounds_center_y(actual) - bounds_center_y(expected)).abs();
+        let size_delta =
+            (actual.width - expected.width).abs() + (actual.height - expected.height).abs();
+        if center_dx <= 4.0 && center_dy <= 4.0 && size_delta <= 8.0 {
+            25
+        } else if center_dx <= 20.0 && center_dy <= 20.0 && size_delta <= 40.0 {
+            18
+        } else if center_dx <= 64.0 && center_dy <= 64.0 {
+            8
+        } else {
+            0
+        }
+    }
+
+    fn bounds_center_x(bounds: MacControlBounds) -> f64 {
+        bounds.x + bounds.width / 2.0
+    }
+
+    fn bounds_center_y(bounds: MacControlBounds) -> f64 {
+        bounds.y + bounds.height / 2.0
+    }
+
+    fn shared_action_score(actual: &[String], expected: &[String]) -> u16 {
+        let shared = actual
+            .iter()
+            .filter(|actual_action| {
+                expected
+                    .iter()
+                    .any(|expected_action| expected_action.eq_ignore_ascii_case(actual_action))
+            })
+            .count();
+        shared.min(5) as u16
+    }
+
+    fn non_empty(value: Option<&str>) -> Option<&str> {
+        value.and_then(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
     }
 
     #[derive(Clone)]

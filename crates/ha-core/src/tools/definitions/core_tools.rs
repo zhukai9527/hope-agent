@@ -1092,7 +1092,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             },
                             "elementId": {
                                 "type": "string",
-                                "description": "Exact element id match within the freshly captured snapshot."
+                                "description": "Exact AX element id from snapshot/elements.find/visual.observe. Prefer passing snapshotId with it so the runtime can verify and re-resolve the original element fingerprint."
+                            },
+                            "snapshotId": {
+                                "type": "string",
+                                "description": "Snapshot id that produced elementId. When provided with elementId, mutations anchor to the original element fingerprint and reject/re-resolve stale ids instead of blindly trusting a fresh el_N."
                             },
                             "text": {
                                 "type": "string",
@@ -1115,7 +1119,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "toTarget": {
                         "type": "object",
-                        "description": "Destination target query for `act.drag` and `act.swipe`, using the same fields as target: appName, bundleId, windowTitle, windowTitleMatch, elementId, text, role, enabled, focused. Runtime parsing uses the same strict target query type."
+                        "description": "Destination target query for `act.drag` and `act.swipe`, using the same fields as target: appName, bundleId, windowTitle, windowTitleMatch, elementId, snapshotId, text, role, enabled, focused. Runtime parsing uses the same strict target query type."
                     }
                 },
                 "required": ["action"],
