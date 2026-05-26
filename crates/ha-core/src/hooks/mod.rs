@@ -74,6 +74,42 @@ pub fn claim_compaction_hooks(key: &str) -> bool {
     true
 }
 
+/// Consecutive `PreCompact` blocks per session. Bounds a hook that keeps
+/// blocking compaction while context usage sits in the band below the
+/// emergency-override ratio (where it would otherwise never reach the forced
+/// threshold, so compaction is deferred forever and the hook re-fires every
+/// turn). After the cap the block is overridden once and the count resets.
+static PRECOMPACT_BLOCK_COUNTS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+
+/// Max consecutive `PreCompact` blocks honored before forcing compaction.
+const MAX_PRECOMPACT_BLOCKS: u32 = 5;
+
+/// Record a `PreCompact` block for `session_id` and return whether it should be
+/// HONORED. Returns `false` (override → compact anyway, and resets the count)
+/// once the consecutive-block cap is exceeded.
+pub fn honor_precompact_block(session_id: &str) -> bool {
+    let map = PRECOMPACT_BLOCK_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    let count = guard.entry(session_id.to_string()).or_insert(0);
+    *count += 1;
+    if *count > MAX_PRECOMPACT_BLOCKS {
+        guard.remove(session_id);
+        false
+    } else {
+        true
+    }
+}
+
+/// Reset the consecutive `PreCompact` block counter — called whenever
+/// compaction actually proceeds (block not honored, or no block at all).
+pub fn reset_precompact_blocks(session_id: &str) {
+    if let Some(map) = PRECOMPACT_BLOCK_COUNTS.get() {
+        map.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(session_id);
+    }
+}
+
 /// Pending `UserPromptSubmit` `additionalContext` per session. The preflight
 /// chokepoint sets this after the hook runs; the turn drains it once at start
 /// and folds it into `extra_system_context` next to `SessionStart`. Keyed by
@@ -183,8 +219,23 @@ impl HookDispatcher {
             let input = &input;
             let env = &env;
             async move {
-                match tokio::time::timeout(backstop, h.run(input, env, deadline)).await {
-                    Ok(r) => r,
+                // Isolate a panicking handler: `join_all` polls these inline, so
+                // an unwrap/panic inside `run` would otherwise propagate and take
+                // down the whole dispatch (and its host call site). catch_unwind
+                // turns it into a non-blocking error like any other handler fault.
+                use futures_util::FutureExt;
+                let guarded = std::panic::AssertUnwindSafe(h.run(input, env, deadline)).catch_unwind();
+                match tokio::time::timeout(backstop, guarded).await {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(_panic)) => {
+                        app_warn!(
+                            "hooks",
+                            "dispatch",
+                            "event={} a handler panicked — treating it as non-blocking",
+                            event.as_str()
+                        );
+                        runner::RawHookResult::non_blocking_error("hook handler panicked")
+                    }
                     Err(_) => {
                         app_warn!(
                             "hooks",

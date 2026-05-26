@@ -176,6 +176,7 @@ impl AssistantAgent {
             // reactive trigger — only consult the PreCompact hook when a
             // compaction is actually plausible, so it precedes a real
             // compaction instead of firing every idle turn.
+            let sid = self.session_id.clone().unwrap_or_default();
             if usage_now >= self.compact_config.reactive_trigger_ratio {
                 let input = crate::hooks::HookInput::PreCompact {
                     common: self.hook_common_input("PreCompact"),
@@ -201,7 +202,8 @@ impl AssistantAgent {
                         usage_now * 100.0,
                         CACHE_TTL_EMERGENCY_RATIO * 100.0
                     );
-                    } else {
+                        crate::hooks::reset_precompact_blocks(&sid);
+                    } else if crate::hooks::honor_precompact_block(&sid) {
                         app_info!(
                             "hooks",
                             "dispatch",
@@ -209,8 +211,22 @@ impl AssistantAgent {
                             usage_now * 100.0
                         );
                         return;
+                    } else {
+                        // Consecutive-block cap exceeded: a hook can't defer
+                        // compaction forever while usage sits in the band.
+                        app_warn!(
+                            "hooks",
+                            "dispatch",
+                            "PreCompact block overridden after repeated blocks (usage {:.1}%), compacting anyway",
+                            usage_now * 100.0
+                        );
                     }
+                } else {
+                    crate::hooks::reset_precompact_blocks(&sid);
                 }
+            } else {
+                // Usage fell back below the trigger band — clear any block streak.
+                crate::hooks::reset_precompact_blocks(&sid);
             }
         }
 
