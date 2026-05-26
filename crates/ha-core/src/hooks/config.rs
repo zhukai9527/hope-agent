@@ -116,6 +116,46 @@ impl HooksConfig {
             .iter()
             .all(|e| self.groups_for(*e).is_empty())
     }
+
+    /// Merge another scope's matcher groups into `self` (union — every scope's
+    /// hooks run; there is no override precedence, design §4). Used to layer
+    /// managed / project / local hooks on top of the user scope. `other`'s
+    /// groups are appended after `self`'s so config order is preserved.
+    pub fn merge_from(&mut self, mut other: HooksConfig) {
+        self.session_start.append(&mut other.session_start);
+        self.session_end.append(&mut other.session_end);
+        self.user_prompt_submit.append(&mut other.user_prompt_submit);
+        self.user_prompt_expansion
+            .append(&mut other.user_prompt_expansion);
+        self.pre_tool_use.append(&mut other.pre_tool_use);
+        self.post_tool_use.append(&mut other.post_tool_use);
+        self.post_tool_use_failure
+            .append(&mut other.post_tool_use_failure);
+        self.post_tool_batch.append(&mut other.post_tool_batch);
+        self.permission_request
+            .append(&mut other.permission_request);
+        self.permission_denied.append(&mut other.permission_denied);
+        self.stop.append(&mut other.stop);
+        self.stop_failure.append(&mut other.stop_failure);
+        self.pre_compact.append(&mut other.pre_compact);
+        self.post_compact.append(&mut other.post_compact);
+        self.notification.append(&mut other.notification);
+        self.subagent_start.append(&mut other.subagent_start);
+        self.subagent_stop.append(&mut other.subagent_stop);
+        self.task_created.append(&mut other.task_created);
+        self.task_completed.append(&mut other.task_completed);
+        self.teammate_idle.append(&mut other.teammate_idle);
+        self.config_change.append(&mut other.config_change);
+        self.cwd_changed.append(&mut other.cwd_changed);
+        self.file_changed.append(&mut other.file_changed);
+        self.instructions_loaded
+            .append(&mut other.instructions_loaded);
+        self.elicitation.append(&mut other.elicitation);
+        self.elicitation_result
+            .append(&mut other.elicitation_result);
+        self.worktree_create.append(&mut other.worktree_create);
+        self.worktree_remove.append(&mut other.worktree_remove);
+    }
 }
 
 const HOOK_EVENTS_FOR_EMPTY_CHECK: [HookEvent; 28] = [
@@ -271,6 +311,23 @@ pub struct AgentHookConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_from_unions_groups_per_event() {
+        let mut base: HooksConfig = serde_json::from_str(
+            r#"{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"a"}]}]}"#,
+        )
+        .unwrap();
+        let overlay: HooksConfig = serde_json::from_str(
+            r#"{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"b"}]}],
+                "PostToolUse":[{"hooks":[{"type":"command","command":"c"}]}]}"#,
+        )
+        .unwrap();
+        base.merge_from(overlay);
+        // PreToolUse now has both groups (union, base first); PostToolUse gained one.
+        assert_eq!(base.groups_for(HookEvent::PreToolUse).len(), 2);
+        assert_eq!(base.groups_for(HookEvent::PostToolUse).len(), 1);
+    }
 
     #[test]
     fn deserialize_settings_example() {

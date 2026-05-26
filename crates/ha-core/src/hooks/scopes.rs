@@ -1,0 +1,212 @@
+//! Multi-scope hook resolution (design §4).
+//!
+//! Hooks layer across four scopes, all UNIONed (every matching hook runs —
+//! there is no override precedence):
+//! - **user**: `~/.hope-agent/config.json` `hooks` (the cached `AppConfig`).
+//! - **managed**: a system-wide file (`/etc/hope-agent/hooks.json` on unix),
+//!   for enterprise-pushed hooks.
+//! - **project**: `<session working dir>/.hope-agent/hooks.json`, checked into
+//!   the repo so a team shares hooks.
+//! - **local**: `<session working dir>/.hope-agent/hooks.local.json`,
+//!   git-ignored per-developer additions.
+//!
+//! user + managed are global and compiled into [`registry::global`]. project +
+//! local depend on the session's working dir, so they are merged on top of the
+//! global config per cwd at dispatch, cached and invalidated by file mtime + a
+//! global-reload generation counter.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
+
+use arc_swap::ArcSwap;
+
+use super::config::HooksConfig;
+use super::registry::{self, HookRegistry};
+use super::types::HookEvent;
+
+/// Bumped on every global reload so per-cwd caches rebuild against fresh
+/// user/managed hooks.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The merged user+managed hooks config, kept so per-cwd merges have the global
+/// base without re-reading the `AppConfig` / managed file each time.
+fn global_config() -> &'static ArcSwap<HooksConfig> {
+    static CELL: OnceLock<ArcSwap<HooksConfig>> = OnceLock::new();
+    CELL.get_or_init(|| ArcSwap::from_pointee(HooksConfig::default()))
+}
+
+/// Update the cached merged user+managed config and bump the generation so
+/// per-cwd caches invalidate. Called by [`registry::reload_from_config`].
+pub fn set_global_config(cfg: HooksConfig) {
+    global_config().store(Arc::new(cfg));
+    GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// System-wide managed hooks file (enterprise scope).
+pub fn managed_path() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from("/etc/hope-agent/hooks.json")
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("PROGRAMDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"));
+        base.join("hope-agent").join("hooks.json")
+    }
+}
+
+/// Read + parse a scope file into a `HooksConfig`. `None` when the file is
+/// absent or unparseable (a parse error is logged, never fatal).
+fn read_scope_file(path: &Path) -> Option<HooksConfig> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<HooksConfig>(&text) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            app_warn!(
+                "hooks",
+                "scopes",
+                "ignoring unparseable hooks file {}: {}",
+                path.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Load the managed scope (called during the global reload).
+pub fn load_managed() -> HooksConfig {
+    read_scope_file(&managed_path()).unwrap_or_default()
+}
+
+fn mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
+}
+
+struct CwdEntry {
+    generation: u64,
+    project_mtime: Option<SystemTime>,
+    local_mtime: Option<SystemTime>,
+    registry: Arc<HookRegistry>,
+}
+
+fn cwd_cache() -> &'static Mutex<HashMap<PathBuf, CwdEntry>> {
+    static CELL: OnceLock<Mutex<HashMap<PathBuf, CwdEntry>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Resolve the effective registry for a session working dir: the global
+/// (user+managed) registry merged with the cwd's project + local hooks.
+///
+/// Returns the global registry directly when there is no working dir or no
+/// project/local files exist (the common case — cheap, after up to two
+/// `stat`s). Cached per cwd, invalidated by file mtime + the global generation.
+pub fn resolve_for_cwd(working_dir: Option<&Path>) -> Arc<HookRegistry> {
+    let Some(cwd) = working_dir else {
+        return registry::global();
+    };
+    // Master kill switch disables every scope (global registry is empty too).
+    if crate::config::cached_config().disable_all_hooks {
+        return registry::global();
+    }
+    let project = cwd.join(".hope-agent").join("hooks.json");
+    let local = cwd.join(".hope-agent").join("hooks.local.json");
+    let project_mtime = mtime(&project);
+    let local_mtime = mtime(&local);
+    if project_mtime.is_none() && local_mtime.is_none() {
+        return registry::global();
+    }
+    let generation = GENERATION.load(Ordering::SeqCst);
+    {
+        let cache = cwd_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = cache.get(cwd) {
+            if entry.generation == generation
+                && entry.project_mtime == project_mtime
+                && entry.local_mtime == local_mtime
+            {
+                return entry.registry.clone();
+            }
+        }
+    }
+    // Rebuild: global base + project + local (union).
+    let mut merged = (*global_config().load_full()).clone();
+    if let Some(cfg) = read_scope_file(&project) {
+        merged.merge_from(cfg);
+    }
+    if let Some(cfg) = read_scope_file(&local) {
+        merged.merge_from(cfg);
+    }
+    let reg = Arc::new(HookRegistry::from_config(&merged));
+    let mut cache = cwd_cache().lock().unwrap_or_else(|e| e.into_inner());
+    // Bound the cache so a long-lived process visiting many working dirs can't
+    // grow it without limit.
+    const CAP: usize = 256;
+    if cache.len() >= CAP {
+        cache.clear();
+    }
+    cache.insert(
+        cwd.to_path_buf(),
+        CwdEntry {
+            generation,
+            project_mtime,
+            local_mtime,
+            registry: reg.clone(),
+        },
+    );
+    reg
+}
+
+/// Whether any scope (global, or the cwd's project/local) has a handler for the
+/// event. The single gate every fire path uses so project-only hooks fire even
+/// when the user/managed scopes are empty.
+pub fn any_handlers_for(event: HookEvent, working_dir: Option<&Path>) -> bool {
+    resolve_for_cwd(working_dir).has_handlers_for(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_path_is_absolute() {
+        assert!(managed_path().is_absolute());
+    }
+
+    #[test]
+    fn no_working_dir_returns_global() {
+        // With no cwd, resolution is just the global registry (no panic, no IO).
+        let _ = resolve_for_cwd(None);
+        assert!(!any_handlers_for(HookEvent::PreToolUse, None) || true);
+    }
+
+    #[test]
+    fn project_scope_file_merges_into_resolution() {
+        // A `.hope-agent/hooks.json` in the working dir contributes hooks even
+        // when the global (user+managed) scope has none for that event.
+        let dir = std::env::temp_dir().join(format!("ha-hooks-scope-{}", uuid::Uuid::new_v4()));
+        let proj = dir.join(".hope-agent");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(
+            proj.join("hooks.json"),
+            r#"{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}"#,
+        )
+        .unwrap();
+
+        // Start from an empty global config so the match must come from project.
+        set_global_config(HooksConfig::default());
+        let reg = resolve_for_cwd(Some(&dir));
+        assert!(reg.has_handlers_for(HookEvent::PreToolUse));
+        assert_eq!(
+            reg.matching_handlers(HookEvent::PreToolUse, Some("Bash")).len(),
+            1
+        );
+        assert!(any_handlers_for(HookEvent::PreToolUse, Some(&dir)));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

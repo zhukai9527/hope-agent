@@ -167,8 +167,14 @@ impl AssistantAgent {
 
         // PreCompact hook (blocking; design §5.3.1). A hook may `block` to skip
         // this compaction — but a fill ratio ≥ 0.95 forces it anyway, since
-        // skipping would let the request overflow the context window.
-        if crate::hooks::registry::global().has_handlers_for(crate::hooks::HookEvent::PreCompact) {
+        // skipping would let the request overflow the context window. Gate is
+        // multi-scope (project/local hooks for this session's working dir too).
+        let precompact_wd =
+            crate::session::effective_session_working_dir(self.session_id.as_deref());
+        if crate::hooks::scopes::any_handlers_for(
+            crate::hooks::HookEvent::PreCompact,
+            precompact_wd.as_deref().map(std::path::Path::new),
+        ) {
             let tokens_now =
                 context_compact::estimate_request_tokens(system_prompt, messages, max_tokens);
             let usage_now = tokens_now as f64 / self.context_window.max(1) as f64;

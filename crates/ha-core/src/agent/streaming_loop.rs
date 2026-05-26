@@ -144,8 +144,12 @@ async fn fire_post_tool_use_hook(
     };
     // Hot-path gate: this fires per tool per round. Skip all input building
     // (two serde parses, one over a possibly-large clean_result) when no hook
-    // listens for this event.
-    if !crate::hooks::registry::global().has_handlers_for(event) {
+    // listens for this event — multi-scope (project/local for this session's
+    // working dir too).
+    if !crate::hooks::scopes::any_handlers_for(
+        event,
+        ctx.session_working_dir.as_deref().map(std::path::Path::new),
+    ) {
         return;
     }
     let common = ctx.common_hook_input(event.as_str());
@@ -675,9 +679,13 @@ impl AssistantAgent {
             // tool call in the round settles, before the round lands in
             // history. Skipped for pure-text rounds (no tools). Any
             // additionalContext is queued for the next round's reminder.
+            let post_tool_batch_wd =
+                crate::session::effective_session_working_dir(self.session_id.as_deref());
             if !executed.is_empty()
-                && crate::hooks::registry::global()
-                    .has_handlers_for(crate::hooks::HookEvent::PostToolBatch)
+                && crate::hooks::scopes::any_handlers_for(
+                    crate::hooks::HookEvent::PostToolBatch,
+                    post_tool_batch_wd.as_deref().map(std::path::Path::new),
+                )
             {
                 let input = crate::hooks::HookInput::PostToolBatch {
                     common: self.hook_common_input("PostToolBatch"),

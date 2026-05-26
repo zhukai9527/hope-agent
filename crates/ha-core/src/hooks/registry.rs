@@ -27,18 +27,23 @@ pub fn global() -> Arc<HookRegistry> {
     cell().load_full()
 }
 
-/// Rebuild the global registry from the current `AppConfig.hooks` (user scope
-/// this phase) and atomically swap it in. Called once at startup and on every
-/// `config:changed` for a hooks-relevant category.
+/// Rebuild the global registry from the user (`AppConfig.hooks`) + managed
+/// (system file) scopes and atomically swap it in. Also refreshes the cached
+/// merged config that per-cwd (project/local) resolution layers on top, bumping
+/// the scope generation so those caches invalidate. Called once at startup and
+/// on every `config:changed` for a hooks-relevant category.
 pub fn reload_from_config() {
     let cfg = crate::config::cached_config();
-    let registry = if cfg.disable_all_hooks {
-        // Master kill switch: behave as if nothing is configured.
-        HookRegistry::empty()
+    let merged = if cfg.disable_all_hooks {
+        // Master kill switch: behave as if nothing is configured (every scope).
+        HooksConfig::default()
     } else {
-        HookRegistry::from_config(&cfg.hooks)
+        let mut m = cfg.hooks.clone();
+        m.merge_from(super::scopes::load_managed());
+        m
     };
-    cell().store(Arc::new(registry));
+    cell().store(Arc::new(HookRegistry::from_config(&merged)));
+    super::scopes::set_global_config(merged);
 }
 
 /// A matcher group with its matcher pre-compiled. Handlers in the group share

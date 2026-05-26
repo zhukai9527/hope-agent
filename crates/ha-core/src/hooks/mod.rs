@@ -17,6 +17,7 @@ pub mod matcher;
 pub mod parse;
 pub mod registry;
 pub mod runner;
+pub mod scopes;
 pub mod transcript;
 pub mod types;
 
@@ -168,7 +169,13 @@ pub struct HookDispatcher;
 
 impl HookDispatcher {
     pub async fn dispatch(event: HookEvent, input: HookInput) -> HookOutcome {
-        Self::dispatch_with(&registry::global(), event, input).await
+        // Resolve the effective registry for this session's working dir so
+        // project/local-scope hooks merge on top of the global (user+managed)
+        // scope (design §4). Falls back to the global registry for app-global
+        // events / sessions without a working dir.
+        let wd = session_working_dir(&input);
+        let registry = scopes::resolve_for_cwd(wd.as_deref().map(std::path::Path::new));
+        Self::dispatch_with(&registry, event, input).await
     }
 
     /// Testable core: dispatch against an explicit registry.
@@ -353,7 +360,8 @@ pub(crate) fn fire_and_forget_runtime() -> Option<&'static tokio::runtime::Runti
 /// `Notification`). No-op when no hook is configured for the event, so call
 /// sites stay cheap. Bridges synchronous call sites onto a runtime.
 pub fn fire_and_forget(event: HookEvent, input: HookInput) {
-    if !registry::global().has_handlers_for(event) {
+    let wd = session_working_dir(&input);
+    if !scopes::any_handlers_for(event, wd.as_deref().map(std::path::Path::new)) {
         return;
     }
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -368,6 +376,18 @@ pub fn fire_and_forget(event: HookEvent, input: HookInput) {
             HookDispatcher::dispatch(event, input).await;
         });
     }
+}
+
+/// The session working dir used for project/local scope resolution — the real
+/// `sessions.working_dir` (no home fallback), so a session without one (or an
+/// app-global event with an empty session id) sees only the global scope and
+/// never picks up a stray `~/.hope-agent/hooks.json` as if it were a project.
+fn session_working_dir(input: &HookInput) -> Option<String> {
+    let sid = &input.common().session_id;
+    if sid.is_empty() {
+        return None;
+    }
+    crate::session::effective_session_working_dir(Some(sid))
 }
 
 /// Common hook-input fields for app-/session-level (non-tool) observation
@@ -419,7 +439,11 @@ pub async fn fire_user_prompt_submit(
     agent_id: Option<&str>,
     prompt: &str,
 ) -> HookOutcome {
-    if !registry::global().has_handlers_for(HookEvent::UserPromptSubmit) {
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(
+        HookEvent::UserPromptSubmit,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
         return HookOutcome::noop();
     }
     let mut common = observation_common("UserPromptSubmit", session_id);
@@ -447,7 +471,8 @@ pub async fn fire_session_start_observation(
     agent_id: &str,
     model: &str,
 ) -> Option<String> {
-    if !registry::global().has_handlers_for(HookEvent::SessionStart)
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(HookEvent::SessionStart, wd.as_deref().map(std::path::Path::new))
         || !claim_session_start(session_id)
     {
         return None;
@@ -486,7 +511,8 @@ pub fn fire_session_end(session_id: &str, source: &str) {
 /// actually finish before the process exits (e.g. the server's graceful
 /// shutdown). Synchronous, fire-and-forget call sites use [`fire_session_end`].
 pub async fn dispatch_session_end(session_id: &str, source: &str) {
-    if !registry::global().has_handlers_for(HookEvent::SessionEnd) {
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(HookEvent::SessionEnd, wd.as_deref().map(std::path::Path::new)) {
         return;
     }
     let input = HookInput::SessionEnd {
@@ -599,9 +625,7 @@ pub fn fire_cwd_changed(session_id: &str, old_cwd: Option<&str>, new_cwd: Option
 /// `action` is `create` / `edit` / `delete` / `patch`. No-op fast path when no
 /// FileChanged hook is configured, so it's cheap to call on every file write.
 pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
-    if !registry::global().has_handlers_for(HookEvent::FileChanged) {
-        return;
-    }
+    // `fire_and_forget` applies the cwd-aware multi-scope gate.
     let input = HookInput::FileChanged {
         common: observation_common("FileChanged", session_id.unwrap_or("")),
         path: path.to_string(),
@@ -613,9 +637,6 @@ pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
 /// Fire a `PermissionRequest` observation hook (a tool approval prompt was
 /// raised). `command` is the matcher target (the command / tool being gated).
 pub fn fire_permission_request(session_id: Option<&str>, command: &str) {
-    if !registry::global().has_handlers_for(HookEvent::PermissionRequest) {
-        return;
-    }
     let input = HookInput::PermissionRequest {
         common: observation_common("PermissionRequest", session_id.unwrap_or("")),
         command: command.to_string(),
@@ -626,9 +647,6 @@ pub fn fire_permission_request(session_id: Option<&str>, command: &str) {
 /// Fire a `PermissionDenied` observation hook (a tool was denied). `reason` is
 /// `user_declined` (the user said no to a prompt) or `policy` (engine auto-deny).
 pub fn fire_permission_denied(session_id: Option<&str>, command: &str, reason: &str) {
-    if !registry::global().has_handlers_for(HookEvent::PermissionDenied) {
-        return;
-    }
     let input = HookInput::PermissionDenied {
         common: observation_common("PermissionDenied", session_id.unwrap_or("")),
         command: command.to_string(),
@@ -646,9 +664,6 @@ pub fn fire_user_prompt_expansion(
     command: &str,
     command_text: &str,
 ) {
-    if !registry::global().has_handlers_for(HookEvent::UserPromptExpansion) {
-        return;
-    }
     let mut common = observation_common("UserPromptExpansion", session_id.unwrap_or(""));
     common.agent_id = Some(agent_id.to_string());
     let input = HookInput::UserPromptExpansion {
