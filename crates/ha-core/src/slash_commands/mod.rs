@@ -162,7 +162,12 @@ pub async fn execute_slash_command(
 
     // UserPromptExpansion hook (observation): a slash command ran, matchable on
     // the command name.
-    crate::hooks::fire_user_prompt_expansion(session_id.as_deref(), &agent_id, &name, &command_text);
+    crate::hooks::fire_user_prompt_expansion(
+        session_id.as_deref(),
+        &agent_id,
+        &name,
+        &command_text,
+    );
 
     app_info!(
         "slash_cmd",

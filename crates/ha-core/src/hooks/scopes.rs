@@ -178,10 +178,12 @@ mod tests {
     }
 
     #[test]
-    fn no_working_dir_returns_global() {
-        // With no cwd, resolution is just the global registry (no panic, no IO).
+    fn no_working_dir_exercises_global_path() {
+        // No cwd → resolves to the global registry with no IO or panic; the
+        // gate is callable for any event. (Asserting a concrete bool would be
+        // flaky — the global registry is process-shared across tests.)
         let _ = resolve_for_cwd(None);
-        assert!(!any_handlers_for(HookEvent::PreToolUse, None) || true);
+        let _ = any_handlers_for(HookEvent::PreToolUse, None);
     }
 
     #[test]
@@ -202,7 +204,8 @@ mod tests {
         let reg = resolve_for_cwd(Some(&dir));
         assert!(reg.has_handlers_for(HookEvent::PreToolUse));
         assert_eq!(
-            reg.matching_handlers(HookEvent::PreToolUse, Some("Bash")).len(),
+            reg.matching_handlers(HookEvent::PreToolUse, Some("Bash"))
+                .len(),
             1
         );
         assert!(any_handlers_for(HookEvent::PreToolUse, Some(&dir)));

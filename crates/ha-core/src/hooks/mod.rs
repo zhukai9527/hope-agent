@@ -472,8 +472,10 @@ pub async fn fire_session_start_observation(
     model: &str,
 ) -> Option<String> {
     let wd = crate::session::effective_session_working_dir(Some(session_id));
-    if !scopes::any_handlers_for(HookEvent::SessionStart, wd.as_deref().map(std::path::Path::new))
-        || !claim_session_start(session_id)
+    if !scopes::any_handlers_for(
+        HookEvent::SessionStart,
+        wd.as_deref().map(std::path::Path::new),
+    ) || !claim_session_start(session_id)
     {
         return None;
     }
@@ -512,7 +514,10 @@ pub fn fire_session_end(session_id: &str, source: &str) {
 /// shutdown). Synchronous, fire-and-forget call sites use [`fire_session_end`].
 pub async fn dispatch_session_end(session_id: &str, source: &str) {
     let wd = crate::session::effective_session_working_dir(Some(session_id));
-    if !scopes::any_handlers_for(HookEvent::SessionEnd, wd.as_deref().map(std::path::Path::new)) {
+    if !scopes::any_handlers_for(
+        HookEvent::SessionEnd,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
         return;
     }
     let input = HookInput::SessionEnd {

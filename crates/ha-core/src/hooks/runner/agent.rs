@@ -37,7 +37,11 @@ impl AgentHandler {
 #[async_trait]
 impl HookHandler for AgentHandler {
     fn identity(&self) -> String {
-        format!("{}|{}", self.config.agent.as_deref().unwrap_or(""), self.config.prompt)
+        format!(
+            "{}|{}",
+            self.config.agent.as_deref().unwrap_or(""),
+            self.config.prompt
+        )
     }
 
     fn handler_type(&self) -> &'static str {
@@ -62,7 +66,11 @@ impl HookHandler for AgentHandler {
             .agent_id
             .clone()
             .unwrap_or_else(|| crate::agent_loader::DEFAULT_AGENT_ID.to_string());
-        let agent_id = self.config.agent.clone().unwrap_or_else(|| parent_agent_id.clone());
+        let agent_id = self
+            .config
+            .agent
+            .clone()
+            .unwrap_or_else(|| parent_agent_id.clone());
 
         let params = SpawnParams {
             task: self.config.prompt.clone(),

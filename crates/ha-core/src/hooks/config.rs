@@ -124,7 +124,8 @@ impl HooksConfig {
     pub fn merge_from(&mut self, mut other: HooksConfig) {
         self.session_start.append(&mut other.session_start);
         self.session_end.append(&mut other.session_end);
-        self.user_prompt_submit.append(&mut other.user_prompt_submit);
+        self.user_prompt_submit
+            .append(&mut other.user_prompt_submit);
         self.user_prompt_expansion
             .append(&mut other.user_prompt_expansion);
         self.pre_tool_use.append(&mut other.pre_tool_use);

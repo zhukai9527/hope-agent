@@ -502,8 +502,8 @@ async fn handle_inbound_message(
             // record a UI-only event marker (excluded from LLM context); the
             // prompt is neither persisted as a user message nor run.
             let notice = format!("🚫 {reason}");
-            let _ = session_db
-                .append_message(&session_id, &crate::session::NewMessage::event(&notice));
+            let _ =
+                session_db.append_message(&session_id, &crate::session::NewMessage::event(&notice));
             let _ = plugin
                 .send_message(&account.id, &msg.chat_id, &ReplyPayload::text(&notice))
                 .await;

@@ -63,7 +63,11 @@ async fn build_prompt_agent(
 impl HookHandler for PromptHandler {
     fn identity(&self) -> String {
         // Prompt text + model define the handler (design §7.7 dedup).
-        format!("{}|{}", self.config.prompt, self.config.model.as_deref().unwrap_or(""))
+        format!(
+            "{}|{}",
+            self.config.prompt,
+            self.config.model.as_deref().unwrap_or("")
+        )
     }
 
     fn handler_type(&self) -> &'static str {

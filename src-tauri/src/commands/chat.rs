@@ -362,8 +362,8 @@ pub async fn chat(
             // run as a turn.
             let notice = format!("🚫 {reason}");
             let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
-            let _ = on_event
-                .send(serde_json::json!({ "type": "text", "text": notice }).to_string());
+            let _ =
+                on_event.send(serde_json::json!({ "type": "text", "text": notice }).to_string());
             return Ok(notice);
         }
     };
