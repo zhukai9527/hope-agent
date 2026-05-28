@@ -355,20 +355,32 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
     // agent from this same local). The helper is shared with the ACP turn loop
     // (which runs `AssistantAgent::chat` directly, not this engine) so both
     // entry points fire SessionStart and resolve cwd identically.
-    if let Some(extra) = crate::hooks::fire_session_start_observation(
-        &session_id,
-        &agent_id,
-        model_chain
-            .first()
-            .map(|m| m.model_id.as_str())
-            .unwrap_or_default(),
-    )
-    .await
-    {
-        extra_system_context = Some(match extra_system_context.take() {
-            Some(e) => format!("{e}\n\n{extra}"),
-            None => extra,
-        });
+    //
+    // Gate on `source.fires_user_lifecycle_hooks()`: subagent / parent-injection
+    // runs are internal workers, not user-visible sessions, so they MUST NOT
+    // fire SessionStart. Without this gate an `agent` handler on `SessionStart`
+    // spawns a sub-agent on every run, whose own chat-engine pass fires another
+    // `SessionStart` (new session id ⇒ per-session `claim_session_start` doesn't
+    // dedupe), and so on — a single global SessionStart agent hook would burn
+    // tokens until concurrency or external limits intervene. Subagent
+    // observability lives on `SubagentStart` / `SubagentStop` instead, also
+    // gated against hook-spawned children in `subagent::spawn`.
+    if source.fires_user_lifecycle_hooks() {
+        if let Some(extra) = crate::hooks::fire_session_start_observation(
+            &session_id,
+            &agent_id,
+            model_chain
+                .first()
+                .map(|m| m.model_id.as_str())
+                .unwrap_or_default(),
+        )
+        .await
+        {
+            extra_system_context = Some(match extra_system_context.take() {
+                Some(e) => format!("{e}\n\n{extra}"),
+                None => extra,
+            });
+        }
     }
 
     // UserPromptSubmit hook context: the preflight chokepoint stashed any

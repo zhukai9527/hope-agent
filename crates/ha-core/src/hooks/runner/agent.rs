@@ -17,7 +17,7 @@ use super::super::config::AgentHookConfig;
 use super::super::env::HookEnv;
 use super::super::types::HookInput;
 use super::{HookHandler, RawHookResult};
-use crate::subagent::{spawn_subagent, SpawnParams};
+use crate::subagent::{spawn_subagent, SpawnParams, HOOK_SPAWN_LABEL};
 
 /// Default `agent` hook timeout when waiting for a synchronous run.
 const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 120;
@@ -80,7 +80,10 @@ impl HookHandler for AgentHandler {
             depth: 0,
             timeout_secs: self.config.timeout,
             model_override: None,
-            label: Some("hook".to_string()),
+            // Tag the spawn so `spawn_subagent` knows to suppress
+            // SubagentStart / SubagentStop hooks for this child — otherwise
+            // a Subagent{Start,Stop} agent hook would respawn forever.
+            label: Some(HOOK_SPAWN_LABEL.to_string()),
             attachments: Vec::new(),
             plan_agent_mode: None,
             plan_mode_allow_paths: Vec::new(),
