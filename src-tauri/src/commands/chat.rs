@@ -247,6 +247,42 @@ pub async fn chat(
     // Mark this session as active — cancels any running subagent injection and blocks new ones
     let _chat_session_guard = crate::subagent::ChatSessionGuard::new(&sid);
 
+    // Prefer display_text for DB/title, fall back to the LLM-bound message.
+    let raw_prompt = ha_core::non_empty_trim_or(display_text.as_deref(), &message);
+
+    // Preflight chokepoint runs BEFORE any side effects (attachments dir creation,
+    // base64 image write, temp file move) so a `UserPromptSubmit` block doesn't
+    // leave orphan attachment files on disk. Reordered after the adversarial
+    // review caught this leak: blocked-prompt semantics were "no user message
+    // persisted", but the attachment IO had already touched disk. The preflight
+    // only consumes `raw_prompt` / `session_id` / `agent_id`, so it doesn't need
+    // any attachment metadata — moving it up is purely a side-effect deferral.
+    let effective_prompt = match ha_core::agent::preflight::user_prompt_preflight(
+        ha_core::agent::preflight::PreflightArgs {
+            session_id: &sid,
+            agent_id: Some(current_agent_id.as_str()),
+            raw_prompt,
+        },
+    )
+    .await
+    {
+        ha_core::agent::preflight::PreflightOutcome::Proceed { effective_prompt } => {
+            effective_prompt
+        }
+        ha_core::agent::preflight::PreflightOutcome::Block { reason } => {
+            // A UserPromptSubmit hook blocked the prompt: record a UI-only event
+            // marker (visible in history but excluded from LLM context) and
+            // surface it. The prompt is neither persisted as a user message nor
+            // run as a turn — and crucially, no attachment file has been
+            // written yet (we're upstream of all attachment IO).
+            let notice = format!("🚫 {reason}");
+            let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
+            let _ =
+                on_event.send(serde_json::json!({ "type": "text", "text": notice }).to_string());
+            return Ok(notice);
+        }
+    };
+
     // Build attachments metadata from file paths (files already saved by save_attachment)
     let attachments_meta = if !attachments.is_empty() {
         // Ensure session attachments directory exists and move temp files if needed
@@ -335,37 +371,6 @@ pub async fn chat(
         Some(serde_json::to_string(&meta_list).unwrap_or_default())
     } else {
         None
-    };
-
-    // Prefer display_text for DB/title, fall back to the LLM-bound message.
-    let raw_prompt = ha_core::non_empty_trim_or(display_text.as_deref(), &message);
-
-    // Preflight chokepoint: every user-message entry point routes through this
-    // before persisting. Pass-through in Phase 0.1; PR 1.2 runs the
-    // `UserPromptSubmit` hook here (may block / rewrite the prompt).
-    let effective_prompt = match ha_core::agent::preflight::user_prompt_preflight(
-        ha_core::agent::preflight::PreflightArgs {
-            session_id: &sid,
-            agent_id: Some(current_agent_id.as_str()),
-            raw_prompt,
-        },
-    )
-    .await
-    {
-        ha_core::agent::preflight::PreflightOutcome::Proceed { effective_prompt } => {
-            effective_prompt
-        }
-        ha_core::agent::preflight::PreflightOutcome::Block { reason } => {
-            // A UserPromptSubmit hook blocked the prompt: record a UI-only event
-            // marker (visible in history but excluded from LLM context) and
-            // surface it. The prompt is neither persisted as a user message nor
-            // run as a turn.
-            let notice = format!("🚫 {reason}");
-            let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
-            let _ =
-                on_event.send(serde_json::json!({ "type": "text", "text": notice }).to_string());
-            return Ok(notice);
-        }
     };
 
     // Save user message to DB
