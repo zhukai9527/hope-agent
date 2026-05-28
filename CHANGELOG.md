@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Agent 自我诊断与 Issue Reporting**：新增内置 `ha-self-diagnosis` skill 与核心 `issue_report` 工具，支持自查源码 / 架构文档 / 配置 / 日志并整理 bug、需求或改进 issue；Settings → Tools 新增 Issue Reporting 面板，可配置目标仓库、标签映射、GitHub token，并在无 token 时回退到已登录的 `gh` CLI。提交前强制用户确认，issue 正文与标题在截断前统一脱敏常见明文凭据。
 - **macOS Control 截图能力 v2**：`mac_control.snapshot(includeScreenshot=true)` 支持 `screenshotTarget=display|window`，可按 `displayId` 采集指定显示器，或按 `windowId`/当前前台窗口采集窗口截图；截图与右侧镜像 frame 现在返回目标类型、display/window id、窗口标题、bounds 与 scale，便于模型区分多屏、Retina 和窗口级视觉上下文。 (#231)
 - **macOS Control 视觉定位 v1**：新增 `mac_control.visual.observe/point`。`observe` 将 display/window 受管截图作为 `__IMAGE_FILE__` 视觉输入返回模型，`point` 把截图像素点或 macOS screen point 映射为可点击 screen point，并返回 AX 命中/最近候选与 `act.click_point` 建议参数；真正点击仍走现有 `act` 审批链。 (#239)
+- **macOS Control 标注截图**：`mac_control.visual.observe` 新增 `annotate=true` 与 `uiMapLimit`，可返回带 AX element id 边框的标注截图和紧凑 `uiMap`，让模型优先用 `elementId` 精确点击，减少盲坐标操作。
+- **macOS Control AX action 执行**：`mac_control.act.perform_action` 新增命名 AX action 调用，支持对明确目标执行 `AXPress`、`AXShowMenu`、`AXIncrement`、`AXDecrement` 等常见动作；常用别名会规范化，合法命名 action 会直接交给 Accessibility 尝试执行，并继续走普通 macOS 控制审批。
+- **macOS Control 审批焦点恢复**：`mac_control` 触发工具审批前会捕获当前前台 App，审批通过或超时继续后在真正执行动作前按 `pid -> bundleId -> appName` best-effort 恢复焦点，避免审批窗口让 Hope Agent 抢前台后把键盘、菜单或 frontmost 依赖动作送错窗口。
+- **macOS Control Dock / Spaces 基础能力**：新增 `mac_control.dock.list/launch/hide/show/menu/select_menu` 与 `spaces.list/switch/move_window`。Dock 列表读取持久项并返回 `dockItemId`、label、bundleId、path、running/active 状态；Dock hide/show 写入 autohide 并重启 Dock；Dock menu 可打开并选择 Dock item 菜单；Spaces 列表优先读取 SkyLight/CGS 实时状态，切换相邻 Space 优先走 Mission Control `Control+Left/Right`，非相邻精确目标再 fallback 到 Control+数字或 SkyLight/CGS，窗口移动通过 SkyLight/CGS best-effort 执行并返回校验结果。
+- **macOS Control Dialog 高层能力**：`mac_control.dialog` 新增 `list/click/input/file`。`list` 是 `inspect` 的语义别名并返回 `fields[]`；`click` 按可见按钮文本点击；`input` 可按 field/fieldIndex/elementId 填写弹窗文本框；`file` 可通过 macOS Go to Folder 输入文件选择器路径、填写保存文件名并点击默认或指定按钮。
 - **macOS Control OCR 定位 v1**：新增 `mac_control.visual.ocr/find_text`，基于 macOS Vision Framework 识别受管截图中的文字，并返回 OCR 文字块、image pixel / screen point 坐标、AX 命中候选与 `act.click_point` 建议参数；无匹配时返回空候选而不是盲点。 (#239)
 - **macOS Control 菜单范围**：`mac_control.menu.list/click` 新增 `scope=app|system`，默认继续操作前台 App 菜单；`system` 用于读取和点击 macOS 菜单栏 extras/status items，并在菜单项摘要中补充 `description`、`value` 与可执行 actions，减少状态栏入口无标题时的误判。 (#231)
 - **macOS Control 跨 App 窗口发现**：`mac_control.windows.list` 新增 `windowScope=frontmost|all`，默认保持前台 App 行为；显式 `all` 时可列出所有运行中 App 的窗口，并返回可复用的 `win_<pid>_<index>` id，便于模型先发现后台窗口再聚焦、移动、缩放、最小化或关闭。 (#231)
@@ -21,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **macOS Control 粘贴输入**：`mac_control.act` 新增 `op=paste`，用于长文本或 `AXValue` 不稳定的输入场景；执行时临时写入 pasteboard、触发系统粘贴，并备份/恢复原 pasteboard items，结果只报告恢复状态、不回显旧剪贴板或待粘贴文本。 (#231)
 - **macOS Control 目标消歧**：`mac_control.act` 在 AX 元素候选最高分并列时不再默认操作第一个匹配项，而是返回带候选提示的歧义错误，要求模型用 `elementId`、窗口标题、role 或更具体文本重试，降低点错相似按钮/输入框的风险。 (#231)
 - **macOS Control 元素检索**：`mac_control.elements.find` 新增只读 AX 元素检索，按 target 过滤并返回排序候选、score、reasons 和所在窗口，方便模型在点击/输入前先确认 `elementId`。 (#231)
-- **macOS Control 动作预解析**：`mac_control.act.dry_run` 新增只读目标解析，可在点击、设置值或拖拽前验证将命中的 AX 元素和歧义状态，不产生 UI 副作用。 (#231)
+- **macOS Control 动作预解析**：`mac_control.act.dry_run` 新增只读目标解析，可在点击、设置值或拖拽前验证将命中的 AX 元素和歧义状态；`dryRunOp` 与 `explain=true` 可预览更接近真实动作的执行路径、风险和 fallback，不产生 UI 副作用。 (#231)
 - **macOS Control 结果收敛**：`mac_control.act`、`wait`、`dialog` 默认不再返回完整 AX snapshot，只返回目标、命中或对话框摘要；调试或确需完整树时可显式传 `includeSnapshot=true`。 (#231)
 - **IM 渠道媒体附件发送**：Signal / Slack / iMessage / WhatsApp 渠道新增媒体附件发送，并支持把公共媒体链接直接路由给渠道。 (#232)
 - **聊天斜杠命令动作卡片**：斜杠命令动作结果以卡片形式渲染，新增 Recap 进度卡片与 Skill Fork 状态卡片。 (#232)
@@ -31,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **macOS Control v3 控制稳定性升级**：完成 Peekaboo 对齐后的桌面控制强化：`visual.point/find_text` 会返回 AX 优先的 `suggestedActions[]`，必要时再坐标兜底；`act` 支持 `snapshotId + elementId` 稳定重定位、observe→act→verify 校验、自动 fallback 与审批后焦点恢复；窗口、文本输入、菜单、dialog、鼠标移动/拖拽/滑动等突变动作返回 verification；新增 `diagnostics.summary/export`、`act.dry_run dryRunOp` 与 explain 预览，便于模型在执行前看清将控制的对象。
 - **菜单栏图标交互**：单击菜单栏小图标时与右键一致打开托盘菜单，不再直接唤起主窗口；动态状态刷新不再因为 uptime 变化打断已展开的菜单。 (#242)
 - **审批弹层倒计时**：审批弹层的倒计时圆环左侧新增剩余时间文字，超时前状态更直观。 (#242)
 - **会话输入草稿保留**：切换会话时会保留每个会话输入区里的文字和待发送附件，切回后继续编辑；未发送的新会话草稿也会保留。 (#242)
@@ -42,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **macOS Control 共享 schema 参数预检**：`mac_control` 现在在权限判断和审批前会按 `action/op` sanitize + preflight 参数，避免 `spaces.switch direction=right` 这类调用被 Provider 默认补出的 `spaceIndex=1` 污染成冲突参数，也避免缺少必要目标的无效突变弹出审批后才失败。
+- **macOS Control Spaces 切换可靠性**：`spaces.switch direction=left|right` 和相邻 `spaceIndex/spaceId` 现在优先走 Mission Control `Control+Left/Right`，避免 SkyLight/CGS 只改内部 active id 却不切可见桌面；非相邻精确目标再 fallback 到 Control+数字或 SkyLight/CGS，执行后校验 current Space，未切到目标时返回明确 warning。
+- **macOS Control Spaces 当前状态修正**：`spaces.list` 不再用 `defaults export com.apple.spaces` 作为首选 current Space 来源，避免偏好文件里的 `Current Space` 与肉眼桌面状态不同步；现在优先用 `CGSGetActiveSpace` 判定 current，并用 `CGSCopyManagedDisplaySpaces` / `CGSCopySpaces` 枚举实时状态。
 - **会话置顶迁移兼容**：旧 session 数据库启动时会补齐 `pinned_at` 列后再创建索引，避免升级后因缺列导致应用无法打开。 (#242)
 - **Web Search fallback 诊断不再污染缓存**：搜索 provider fallback 时会区分无结果与 provider 不可用，且临时失败 / 限流诊断只出现在本次响应中，不再写入结果缓存。 (#236)
 - **聊天「停止」状态稳定保留**：重做 chat engine 活动 turn / 持久化 / 流序号管线，按下停止后会话状态正确保留，不再丢失或错乱（覆盖 failover 与 subagent 路径）。 (#230)

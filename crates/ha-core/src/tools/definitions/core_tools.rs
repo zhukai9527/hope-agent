@@ -724,7 +724,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
         // ── macOS Control ──────────────────────────────────────
         ToolDefinition {
             name: TOOL_MAC_CONTROL.into(),
-            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context, `visual.point` image-pixel/screen-point mapping with AX hit candidates, `visual.ocr/find_text` OCR text positioning, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/click/click_point/double_click/right_click/type/paste/set_value/hotkey/scroll/drag, `menu` list/click for app menus or system menu bar extras, `clipboard` get/set/clear text, and `dialog` inspect/accept/dismiss. Prefer visual.find_text/visual.point/elements.find/snapshot/wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
+            description: "Inspect and control the local macOS desktop through Hope Agent's native bridge. Supports `status`, `permissions`, `diagnostics` summary/export for failure analysis, `snapshot` with display/window screenshots, `visual.observe` screenshot-to-model context with optional annotated AX UI map, `visual.point` image-pixel/screen-point mapping with AX hit candidates and suggestedActions, `visual.ocr/find_text` OCR text positioning with AX-first click suggestions, `elements.find` scored AX element search, `wait` present/gone, `apps` list/frontmost/installed/search/activate/launch/quit, `dock` list/launch/hide/show/menu/select_menu, `spaces` list/switch/move_window, `windows` list/focus/move/resize/minimize/close including all-app window discovery, `act` dry_run/perform_action/click/click_point/move_cursor/double_click/right_click/type/paste/set_value/hotkey/press/scroll/drag/swipe plus dryRunOp/explain previews, `menu` list/click for app menus or system menu bar extras plus `menu.popover` for menu bar status popover detection, `clipboard` get/set/clear text, and `dialog` list/inspect/click/input/file/accept/dismiss. Prefer visual.observe annotate=true, visual.find_text, visual.point, elements.find, snapshot, or wait before mutation. Destructive quit/close/dangerous menu/dialog actions use strict approval; clipboard actions require approval because clipboard content may be sensitive.".into(),
             tier: ToolTier::Standard { default_for_main: true, default_for_others: false, default_deferred: true },
             internal: false,
             concurrent_safe: false,
@@ -734,13 +734,13 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["status", "permissions", "snapshot", "visual", "elements", "wait", "apps", "windows", "act", "menu", "clipboard", "dialog"],
-                        "description": "`status` returns bridge/platform/readiness summary. `permissions` includes macOS system permissions. `snapshot` returns a read-only frontmost-app/window/AX element summary and optional display/window screenshot. `visual` observes a screenshot for model vision, runs OCR text positioning, or maps a visual point to macOS screen points and AX hit candidates. `elements` finds and ranks AX element candidates without mutating UI. `wait` polls snapshots until a target query is present or gone. `apps`, `windows`, `act`, `menu`, `clipboard`, and `dialog` perform desktop operations."
+                        "enum": ["status", "permissions", "diagnostics", "snapshot", "visual", "elements", "wait", "apps", "dock", "spaces", "windows", "act", "menu", "clipboard", "dialog"],
+                        "description": "`status` returns bridge/platform/readiness summary. `permissions` includes macOS system permissions. `diagnostics` is read-only and returns or exports readiness, snapshot-cache summaries, recent errors, and the current focus anchor. `snapshot` returns a read-only frontmost-app/window/AX element summary and optional display/window screenshot. `visual` observes a screenshot for model vision, optionally returns an annotated AX UI map, runs OCR text positioning, or maps a visual point to macOS screen points and AX hit candidates. `elements` finds and ranks AX element candidates without mutating UI. `wait` polls snapshots until a target query is present or gone. `apps`, `dock`, `spaces`, `windows`, `act`, `menu`, `clipboard`, and `dialog` perform desktop operations."
                     },
                     "op": {
                         "type": "string",
-                        "enum": ["observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "focus", "move", "resize", "minimize", "close", "dry_run", "click", "click_point", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "scroll", "drag", "get", "set", "clear", "inspect", "accept", "dismiss"],
-                        "description": "Sub-operation. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation, click for AX target clicks, click_point for raw screen coordinates, double_click|right_click target clicks, type|paste|set_value|hotkey|scroll, drag from target center to x/y. For `menu`: list|click. For `clipboard`: get|set|clear text. For `dialog`: inspect|accept|dismiss."
+                        "enum": ["summary", "export", "observe", "point", "ocr", "find_text", "find", "present", "gone", "list", "frontmost", "installed", "search", "activate", "launch", "quit", "hide", "show", "menu", "select_menu", "switch", "move_window", "focus", "move", "resize", "minimize", "close", "dry_run", "perform_action", "click", "click_point", "move_cursor", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "press", "scroll", "drag", "swipe", "popover", "input", "file", "get", "set", "clear", "inspect", "accept", "dismiss"],
+                        "description": "Sub-operation. For `diagnostics`: summary|export. For `visual`: observe|point|ocr|find_text. For `elements`: find. For `wait`: present|gone. For `apps`: list|frontmost|installed|search|activate|launch|quit. For `dock`: list|launch|hide|show|menu|select_menu. For `spaces`: list|switch|move_window. For `windows`: list|focus|move|resize|minimize|close. For `act`: dry_run resolves a target without mutation and can preview `dryRunOp`, perform_action runs a named AX action after basic format validation, click for AX target clicks, click_point for raw screen coordinates, move_cursor to x/y or target center, double_click|right_click target clicks, type|paste|set_value|hotkey|press|scroll, drag/swipe between coordinate or AX element endpoints. For `menu`: list|click|popover. For `clipboard`: get|set|clear text. For `dialog`: list|inspect|click|input|file|accept|dismiss."
                     },
                     "scope": {
                         "type": "string",
@@ -754,16 +754,29 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "appName": {
                         "type": "string",
-                        "description": "For `apps`: app name query. By default this is an exact match against localized name, bundle id suffix, .app name, or executable name. If launch/activate by name is ambiguous or fails, call apps.search/installed and retry with bundleId."
+                        "description": "For `apps` or `dock.launch`: app name query. By default this is an exact match against localized name, bundle id suffix, .app name, executable name, or Dock label. If launch/activate by name is ambiguous or fails, call apps.search/installed or dock.list and retry with bundleId/dockItemId."
                     },
                     "appNameMatch": {
                         "type": "string",
                         "enum": ["exact", "contains"],
-                        "description": "For `apps` appName matching. Defaults to exact. Use contains only for read-only discovery such as apps.search/installed; prefer bundleId for mutations."
+                        "description": "For `apps` and `dock` appName matching. Defaults to exact. Use contains only for read-only discovery such as apps.search/installed or dock.list; prefer bundleId/dockItemId for mutations."
+                    },
+                    "appHint": {
+                        "type": "string",
+                        "description": "For `menu.popover`: optional app/status item hint used to rank menu bar popover candidates by app name, bundle id, window title, or OCR text."
+                    },
+                    "menuIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "For `menu.click scope=system`: 0-based status item index from `menu.list scope=system`; ignored when a non-empty `path` is also provided. For `dock.select_menu`: 0-based Dock context menu item index from `dock.menu`; use only when `menuItem` is unavailable, because index-only Dock menu selections require strict approval."
+                    },
+                    "menuItem": {
+                        "type": "string",
+                        "description": "For `dock.select_menu`: Dock context menu item title to click, such as `Options` or `Remove from Dock`. Prefer this over `menuIndex`; when both are provided, `menuItem` is treated as the intended target."
                     },
                     "bundleId": {
                         "type": "string",
-                        "description": "For `apps`: case-insensitive substring match against the running app bundle id."
+                        "description": "For `apps` or `dock.launch`: case-insensitive substring match against the app bundle id."
                     },
                     "pid": {
                         "type": "integer",
@@ -773,11 +786,37 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 100,
-                        "description": "For `apps.list`: maximum running apps returned, default 50. For `elements.find`: maximum ranked candidates returned, default 20. For `visual.point`: maximum hit/nearest AX candidates returned, default 5. For `visual.find_text`: maximum OCR matches returned, default 5. Hard-capped at 100."
+                        "description": "For `apps.list`: maximum running apps returned, default 50. For `diagnostics`: maximum cached snapshot summaries returned, default 10 and hard-capped at 20. For `elements.find`: maximum ranked candidates returned, default 20. For `visual.point`: maximum hit/nearest AX candidates returned, default 5. For `visual.find_text`: maximum OCR matches returned, default 5. For `menu.popover`: maximum ranked popover candidates returned, default 5 and hard-capped at 20. Other hard caps are 100 unless documented."
                     },
                     "windowId": {
                         "type": "string",
                         "description": "For `windows`: window id from the latest snapshot/list, e.g. win_1 or all-scope win_<pid>_<index>. Prefer all-scope ids when operating background app windows. For `snapshot` or `visual.observe` window screenshots: capture this AX window id; omit to capture the focused/frontmost window."
+                    },
+                    "dockItemId": {
+                        "type": "string",
+                        "description": "For `dock.launch`, `dock.menu`, or `dock.select_menu`: exact Dock item id from `dock.list`, e.g. dock_123456789. Prefer this over appName when mutating a Dock item."
+                    },
+                    "itemPath": {
+                        "type": "string",
+                        "description": "For `dock.launch`, `dock.menu`, or `dock.select_menu`: exact filesystem path or file:// URL from a Dock item. Prefer dockItemId or bundleId for app launches."
+                    },
+                    "spaceId": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "For `spaces.switch`: managed Space id from `spaces.list`. Prefer this for exact Space targeting; Hope Agent resolves it to a target ManagedSpaceID."
+                    },
+                    "spaceIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9,
+                        "default": 0,
+                        "description": "For `spaces.switch`: 1-based Space index from `spaces.list`; use 0 or omit when not targeting by index. Pass exactly one of spaceId, spaceIndex, or direction."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["left", "right"],
+                        "description": "For `spaces.switch`: switch to the adjacent Space. Pass exactly one of direction, spaceId, or spaceIndex."
                     },
                     "snapshotId": {
                         "type": "string",
@@ -790,11 +829,27 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "x": {
                         "type": "number",
-                        "description": "For `visual.point`: x in coordinateSpace (`image_pixels` by default, 0 is valid). For `windows.move` or `act.click_point`: x position in macOS screen points. For `act.drag`: destination x point; the source is target center."
+                        "description": "For `visual.point`: x in coordinateSpace (`image_pixels` by default, 0 is valid). For `windows.move`, `act.click_point`, or `act.move_cursor`: x position in macOS screen points. For `act.drag`: destination x point. For `act.swipe`: start x point when using x/y source."
                     },
                     "y": {
                         "type": "number",
-                        "description": "For `visual.point`: y in coordinateSpace (`image_pixels` by default, 0 is valid). For `windows.move` or `act.click_point`: y position in macOS screen points. For `act.drag`: destination y point; the source is target center."
+                        "description": "For `visual.point`: y in coordinateSpace (`image_pixels` by default, 0 is valid). For `windows.move`, `act.click_point`, or `act.move_cursor`: y position in macOS screen points. For `act.drag`: destination y point. For `act.swipe`: start y point when using x/y source."
+                    },
+                    "fromX": {
+                        "type": "number",
+                        "description": "For `act.drag` or `act.swipe`: raw source x point when not using target. For backwards compatibility, `act.swipe` also accepts x/y as the source."
+                    },
+                    "fromY": {
+                        "type": "number",
+                        "description": "For `act.drag` or `act.swipe`: raw source y point when not using target. For backwards compatibility, `act.swipe` also accepts x/y as the source."
+                    },
+                    "toX": {
+                        "type": "number",
+                        "description": "For `act.drag` or `act.swipe`: raw destination x point when not using x/y, deltaX/deltaY, or toTarget."
+                    },
+                    "toY": {
+                        "type": "number",
+                        "description": "For `act.drag` or `act.swipe`: raw destination y point when not using x/y, deltaX/deltaY, or toTarget."
                     },
                     "width": {
                         "type": "number",
@@ -806,7 +861,27 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "text": {
                         "type": "string",
-                        "description": "For `visual.find_text`: OCR text query. For `act.type`: text to set/type through Accessibility. For `act.paste`: text to paste via the pasteboard without echoing it in the result. For `clipboard.set`: text to place on the clipboard; the result does not echo it back. For target matching, use target.text."
+                        "description": "For `visual.find_text`: OCR text query. For `act.type`: text to set through Accessibility, or to type character-by-character when typingProfile/typingDelayMs is provided. For `act.paste`: text to paste via the pasteboard without echoing it in the result. For `dialog.input`: text to enter into a dialog field. For `clipboard.set`: text to place on the clipboard; the result does not echo it back. For target matching, use target.text."
+                    },
+                    "typingProfile": {
+                        "type": "string",
+                        "enum": ["instant", "steady", "human"],
+                        "description": "For `act.type`: when provided, type text via CGEvent Unicode key events instead of AXSetValue. `steady` uses a short fixed delay, `human` adds small deterministic jitter, and `instant` posts characters without delay."
+                    },
+                    "dryRunOp": {
+                        "type": "string",
+                        "enum": ["perform_action", "click", "click_point", "move_cursor", "double_click", "right_click", "type", "paste", "set_value", "hotkey", "press", "scroll", "drag", "swipe"],
+                        "description": "For `act.dry_run`: the real act op to preview after resolving the target. Defaults to click. The result includes `preview` with executionPlan/fallbackPlan/verificationPlan/warnings without mutating UI."
+                    },
+                    "explain": {
+                        "type": "boolean",
+                        "description": "For `act`: when true, include the same structured `preview` explanation with the result. For pre-mutation review, prefer `op=dry_run` plus dryRunOp."
+                    },
+                    "typingDelayMs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000,
+                        "description": "For `act.type`: explicit per-character delay in milliseconds when using CGEvent Unicode typing. Overrides typingProfile delay and is hard-capped at 1000."
                     },
                     "textMatch": {
                         "type": "string",
@@ -816,18 +891,18 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "languages": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "For `visual.ocr` and `visual.find_text`: optional Vision recognition languages such as [\"zh-Hans\", \"en-US\"]. Omit to let Vision auto-detect."
+                        "description": "For `visual.ocr`, `visual.find_text`, and `menu.popover includeOcr=true`: optional Vision recognition languages such as [\"zh-Hans\", \"en-US\"]. Omit to let Vision auto-detect."
                     },
                     "minConfidence": {
                         "type": "number",
                         "minimum": 0,
                         "maximum": 1,
-                        "description": "For `visual.ocr` and `visual.find_text`: discard OCR blocks below this confidence. Defaults to 0."
+                        "description": "For `visual.ocr`, `visual.find_text`, and `menu.popover includeOcr=true`: discard OCR blocks below this confidence. Defaults to 0."
                     },
                     "recognitionLevel": {
                         "type": "string",
                         "enum": ["accurate", "fast"],
-                        "description": "For `visual.ocr` and `visual.find_text`: Vision recognition level. Defaults to accurate."
+                        "description": "For `visual.ocr`, `visual.find_text`, and `menu.popover includeOcr=true`: Vision recognition level. Defaults to accurate."
                     },
                     "maxChars": {
                         "type": "integer",
@@ -839,31 +914,110 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "type": "string",
                         "description": "For `act.set_value`: value to set via Accessibility."
                     },
+                    "axAction": {
+                        "type": "string",
+                        "description": "For `act.perform_action`: Accessibility action name to perform on the resolved target. Common aliases normalize to AX names; other names are accepted if non-empty, <=128 chars, and only ASCII letters/digits/_/-. The target does not have to advertise the action in `actions[]`; unsupported actions fail at execution."
+                    },
                     "key": {
                         "type": "string",
-                        "description": "For `act.hotkey`: single key name, e.g. n, Enter, Escape, Tab."
+                        "description": "For `act.hotkey` or `act.press`: single key name, e.g. n, Enter, Escape, Tab."
                     },
                     "keys": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "For `act.hotkey`: ordered keys/modifiers, e.g. [\"cmd\",\"n\"] or [\"cmd\",\"shift\",\"g\"]."
+                        "description": "For `act.hotkey`: ordered keys/modifiers, e.g. [\"cmd\",\"n\"] or [\"cmd\",\"shift\",\"g\"]. For `act.press`: ordered key names to press sequentially."
+                    },
+                    "modifiers": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "For `act.press`, `act.drag`, and `act.swipe`: modifier keys to hold during the action, e.g. [\"shift\"] or [\"cmd\",\"option\"]."
+                    },
+                    "repeat": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "For `act.press`: repeat count for the key sequence. Defaults to 1 and is hard-capped at 100."
+                    },
+                    "holdMs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "description": "For `act.press`: how long to hold each key down in milliseconds. Defaults to a short key press and is hard-capped at 10000."
+                    },
+                    "intervalMs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5000,
+                        "description": "For `act.press`: delay between repeated or sequential key presses. Defaults to 0 and is hard-capped at 5000."
                     },
                     "deltaX": {
                         "type": "number",
-                        "description": "For `act.scroll`: horizontal scroll delta."
+                        "description": "For `act.scroll`: horizontal scroll delta. For `act.swipe`: horizontal movement from the start point."
                     },
                     "deltaY": {
                         "type": "number",
-                        "description": "For `act.scroll`: vertical scroll delta."
+                        "description": "For `act.scroll`: vertical scroll delta. For `act.swipe`: vertical movement from the start point."
+                    },
+                    "durationMs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "description": "For `act.move_cursor`, `act.drag`, and `act.swipe`: optional motion duration in milliseconds. Defaults to a short smooth movement and is hard-capped at 10000."
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 240,
+                        "description": "For `act.move_cursor`, `act.drag`, and `act.swipe`: optional number of interpolation points. Defaults to a short smooth movement and is hard-capped at 240."
+                    },
+                    "motionProfile": {
+                        "type": "string",
+                        "enum": ["linear", "human"],
+                        "description": "For `act.move_cursor`, `act.drag`, and `act.swipe`: optional cursor path profile. `linear` preserves deterministic straight interpolation; `human` uses eased movement with small deterministic wobble and long-distance correction."
                     },
                     "path": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "For `menu.click`: menu path. App menus match titles, e.g. [\"File\", \"New Window\"]; system menu bar extras may match title, description, or value from `menu.list`."
+                        "oneOf": [
+                            { "type": "array", "items": { "type": "string" } },
+                            { "type": "string" }
+                        ],
+                        "description": "For `menu.click`: menu path array. For `dialog.file`, string alias for filePath to match Peekaboo-style args."
                     },
                     "buttonText": {
                         "type": "string",
-                        "description": "For `dialog.accept` or `dialog.dismiss`: preferred button label. If omitted, accept/dismiss use conservative built-in label lists such as OK/Save/Open or Cancel/Close/Don't Save."
+                        "description": "For `dialog.click`, `dialog.accept`, `dialog.dismiss`, or `dialog.file`: preferred button label. `dialog.click` requires this; accept/dismiss/file can use conservative built-in/default labels when omitted."
+                    },
+                    "field": {
+                        "type": "string",
+                        "description": "For `dialog.input`: field label, value, or element id to target. Omit to use the focused/first text field in the dialog."
+                    },
+                    "fieldIndex": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "For `dialog.input`: 0-based text field index within the inspected dialog."
+                    },
+                    "clear": {
+                        "type": "boolean",
+                        "description": "For `dialog.input`: replace the field value through Accessibility instead of appending/pasting at the current insertion point."
+                    },
+                    "filePath": {
+                        "type": "string",
+                        "description": "For `dialog.file`: directory or full file path to enter in a native Open/Save panel using Go to Folder."
+                    },
+                    "fileName": {
+                        "type": "string",
+                        "description": "For `dialog.file`: filename to enter in the file dialog's text field, typically for Save panels."
+                    },
+                    "selectButton": {
+                        "type": "string",
+                        "description": "For `dialog.file`: button to click after entering path/name, such as Open, Save, Choose, Cancel, or default. Omit to click the default accept-style button."
+                    },
+                    "ensureExpanded": {
+                        "type": "boolean",
+                        "description": "For `dialog.file`: best-effort expand/click Show Details before entering path/name."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "For `dialog.dismiss`: when true, send Escape if no dismiss button can be resolved."
                     },
                     "includeScreenshot": {
                         "type": "boolean",
@@ -871,7 +1025,25 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "includeSnapshot": {
                         "type": "boolean",
-                        "description": "For `act`, `wait`, or `dialog`: include the full AX snapshot used for the operation in the result. Defaults to false to keep results compact. `act.dry_run` stays compact; use `snapshot` or `elements.find` for full tree context."
+                        "description": "For `act`, `wait`, or `dialog`: include the full AX snapshot used for the operation in the result. Defaults to false to keep results compact. `act.dry_run` stays compact but can return a structured preview; use `snapshot` or `elements.find` for full tree context."
+                    },
+                    "includeOcr": {
+                        "type": "boolean",
+                        "description": "For `menu.popover`: run a best-effort display OCR pass and attach visible text inside candidate popover windows. Defaults to true; set false for AX-window-only detection."
+                    },
+                    "verify": {
+                        "type": "boolean",
+                        "description": "For `menu.click scope=system`: after clicking a status item, attempt to verify/opened popover by returning `menu.popover` candidates and screenshot metadata."
+                    },
+                    "annotate": {
+                        "type": "boolean",
+                        "description": "For `visual.observe`: when true, return an annotated screenshot with AX element ids overlaid plus a compact uiMap. Defaults to false."
+                    },
+                    "uiMapLimit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": "For `visual.observe annotate=true`: maximum annotated/uiMap AX elements. Defaults to 80 and is hard-capped at 200."
                     },
                     "screenshotTarget": {
                         "type": "string",
@@ -892,7 +1064,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 16,
-                        "description": "Maximum AX tree traversal depth for snapshot, elements.find, wait, windows, dialog, or act. Defaults to 8 and is hard-capped at 16."
+                        "description": "Maximum AX tree traversal depth for snapshot, elements.find, wait, windows, dialog, act, or menu.list/click. Defaults to 8 for AX trees; menu defaults to 3 and is hard-capped at 8."
                     },
                     "timeoutMs": {
                         "type": "integer",
@@ -929,7 +1101,11 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             },
                             "elementId": {
                                 "type": "string",
-                                "description": "Exact element id match within the freshly captured snapshot."
+                                "description": "Exact AX element id from snapshot/elements.find/visual.observe. Prefer passing snapshotId with it so the runtime can verify and re-resolve the original element fingerprint."
+                            },
+                            "snapshotId": {
+                                "type": "string",
+                                "description": "Snapshot id that produced elementId. When provided with elementId, mutations anchor to the original element fingerprint and reject/re-resolve stale ids instead of blindly trusting a fresh el_N."
                             },
                             "text": {
                                 "type": "string",
@@ -949,6 +1125,10 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             }
                         },
                         "additionalProperties": false
+                    },
+                    "toTarget": {
+                        "type": "object",
+                        "description": "Destination target query for `act.drag` and `act.swipe`, using the same fields as target: appName, bundleId, windowTitle, windowTitleMatch, elementId, snapshotId, text, role, enabled, focused. Runtime parsing uses the same strict target query type."
                     }
                 },
                 "required": ["action"],
@@ -1604,10 +1784,23 @@ mod tests {
         assert!(action_enum
             .iter()
             .any(|value| value.as_str() == Some("visual")));
+        assert!(action_enum
+            .iter()
+            .any(|value| value.as_str() == Some("diagnostics")));
+        assert!(action_enum
+            .iter()
+            .any(|value| value.as_str() == Some("dock")));
+        assert!(action_enum
+            .iter()
+            .any(|value| value.as_str() == Some("spaces")));
 
         let op_enum = tool.parameters["properties"]["op"]["enum"]
             .as_array()
             .expect("op enum");
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("summary")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("export")));
         assert!(op_enum
             .iter()
             .any(|value| value.as_str() == Some("observe")));
@@ -1616,12 +1809,41 @@ mod tests {
         assert!(op_enum
             .iter()
             .any(|value| value.as_str() == Some("find_text")));
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("perform_action")));
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("popover")));
+        assert!(op_enum
+            .iter()
+            .any(|value| value.as_str() == Some("select_menu")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("switch")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("input")));
+        assert!(op_enum.iter().any(|value| value.as_str() == Some("file")));
         assert!(tool.parameters["properties"].get("snapshotId").is_some());
+        assert!(tool.parameters["properties"].get("dryRunOp").is_some());
+        assert!(tool.parameters["properties"].get("explain").is_some());
+        assert!(tool.parameters["properties"].get("dockItemId").is_some());
+        assert!(tool.parameters["properties"].get("menuItem").is_some());
+        assert!(tool.parameters["properties"].get("menuIndex").is_some());
+        assert!(tool.parameters["properties"].get("appHint").is_some());
+        assert!(tool.parameters["properties"].get("includeOcr").is_some());
+        assert!(tool.parameters["properties"].get("spaceIndex").is_some());
+        assert!(tool.parameters["properties"].get("direction").is_some());
+        assert!(tool.parameters["properties"].get("field").is_some());
+        assert!(tool.parameters["properties"].get("fieldIndex").is_some());
+        assert!(tool.parameters["properties"].get("filePath").is_some());
+        assert!(tool.parameters["properties"].get("fileName").is_some());
+        assert!(tool.parameters["properties"].get("selectButton").is_some());
         assert!(tool.parameters["properties"]
             .get("coordinateSpace")
             .is_some());
         assert!(tool.parameters["properties"].get("textMatch").is_some());
         assert!(tool.parameters["properties"].get("languages").is_some());
         assert!(tool.parameters["properties"].get("minConfidence").is_some());
+        assert!(tool.parameters["properties"].get("annotate").is_some());
+        assert!(tool.parameters["properties"].get("uiMapLimit").is_some());
+        assert!(tool.parameters["properties"].get("axAction").is_some());
     }
 }

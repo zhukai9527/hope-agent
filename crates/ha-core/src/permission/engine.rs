@@ -448,21 +448,35 @@ fn check_mac_control_action(ctx: &ResolveContext<'_>) -> Option<AskReason> {
     let label = match (action, op) {
         ("apps", Some("activate")) => "apps.activate",
         ("apps", Some("launch")) => "apps.launch",
+        ("dock", Some("launch")) => "dock.launch",
+        ("dock", Some("hide")) => "dock.hide",
+        ("dock", Some("show")) => "dock.show",
+        ("dock", Some("menu")) => "dock.menu",
+        ("dock", Some("select_menu")) => "dock.select_menu",
+        ("spaces", Some("switch")) => "spaces.switch",
+        ("spaces", Some("move_window")) => "spaces.move_window",
         ("windows", Some("focus")) => "windows.focus",
         ("windows", Some("move")) => "windows.move",
         ("windows", Some("resize")) => "windows.resize",
         ("windows", Some("minimize")) => "windows.minimize",
         ("act", Some("click")) => "act.click",
         ("act", Some("click_point")) => "act.click_point",
+        ("act", Some("move_cursor")) => "act.move_cursor",
+        ("act", Some("perform_action")) => "act.perform_action",
         ("act", Some("double_click")) => "act.double_click",
         ("act", Some("right_click")) => "act.right_click",
         ("act", Some("type")) => "act.type",
         ("act", Some("paste")) => "act.paste",
         ("act", Some("set_value")) => "act.set_value",
         ("act", Some("hotkey")) => "act.hotkey",
+        ("act", Some("press")) => "act.press",
         ("act", Some("scroll")) => "act.scroll",
         ("act", Some("drag")) => "act.drag",
+        ("act", Some("swipe")) => "act.swipe",
         ("act", None) => "act.click",
+        ("dialog", Some("click")) => "dialog.click",
+        ("dialog", Some("input")) => "dialog.input",
+        ("dialog", Some("file")) => "dialog.file",
         ("dialog", Some("dismiss")) => "dialog.dismiss",
         ("menu", Some("click")) => "menu.click",
         ("clipboard", Some("get")) => "clipboard.get",
@@ -485,11 +499,30 @@ fn mac_control_dangerous_label(
         ("apps", Some("quit")) => Some("apps.quit"),
         ("windows", Some("close")) => Some("windows.close"),
         ("dialog", Some("accept")) => Some("dialog.accept"),
+        ("dialog", Some("click")) if mac_control_dialog_button_is_dangerous(args) => {
+            Some("dialog.click.dangerous")
+        }
+        ("dialog", Some("file")) if mac_control_dialog_button_is_dangerous(args) => {
+            Some("dialog.file.dangerous")
+        }
+        ("act", Some("perform_action")) if mac_control_ax_action_is_dangerous(args) => {
+            Some("act.perform_action.confirm")
+        }
         ("menu", Some("click")) if mac_control_menu_path_is_dangerous(args) => {
             Some("menu.click.dangerous")
         }
+        ("dock", Some("select_menu")) if mac_control_dock_menu_selection_is_dangerous(args) => {
+            Some("dock.select_menu.dangerous")
+        }
         _ => None,
     }
+}
+
+fn mac_control_ax_action_is_dangerous(args: &Value) -> bool {
+    args.get("axAction")
+        .and_then(|value| value.as_str())
+        .and_then(crate::mac_control::normalize_perform_ax_action)
+        .is_some_and(|action| action == "AXConfirm")
 }
 
 fn mac_control_menu_path_is_dangerous(args: &Value) -> bool {
@@ -499,6 +532,25 @@ fn mac_control_menu_path_is_dangerous(args: &Value) -> bool {
     path.iter()
         .filter_map(|value| value.as_str())
         .any(mac_control_text_is_dangerous)
+}
+
+fn mac_control_dialog_button_is_dangerous(args: &Value) -> bool {
+    ["buttonText", "button", "selectButton", "select"]
+        .iter()
+        .filter_map(|key| args.get(*key).and_then(|value| value.as_str()))
+        .any(mac_control_text_is_dangerous)
+}
+
+fn mac_control_dock_menu_selection_is_dangerous(args: &Value) -> bool {
+    if args
+        .get("menuItem")
+        .and_then(|value| value.as_str())
+        .is_some_and(mac_control_text_is_dangerous)
+    {
+        return true;
+    }
+
+    args.get("menuIndex").is_some() && args.get("menuItem").is_none()
 }
 
 fn mac_control_text_is_dangerous(value: &str) -> bool {
@@ -802,15 +854,29 @@ mod tests {
             json!({"action": "windows", "op": "focus", "target": {"windowTitle": "Notes"}}),
             json!({"action": "act", "op": "click", "target": {"text": "OK"}}),
             json!({"action": "act", "op": "click_point", "x": 0, "y": 0}),
+            json!({"action": "act", "op": "move_cursor", "x": 0, "y": 0}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "More"}, "axAction": "AXShowMenu"}),
             json!({"action": "act", "op": "double_click", "target": {"text": "Open"}}),
             json!({"action": "act", "op": "right_click", "target": {"text": "Open"}}),
             json!({"action": "act", "op": "paste", "text": "hello"}),
+            json!({"action": "act", "op": "press", "key": "Enter"}),
             json!({"action": "act", "op": "drag", "target": {"text": "Open"}, "x": 200, "y": 200}),
+            json!({"action": "act", "op": "swipe", "x": 0, "y": 0, "deltaX": 100}),
+            json!({"action": "dialog", "op": "click", "buttonText": "OK"}),
+            json!({"action": "dialog", "op": "input", "text": "hello"}),
+            json!({"action": "dialog", "op": "file", "filePath": "/tmp", "selectButton": "Open"}),
             json!({"action": "dialog", "op": "dismiss"}),
             json!({"action": "menu", "op": "click", "path": ["File", "New"]}),
             json!({"action": "clipboard", "op": "get"}),
             json!({"action": "clipboard", "op": "set", "text": "hello"}),
             json!({"action": "clipboard", "op": "clear"}),
+            json!({"action": "dock", "op": "launch", "bundleId": "com.apple.TextEdit"}),
+            json!({"action": "dock", "op": "hide"}),
+            json!({"action": "dock", "op": "show"}),
+            json!({"action": "dock", "op": "menu", "bundleId": "com.apple.TextEdit"}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuItem": "Show in Finder"}),
+            json!({"action": "spaces", "op": "switch", "direction": "right"}),
+            json!({"action": "spaces", "op": "move_window", "windowId": "win_1", "spaceIndex": 2}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);
             assert!(matches!(
@@ -826,11 +892,17 @@ mod tests {
             json!({"action": "act", "op": "dry_run", "target": {"text": "Open"}}),
             json!({"action": "windows", "op": "list"}),
             json!({"action": "menu", "op": "list"}),
+            json!({"action": "menu", "op": "popover", "appHint": "Control Center"}),
             json!({"action": "dialog", "op": "inspect"}),
+            json!({"action": "dialog", "op": "list"}),
+            json!({"action": "diagnostics", "op": "summary"}),
+            json!({"action": "diagnostics", "op": "export"}),
             json!({"action": "visual", "op": "observe"}),
             json!({"action": "visual", "op": "point", "snapshotId": "macsnap_1", "x": 0, "y": 0}),
             json!({"action": "visual", "op": "ocr", "snapshotId": "macsnap_1"}),
             json!({"action": "visual", "op": "find_text", "snapshotId": "macsnap_1", "text": "Save"}),
+            json!({"action": "dock", "op": "list"}),
+            json!({"action": "spaces", "op": "list"}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);
             assert_eq!(resolve(&c), Decision::Allow);
@@ -845,7 +917,14 @@ mod tests {
             json!({"action": "apps", "op": "quit", "bundleId": "com.apple.TextEdit"}),
             json!({"action": "windows", "op": "close", "target": {"windowTitle": "Untitled"}}),
             json!({"action": "dialog", "op": "accept"}),
+            json!({"action": "dialog", "op": "click", "buttonText": "Don't Save"}),
+            json!({"action": "dialog", "op": "click", "button": "Delete"}),
+            json!({"action": "dialog", "op": "file", "selectButton": "Don't Save"}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "AXConfirm"}),
+            json!({"action": "act", "op": "perform_action", "target": {"text": "OK"}, "axAction": "confirm"}),
             json!({"action": "menu", "op": "click", "path": ["File", "Move to Trash"]}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuItem": "Remove from Dock"}),
+            json!({"action": "dock", "op": "select_menu", "bundleId": "com.apple.TextEdit", "menuIndex": 0}),
         ] {
             let c = ctx("mac_control", &args, SessionMode::Default, &plan, &custom);
             assert!(matches!(
