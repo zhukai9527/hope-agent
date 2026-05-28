@@ -577,6 +577,21 @@ impl AssistantAgent {
                     log_tool_output(&call_id, &name, &result, elapsed_ms, round);
                     let is_error = result.starts_with("Tool error:");
                     let (mut clean_result, media_items) = extract_media_items(&result);
+                    // Same `effective_arguments` plumbing as the sequential
+                    // branch — concurrent-safe tools (read / ls / grep / find /
+                    // web_fetch / MCP) also honor `PreToolUse` `updatedInput`
+                    // rewrites, and dropping them here would silently
+                    // audit-roll-back the rewrite in the UI, history, and
+                    // `PostToolUse` hook input (the actual exec saw the patched
+                    // args, but everything else saw the model's pre-rewrite
+                    // shape). Mirror lines 644-675 verbatim.
+                    let effective_args: &str = side
+                        .effective_arguments
+                        .as_deref()
+                        .inspect(|patched| {
+                            emit_tool_call_args_rewritten(on_delta, &call_id, patched);
+                        })
+                        .unwrap_or(arguments.as_str());
                     emit_tool_result(
                         on_delta,
                         &call_id,
@@ -589,21 +604,24 @@ impl AssistantAgent {
                     );
                     // PostToolUse / PostToolUseFailure (observation): fold any
                     // hook additionalContext into the result so the LLM sees it
-                    // attached to this tool on the next round.
+                    // attached to this tool on the next round. Pass the
+                    // *effective* args so a validating PostToolUse hook can't
+                    // be fooled by the pre-rewrite shape.
                     fire_post_tool_use_hook(
                         &tool_ctx,
                         &call_id,
                         &name,
-                        &arguments,
+                        effective_args,
                         &mut clean_result,
                         is_error,
                         elapsed_ms,
                     )
                     .await;
+                    let persisted_arguments = effective_args.to_string();
                     executed.push(ExecutedTool {
                         call_id,
                         name,
-                        arguments,
+                        arguments: persisted_arguments,
                         clean_result,
                     });
                 }
