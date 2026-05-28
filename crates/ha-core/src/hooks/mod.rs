@@ -927,13 +927,15 @@ mod tests {
 
     #[tokio::test]
     async fn matching_command_injects_additional_context() {
+        // Matcher `Write` is normalized to `write` at compile; the dispatcher
+        // passes the internal tool name (`write`) so the group fires.
         let reg = registry_from(
             r#"{"PostToolUse":[{"matcher":"Write","hooks":[
                 {"type":"command","shell":"bash","command":"printf '%s' '{\"hookSpecificOutput\":{\"additionalContext\":\"INJECTED\"}}'"}
             ]}]}"#,
         );
         let out =
-            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Write"))
+            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("write"))
                 .await;
         assert_eq!(out.merged_additional_context().as_deref(), Some("INJECTED"));
         assert_eq!(out.decision, HookDecision::Allow);
@@ -945,7 +947,7 @@ mod tests {
             r#"{"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"echo x"}]}]}"#,
         );
         let out =
-            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Read"))
+            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("read"))
                 .await;
         assert!(out.merged_additional_context().is_none());
     }
@@ -954,7 +956,7 @@ mod tests {
     async fn empty_registry_is_noop() {
         let reg = HookRegistry::empty();
         let out =
-            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("Write"))
+            HookDispatcher::dispatch_with(&reg, HookEvent::PostToolUse, post_tool_use("write"))
                 .await;
         assert_eq!(out.decision, HookDecision::Allow);
         assert!(out.merged_additional_context().is_none());
@@ -967,8 +969,10 @@ mod tests {
                 {"type":"command","shell":"bash","command":"echo blocked 1>&2; exit 2"}
             ]}]}"#,
         );
+        // `Bash` matcher → normalized to `exec`; pass `exec` as the dispatched
+        // tool name (the production path).
         let out =
-            HookDispatcher::dispatch_with(&reg, HookEvent::PreToolUse, pre_tool_use("Bash")).await;
+            HookDispatcher::dispatch_with(&reg, HookEvent::PreToolUse, pre_tool_use("exec")).await;
         assert!(matches!(out.decision, HookDecision::Block { .. }));
     }
 

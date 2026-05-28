@@ -85,6 +85,17 @@ impl HookEvent {
         }
     }
 
+    /// Whether this event's matcher target is a tool name (so
+    /// `matcher::compile_for_event` can normalize Claude Code aliases like
+    /// `Bash`/`Write` to Hope Agent's internal `exec`/`write` before compile).
+    /// Pure metadata; keep in sync with [`HookInput::matcher_target`].
+    pub fn uses_tool_name_matcher(&self) -> bool {
+        matches!(
+            self,
+            Self::PreToolUse | Self::PostToolUse | Self::PostToolUseFailure
+        )
+    }
+
     /// Whether this event is observation-only — it cannot gate execution, so a
     /// hook returning `block`/`deny` for it is downgraded to non-blocking +
     /// logged (design §5.1.1). Lists exactly the events fired this phase;

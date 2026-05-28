@@ -227,8 +227,11 @@ mod tests {
         set_global_config(HooksConfig::default());
         let reg = resolve_for_cwd_inner(Some(&dir), false, true);
         assert!(reg.has_handlers_for(HookEvent::PreToolUse));
+        // `matcher:"Bash"` normalizes to `exec` at compile (the matcher alias
+        // map), so the dispatched internal name `exec` is what matches the
+        // project group.
         assert!(
-            !reg.matching_handlers(HookEvent::PreToolUse, Some("Bash"))
+            !reg.matching_handlers(HookEvent::PreToolUse, Some("exec"))
                 .is_empty(),
             "project Bash matcher contributes a handler"
         );

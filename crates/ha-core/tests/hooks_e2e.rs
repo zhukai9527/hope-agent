@@ -81,14 +81,14 @@ async fn config_driven_hooks_dispatch_end_to_end() {
     hooks::registry::reload_from_config();
 
     // PostToolUse(Write) → additionalContext injected via the GLOBAL dispatch.
-    let out = HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("Write", "c1")).await;
+    let out = HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("write", "c1")).await;
     assert_eq!(
         out.merged_additional_context().as_deref(),
         Some("WROTE_VIA_HOOK")
     );
 
     // A non-matching tool falls through to a no-op.
-    let noop = HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("Read", "c2")).await;
+    let noop = HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("read", "c2")).await;
     assert!(noop.merged_additional_context().is_none());
 
     // SessionStart via the shared helper (engine + ACP both call this).
@@ -128,7 +128,7 @@ async fn config_driven_hooks_dispatch_end_to_end() {
     .expect("write overflow hook config");
     hooks::registry::reload_from_config();
     let big =
-        HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("Write", "c-big")).await;
+        HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("write", "c-big")).await;
     let injected = big
         .merged_additional_context()
         .expect("overflow hook injects context");
@@ -149,6 +149,6 @@ async fn config_driven_hooks_dispatch_end_to_end() {
     .expect("clear hooks config");
     hooks::registry::reload_from_config();
     let after_clear =
-        HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("Write", "c3")).await;
+        HookDispatcher::dispatch(HookEvent::PostToolUse, post_tool_use("write", "c3")).await;
     assert!(after_clear.merged_additional_context().is_none());
 }

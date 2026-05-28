@@ -28,7 +28,9 @@ fn pre_tool_use(session_id: &str, cwd: PathBuf) -> HookInput {
             agent_id: None,
             agent_type: None,
         },
-        tool_name: "Bash".into(),
+        // Use the internal tool name — the dispatcher passes this verbatim,
+        // and `matcher:"Bash"` is normalized to `exec` at compile time.
+        tool_name: "exec".into(),
         tool_input: serde_json::json!({ "command": "ls" }),
         tool_use_id: "c1".into(),
     }

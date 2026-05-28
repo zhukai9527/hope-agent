@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use arc_swap::ArcSwap;
 
 use super::config::{HookHandlerConfig, HooksConfig};
-use super::matcher::{compile, MatcherKind};
+use super::matcher::{compile_for_event, MatcherKind};
 use super::types::HookEvent;
 
 /// Process-global compiled registry, hot-swapped on config change.
@@ -109,7 +109,11 @@ impl HookRegistry {
             let compiled: Vec<CompiledGroup> = groups
                 .iter()
                 .map(|g| CompiledGroup {
-                    matcher: compile(g.matcher.as_deref()),
+                    // `compile_for_event` normalizes Claude Code tool aliases
+                    // (`Bash`/`Write`/`Edit`/`Read`/`WebFetch`) to Hope Agent's
+                    // internal names *only* for tool-name events; other events
+                    // see the raw matcher unchanged.
+                    matcher: compile_for_event(g.matcher.as_deref(), event),
                     handlers: g.hooks.clone(),
                 })
                 .collect();
@@ -180,14 +184,31 @@ mod tests {
         assert!(r.has_handlers_for(HookEvent::PostToolUse));
         assert!(!r.has_handlers_for(HookEvent::PreToolUse));
 
-        let write_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("Write"));
+        // `Write|Edit` is normalized to `write|edit` at compile (alias map);
+        // the dispatcher passes the *internal* tool name, so the registry must
+        // accept the internal-name target.
+        let write_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("write"));
         assert_eq!(write_hooks.len(), 1);
+        let edit_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("edit"));
+        assert_eq!(edit_hooks.len(), 1);
 
-        let bash_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("Bash"));
+        // `Bash` → `exec`.
+        let bash_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("exec"));
         assert_eq!(bash_hooks.len(), 1);
 
-        let read_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("Read"));
+        // `Read` has no group → no handler (regardless of alias direction).
+        let read_hooks = r.matching_handlers(HookEvent::PostToolUse, Some("read"));
         assert!(read_hooks.is_empty());
+
+        // Raw Claude Code names no longer match — proves the normalization
+        // path is firing (previous bug was silent: matcher kept `Bash`,
+        // dispatcher passed `exec`, group missed).
+        assert!(r
+            .matching_handlers(HookEvent::PostToolUse, Some("Bash"))
+            .is_empty());
+        assert!(r
+            .matching_handlers(HookEvent::PostToolUse, Some("Write"))
+            .is_empty());
     }
 
     #[test]
@@ -216,15 +237,15 @@ mod tests {
             }"#,
         );
         let r = HookRegistry::from_config(&cfg);
-        // Wildcard group + Bash group both fire for Bash.
+        // Wildcard group + Bash→exec group both fire for the internal `exec` name.
         assert_eq!(
-            r.matching_handlers(HookEvent::PreToolUse, Some("Bash"))
+            r.matching_handlers(HookEvent::PreToolUse, Some("exec"))
                 .len(),
             2
         );
-        // Only the wildcard group fires for Read.
+        // Only the wildcard group fires for `read`.
         assert_eq!(
-            r.matching_handlers(HookEvent::PreToolUse, Some("Read"))
+            r.matching_handlers(HookEvent::PreToolUse, Some("read"))
                 .len(),
             1
         );

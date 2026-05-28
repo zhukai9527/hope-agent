@@ -11,24 +11,15 @@ use crate::permission::rules::{
     extract_command_arg, extract_domain_arg, extract_path_arg, glob_match_simple,
 };
 
+use super::matcher::tool_alias;
 use super::types::HookInput;
 
-/// Normalize a rule's tool name to Hope Agent's internal tool names, so users
-/// can paste Claude Code-style rules (`Bash(...)`, `Write(...)`) unchanged.
-fn normalize_tool(tool: &str) -> &str {
-    match tool {
-        "Bash" | "bash" | "Shell" | "shell" => "exec",
-        "Write" => "write",
-        "Edit" => "edit",
-        "Read" => "read",
-        "WebFetch" => "web_fetch",
-        other => other,
-    }
-}
-
-/// Parse `"ToolName(pattern)"` into `(normalized_tool, pattern)`. `None` when the
-/// string isn't in that shape — the caller treats that as "no usable rule" and
-/// skips the handler (fail-safe).
+/// Parse `"ToolName(pattern)"` into `(normalized_tool, pattern)`. The tool name
+/// is mapped through [`tool_alias`] so users can paste Claude Code-style rules
+/// (`Bash(...)`, `Write(...)`) verbatim — same alias table the matcher uses,
+/// so an `if` rule and a `matcher:` field never disagree about a tool name.
+/// `None` when the string isn't in `Name(...)` shape — the caller treats that
+/// as "no usable rule" and skips the handler (fail-safe).
 fn parse_if_rule(rule: &str) -> Option<(&str, &str)> {
     let rule = rule.trim();
     let inner = rule.strip_suffix(')')?;
@@ -37,7 +28,7 @@ fn parse_if_rule(rule: &str) -> Option<(&str, &str)> {
     if tool.is_empty() {
         return None;
     }
-    Some((normalize_tool(tool), &inner[open + 1..]))
+    Some((tool_alias(tool), &inner[open + 1..]))
 }
 
 /// Whether `input` satisfies the handler's `if` rule. Non-tool events,

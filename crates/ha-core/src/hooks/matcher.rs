@@ -10,6 +10,46 @@
 
 use regex::Regex;
 
+use super::types::HookEvent;
+
+/// Map a Claude Code-style tool alias to Hope Agent's internal tool name.
+/// `Bash`/`Write`/`Edit`/`Read`/`WebFetch` are the upstream-doc names; the
+/// dispatcher routes hook input with the internal tool name (`exec`/`write`/
+/// `edit`/`read`/`web_fetch`), so a verbatim `matcher: "Bash"` from a Claude
+/// Code script would silently miss the literal/pipe branch without this map.
+/// Anything not in the alias table passes through unchanged so user-defined
+/// or MCP-namespaced names (`mcp__foo__bar`) keep their literal identity.
+///
+/// Single source of truth: also reused by [`super::condition`] so that a
+/// matcher and an `if` rule never disagree about what `Bash` resolves to.
+pub(super) fn tool_alias(name: &str) -> &str {
+    match name {
+        "Bash" | "bash" | "Shell" | "shell" => "exec",
+        "Write" => "write",
+        "Edit" => "edit",
+        "Read" => "read",
+        "WebFetch" => "web_fetch",
+        other => other,
+    }
+}
+
+/// Normalize tool aliases inside a literal/pipe matcher string. Each
+/// `|`-separated item is mapped via [`tool_alias`]; regex matchers (any char
+/// outside `[A-Za-z0-9_|]`) pass through unchanged because alias substitution
+/// inside a regex would be hairy and authors of regex matchers are presumed
+/// to know the internal names. Returns the normalized string (allocates only
+/// when at least one item differs from its input).
+fn normalize_tool_aliases(matcher: &str) -> String {
+    if !is_literal_or_pipe(matcher) {
+        return matcher.to_string();
+    }
+    matcher
+        .split('|')
+        .map(tool_alias)
+        .collect::<Vec<&str>>()
+        .join("|")
+}
+
 /// A compiled matcher.
 #[derive(Debug)]
 pub enum MatcherKind {
@@ -28,6 +68,23 @@ pub enum MatcherKind {
 fn is_literal_or_pipe(s: &str) -> bool {
     s.chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '|')
+}
+
+/// Compile a matcher for a specific event, normalizing Claude Code tool
+/// aliases (`Bash` → `exec`, `Write` → `write`, …) when the event matches on a
+/// tool name. Other events (`Notification`, `SessionStart`, `SubagentStart`,
+/// …) get the raw matcher unchanged. This is the production entry point used
+/// by [`super::registry::HookRegistry::from_config`]; [`compile`] is the
+/// alias-agnostic primitive kept around for unit tests and any future caller
+/// that doesn't know the event up front.
+pub fn compile_for_event(matcher: Option<&str>, event: HookEvent) -> MatcherKind {
+    if let Some(raw) = matcher {
+        if event.uses_tool_name_matcher() {
+            let normalized = normalize_tool_aliases(raw);
+            return compile(Some(&normalized));
+        }
+    }
+    compile(matcher)
 }
 
 /// Compile a matcher string into a [`MatcherKind`].
@@ -160,5 +217,66 @@ mod tests {
         // regex pattern to exercise anchoring.
         assert!(m("Wr.te", "Write"));
         assert!(!m("Wr.te", "Writexx"));
+    }
+
+    fn me(pat: &str, target: &str, event: HookEvent) -> bool {
+        compile_for_event(Some(pat), event).is_match(Some(target))
+    }
+
+    #[test]
+    fn tool_aliases_normalize_for_tool_events() {
+        // Single literal: `Bash` → `exec`.
+        assert!(me("Bash", "exec", HookEvent::PreToolUse));
+        // Pipe list: `Write|Edit` → `write|edit`.
+        assert!(me("Write|Edit", "write", HookEvent::PreToolUse));
+        assert!(me("Write|Edit", "edit", HookEvent::PostToolUse));
+        // Hope Agent internal names already work.
+        assert!(me("exec", "exec", HookEvent::PreToolUse));
+        assert!(me("read", "read", HookEvent::PostToolUseFailure));
+        // Lowercase Bash alias too (mirrors `condition.rs::normalize_tool`).
+        assert!(me("bash", "exec", HookEvent::PreToolUse));
+        // Web fetch alias.
+        assert!(me("WebFetch", "web_fetch", HookEvent::PreToolUse));
+    }
+
+    #[test]
+    fn aliases_dont_match_unrelated_names() {
+        // `Write` normalizes to `write`, NOT `Write` — the literal `Write` no
+        // longer matches once aliases are folded.
+        assert!(!me("Write", "Write", HookEvent::PreToolUse));
+        // MCP-namespaced names pass through (no alias collision).
+        assert!(me(
+            "mcp__memory__create_entities",
+            "mcp__memory__create_entities",
+            HookEvent::PreToolUse,
+        ));
+    }
+
+    #[test]
+    fn aliases_skipped_for_non_tool_events() {
+        // SessionStart / Notification match on `source` / `notification_type`,
+        // not tool names — so `Bash` must NOT silently become `exec` there.
+        assert!(me("Bash", "Bash", HookEvent::SessionStart));
+        assert!(!me("Bash", "exec", HookEvent::SessionStart));
+        assert!(me("Bash", "Bash", HookEvent::Notification));
+    }
+
+    #[test]
+    fn regex_matchers_dont_get_aliased() {
+        // `Bash.*` is a regex (contains `.` and `*`), so it stays literal.
+        // It would (rightly) miss the internal `exec`, but the failure mode is
+        // a regex author's choice rather than a silent alias trap.
+        let k = compile_for_event(Some("Bash.*"), HookEvent::PreToolUse);
+        assert!(k.is_match(Some("Bashfoo")));
+        assert!(!k.is_match(Some("exec")));
+    }
+
+    #[test]
+    fn wildcard_and_none_unchanged_for_tool_events() {
+        for pat in [None, Some(""), Some("*")] {
+            let k = compile_for_event(pat, HookEvent::PreToolUse);
+            assert!(k.is_match(Some("exec")));
+            assert!(k.is_match(Some("Bash")));
+        }
     }
 }
