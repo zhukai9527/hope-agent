@@ -96,7 +96,8 @@ impl HookHandler for AgentHandler {
             skill_name: None,
         };
 
-        let run_id = match spawn_subagent(params, session_db.clone(), cancel_registry).await {
+        let run_id = match spawn_subagent(params, session_db.clone(), cancel_registry.clone()).await
+        {
             Ok(id) => id,
             Err(e) => {
                 return RawHookResult::non_blocking_error(format!("agent hook spawn failed: {e}"))
@@ -118,10 +119,29 @@ impl HookHandler for AgentHandler {
         // the deadline elapses.
         loop {
             if Instant::now() >= deadline {
+                // Deadline hit. Signal the subagent's cancel flag so it stops
+                // calling the model / running tools — otherwise the run
+                // continues in the background indefinitely (until its own
+                // `timeout_secs`, typically much longer than the hook
+                // deadline), silently burning tokens and concurrency slots
+                // on every PreToolUse / PostToolUse fire. Adversarial-review
+                // MEDIUM. `cancel(...)` returns false when the run already
+                // terminated between the last poll and now — that's fine,
+                // it's a no-op in that case.
+                let cancelled = cancel_registry.cancel(&run_id);
+                crate::app_warn!(
+                    "hooks",
+                    "agent",
+                    "agent hook deadline exceeded; cancel signaled run_id={} cancelled={}",
+                    run_id,
+                    cancelled
+                );
                 return RawHookResult {
                     exit_code: None,
                     stdout: String::new(),
-                    stderr: format!("agent hook run {run_id} did not finish before deadline"),
+                    stderr: format!(
+                        "agent hook run {run_id} did not finish before deadline (cancel signaled)"
+                    ),
                     duration: start.elapsed(),
                     timed_out: true,
                 };
