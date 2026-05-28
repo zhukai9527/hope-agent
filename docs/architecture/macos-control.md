@@ -281,9 +281,9 @@ Transport 结果类型：
 | action / op | 入参 | 出参 `result` | 说明 |
 | --- | --- | --- | --- |
 | `visual.observe` | `action="visual"`、`op="observe"`；可选 `screenshotTarget`、`displayId`、`windowId`、`annotate`、`uiMapLimit`、`maxElements`、`maxDepth` | `op="observe"`、`snapshotId`、`screenshot`、`annotatedScreenshot?`、`uiMap[]`、`snapshot?`、`warnings[]`；tool result 额外包含 `__IMAGE_FILE__{"mime":"image/jpeg","path":"..."}` marker | 采集 AX snapshot + display/window JPEG。`annotate=true` 时 marker 指向带 AX element id 边框的标注图，并返回紧凑 `uiMap`；snapshot 同时进入短生命周期 cache 供 `visual.point` hit-test |
-| `visual.point` | `action="visual"`、`op="point"`、`snapshotId`、`x`、`y`；可选 `coordinateSpace="image_pixels" \| "screen_points"`、`limit` | `snapshotId`、`screenshot`、`coordinateSpace`、`imagePoint`、`screenPoint`、`insideFrame`、`hitElements[]`、`nearestElements[]`、`suggestedAction?`、`warnings[]` | 只读解析坐标并做 AX hit-test。`suggestedAction` 可直接作为后续 `mac_control action="act" op="click_point"` 的 `x/y` 来源 |
+| `visual.point` | `action="visual"`、`op="point"`、`snapshotId`、`x`、`y`；可选 `coordinateSpace="image_pixels" \| "screen_points"`、`limit` | `snapshotId`、`screenshot`、`coordinateSpace`、`imagePoint`、`screenPoint`、`insideFrame`、`hitElements[]`、`nearestElements[]`、`suggestedAction?`、`suggestedActions[]`、`warnings[]` | 只读解析坐标并做 AX hit-test。若命中支持 `AXPress` 的元素，`suggestedActions[0]` 优先给 `act.click target.elementId + snapshotId`；同时保留 `act.click_point` 坐标兜底 |
 | `visual.ocr` | `action="visual"`、`op="ocr"`；可选 `snapshotId`、`screenshotTarget`、`displayId`、`windowId`、`languages`、`minConfidence`、`recognitionLevel`、`maxElements`、`maxDepth` | `snapshotId`、`screenshot`、`textBlocks[]`、`warnings[]` | 对截图运行 macOS Vision OCR。传 `snapshotId` 时复用 cached screenshot；不传时先采集新截图。文字块含 `imageBounds`、`screenBounds`、中心点和置信度 |
-| `visual.find_text` | `action="visual"`、`op="find_text"`、`text`；可选 `textMatch`、`snapshotId`、`limit`、OCR 参数同上 | `snapshotId`、`screenshot`、`textBlocks[]`、`textMatches[]`、`suggestedAction?`、`warnings[]` | 按 OCR 文本找可点击位置。每个 match 带 AX `hitElements` / `nearestElements`；顶层 `suggestedAction` 来自第一候选中心点 |
+| `visual.find_text` | `action="visual"`、`op="find_text"`、`text`；可选 `textMatch`、`snapshotId`、`limit`、OCR 参数同上 | `snapshotId`、`screenshot`、`textBlocks[]`、`textMatches[]`、`suggestedAction?`、`suggestedActions[]`、`warnings[]` | 按 OCR 文本找可点击位置。每个 match 带 AX `hitElements` / `nearestElements` 和 `suggestedActions[]`；顶层建议动作来自第一候选 |
 
 坐标契约：
 
@@ -303,7 +303,7 @@ Hit-test 规则：
 - 先在 cached snapshot 的 AX 元素 bounds 内找包含该 point 的元素。
 - `hitElements[]` 按“包含点、距离、面积更小、可操作、id”排序；第一个候选优先是最小命中元素，避免父级窗口/容器盖过真实控件。
 - 无命中时 `nearestElements[]` 返回最近候选和 `distancePoints`，供模型改点或改用 AX target。
-- `visual.point` 不会把图片像素直接传给点击；模型必须使用返回的 `screenPoint` 或 `suggestedAction.x/y`。
+- `visual.point` 不会把图片像素直接传给点击；模型必须使用返回的 `suggestedActions[]` / `screenPoint`。优先使用 `op="click"` 的 AX target 建议，只有没有清晰 AX target 时才用 `op="click_point"` 坐标兜底。
 
 Annotated UI Map 规则：
 
@@ -316,7 +316,7 @@ OCR 规则：
 
 - OCR 由 macOS Vision Framework 在 Tauri bridge 内执行；`ha-core` 只处理坐标映射、过滤和匹配。
 - Vision 返回的 normalized lower-left bounds 会转换成截图左上角 `image_pixels`，再用同一套 `boundsPoints + scale` 公式得到 `screenBounds`。
-- `visual.ocr` 只返回文字块；`visual.find_text` 在文字块中心点执行 AX hit-test，并为第一候选给出 `act.click_point` 建议。
+- `visual.ocr` 只返回文字块；`visual.find_text` 在文字块中心点执行 AX hit-test，并为第一候选给出动作阶梯：支持 `AXPress` 的 AX 命中优先 `act.click`，坐标点击作为兜底。
 - `visual.find_text` 无匹配不是错误：`error=null`、`textMatches=[]`、`suggestedAction=null`。
 
 错误语义：
@@ -416,12 +416,12 @@ OCR 规则：
 | `MacControlWindowSummary` | `id`、`appPid?`、`role?`、`subrole?`、`title?`、`focused`、`boundsPoints?` |
 | `MacControlElementSummary` | `id`、`windowId?`、`role?`、`label?`、`value?`、`enabled?`、`focused`、`boundsPoints?`、`actions[]` |
 | `MacControlElementCandidate` | `element`、`window?`、`score`、`reasons[]` |
-| `MacControlVisualResult` | `op`、`snapshotId?`、`snapshot?`、`screenshot?`、`annotatedScreenshot?`、`uiMap[]`、`coordinateSpace?`、`imagePoint?`、`screenPoint?`、`insideFrame?`、`hitElements[]`、`nearestElements[]`、`textBlocks[]`、`textMatches[]`、`suggestedAction?`、`warnings[]` |
+| `MacControlVisualResult` | `op`、`snapshotId?`、`snapshot?`、`screenshot?`、`annotatedScreenshot?`、`uiMap[]`、`coordinateSpace?`、`imagePoint?`、`screenPoint?`、`insideFrame?`、`hitElements[]`、`nearestElements[]`、`textBlocks[]`、`textMatches[]`、`suggestedAction?`、`suggestedActions[]`、`warnings[]` |
 | `MacControlVisualElementMatch` | `element`、`window?`、`containsPoint`、`distancePoints` |
 | `MacControlUiMapItem` | `id`、`windowId?`、`role?`、`text?`、`enabled?`、`focused`、`boundsPoints`、`imageBounds`、`actions[]` |
 | `MacControlOcrTextBlock` | `id`、`text`、`confidence`、`imageBounds`、`screenBounds`、`imagePoint`、`screenPoint` |
-| `MacControlOcrTextMatch` | `block`、`score`、`reasons[]`、`hitElements[]`、`nearestElements[]`、`suggestedAction?` |
-| `MacControlSuggestedAction` | `action="act"`、`op="click_point"`、`x`、`y`，坐标单位为 macOS screen point |
+| `MacControlOcrTextMatch` | `block`、`score`、`reasons[]`、`hitElements[]`、`nearestElements[]`、`suggestedAction?`、`suggestedActions[]` |
+| `MacControlSuggestedAction` | `action="act"`、`op="click" \| "click_point"`、`target?`、`x`、`y`；`x/y` 坐标单位为 macOS screen point，`target` 用于 AX click |
 | `MacControlDiagnosticsResult` | `op`、`generatedAt`、`snapshotCache[]`、`recentErrors[]`、`focusAnchor?`、`exportPath?`、`warnings[]` |
 | `MacControlCachedSnapshotSummary` | `snapshotId`、`createdAt`、`frontmostApp?`、`displayCount`、`windowCount`、`elementCount`、`hasScreenshot`、`screenshot?`、`truncated`、`warnings[]` |
 | `MacControlTargetMatches` | `app?`、`windows[]`、`elements[]` |
@@ -463,7 +463,7 @@ OCR 规则：
 - 合法坐标 `0` 不能被全局吞掉；裸坐标点击只能通过 `act.click_point` 表达。
 - `visual.observe` 默认采集 display 截图；`screenshotTarget="window"` 可采集当前前台窗口或 `windowId` 指定窗口。
 - `visual.observe annotate=true` 默认最多标注 80 个元素，`uiMapLimit` 硬上限 200；标注失败只进入 `warnings[]`，不会影响原始截图和 snapshot。
-- `visual.point.coordinateSpace` 默认为 `image_pixels`，返回的 `screenPoint` / `suggestedAction.x/y` 才能用于 `act.click_point`。
+- `visual.point.coordinateSpace` 默认为 `image_pixels`，返回的 `screenPoint` / `suggestedActions[].x/y` 才能用于 `act.click_point`；若建议动作含 `target`，优先按 `op` 使用该 target。
 - `visual.find_text.textMatch` 默认为 `exact`；只有显式传 `contains` 才按 OCR 子串匹配。
 - `visual.ocr/find_text.recognitionLevel` 默认为 `accurate`；`languages` 最多保留 16 个非空语言标签；`minConfidence` 会归一到 `0..1`。
 

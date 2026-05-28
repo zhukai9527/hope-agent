@@ -69,3 +69,6 @@
 - [x] F. dry_run / explain 体验层（首批）
   - `act.dry_run` 新增 `dryRunOp`，按目标真实 op 预演 target 解析，但不触发 AX action、CGEvent、键盘或剪贴板。
   - `MacControlActResult.preview` 返回 executionPlan、fallbackPlan、verificationPlan、warnings 和 nextStep；`explain=true` 可把同一 preview 附到真实 act 结果上。
+- [x] G. 视觉/OCR 目标多策略（首批）
+  - `visual.point` / `visual.find_text` 的建议动作从单一 `click_point` 升级为 `suggestedActions[]` 阶梯。
+  - 命中支持 `AXPress` 的 AX 元素时优先建议 `act.click target.elementId + target.snapshotId`，并保留 `act.click_point x/y` 作为坐标兜底，降低视觉/OCR 误点率。

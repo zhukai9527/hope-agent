@@ -794,6 +794,7 @@ pub struct MacControlVisualResult {
     pub text_blocks: Vec<MacControlOcrTextBlock>,
     pub text_matches: Vec<MacControlOcrTextMatch>,
     pub suggested_action: Option<MacControlSuggestedAction>,
+    pub suggested_actions: Vec<MacControlSuggestedAction>,
     pub warnings: Vec<String>,
 }
 
@@ -848,6 +849,7 @@ pub struct MacControlOcrTextMatch {
     pub hit_elements: Vec<MacControlVisualElementMatch>,
     pub nearest_elements: Vec<MacControlVisualElementMatch>,
     pub suggested_action: Option<MacControlSuggestedAction>,
+    pub suggested_actions: Vec<MacControlSuggestedAction>,
 }
 
 #[derive(Debug, Clone)]
@@ -869,6 +871,7 @@ pub struct MacControlOcrRawTextBlock {
 pub struct MacControlSuggestedAction {
     pub action: String,
     pub op: MacControlActOp,
+    pub target: Option<MacControlTargetQuery>,
     pub x: f64,
     pub y: f64,
 }
@@ -3407,9 +3410,11 @@ async fn visual_ocr_or_find_text(
     } else {
         Vec::new()
     };
-    let suggested_action = text_matches
+    let suggested_actions = text_matches
         .first()
-        .and_then(|candidate| candidate.suggested_action.clone());
+        .map(|candidate| candidate.suggested_actions.clone())
+        .unwrap_or_default();
+    let suggested_action = suggested_actions.first().cloned();
 
     MacControlVisualResponse {
         status,
@@ -3433,6 +3438,7 @@ async fn visual_ocr_or_find_text(
             text_blocks,
             text_matches,
             suggested_action,
+            suggested_actions,
             warnings: snapshot.warnings,
         }),
         error: None,
@@ -4455,6 +4461,7 @@ fn visual_observe_result(
         text_blocks: Vec::new(),
         text_matches: Vec::new(),
         suggested_action: None,
+        suggested_actions: Vec::new(),
         warnings,
     }
 }
@@ -4997,12 +5004,12 @@ fn resolve_visual_point(
         && image_point.y < screenshot.height_px as f64;
     let (hit_elements, nearest_elements) =
         visual_element_matches(snapshot, screen_point, limit.max(1), inside_frame);
-    let suggested_action = inside_frame.then_some(MacControlSuggestedAction {
-        action: "act".to_string(),
-        op: MacControlActOp::ClickPoint,
-        x: screen_point.x,
-        y: screen_point.y,
-    });
+    let suggested_actions = if inside_frame {
+        visual_suggested_actions(snapshot, screen_point, &hit_elements)
+    } else {
+        Vec::new()
+    };
+    let suggested_action = suggested_actions.first().cloned();
 
     Ok(MacControlVisualResult {
         op: MacControlVisualOp::Point,
@@ -5020,6 +5027,7 @@ fn resolve_visual_point(
         text_blocks: Vec::new(),
         text_matches: Vec::new(),
         suggested_action,
+        suggested_actions,
         warnings: if inside_frame {
             Vec::new()
         } else {
@@ -5130,12 +5138,9 @@ fn resolve_ocr_text_matches(
         .map(|(block, score, reasons)| {
             let (hit_elements, nearest_elements) =
                 visual_element_matches(snapshot, block.screen_point, limit, true);
-            let suggested_action = Some(MacControlSuggestedAction {
-                action: "act".to_string(),
-                op: MacControlActOp::ClickPoint,
-                x: block.screen_point.x,
-                y: block.screen_point.y,
-            });
+            let suggested_actions =
+                visual_suggested_actions(snapshot, block.screen_point, &hit_elements);
+            let suggested_action = suggested_actions.first().cloned();
             MacControlOcrTextMatch {
                 block,
                 score,
@@ -5143,9 +5148,64 @@ fn resolve_ocr_text_matches(
                 hit_elements,
                 nearest_elements,
                 suggested_action,
+                suggested_actions,
             }
         })
         .collect()
+}
+
+fn visual_suggested_actions(
+    snapshot: &MacControlSnapshot,
+    point: MacControlPoint,
+    hit_elements: &[MacControlVisualElementMatch],
+) -> Vec<MacControlSuggestedAction> {
+    let mut actions = Vec::new();
+    if let Some(hit) = hit_elements
+        .iter()
+        .find(|hit| hit.contains_point && visual_click_target_element(&hit.element))
+    {
+        actions.push(MacControlSuggestedAction {
+            action: "act".to_string(),
+            op: MacControlActOp::Click,
+            target: Some(visual_target_for_element(snapshot, &hit.element)),
+            x: point.x,
+            y: point.y,
+        });
+    }
+    actions.push(MacControlSuggestedAction {
+        action: "act".to_string(),
+        op: MacControlActOp::ClickPoint,
+        target: None,
+        x: point.x,
+        y: point.y,
+    });
+    actions
+}
+
+fn visual_click_target_element(element: &MacControlElementSummary) -> bool {
+    element.enabled != Some(false)
+        && element
+            .actions
+            .iter()
+            .any(|action| action.eq_ignore_ascii_case("AXPress"))
+}
+
+fn visual_target_for_element(
+    snapshot: &MacControlSnapshot,
+    element: &MacControlElementSummary,
+) -> MacControlTargetQuery {
+    MacControlTargetQuery {
+        app_name: None,
+        bundle_id: None,
+        window_title: None,
+        window_title_match: MacControlStringMatch::Exact,
+        element_id: Some(element.id.clone()),
+        snapshot_id: Some(snapshot.snapshot_id.clone()),
+        text: None,
+        role: None,
+        enabled: None,
+        focused: None,
+    }
 }
 
 fn visual_screenshot_metadata<'a>(
@@ -5956,9 +6016,14 @@ mod tests {
 
         let action = result.suggested_action.expect("suggested click");
         assert_eq!(action.action, "act");
-        assert_eq!(action.op, MacControlActOp::ClickPoint);
+        assert_eq!(action.op, MacControlActOp::Click);
+        let target = action.target.expect("AX target");
+        assert_eq!(target.snapshot_id.as_deref(), Some("macsnap_sample"));
+        assert_eq!(target.element_id.as_deref(), Some("el_1"));
         assert_eq!(action.x, 150.0);
         assert_eq!(action.y, 145.0);
+        assert_eq!(result.suggested_actions.len(), 2);
+        assert_eq!(result.suggested_actions[1].op, MacControlActOp::ClickPoint);
     }
 
     #[test]
@@ -5982,6 +6047,29 @@ mod tests {
         assert_eq!(screen_point.y, 80.0);
         assert!(result.suggested_action.is_some());
         assert!(!result.nearest_elements.is_empty());
+    }
+
+    #[test]
+    fn visual_point_does_not_suggest_ax_click_for_raise_only_element() {
+        let snapshot = sample_snapshot();
+        let result = resolve_visual_point(
+            &snapshot,
+            MacControlCoordinateSpace::ScreenPoints,
+            60.0,
+            90.0,
+            5,
+        )
+        .expect("visual point");
+
+        assert_eq!(result.inside_frame, Some(true));
+        assert!(result
+            .hit_elements
+            .iter()
+            .any(|hit| hit.element.id == "el_window"));
+        let action = result.suggested_action.expect("suggested click");
+        assert_eq!(action.op, MacControlActOp::ClickPoint);
+        assert!(action.target.is_none());
+        assert_eq!(result.suggested_actions.len(), 1);
     }
 
     #[test]
@@ -6122,9 +6210,17 @@ mod tests {
             .suggested_action
             .as_ref()
             .expect("suggested action");
-        assert_eq!(action.op, MacControlActOp::ClickPoint);
+        assert_eq!(action.op, MacControlActOp::Click);
+        let target = action.target.as_ref().expect("AX target");
+        assert_eq!(target.snapshot_id.as_deref(), Some("macsnap_sample"));
+        assert_eq!(target.element_id.as_deref(), Some("el_1"));
         assert_eq!(action.x, matches[0].block.screen_point.x);
         assert_eq!(action.y, matches[0].block.screen_point.y);
+        assert_eq!(matches[0].suggested_actions.len(), 2);
+        assert_eq!(
+            matches[0].suggested_actions[1].op,
+            MacControlActOp::ClickPoint
+        );
 
         let none = resolve_ocr_text_matches(
             &snapshot,

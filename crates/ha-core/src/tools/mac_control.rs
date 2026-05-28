@@ -263,6 +263,7 @@ mod tests {
                 text_blocks: Vec::new(),
                 text_matches: Vec::new(),
                 suggested_action: None,
+                suggested_actions: Vec::new(),
                 warnings: vec!["annotation failed".to_string()],
             }),
             error: None,

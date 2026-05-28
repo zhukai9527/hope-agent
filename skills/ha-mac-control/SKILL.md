@@ -112,7 +112,8 @@ act.click target.elementId="el_..." target.snapshotId="macsnap_..."  # when the 
 visual.ocr or visual.find_text text="..."      # when the target is visible text
 read the returned image and choose an image pixel point # when OCR is not enough
 visual.point snapshotId=... coordinateSpace="image_pixels" x=... y=...
-act.click_point x=<suggestedAction.x> y=<suggestedAction.y>
+act.click target=<suggestedAction.target>       # if suggestedAction.op is click
+act.click_point x=<suggestedAction.x> y=<suggestedAction.y> # if suggestedAction.op is click_point
 verify with snapshot, visual.observe, wait, or elements.find
 ```
 
@@ -123,11 +124,11 @@ Rules:
 - If the annotated id is unclear or the target is not in `uiMap`, use OCR or image-pixel positioning.
 - `visual.ocr` is read-only. Use it when visible text matters but you do not need to filter for one phrase yet.
 - `visual.find_text` is read-only. Use it before coordinate clicking visible words or text-only buttons; pass `textMatch="contains"` only for intentional partial text.
-- `visual.find_text` returns OCR `textMatches` with center points, AX `hitElements` / `nearestElements`, and a top-level `suggestedAction`.
+- `visual.find_text` returns OCR `textMatches` with center points, AX `hitElements` / `nearestElements`, a top-level `suggestedAction`, and `suggestedActions[]` ordered from stable AX target to coordinate fallback.
 - Image pixel coordinates use the screenshot top-left as origin. `(0, 0)` is valid. Never pass image pixels directly to `act.click_point`.
 - Always call `visual.point` before coordinate clicks chosen from a screenshot. It converts image pixels to macOS screen points and returns AX `hitElements` / `nearestElements`.
-- Prefer `suggestedAction.x/y` from `visual.point` or `visual.find_text` for `act.click_point`. If `insideFrame=false`, do not click; adjust the point or observe again.
-- If `hitElements[0]` is a clear AX target, prefer `act.click target.elementId=... target.snapshotId=<point/observe snapshotId>` over raw `act.click_point`.
+- Prefer `suggestedAction` from `visual.point` or `visual.find_text`; follow its `op`. If it includes `target`, call `act.click` with that target. If it is `click_point`, use its `x/y`. If `insideFrame=false`, do not click; adjust the point or observe again.
+- If `suggestedActions[]` has multiple entries, use the first clear AX target first and keep `click_point` as a fallback after re-observing uncertainty.
 - If OCR returns no match, do not click blindly. Retry with `textMatch="contains"`, OCR `languages`, a fresh window screenshot, or use image-pixel visual positioning.
 - If the snapshot expired or lacks screenshot metadata, call `visual.observe` again instead of reusing old points.
 
