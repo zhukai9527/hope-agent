@@ -19,7 +19,9 @@
 //! degraded paths (transport/timeout = inert) since they can't gate anyway
 //! and fail-closing them would just hide the real call's outcome.
 
-use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -31,8 +33,26 @@ use super::{HookHandler, RawHookResult};
 
 /// Default http-hook timeout (design §7.3).
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
-/// Response body capture cap (§7.9).
+/// Response body capture cap (§7.9). Enforced INCREMENTALLY by
+/// [`read_body_bounded`] — the cap is a memory ceiling, not a post-hoc
+/// truncation. An endpoint that streams a multi-GB body is hung up at 1 MiB.
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Top-level keys that count as recognized hook-protocol fields on a 2xx body.
+/// An object whose keys are ALL outside this set (`{"error":"unauthorized"}`,
+/// `{"message":"ok"}` from a generic JSON endpoint, etc.) is rejected on a
+/// blocking event — silent-fall-through to `Allow` would defeat the gate.
+/// Camel-case to match the wire form; `HookOutput` field renames decide what
+/// the parser actually consumes downstream.
+const RECOGNIZED_PROTOCOL_KEYS: &[&str] = &[
+    "continue",
+    "stopReason",
+    "suppressOutput",
+    "systemMessage",
+    "decision",
+    "reason",
+    "hookSpecificOutput",
+];
 
 /// Whether this hook input fires on a gate-capable event whose degraded
 /// delivery paths must fail closed. The list mirrors the events that flow
@@ -47,6 +67,92 @@ fn is_blocking_hook_input(input: &HookInput) -> bool {
             | HookInput::UserPromptSubmit { .. }
             | HookInput::PreCompact { .. }
     )
+}
+
+/// A stable fingerprint of the per-request semantics that aren't already in
+/// the URL/timeout. Hashing headers + the env-var whitelist disambiguates two
+/// HTTP hooks pointing at the same URL but carrying different
+/// Authorization/tenant headers or sourcing different env keys — without it
+/// the `(handler_type, identity)` dedup in `dispatch_with` silently folds
+/// them and only the first config actually runs (a UNION-scope user / managed
+/// double-policy footgun). Identity-only call site for now, so SipHash via
+/// `DefaultHasher` is fine — collisions require two semantically distinct
+/// configs to coincidentally produce the same 64-bit digest, vanishingly
+/// rare for short JSON-ish material.
+fn http_identity_hash(headers: &HashMap<String, String>, allowed_env_vars: &[String]) -> String {
+    let mut h = DefaultHasher::new();
+    // HashMap iteration order is non-deterministic — sort by key for a stable
+    // identity. Mixing in both key + value catches `Authorization: X` vs
+    // `Authorization: Y` on the same URL.
+    let mut sorted_headers: Vec<(&String, &String)> = headers.iter().collect();
+    sorted_headers.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, v) in sorted_headers {
+        k.hash(&mut h);
+        v.hash(&mut h);
+    }
+    // `allowed_env_vars` is a Vec but we don't want order to matter here —
+    // `[A, B]` and `[B, A]` describe the same forwarding set.
+    let mut sorted_env: Vec<&String> = allowed_env_vars.iter().collect();
+    sorted_env.sort();
+    for k in sorted_env {
+        k.hash(&mut h);
+    }
+    format!("{:016x}", h.finish())
+}
+
+/// Whether a parsed 2xx body looks like a valid hook-protocol response on a
+/// blocking event. An empty object (`{}`) is valid — that's the documented
+/// "no opinion / silent allow" shape; the parser folds it to `Allow`. Any
+/// non-object value, or an object whose keys are ALL outside
+/// [`RECOGNIZED_PROTOCOL_KEYS`], is rejected so a generic error envelope
+/// (`{"error":"..."}`, `{"message":"ok"}`, `[]`, `"ok"`, …) can't sneak
+/// through as inert → fail-open.
+fn looks_like_hook_protocol_response(value: &serde_json::Value) -> bool {
+    let serde_json::Value::Object(map) = value else {
+        return false;
+    };
+    if map.is_empty() {
+        return true; // `{}` → silent allow, parser will resolve to Allow
+    }
+    map.keys()
+        .any(|k| RECOGNIZED_PROTOCOL_KEYS.contains(&k.as_str()))
+}
+
+/// Read the response body chunk-by-chunk, stopping AT `max_bytes` rather than
+/// after. Returns `(text, truncated)` where `truncated=true` means at least
+/// one byte was discarded — the caller decides whether to fail-closed (on a
+/// blocking event) or accept the partial body (observation). Replaces
+/// `resp.text().await`, which buffered the entire response before applying
+/// the cap — a multi-GB endpoint would OOM the process before truncation
+/// fired. Adversarial-review HIGH.
+async fn read_body_bounded(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<(String, bool), reqwest::Error> {
+    let mut buf: Vec<u8> = Vec::with_capacity(8 * 1024);
+    let mut truncated = false;
+    while let Some(chunk) = resp.chunk().await? {
+        if buf.len() >= max_bytes {
+            truncated = true;
+            break;
+        }
+        let remaining = max_bytes - buf.len();
+        if chunk.len() > remaining {
+            buf.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            // Drop `resp` here — `reqwest::Response` owns the underlying
+            // body stream; dropping it terminates the connection so the
+            // remote stops sending.
+            break;
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    // The body may be valid UTF-8 truncated mid-char by our byte cap; the
+    // lossy path replaces the trailing partial codepoint with U+FFFD rather
+    // than failing — sufficient for the downstream JSON parser which only
+    // needs to see the truncated body as invalid JSON to fail closed on a
+    // blocking event.
+    Ok((String::from_utf8_lossy(&buf).into_owned(), truncated))
 }
 
 /// Build a `Block`-mapped `RawHookResult` (`exit 2` → parser produces
@@ -178,7 +284,16 @@ impl HttpHandler {
 #[async_trait]
 impl HookHandler for HttpHandler {
     fn identity(&self) -> String {
-        format!("{}|timeout={:?}", self.config.url, self.config.timeout)
+        // `(url, timeout)` alone collapses two hooks pointing at the same URL
+        // but carrying different headers / env forwarding — see
+        // `http_identity_hash` for the rationale. Hash is appended so the
+        // existing prefix stays human-readable in audit logs.
+        format!(
+            "{}|timeout={:?}|{}",
+            self.config.url,
+            self.config.timeout,
+            http_identity_hash(&self.config.headers, &self.config.allowed_env_vars),
+        )
     }
 
     fn handler_type(&self) -> &'static str {
@@ -351,8 +466,11 @@ impl HookHandler for HttpHandler {
         };
 
         let status = resp.status();
-        let text = match resp.text().await {
-            Ok(t) => crate::truncate_utf8(&t, MAX_RESPONSE_BYTES).to_string(),
+        // Bounded streaming read — caps memory AT the limit rather than
+        // after `resp.text()` has already buffered the whole body. A
+        // multi-GB endpoint is hung up at MAX_RESPONSE_BYTES.
+        let (text, truncated) = match read_body_bounded(resp, MAX_RESPONSE_BYTES).await {
+            Ok(t) => t,
             Err(e) => {
                 let msg = format!("read hook http body: {e}");
                 if is_blocking {
@@ -368,15 +486,47 @@ impl HookHandler for HttpHandler {
                 return RawHookResult::non_blocking_error(msg);
             }
         };
+        // An oversized body is itself a degraded delivery: the endpoint
+        // either misconfigured or is hostile. For blocking events that
+        // means fail-closed. For observation events we keep the (now
+        // truncated) body, but log the truncation so the cap isn't
+        // silent — a 5xx error page that happens to exceed the cap
+        // still parses inert in the existing path.
+        if truncated {
+            if is_blocking {
+                crate::app_warn!(
+                    "hooks",
+                    "http",
+                    "blocking event fail-closed (body > {} bytes): {}",
+                    MAX_RESPONSE_BYTES,
+                    self.config.url
+                );
+                return fail_closed_block(
+                    format!(
+                        "hook http body exceeded {} bytes on blocking event — failing closed",
+                        MAX_RESPONSE_BYTES
+                    ),
+                    start,
+                );
+            }
+            crate::app_warn!(
+                "hooks",
+                "http",
+                "observation body truncated at {} bytes: {}",
+                MAX_RESPONSE_BYTES,
+                self.config.url
+            );
+        }
 
-        // Blocking events demand a parseable JSON verdict on a 2xx response.
-        // A 401 HTML page, a 502 from a reverse proxy, or a 200 with the wrong
-        // content-type are all "the policy didn't render a verdict for us" —
-        // the safe default for a security gate is to refuse the action, not
-        // to silently let it through because the parser falls back to inert.
-        // Observation events keep the legacy lenient parse: their decisions
-        // are downgraded by `is_observation_only` anyway, so fail-closing them
-        // would just hide the real call.
+        // Blocking events demand a parseable, protocol-shaped JSON verdict on a
+        // 2xx response. A 401 HTML page, a 502 from a reverse proxy, and a 200
+        // with a generic error envelope (`{"error":"unauthorized"}`) are all
+        // "the policy didn't render a verdict for us" — the safe default for a
+        // security gate is to refuse the action, not to silently let it through
+        // because the parser falls back to inert. Observation events keep the
+        // legacy lenient parse: their decisions are downgraded by
+        // `is_observation_only` anyway, so fail-closing them would just hide
+        // the real call.
         if is_blocking {
             if !status.is_success() {
                 let msg = format!(
@@ -392,21 +542,36 @@ impl HookHandler for HttpHandler {
                 );
                 return fail_closed_block(msg, start);
             }
-            // 2xx — must be valid JSON. An empty body is treated as "no
-            // verdict" → fail closed; the parser's plaintext fallback only
-            // applies to a couple of observation events and doesn't help a
-            // gate decide.
+            // 2xx — must look like a hook-protocol response. The shape check
+            // splits three failure modes that all used to pass through:
+            //   - empty body → no verdict at all → fail-closed
+            //   - non-object JSON (`[]`, `"ok"`, `42`, `true`, `null`) →
+            //     fail-closed
+            //   - object whose keys are ALL outside the recognized set
+            //     (`{"error":"unauthorized"}`) → fail-closed
+            // `{}` (empty object) is the documented "silent allow" shape and
+            // is explicitly accepted by `looks_like_hook_protocol_response`.
             let trimmed = text.trim();
-            if trimmed.is_empty() || serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
-                let msg = "hook http returned non-JSON body on blocking event — failing closed"
-                    .to_string();
+            let valid = (!trimmed.is_empty())
+                .then(|| serde_json::from_str::<serde_json::Value>(trimmed).ok())
+                .flatten()
+                .as_ref()
+                .map(looks_like_hook_protocol_response)
+                .unwrap_or(false);
+            if !valid {
+                let reason = if trimmed.is_empty() {
+                    "hook http returned empty body on blocking event — failing closed".to_string()
+                } else {
+                    "hook http returned non-protocol body on blocking event — failing closed"
+                        .to_string()
+                };
                 crate::app_warn!(
                     "hooks",
                     "http",
-                    "blocking event fail-closed (non-JSON body): {}",
+                    "blocking event fail-closed (non-protocol body): {}",
                     self.config.url
                 );
-                return fail_closed_block(msg, start);
+                return fail_closed_block(reason, start);
             }
         }
 
@@ -660,5 +825,143 @@ mod tests {
             .await;
         assert_eq!(r.exit_code, Some(1), "observation event stays non-blocking");
         assert!(r.stderr.contains("SSRF"));
+    }
+
+    // ── Protocol-shape validation (E2) ──────────────────────────────────
+
+    #[test]
+    fn empty_object_is_valid_silent_allow() {
+        // `{}` is the documented "no opinion" response — the parser folds
+        // it to Allow. Fail-closing it would break every silent-observe
+        // webhook.
+        let v: serde_json::Value = serde_json::from_str("{}").unwrap();
+        assert!(looks_like_hook_protocol_response(&v));
+    }
+
+    #[test]
+    fn object_with_recognized_key_is_valid() {
+        for key in RECOGNIZED_PROTOCOL_KEYS {
+            let json = format!(r#"{{"{}": null}}"#, key);
+            let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert!(
+                looks_like_hook_protocol_response(&v),
+                "{} should be recognized",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn generic_error_envelope_is_rejected() {
+        // A 200 returning `{"error":"..."}` from a generic JSON endpoint
+        // currently slips through as inert → Allow. That's the most
+        // dangerous fail-open shape — auth-expired webhooks routinely
+        // return this.
+        let cases = [
+            r#"{"error":"unauthorized"}"#,
+            r#"{"message":"ok"}"#,
+            r#"{"status":"failed"}"#,
+            r#"{"random":"thing"}"#,
+        ];
+        for c in cases {
+            let v: serde_json::Value = serde_json::from_str(c).unwrap();
+            assert!(
+                !looks_like_hook_protocol_response(&v),
+                "{} should be rejected",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn non_object_json_is_rejected() {
+        for c in [
+            "[]",
+            r#""ok""#,
+            "42",
+            "true",
+            "null",
+            "[{\"decision\":\"allow\"}]", // wrapping a verdict in an array doesn't make it a verdict
+        ] {
+            let v: serde_json::Value = serde_json::from_str(c).unwrap();
+            assert!(
+                !looks_like_hook_protocol_response(&v),
+                "{} should be rejected",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_object_with_one_recognized_key_is_valid() {
+        // Real-world responses often carry extra metadata alongside a verdict
+        // (`{"decision":"allow","trace_id":"..."}`). One recognized key is
+        // enough; unknown siblings don't trip the shape check.
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"decision":"allow","trace_id":"abc"}"#).unwrap();
+        assert!(looks_like_hook_protocol_response(&v));
+    }
+
+    // ── Identity dedup (E3) ─────────────────────────────────────────────
+
+    fn http_config(headers: &[(&str, &str)], env_vars: &[&str]) -> HttpHookConfig {
+        let mut h = HashMap::new();
+        for (k, v) in headers {
+            h.insert((*k).to_string(), (*v).to_string());
+        }
+        HttpHookConfig {
+            url: "https://example.com/hook".into(),
+            timeout: Some(10),
+            headers: h,
+            allowed_env_vars: env_vars.iter().map(|s| (*s).to_string()).collect(),
+            status_message: None,
+            if_rule: None,
+            once: None,
+        }
+    }
+
+    #[test]
+    fn identity_disambiguates_different_authorization_headers() {
+        // Two hooks pointing at the same URL with different bearer tokens
+        // (multi-tenant webhook, or managed + user double-policy) used to
+        // collide on `(url, timeout)` and the dispatch dedup silently kept
+        // only one. Hash now folds headers in.
+        let a = HttpHandler::new(http_config(&[("Authorization", "Bearer aaa")], &[]));
+        let b = HttpHandler::new(http_config(&[("Authorization", "Bearer bbb")], &[]));
+        assert_ne!(a.identity(), b.identity());
+
+        // Same auth header → same identity (legitimate dedup).
+        let c = HttpHandler::new(http_config(&[("Authorization", "Bearer aaa")], &[]));
+        assert_eq!(a.identity(), c.identity());
+    }
+
+    #[test]
+    fn identity_disambiguates_different_allowed_env_vars() {
+        // Two hooks with different env-forwarding whitelists send different
+        // `X-Hope-Env-*` headers — they're semantically distinct.
+        let a = HttpHandler::new(http_config(&[], &["TOKEN_A"]));
+        let b = HttpHandler::new(http_config(&[], &["TOKEN_B"]));
+        assert_ne!(a.identity(), b.identity());
+    }
+
+    #[test]
+    fn identity_ignores_insertion_order_of_headers_and_env() {
+        // HashMap iteration order is non-deterministic; identity must be
+        // order-independent so two equivalent configs in different scopes
+        // (user + managed reading the same `hooks.json`) genuinely dedup.
+        let a = HttpHandler::new(http_config(&[("A", "1"), ("B", "2")], &["X", "Y"]));
+        let b = HttpHandler::new(http_config(&[("B", "2"), ("A", "1")], &["Y", "X"]));
+        assert_eq!(a.identity(), b.identity());
+    }
+
+    // ── Bounded body capture (E1) ────────────────────────────────────────
+
+    #[test]
+    fn looks_like_hook_protocol_response_accepts_object_with_continue_field() {
+        // The `continue:false` shape carries no `decision` but still drives
+        // a Block via the aggregator — it's a recognized protocol key.
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"continue":false,"stopReason":"halt"}"#).unwrap();
+        assert!(looks_like_hook_protocol_response(&v));
     }
 }
