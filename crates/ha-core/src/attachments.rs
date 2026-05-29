@@ -418,6 +418,20 @@ mod tests {
     use super::*;
     use crate::agent::Attachment;
 
+    fn assert_session_attachment_path(path: &str, root: &Path, session_id: &str) {
+        let path = Path::new(path);
+        let expected_dir = root.join("attachments").join(session_id);
+        let expected_dir = expected_dir
+            .canonicalize()
+            .expect("session attachments dir should exist");
+        assert!(
+            path.starts_with(&expected_dir),
+            "expected {} to be inside {}",
+            path.display(),
+            expected_dir.display()
+        );
+    }
+
     #[test]
     fn sniff_png_magic() {
         assert_eq!(
@@ -517,7 +531,7 @@ mod tests {
             let missing_after = attachments[0].file_path.as_deref().expect("missing path");
             assert_eq!(missing_after, missing.to_string_lossy());
             let final_path = attachments[1].file_path.as_deref().expect("final path");
-            assert!(final_path.contains("/attachments/session-a/"));
+            assert_session_attachment_path(final_path, root.path(), "session-a");
             assert!(!Path::new(&saved).exists(), "temp file should be moved");
             assert_eq!(std::fs::read(final_path).expect("read final"), b"hello");
             assert!(meta.contains("\"name\":\"note.txt\""));
@@ -543,7 +557,7 @@ mod tests {
                 .expect("meta");
 
             let final_path = attachments[0].file_path.as_deref().expect("final path");
-            assert!(final_path.contains("/attachments/session-a/"));
+            assert_session_attachment_path(final_path, root.path(), "session-a");
             assert!(!Path::new(&saved).exists(), "temp file should be moved");
             assert_eq!(std::fs::read(final_path).expect("read final"), b"hello");
             assert!(meta.contains("\"name\":\"note.txt\""));
