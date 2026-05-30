@@ -4,9 +4,11 @@
 //! in.
 //!
 //! Covers the adversarial-review fix where the `PreToolUse` fast-path consulted
-//! only the global registry and silently skipped project-only hooks. Single
-//! `#[test]` per binary so the process-global OnceLocks don't race with the
-//! other hooks integration tests.
+//! only the global registry and silently skipped project-only hooks, and the
+//! follow-up fix where the live transcript mirror was likewise gated on the
+//! global registry alone — leaving project-only hooks reading stale/missing
+//! history. Single `#[test]` per binary so the process-global OnceLocks don't
+//! race with the other hooks integration tests.
 //!
 //! Unix-only: the hook shells out to `bash`.
 #![cfg(unix)]
@@ -91,5 +93,30 @@ async fn project_scope_pretooluse_gated_by_opt_in() {
         ),
         "project scope on → repo PreToolUse hook blocks, got {:?}",
         on.decision
+    );
+
+    // (c) Adversarial review: with ONLY project-scope hooks configured (the
+    // global user/managed registry is empty in this test), the live transcript
+    // mirror must STILL track new messages. A hook script that reads
+    // `transcript.jsonl` would otherwise make security/audit decisions on
+    // stale/missing history. Append a message and assert it lands in the
+    // session transcript — the pre-fix gate (`registry::global().is_empty()`)
+    // skipped the mirror entirely here.
+    assert!(
+        hooks::registry::global().is_empty(),
+        "precondition: this test configures no global hooks"
+    );
+    db.append_message(
+        &sid,
+        &ha_core::session::NewMessage::user("hi from a project-only hook session"),
+    )
+    .expect("append message");
+    let transcript = ha_core::paths::session_dir(&sid)
+        .expect("session dir")
+        .join("transcript.jsonl");
+    let body = std::fs::read_to_string(&transcript).unwrap_or_default();
+    assert!(
+        body.contains("hi from a project-only hook session"),
+        "project-only hooks must keep the transcript mirror current; transcript was {body:?}"
     );
 }
