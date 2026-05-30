@@ -531,13 +531,10 @@ pub(super) fn build_session_working_dir_section(
         path
     );
 
-    // Top-level file listing so the model knows what's present without a
-    // `read` round-trip. Names only + sorted → byte-identical text for the
-    // same directory state, maximizing prefix-cache reuse.
-    if let Some(listing) = build_working_dir_file_listing(path) {
-        out.push_str("\n\n## Files in Working Directory\n\n");
-        out.push_str(&listing);
-    }
+    // NOTE: the top-level file listing is intentionally NOT here — it lives in
+    // its own trailing section (`build_working_dir_files_section`) so that a
+    // file add/remove only busts that tail block, not this section and
+    // everything after it.
 
     if instructions.is_empty() {
         return out;
@@ -556,6 +553,19 @@ pub(super) fn build_session_working_dir_section(
         );
     }
     out
+}
+
+/// Standalone top-level file listing for the working directory, emitted as the
+/// final system-prompt section so adding/removing a top-level entry only
+/// invalidates this trailing block — the larger static prefix (tools, skills,
+/// memory, …) stays cache-stable. Returns `None` for an empty/unreadable dir.
+pub(super) fn build_working_dir_files_section(path: &str) -> Option<String> {
+    let listing = build_working_dir_file_listing(path)?;
+    Some(format!(
+        "# Files in Working Directory\n\n\
+         Top-level entries in `{}` (non-recursive, refreshed each turn):\n\n{}",
+        path, listing
+    ))
 }
 
 /// Build a compact, non-recursive listing of the working directory's top-level

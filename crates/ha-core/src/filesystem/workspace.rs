@@ -114,6 +114,13 @@ impl WorkspaceScope {
             }
         };
 
+        // When the target itself doesn't exist (tail non-empty), its nearest
+        // existing ancestor must be a directory — otherwise a path component is
+        // a regular file (e.g. `notes.txt/sub`) and the operation would fail
+        // deep in std::fs with an opaque "Not a directory" error.
+        if !tail.is_empty() && !canon_ancestor.is_dir() {
+            return Err(FilesystemError::bad_input("a path component is not a directory"));
+        }
         let mut full = canon_ancestor;
         for part in tail.iter().rev() {
             full.push(part);

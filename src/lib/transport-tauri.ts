@@ -156,7 +156,11 @@ export class TauriTransport implements Transport {
       overwrite?: boolean;
     },
   ): Promise<UploadResult> {
-    const bytes = Array.from(new Uint8Array(await args.data.arrayBuffer()));
+    // Pass a Uint8Array so Tauri v2 streams the bytes over its binary IPC
+    // channel (Rust receives `Vec<u8>`), instead of JSON-encoding a
+    // number-per-byte array — which would balloon a 20MB upload into hundreds
+    // of MB and freeze the webview.
+    const bytes = new Uint8Array(await args.data.arrayBuffer());
     return invoke<UploadResult>("project_fs_upload", {
       scope: args.scope,
       scopeId: args.scopeId,

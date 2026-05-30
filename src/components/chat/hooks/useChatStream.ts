@@ -118,6 +118,7 @@ interface PendingSend {
   text: string
   options?: SendOptions
   attachedFiles?: File[]
+  quotes?: PendingFileQuote[]
 }
 
 interface InputDraft {
@@ -565,22 +566,27 @@ export function useChatStream({
   async function handleSend(directText?: string, options?: SendOptions) {
     const rawText = directText ?? input
     const hasAttachedFiles = !directText && attachedFiles.length > 0
-    if (!rawText.trim() && !hasAttachedFiles) return
+    const hasQuotes = !directText && pendingQuotes.length > 0
+    if (!rawText.trim() && !hasAttachedFiles && !hasQuotes) return
 
-    // If currently loading, queue the message as pending. Capture both the
-    // LLM-bound text and the original options so the replay below resends
-    // with identical metadata (Plan Mode triggers carry `isPlanTrigger`,
-    // slash-skill expansions carry `displayText`, etc.).
+    // If currently loading, queue the message as pending. Capture the
+    // LLM-bound text, the original options, and any staged files/quotes so the
+    // replay below resends with identical content + metadata (Plan Mode
+    // triggers carry `isPlanTrigger`, slash-skill expansions carry
+    // `displayText`, etc.).
     if (loading) {
       const queuedFiles = directText ? [] : [...attachedFiles]
+      const queuedQuotes = directText ? [] : [...pendingQuotes]
       setPendingSendState({
         text: rawText.trim(),
         options,
         ...(queuedFiles.length > 0 && { attachedFiles: queuedFiles }),
+        ...(queuedQuotes.length > 0 && { quotes: queuedQuotes }),
       })
       if (!directText) {
         setInput("")
         setAttachedFiles([])
+        setPendingQuotes([])
       }
       return
     }
@@ -1042,6 +1048,9 @@ export function useChatStream({
       const queued = pendingSendRef.current
       if (queued) {
         setPendingSendState(null)
+        // Restore staged quotes so they ride along with the replayed message
+        // (user-draft path) instead of being silently dropped.
+        if (queued.quotes?.length) setPendingQuotes(queued.quotes)
         if (queued.options && (queued.options.isPlanTrigger || autoSendPendingRef.current)) {
           // Programmatic queued send (Plan Mode approve, slash-skill
           // expansion). Replay through the auto-send effect with the

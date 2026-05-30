@@ -320,6 +320,16 @@ pub fn build(
         sections.push(weather_text);
     }
 
+    // ⑮ Working-directory file listing — emitted LAST so adding/removing a
+    //    top-level file only invalidates this trailing block; the larger prefix
+    //    (tools / skills / memory / …) stays cache-stable across turns. Same
+    //    gating as the working-dir section above.
+    if let Some(wd) = session_working_dir.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(files_section) = build_working_dir_files_section(wd) {
+            sections.push(files_section);
+        }
+    }
+
     // Join all non-empty sections
     let section_lengths: Vec<usize> = sections.iter().map(|s| s.len()).collect();
     let prompt = sections

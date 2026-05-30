@@ -412,16 +412,26 @@ function RenameInput({
 }) {
   const ref = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState(initial)
+  // Enter commits and then unmounts this input, and the unmount fires `onBlur`
+  // — without this guard the second `onCommit` runs against stale state and
+  // surfaces a spurious "failed" toast for an operation that already succeeded.
+  const doneRef = useRef(false)
   useEffect(() => {
     ref.current?.focus()
     ref.current?.select()
   }, [])
+  const commit = (name: string) => {
+    if (doneRef.current) return
+    doneRef.current = true
+    onCommit(name)
+  }
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault()
-      onCommit(value)
+      commit(value)
     } else if (e.key === "Escape") {
       e.preventDefault()
+      doneRef.current = true // suppress the blur that follows the unmount
       onCancel()
     }
     e.stopPropagation()
@@ -434,7 +444,7 @@ function RenameInput({
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={onKeyDown}
       onClick={(e) => e.stopPropagation()}
-      onBlur={() => onCommit(value)}
+      onBlur={() => commit(value)}
       className="h-6 px-1 py-0 text-sm"
     />
   )

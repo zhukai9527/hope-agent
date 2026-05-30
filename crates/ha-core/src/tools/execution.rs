@@ -433,6 +433,42 @@ impl ToolExecContext {
             *sink.lock().await = Some(value);
         }
     }
+
+    /// Best-effort: tell any open file-browser view that a file under this
+    /// session's working directory just changed (agent `write` / `edit` /
+    /// `apply_patch`), so the tree/preview reconcile without a manual reload —
+    /// the same `project:fs_changed` event the browser's own CRUD emits. No-op
+    /// when there's no session, no working dir, no event bus, or the path falls
+    /// outside the working directory.
+    pub fn notify_workspace_file_changed(&self, abs_path: &str) {
+        let (Some(sid), Some(wd)) = (
+            self.session_id.as_deref(),
+            self.session_working_dir.as_deref(),
+        ) else {
+            return;
+        };
+        let Some(bus) = crate::globals::get_event_bus() else {
+            return;
+        };
+        let Ok(root) = std::path::Path::new(wd).canonicalize() else {
+            return;
+        };
+        // The file may have just been created, so canonicalize its parent dir.
+        let Some(parent) = std::path::Path::new(abs_path).parent() else {
+            return;
+        };
+        let Ok(parent) = parent.canonicalize() else {
+            return;
+        };
+        let Ok(rel) = parent.strip_prefix(&root) else {
+            return; // outside the working dir — not a browseable change
+        };
+        let dir = rel.to_string_lossy().replace('\\', "/");
+        bus.emit(
+            "project:fs_changed",
+            serde_json::json!({ "scope": "session", "scopeId": sid, "dir": dir }),
+        );
+    }
 }
 
 fn canonical_builtin_tool_name(name: &str) -> &str {

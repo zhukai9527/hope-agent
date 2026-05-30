@@ -1480,7 +1480,12 @@ fn build_router_with_cors(
         .route("/fs/read", get(routes::project_fs::fs_read))
         .route("/fs/extract", get(routes::project_fs::fs_extract))
         .route("/fs/raw", get(routes::project_fs::fs_raw))
-        .route("/fs/file", put(routes::project_fs::fs_write))
+        // Raise the body cap above axum's 2MB default so saving a file as large
+        // as the read-preview ceiling (5MB) isn't rejected before the handler.
+        .route(
+            "/fs/file",
+            put(routes::project_fs::fs_write).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
         .route("/fs/entry", delete(routes::project_fs::fs_delete))
         .route("/fs/rename", post(routes::project_fs::fs_rename))
         .route("/fs/mkdir", post(routes::project_fs::fs_mkdir))

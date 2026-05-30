@@ -15,6 +15,11 @@ use super::{FilesystemError, Result};
 /// the raw/preview endpoint or a binary placeholder.
 const MAX_TEXT_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Documents are fully buffered + parsed (and PDFs rasterized) by
+/// `file_extract`, so cap the input to keep a single preview from blowing up
+/// memory.
+const MAX_EXTRACT_BYTES: u64 = 50 * 1024 * 1024;
+
 /// Per-directory entry cap (same intent as `MAX_LIST_ENTRIES` in `mod.rs`).
 const MAX_LIST_ENTRIES: usize = 5000;
 
@@ -201,6 +206,15 @@ pub fn project_read_text(scope: &WorkspaceScope, rel: &str) -> Result<FileTextCo
 /// formats return extracted text (and any embedded images).
 pub fn project_fs_extract(scope: &WorkspaceScope, rel: &str) -> Result<ExtractedContent> {
     let abs = scope.resolve_existing(rel)?;
+    let meta =
+        std::fs::metadata(&abs).map_err(|e| FilesystemError::internal(format!("stat: {}", e)))?;
+    if meta.len() > MAX_EXTRACT_BYTES {
+        return Err(FilesystemError::bad_input(format!(
+            "file too large to preview: {} bytes (max {} bytes)",
+            meta.len(),
+            MAX_EXTRACT_BYTES
+        )));
+    }
     let path_str = abs.to_string_lossy().to_string();
     let name = abs
         .file_name()

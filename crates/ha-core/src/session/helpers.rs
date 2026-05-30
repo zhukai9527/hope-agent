@@ -93,13 +93,32 @@ pub fn effective_working_dir_for_meta(meta: &SessionMeta) -> Option<String> {
         return Some(wd);
     }
     let pid = meta.project_id.as_deref()?;
-    let project = crate::get_project_db()?.get(pid).ok().flatten()?;
-    if let Some(wd) = project.working_dir.filter(|s| !s.trim().is_empty()) {
-        return Some(wd);
+    // An explicit project `working_dir` wins — but a missing project row or a
+    // transient DB error must NOT silently drop the session to the agent home
+    // (which would scatter the model's relative writes). Fall through to the
+    // project's default workspace, which only needs the id.
+    if let Some(db) = crate::get_project_db() {
+        match db.get(pid) {
+            Ok(Some(project)) => {
+                if let Some(wd) = project.working_dir.filter(|s| !s.trim().is_empty()) {
+                    return Some(wd);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                crate::app_warn!(
+                    "session",
+                    "resolve_working_dir",
+                    "project {} lookup failed, falling back to default workspace: {}",
+                    pid,
+                    e
+                );
+            }
+        }
     }
-    // Project with no explicit working dir → lazily materialize the default
-    // workspace and use it. Failure degrades to `None` (no working-dir section
-    // injected) rather than panicking.
+    // No explicit working dir (or an unreadable row) → lazily materialize the
+    // default workspace and use it. Failure degrades to `None` (no working-dir
+    // section injected) rather than panicking.
     let ws = crate::paths::project_workspace_dir(pid).ok()?;
     match crate::util::ensure_dir_canonical(&ws) {
         Ok(path) => Some(path),

@@ -6,14 +6,15 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path as FsPath, PathBuf};
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::error::AppError;
 use crate::routes::file_serve::{
-    apply_inline_media_headers, resolve_mime_for_path, HeaderOpts, MimeOpts,
+    apply_inline_media_headers, resolve_mime_for_path, safe_content_disposition, HeaderOpts,
+    MimeOpts,
 };
 use crate::AppContext;
 
@@ -452,26 +453,6 @@ fn parse_download_flag(value: Option<&str>) -> bool {
     value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
 }
 
-fn content_disposition_for_file(path: &FsPath, mime: &str, force_download: bool) -> String {
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("download");
-    let kind = if force_download {
-        "attachment"
-    } else if mime.starts_with("image/")
-        || mime.starts_with("video/")
-        || mime.starts_with("audio/")
-        || mime == "application/pdf"
-    {
-        "inline"
-    } else {
-        "attachment"
-    };
-    let quoted = filename.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("{}; filename=\"{}\"", kind, quoted)
-}
-
 // ── Handlers ────────────────────────────────────────────────────
 
 /// `POST /api/sessions` — create a new session.
@@ -800,7 +781,7 @@ pub async fn download_session_file_by_path(
         },
     )
     .await;
-    let disposition = content_disposition_for_file(
+    let disposition = safe_content_disposition(
         &file_canon,
         &mime,
         parse_download_flag(q.download.as_deref()),

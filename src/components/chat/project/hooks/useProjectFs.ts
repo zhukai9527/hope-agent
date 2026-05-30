@@ -255,20 +255,42 @@ export function useProjectFs(
 
   const getDir = useCallback((dir: string) => dirs[dir], [dirs])
 
-  return {
-    scope: scopeArg,
-    available: !!scopeId,
-    getDir,
-    loadDir,
-    refreshDir,
-    readFile,
-    extractDoc,
-    rawUrl,
-    createFile,
-    createFolder,
-    rename,
-    remove,
-    uploadInto,
-    writeText,
-  }
+  // Memoize so the returned API keeps a stable identity across renders;
+  // consumers depend on `fs` in effects (FilePreviewPane re-fetches + clears the
+  // selection whenever it changes), so a fresh object each render would re-run
+  // them on every unrelated directory load.
+  return useMemo<ProjectFsApi>(
+    () => ({
+      scope: scopeArg,
+      available: !!scopeId,
+      getDir,
+      loadDir,
+      refreshDir,
+      readFile,
+      extractDoc,
+      rawUrl,
+      createFile,
+      createFolder,
+      rename,
+      remove,
+      uploadInto,
+      writeText,
+    }),
+    [
+      scopeArg,
+      scopeId,
+      getDir,
+      loadDir,
+      refreshDir,
+      readFile,
+      extractDoc,
+      rawUrl,
+      createFile,
+      createFolder,
+      rename,
+      remove,
+      uploadInto,
+      writeText,
+    ],
+  )
 }

@@ -19,12 +19,18 @@ pub(super) fn process_file_attachments(
             let path = att.file_path.as_deref().unwrap_or(att.name.as_str());
             let snippet = att.data.as_deref().unwrap_or("");
             let lines_attr = match att.quote_lines.as_deref().filter(|s| !s.is_empty()) {
-                Some(lines) => format!(" lines=\"{}\"", lines),
+                Some(lines) => format!(" lines=\"{}\"", escape_xml_attr(lines)),
                 None => String::new(),
             };
+            // Escape the attribute and the body so a snippet (or path)
+            // containing markup — e.g. a literal `</file_reference>` — cannot
+            // break out of the reference and inject text the model would read
+            // as its own instructions.
             file_texts.push(format!(
                 "<file_reference path=\"{}\"{}>\n{}\n</file_reference>",
-                path, lines_attr, snippet
+                escape_xml_attr(path),
+                lines_attr,
+                escape_xml_text(snippet)
             ));
             continue;
         }
@@ -62,6 +68,20 @@ pub(super) fn process_file_attachments(
     };
 
     (extra_text, extra_images)
+}
+
+/// Escape a value for use inside a double-quoted XML attribute.
+fn escape_xml_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
+}
+
+/// Minimal XML text escaping: neutralizing `<` (and `&`) is enough to stop any
+/// embedded markup — e.g. a literal `</file_reference>` — from closing the
+/// surrounding element. `>` is left intact so the quoted source stays readable.
+fn escape_xml_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;")
 }
 
 /// Build multimodal user content array for Anthropic Messages API.

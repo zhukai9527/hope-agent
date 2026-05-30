@@ -7,15 +7,19 @@
 //! cannot modify the server host's files unless the operator opts in. The
 //! desktop (Tauri IPC) bypasses this gate entirely.
 
-use axum::body::Body;
-use axum::extract::{Multipart, Query, State};
-use axum::response::Response;
+use axum::extract::{Multipart, Query, Request, State};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 
-use super::file_serve::{apply_inline_media_headers, resolve_mime_for_path, HeaderOpts, MimeOpts};
+use super::file_serve::{
+    apply_inline_media_headers, resolve_mime_for_path, safe_content_disposition, HeaderOpts,
+    MimeOpts,
+};
 use super::helpers::parse_file_upload;
 use crate::error::AppError;
 use crate::AppContext;
@@ -144,7 +148,7 @@ pub struct RawQuery {
 
 /// `GET /api/fs/raw?scope=&scopeId=&path=&download=` — serve raw bytes inline
 /// (images / PDFs / any file) for the preview pane.
-pub async fn fs_raw(Query(q): Query<RawQuery>) -> Result<Response, AppError> {
+pub async fn fs_raw(Query(q): Query<RawQuery>, request: Request) -> Result<Response, AppError> {
     let RawQuery {
         scope,
         scope_id,
@@ -156,9 +160,6 @@ pub async fn fs_raw(Query(q): Query<RawQuery>) -> Result<Response, AppError> {
         s.resolve_existing(&path)
     })
     .await?;
-    let bytes = tokio::fs::read(&abs)
-        .await
-        .map_err(|e| AppError::internal(format!("read file: {e}")))?;
     let mime = resolve_mime_for_path(
         &abs,
         MimeOpts {
@@ -167,16 +168,14 @@ pub async fn fs_raw(Query(q): Query<RawQuery>) -> Result<Response, AppError> {
         },
     )
     .await;
-    let disposition = if download.unwrap_or(0) == 1 {
-        let name = abs
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "download".to_string());
-        format!("attachment; filename=\"{}\"", name.replace('"', ""))
-    } else {
-        "inline".to_string()
-    };
-    let mut response = Response::new(Body::from(bytes));
+    let disposition = safe_content_disposition(&abs, &mime, download.unwrap_or(0) == 1);
+    // Stream via ServeFile (Range-capable, memory-bounded) rather than buffering
+    // the whole file into a Vec — a large file would otherwise spike RSS / OOM.
+    let mut response = ServeFile::new(&abs)
+        .oneshot(request)
+        .await
+        .map_err(|e| AppError::internal(format!("serve file: {e}")))?
+        .into_response();
     apply_inline_media_headers(
         &mut response,
         HeaderOpts {
@@ -185,6 +184,13 @@ pub async fn fs_raw(Query(q): Query<RawQuery>) -> Result<Response, AppError> {
             disposition: &disposition,
             no_referrer: false,
         },
+    );
+    // Defense in depth: stop content-type sniffing from upgrading a mislabeled
+    // file (e.g. a `.txt` whose bytes look like HTML) into active content in
+    // the app origin.
+    response.headers_mut().insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
     );
     Ok(response)
 }

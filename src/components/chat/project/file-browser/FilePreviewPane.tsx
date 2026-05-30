@@ -245,7 +245,10 @@ function PreviewBody({
   // code / text / markdown-source: render as a fenced code block for Shiki.
   if (loaded.kind === "code" || loaded.kind === "text" || loaded.kind === "markdown") {
     const lang = shikiLang(entry.name)
-    const fenced = `\`\`\`${lang}\n${loaded.data.content}\n\`\`\``
+    // Use a fence longer than any backtick run inside the file, otherwise a
+    // file that itself contains ``` would close the block early.
+    const fence = "`".repeat(Math.max(3, longestBacktickRun(loaded.data.content) + 1))
+    const fenced = `${fence}${lang}\n${loaded.data.content}\n${fence}`
     return (
       <div className="px-4 py-3 text-sm">
         <MarkdownRenderer content={fenced} />
@@ -256,19 +259,41 @@ function PreviewBody({
   return null
 }
 
+/** Length of the longest run of consecutive backticks in `s`. */
+function longestBacktickRun(s: string): number {
+  let max = 0
+  let cur = 0
+  for (const ch of s) {
+    if (ch === "`") {
+      cur += 1
+      if (cur > max) max = cur
+    } else {
+      cur = 0
+    }
+  }
+  return max
+}
+
 /** Best-effort 1-based line range of `selection` within `content`. */
 function locateLineRange(content: string, selection: string): { startLine: number; endLine: number } {
   if (!content || !selection) return { startLine: 1, endLine: 1 }
-  const idx = content.indexOf(selection)
+  // The DOM selection often carries a trailing newline the source lacks; try the
+  // trimmed needle first, then the raw selection.
+  const needle = selection.replace(/\s+$/, "")
+  let idx = needle ? content.indexOf(needle) : -1
+  if (idx < 0) idx = content.indexOf(selection)
   if (idx < 0) {
-    // Fall back to matching the first selected line.
-    const firstLine = selection.split("\n")[0]
-    const lineIdx = content.split("\n").findIndex((l) => l.includes(firstLine))
+    // Fall back to matching the first non-empty selected line.
+    const lines = selection.split("\n")
+    const firstLine = (lines.find((l) => l.trim().length > 0) ?? lines[0]).trim()
+    const lineIdx = firstLine
+      ? content.split("\n").findIndex((l) => l.includes(firstLine))
+      : -1
     const start = lineIdx >= 0 ? lineIdx + 1 : 1
-    return { startLine: start, endLine: start + selection.split("\n").length - 1 }
+    return { startLine: start, endLine: start + lines.length - 1 }
   }
   const before = content.slice(0, idx)
   const startLine = before.split("\n").length
-  const endLine = startLine + selection.split("\n").length - 1
+  const endLine = startLine + needle.split("\n").length - 1
   return { startLine, endLine }
 }
