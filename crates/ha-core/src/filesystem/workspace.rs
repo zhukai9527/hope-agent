@@ -11,6 +11,12 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{FilesystemError, Result};
 
+/// Separator for the `path` scope's encoded id
+/// (`base_scope ∣ base_scope_id ∣ target_abs`). U+001F (Unit Separator) can
+/// never appear in a scope kind, a session/project id, or a filesystem path,
+/// so the split is unambiguous. The frontend builds the same triple.
+const PATH_SCOPE_SEP: char = '\u{1f}';
+
 /// A working-directory root that all file-browser operations are confined to.
 /// Constructed from a session (its effective working dir) or a project (its
 /// explicit `working_dir` or default workspace).
@@ -45,23 +51,42 @@ impl WorkspaceScope {
         Self::resolve(kind, id)
     }
 
-    /// Scope directly to an absolute path. Used for jumping the browser to a
-    /// sibling git worktree. Safety gate: the path must canonicalize to a real
-    /// directory **inside a git work tree** — this narrows arbitrary-directory
-    /// browsing down to the worktree-jump use case.
-    pub fn for_path(abs: &str) -> Result<Self> {
-        let root = Path::new(abs.trim()).canonicalize().map_err(|e| {
-            FilesystemError::bad_input(format!("cannot resolve path '{}': {}", abs, e))
+    /// Read-only worktree-jump browse scope. The `id` is an opaque triple
+    /// `"{base_scope}\x1f{base_scope_id}\x1f{target_abs}"` (U+001F separator):
+    /// the target is accepted **only if git reports it as one of the worktrees
+    /// of the base (session/project) repository**. This anchors the jump to the
+    /// current repo — a client can never point `path` at an arbitrary git repo
+    /// on the host (which the old "inside any git work tree" gate allowed,
+    /// escaping the per-session/project boundary over the HTTP read endpoints).
+    pub fn for_path(id: &str) -> Result<Self> {
+        let mut parts = id.splitn(3, PATH_SCOPE_SEP);
+        let base_scope = parts.next().unwrap_or("");
+        let (base_scope_id, target) = match (parts.next(), parts.next()) {
+            (Some(b), Some(t)) if !t.trim().is_empty() => (b, t),
+            _ => return Err(FilesystemError::bad_input("invalid path scope")),
+        };
+
+        // The base must resolve through a real session/project scope (never
+        // another `path`, so there is no recursion and no way to launder an
+        // arbitrary directory in as the anchor).
+        let base = match base_scope {
+            "session" => Self::for_session(base_scope_id)?,
+            "project" => Self::for_project(base_scope_id)?,
+            _ => return Err(FilesystemError::bad_input("invalid base scope for path jump")),
+        };
+
+        let target_root = Path::new(target.trim()).canonicalize().map_err(|e| {
+            FilesystemError::bad_input(format!("cannot resolve path '{}': {}", target, e))
         })?;
-        if !root.is_dir() {
+        if !target_root.is_dir() {
             return Err(FilesystemError::bad_input("path is not a directory"));
         }
-        if !super::git::is_inside_work_tree(&root) {
+        if !super::git::is_worktree_of(base.root(), &target_root) {
             return Err(FilesystemError::bad_input(
-                "path is not inside a git work tree",
+                "path is not a worktree of the current repository",
             ));
         }
-        Ok(Self { root })
+        Ok(Self { root: target_root })
     }
 
     /// Scope to a session's effective working directory (session-level dir →

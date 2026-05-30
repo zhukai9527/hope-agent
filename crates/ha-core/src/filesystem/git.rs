@@ -46,14 +46,32 @@ pub fn git_info(root: &Path) -> Option<GitInfo> {
     Some(GitInfo { branch, worktrees })
 }
 
-/// Cheap probe: is `dir` inside a git work tree? Also the safety gate for the
-/// `path` browse scope (worktree jump).
+/// Cheap probe: is `dir` inside a git work tree?
 pub fn is_inside_work_tree(dir: &Path) -> bool {
     Command::new("git")
         .current_dir(dir)
         .args(["rev-parse", "--is-inside-work-tree"])
         .output()
         .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false)
+}
+
+/// Security gate for the read-only `path` browse scope: is `target_canon` (an
+/// already-canonicalized directory) one of the worktrees of the git repository
+/// at `base`? This anchors worktree-jump browsing to the *current* session /
+/// project repository, so a client can never jump to an arbitrary git repo on
+/// the host — only between the base repo's own worktrees. Runs a single
+/// `git worktree list` (no branch probe needed here).
+pub fn is_worktree_of(base: &Path, target_canon: &Path) -> bool {
+    run_git(base, &["worktree", "list", "--porcelain"])
+        .map(|out| {
+            parse_worktrees(&out, None).iter().any(|w| {
+                Path::new(&w.path)
+                    .canonicalize()
+                    .map(|c| c == *target_canon)
+                    .unwrap_or(false)
+            })
+        })
         .unwrap_or(false)
 }
 

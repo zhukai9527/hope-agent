@@ -42,7 +42,14 @@ import { FileBrowserTree, type DraftNode } from "./FileBrowserTree"
 import { FilePreviewPane, type QuotePayload } from "./FilePreviewPane"
 import { useDragWidth } from "./useDragWidth"
 
-type PathRoot = { scope: "path"; scopeId: string }
+// The read-only worktree-jump scope encodes its id as a triple
+// `base_scope ∣ base_scope_id ∣ target_abs` (U+001F separator) that the backend
+// (`WorkspaceScope::for_path`) validates against the base repo's worktree list,
+// so the browser can only jump between the current repo's own worktrees — never
+// to an arbitrary git repo on the host.
+const PATH_SCOPE_SEP = String.fromCharCode(0x1f)
+const encodePathScope = (baseScope: string, baseScopeId: string, target: string) =>
+  `${baseScope}${PATH_SCOPE_SEP}${baseScopeId}${PATH_SCOPE_SEP}${target}`
 
 export interface FileBrowserViewProps {
   scope: "session" | "project"
@@ -66,9 +73,9 @@ export function FileBrowserView({
 }: FileBrowserViewProps) {
   const { t } = useTranslation()
 
-  // Worktree-jump override: when set, the browser re-roots at an absolute path
-  // via the read-only `"path"` scope.
-  const [activeRoot, setActiveRoot] = useState<PathRoot | null>(null)
+  // Worktree-jump override: the absolute path of the worktree the browser is
+  // re-rooted at (read-only `"path"` scope), or null while viewing the host scope.
+  const [activeWorktree, setActiveWorktree] = useState<string | null>(null)
   // Absolute path of the host working dir (the `isCurrent` worktree while
   // browsing the host scope), so clicking it returns to the writable main view.
   const [mainRootPath, setMainRootPath] = useState<string | null>(null)
@@ -81,15 +88,16 @@ export function FileBrowserView({
   const [trackedHost, setTrackedHost] = useState(hostKey)
   if (hostKey !== trackedHost) {
     setTrackedHost(hostKey)
-    setActiveRoot(null)
+    setActiveWorktree(null)
     setMainRootPath(null)
     setSelected(null)
     setGitInfo(null)
   }
 
-  const activeScope = activeRoot?.scope ?? scope
-  const activeScopeId = activeRoot?.scopeId ?? (scopeId ?? "")
-  const isWorktreeView = activeRoot !== null
+  const isWorktreeView = activeWorktree !== null
+  const activeScope: "session" | "project" | "path" = activeWorktree !== null ? "path" : scope
+  const activeScopeId =
+    activeWorktree !== null ? encodePathScope(scope, scopeId ?? "", activeWorktree) : scopeId ?? ""
   const effectiveEditable = editable && !isWorktreeView
 
   const fs = useProjectFs(activeScope, activeScopeId)
@@ -113,7 +121,7 @@ export function FileBrowserView({
       .then((info) => {
         if (cancelled) return
         setGitInfo(info)
-        if (!activeRoot && info) {
+        if (!activeWorktree && info) {
           const cur = info.worktrees.find((w) => w.isCurrent)
           if (cur) setMainRootPath(cur.path)
         }
@@ -124,20 +132,32 @@ export function FileBrowserView({
     return () => {
       cancelled = true
     }
-  }, [activeScope, activeScopeId, scopeId, activeRoot])
+  }, [activeScope, activeScopeId, scopeId, activeWorktree])
 
   const jumpToWorktree = useCallback(
     (path: string) => {
       setSelected(null)
-      if (mainRootPath && path === mainRootPath) setActiveRoot(null)
-      else setActiveRoot({ scope: "path", scopeId: path })
+      if (activeWorktree !== null) {
+        // Already in a worktree view: clicking the host's current worktree
+        // returns to the writable main view; otherwise switch worktrees.
+        setActiveWorktree(path === mainRootPath ? null : path)
+      } else {
+        // Host view: gitInfo currently describes the host repo, so derive the
+        // host's current worktree synchronously (the async mainRootPath effect
+        // may still be null) and cache it before jumping — otherwise picking the
+        // current worktree would wrongly re-root the host dir via the read-only
+        // path scope.
+        const hostCurrent = gitInfo?.worktrees.find((w) => w.isCurrent)?.path ?? rootPath ?? null
+        setMainRootPath(hostCurrent)
+        setActiveWorktree(path === hostCurrent ? null : path)
+      }
     },
-    [mainRootPath],
+    [activeWorktree, mainRootPath, gitInfo, rootPath],
   )
 
   const backToRoot = useCallback(() => {
     setSelected(null)
-    setActiveRoot(null)
+    setActiveWorktree(null)
   }, [])
 
   const onSelectFile = useCallback((entry: WorkspaceEntry) => setSelected(entry), [])
@@ -207,7 +227,10 @@ export function FileBrowserView({
         </IconTip>
       ) : null}
       {gitInfo.worktrees.length > 1 ? (
-        <Select value={isWorktreeView ? activeScopeId : mainRootPath ?? ""} onValueChange={jumpToWorktree}>
+        <Select
+          value={(isWorktreeView ? activeWorktree : mainRootPath) ?? ""}
+          onValueChange={jumpToWorktree}
+        >
           <SelectTrigger className="ml-auto h-6 w-auto gap-1 border-0 bg-transparent px-1.5 py-0 text-xs">
             <SelectValue placeholder={t("fileBrowser.worktrees", "Worktrees")} />
           </SelectTrigger>
