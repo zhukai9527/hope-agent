@@ -59,6 +59,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   project_fs_list:                 { method: "GET",    path: "/api/fs/list" },
   project_fs_read_text:            { method: "GET",    path: "/api/fs/read" },
   project_fs_extract:              { method: "GET",    path: "/api/fs/extract" },
+  project_git_info:                { method: "GET",    path: "/api/fs/git" },
   project_fs_write_text:           { method: "PUT",    path: "/api/fs/file" },
   project_fs_delete:               { method: "DELETE", path: "/api/fs/entry" },
   project_fs_rename:               { method: "POST",   path: "/api/fs/rename" },

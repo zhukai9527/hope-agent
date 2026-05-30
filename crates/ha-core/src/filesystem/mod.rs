@@ -67,9 +67,11 @@ pub type Result<T> = std::result::Result<T, FilesystemError>;
 
 // ---- Project file-browser API (workspace-scoped CRUD) ----------------------
 
+mod git;
 mod ops;
 mod workspace;
 
+pub use git::{git_info, GitInfo, WorktreeInfo};
 pub use ops::{
     project_delete, project_fs_extract, project_list_dir, project_mkdir, project_read_text,
     project_rename, project_upload, project_write_text, ExtractedContent, FileTextContent,

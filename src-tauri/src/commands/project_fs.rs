@@ -10,7 +10,7 @@
 
 use crate::commands::CmdError;
 use ha_core::filesystem::{
-    self, ExtractedContent, FileTextContent, RenameResult, UploadResult, WorkspaceListing,
+    self, ExtractedContent, FileTextContent, GitInfo, RenameResult, UploadResult, WorkspaceListing,
     WorkspaceScope, WriteResult,
 };
 
@@ -104,6 +104,20 @@ pub async fn project_fs_resolve(
     .await
 }
 
+/// Read-only git branch + worktree list for the scope's working dir. `None`
+/// when the dir is not inside a git work tree.
+#[tauri::command]
+pub async fn project_git_info(
+    scope: String,
+    scope_id: String,
+) -> Result<Option<GitInfo>, CmdError> {
+    blocking(move || {
+        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        Ok(filesystem::git_info(s.root()))
+    })
+    .await
+}
+
 // ── Write ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -116,7 +130,7 @@ pub async fn project_fs_write_text(
 ) -> Result<WriteResult, CmdError> {
     let (s_scope, s_id) = (scope.clone(), scope_id.clone());
     let res = blocking(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_write_text(&s, &path, &content, create_only.unwrap_or(false))
     })
     .await?;
@@ -134,7 +148,7 @@ pub async fn project_fs_delete(
     let (s_scope, s_id) = (scope.clone(), scope_id.clone());
     let dir = parent_rel(&path);
     blocking(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_delete(&s, &path, recursive.unwrap_or(false))
     })
     .await?;
@@ -153,7 +167,7 @@ pub async fn project_fs_rename(
     let (s_scope, s_id) = (scope.clone(), scope_id.clone());
     let from_dir = parent_rel(&from_path);
     let res = blocking(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_rename(&s, &from_path, &to_path, overwrite.unwrap_or(false))
     })
     .await?;
@@ -171,7 +185,7 @@ pub async fn project_fs_mkdir(
 ) -> Result<WriteResult, CmdError> {
     let (s_scope, s_id) = (scope.clone(), scope_id.clone());
     let res = blocking(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_mkdir(&s, &path)
     })
     .await?;
@@ -190,7 +204,7 @@ pub async fn project_fs_upload(
 ) -> Result<UploadResult, CmdError> {
     let (s_scope, s_id) = (scope.clone(), scope_id.clone());
     let res = blocking(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_upload(&s, &dir_path, &file_name, &data, overwrite.unwrap_or(false))
     })
     .await?;

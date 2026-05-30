@@ -531,6 +531,7 @@ pub fn run() {
             commands::project_fs::project_fs_read_text,
             commands::project_fs::project_fs_extract,
             commands::project_fs::project_fs_resolve,
+            commands::project_fs::project_git_info,
             commands::project_fs::project_fs_write_text,
             commands::project_fs::project_fs_delete,
             commands::project_fs::project_fs_rename,

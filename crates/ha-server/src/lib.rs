@@ -1480,6 +1480,7 @@ fn build_router_with_cors(
         .route("/fs/read", get(routes::project_fs::fs_read))
         .route("/fs/extract", get(routes::project_fs::fs_extract))
         .route("/fs/raw", get(routes::project_fs::fs_raw))
+        .route("/fs/git", get(routes::project_fs::fs_git_info))
         // Raise the body cap above axum's 2MB default so saving a file as large
         // as the read-preview ceiling (5MB) isn't rejected before the handler.
         .route(

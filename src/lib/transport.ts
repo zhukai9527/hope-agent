@@ -328,9 +328,9 @@ export interface FileSearchResponse {
 
 /** Selects which working directory the file-browser API operates on. */
 export interface ProjectFsScope {
-  /** `"session"` resolves the session's effective working dir; `"project"`
-   *  resolves the project's workspace. */
-  scope: "session" | "project";
+  /** `"session"` / `"project"` resolve a session/project working dir; `"path"`
+   *  browses an absolute git-worktree path read-only (worktree jump). */
+  scope: "session" | "project" | "path";
   scopeId: string;
 }
 
@@ -391,6 +391,17 @@ export interface RenameResult {
 export interface UploadResult {
   relPath: string;
   sizeBytes: number;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string | null;
+  isCurrent: boolean;
+}
+
+export interface GitInfo {
+  branch: string | null;
+  worktrees: WorktreeInfo[];
 }
 
 /**

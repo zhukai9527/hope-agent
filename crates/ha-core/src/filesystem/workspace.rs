@@ -28,10 +28,40 @@ impl WorkspaceScope {
         match kind {
             "session" => Self::for_session(id),
             "project" => Self::for_project(id),
+            "path" => Self::for_path(id),
             other => Err(FilesystemError::bad_input(format!(
                 "invalid scope: {other}"
             ))),
         }
+    }
+
+    /// Like [`Self::resolve`] but rejects read-only scopes. The `"path"` scope
+    /// (git-worktree jump browsing) is read-only — write/delete/rename/mkdir/
+    /// upload must route through here so a worktree view can't mutate files.
+    pub fn resolve_writable(kind: &str, id: &str) -> Result<Self> {
+        if kind == "path" {
+            return Err(FilesystemError::bad_input("this view is read-only"));
+        }
+        Self::resolve(kind, id)
+    }
+
+    /// Scope directly to an absolute path. Used for jumping the browser to a
+    /// sibling git worktree. Safety gate: the path must canonicalize to a real
+    /// directory **inside a git work tree** — this narrows arbitrary-directory
+    /// browsing down to the worktree-jump use case.
+    pub fn for_path(abs: &str) -> Result<Self> {
+        let root = Path::new(abs.trim()).canonicalize().map_err(|e| {
+            FilesystemError::bad_input(format!("cannot resolve path '{}': {}", abs, e))
+        })?;
+        if !root.is_dir() {
+            return Err(FilesystemError::bad_input("path is not a directory"));
+        }
+        if !super::git::is_inside_work_tree(&root) {
+            return Err(FilesystemError::bad_input(
+                "path is not inside a git work tree",
+            ));
+        }
+        Ok(Self { root })
     }
 
     /// Scope to a session's effective working directory (session-level dir →

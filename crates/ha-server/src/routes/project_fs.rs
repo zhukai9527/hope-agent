@@ -24,7 +24,7 @@ use super::helpers::parse_file_upload;
 use crate::error::AppError;
 use crate::AppContext;
 use ha_core::filesystem::{
-    self, ExtractedContent, FileTextContent, FilesystemError, RenameResult, UploadResult,
+    self, ExtractedContent, FileTextContent, FilesystemError, GitInfo, RenameResult, UploadResult,
     WorkspaceListing, WorkspaceScope, WriteResult,
 };
 
@@ -195,6 +195,27 @@ pub async fn fs_raw(Query(q): Query<RawQuery>, request: Request) -> Result<Respo
     Ok(response)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeOnlyQuery {
+    pub scope: String,
+    pub scope_id: String,
+}
+
+/// `GET /api/fs/git?scope=&scopeId=` — read-only git branch + worktree list for
+/// the scope's working dir. `null` when it is not inside a git work tree.
+pub async fn fs_git_info(
+    Query(q): Query<ScopeOnlyQuery>,
+) -> Result<Json<Option<GitInfo>>, AppError> {
+    let ScopeOnlyQuery { scope, scope_id } = q;
+    let res = run(move || {
+        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        Ok(filesystem::git_info(s.root()))
+    })
+    .await?;
+    Ok(Json(res))
+}
+
 // ── Write endpoints (gated) ─────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -223,7 +244,7 @@ pub async fn fs_write(
     } = b;
     let (es, ei) = (scope.clone(), scope_id.clone());
     let res = run(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_write_text(&s, &path, &content, create_only.unwrap_or(false))
     })
     .await?;
@@ -256,7 +277,7 @@ pub async fn fs_delete(
     let (es, ei) = (scope.clone(), scope_id.clone());
     let dir = parent_rel(&path);
     run(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_delete(&s, &path, recursive.unwrap_or(false))
     })
     .await?;
@@ -291,7 +312,7 @@ pub async fn fs_rename(
     let (es, ei) = (scope.clone(), scope_id.clone());
     let from_dir = parent_rel(&from_path);
     let res = run(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_rename(&s, &from_path, &to_path, overwrite.unwrap_or(false))
     })
     .await?;
@@ -321,7 +342,7 @@ pub async fn fs_mkdir(
     } = b;
     let (es, ei) = (scope.clone(), scope_id.clone());
     let res = run(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_mkdir(&s, &path)
     })
     .await?;
@@ -359,7 +380,7 @@ pub async fn fs_upload(
     let file_name = parsed.file_name;
     let data = parsed.file_data;
     let res = run(move || {
-        let s = WorkspaceScope::resolve(&scope, &scope_id)?;
+        let s = WorkspaceScope::resolve_writable(&scope, &scope_id)?;
         filesystem::project_upload(&s, &dir, &file_name, &data, overwrite.unwrap_or(false))
     })
     .await?;
