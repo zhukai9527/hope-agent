@@ -1,9 +1,9 @@
 //! Hooks system — event → pluggable handler dispatch.
 //!
 //! Field-level aligned with the Claude Code hooks protocol. See
-//! `docs/plans/hooks-system-design.md` for the full design; this module is the
+//! `docs/architecture/hooks.md` for the reference; this module is the
 //! `ha-core` implementation (zero Tauri deps — runs in desktop, `server`, and
-//! ACP modes alike, per design §3.6).
+//! ACP modes alike).
 //!
 //! Business call sites only ever touch [`HookDispatcher::dispatch`] and read a
 //! [`HookOutcome`]; matcher filtering, concurrent execution, timeouts,

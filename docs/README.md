@@ -104,16 +104,6 @@
 
 ---
 
-## 计划与设计（Plans）
-
-设计提案与开放任务跟踪，与代码同 commit 演进。
-
-| 文档 | 说明 |
-| --- | --- |
-| [Hooks System Design](plans/hooks-system-design.md) | Hooks 系统的设计文档（与 Claude Code Hook spec 对齐） |
-
----
-
 ## 发版说明（Release Notes）
 
 | 版本 | 中文 | 英文 |

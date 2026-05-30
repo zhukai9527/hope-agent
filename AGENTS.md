@@ -172,7 +172,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `ski
 
 ### Hooks
 
-详见 [`hooks.md`](docs/architecture/hooks.md) / [`docs/plans/hooks-system-design.md`](docs/plans/hooks-system-design.md)（28 事件完整设计；附录 A 埋点位置写于主对话重构前，已过时，以代码为准）。
+详见 [`hooks.md`](docs/architecture/hooks.md)（hooks 子系统单一真相源：28 事件矩阵 / 数据流 / 5 handler / 四层 scope / 安全 / 测试 / Roadmap）。
 
 - **字段级对齐 Claude Code hooks 协议**；核心全在 `ha-core::hooks`（**零 Tauri 依赖**），desktop / server / ACP 共用
 - **唯一入口 `HookDispatcher::dispatch(event, input)`** + `hooks::fire_*` 助手：内部封装 per-cwd scope 解析 / matcher 过滤 / 并发执行（catch_unwind 隔离）/ 去重 / 超时 / 聚合，调用方只读 `HookOutcome`；**严禁在业务代码里 match 具体 handler 类型**
