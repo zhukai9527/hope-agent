@@ -453,6 +453,24 @@ impl HookInput {
         }
     }
 
+    /// Whether this input fires on a gate-capable event whose degraded
+    /// delivery paths must fail **closed**. Lists exactly the events that flow
+    /// through a blocking decision sink (PreToolUse gate, UserPromptSubmit
+    /// preflight, PreCompact). For these, a handler that can't run at all
+    /// (spawn failure, IO error, timeout, unreachable endpoint) must be
+    /// treated as `Block` rather than silently inert — a silent fall-through
+    /// to `Allow` would defeat the very gate the hook exists to enforce.
+    /// Observation-only events are excluded: `Block` from them is downgraded
+    /// by [`HookEvent::is_observation_only`] anyway, and fail-closing them
+    /// would hide real errors without buying any security. Every runner
+    /// (`command`, `http`) consults this on its infra-failure branches.
+    pub fn is_blocking(&self) -> bool {
+        matches!(
+            self,
+            Self::PreToolUse { .. } | Self::UserPromptSubmit { .. } | Self::PreCompact { .. }
+        )
+    }
+
     /// The tool name for tool-lifecycle events (`PreToolUse` / `PostToolUse` /
     /// `PostToolUseFailure`); `None` for every other event. Used by the `if`
     /// condition gate — a non-tool event can't satisfy a `ToolName(...)` rule.

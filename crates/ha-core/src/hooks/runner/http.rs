@@ -54,21 +54,6 @@ const RECOGNIZED_PROTOCOL_KEYS: &[&str] = &[
     "hookSpecificOutput",
 ];
 
-/// Whether this hook input fires on a gate-capable event whose degraded
-/// delivery paths must fail closed. The list mirrors the events that flow
-/// through a blocking decision sink (PreToolUse gate, UserPromptSubmit
-/// preflight, PreCompact). Observation-only events are excluded — `Block`
-/// from them is downgraded by `is_observation_only` anyway, and fail-closing
-/// them would hide real errors without buying any security.
-fn is_blocking_hook_input(input: &HookInput) -> bool {
-    matches!(
-        input,
-        HookInput::PreToolUse { .. }
-            | HookInput::UserPromptSubmit { .. }
-            | HookInput::PreCompact { .. }
-    )
-}
-
 /// A stable fingerprint of the per-request semantics that aren't already in
 /// the URL/timeout. Hashing headers + the env-var whitelist disambiguates two
 /// HTTP hooks pointing at the same URL but carrying different
@@ -315,7 +300,7 @@ impl HookHandler for HttpHandler {
 
     async fn run(&self, input: &HookInput, env: &HookEnv, deadline: Instant) -> RawHookResult {
         let start = Instant::now();
-        let is_blocking = is_blocking_hook_input(input);
+        let is_blocking = input.is_blocking();
 
         // SSRF gate FIRST — before constructing the client or touching the
         // network. Uses the shared `Default` policy + the app's trusted-host
@@ -765,7 +750,7 @@ mod tests {
         // their degraded HTTP paths must fail closed. Everything else is
         // observation and must keep the lenient (inert) behavior.
         let pre_tool = dummy_input();
-        assert!(is_blocking_hook_input(&pre_tool));
+        assert!(pre_tool.is_blocking());
         let user_prompt = HookInput::UserPromptSubmit {
             common: CommonHookInput {
                 session_id: "s1".into(),
@@ -778,7 +763,7 @@ mod tests {
             },
             prompt: "x".into(),
         };
-        assert!(is_blocking_hook_input(&user_prompt));
+        assert!(user_prompt.is_blocking());
         let pre_compact = HookInput::PreCompact {
             common: CommonHookInput {
                 session_id: "s1".into(),
@@ -792,9 +777,9 @@ mod tests {
             trigger: crate::hooks::types::CompactTrigger::Auto,
             usage_ratio: 0.5,
         };
-        assert!(is_blocking_hook_input(&pre_compact));
+        assert!(pre_compact.is_blocking());
         // Notification is observation — keep inert path on degradation.
-        assert!(!is_blocking_hook_input(&observation_input()));
+        assert!(!observation_input().is_blocking());
     }
 
     /// On a blocking event, an SSRF refusal short-circuits to fail-closed

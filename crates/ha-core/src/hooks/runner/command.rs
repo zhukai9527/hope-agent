@@ -119,10 +119,20 @@ impl HookHandler for CommandHandler {
 
     async fn run(&self, input: &HookInput, env: &HookEnv, deadline: Instant) -> RawHookResult {
         let start = Instant::now();
+        // Gate-capable events must fail CLOSED (exit 2 → Block) on any infra
+        // failure below rather than fall through to inert Allow. Mirrors the
+        // http runner. Async (fire-and-forget) hooks can't block by design, so
+        // this only affects the synchronous path. Adversarial review HIGH.
+        let fail_closed = input.is_blocking();
         let stdin_data = match serde_json::to_string(input) {
             Ok(s) => format!("{s}\n"), // trailing newline for `read`/`jq` friendliness
             Err(e) => {
-                return RawHookResult::non_blocking_error(format!("serialize hook input: {e}"))
+                let msg = format!("serialize hook input: {e}");
+                return if fail_closed {
+                    RawHookResult::blocked(msg)
+                } else {
+                    RawHookResult::non_blocking_error(msg)
+                };
             }
         };
 
@@ -224,7 +234,19 @@ impl HookHandler for CommandHandler {
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
-            Err(e) => return RawHookResult::non_blocking_error(format!("spawn hook: {e}")),
+            Err(e) => {
+                let msg = format!("spawn hook: {e}");
+                return if fail_closed {
+                    crate::app_warn!(
+                        "hooks",
+                        "command",
+                        "blocking event fail-closed (spawn): {msg}"
+                    );
+                    RawHookResult::blocked(msg)
+                } else {
+                    RawHookResult::non_blocking_error(msg)
+                };
+            }
         };
         let child_pid = child.id();
 
@@ -274,7 +296,15 @@ impl HookHandler for CommandHandler {
                 duration: start.elapsed(),
                 timed_out: false,
             },
-            Ok((Err(e), _, _)) => RawHookResult::non_blocking_error(format!("hook io error: {e}")),
+            Ok((Err(e), _, _)) => {
+                let msg = format!("hook io error: {e}");
+                if fail_closed {
+                    crate::app_warn!("hooks", "command", "blocking event fail-closed (io): {msg}");
+                    RawHookResult::blocked(msg)
+                } else {
+                    RawHookResult::non_blocking_error(msg)
+                }
+            }
             Err(_) => {
                 // Timed out. `kill_on_drop` reaps only the direct child when
                 // the cancelled future drops; explicitly kill the whole process
@@ -282,12 +312,30 @@ impl HookHandler for CommandHandler {
                 if let Some(pid) = child_pid {
                     crate::platform::terminate_process_tree(pid);
                 }
-                RawHookResult {
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: format!("hook timed out after {}s", timeout.as_secs()),
-                    duration: start.elapsed(),
-                    timed_out: true,
+                let msg = format!("hook timed out after {}s", timeout.as_secs());
+                if fail_closed {
+                    // A timed-out gate hook must deny, not fall through. Map to
+                    // exit 2 (Block) while still recording the timeout.
+                    crate::app_warn!(
+                        "hooks",
+                        "command",
+                        "blocking event fail-closed (timeout): {msg}"
+                    );
+                    RawHookResult {
+                        exit_code: Some(2),
+                        stdout: String::new(),
+                        stderr: msg,
+                        duration: start.elapsed(),
+                        timed_out: true,
+                    }
+                } else {
+                    RawHookResult {
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: msg,
+                        duration: start.elapsed(),
+                        timed_out: true,
+                    }
                 }
             }
         }
@@ -427,6 +475,50 @@ mod tests {
         let r = h.run(&dummy_input(), &HookEnv::empty(), deadline(1)).await;
         assert!(r.timed_out);
         assert_eq!(r.exit_code, None);
+    }
+
+    fn pretooluse_input() -> HookInput {
+        HookInput::PreToolUse {
+            common: CommonHookInput {
+                session_id: "s1".into(),
+                transcript_path: PathBuf::from("/tmp/t.jsonl"),
+                cwd: PathBuf::from("/tmp"),
+                permission_mode: PermissionMode::Default,
+                hook_event_name: "PreToolUse".into(),
+                agent_id: None,
+                agent_type: None,
+            },
+            tool_name: "exec".into(),
+            tool_input: serde_json::json!({ "command": "rm -rf /" }),
+            tool_use_id: "u1".into(),
+        }
+    }
+
+    // Adversarial review HIGH: an infra failure on a gate-capable event must
+    // fail CLOSED — map to exit 2 (Block) — not fall through to inert Allow and
+    // silently bypass the gate. The timeout path is the deterministically
+    // triggerable infra failure (spawn/IO ENOENT depend on which shells exist on
+    // the host); it shares the `fail_closed` dispatch with the spawn/IO
+    // branches. A timed-out PreToolUse hook must Block while still recording the
+    // timeout, in contrast to `timeout_marks_timed_out`'s observation event,
+    // which stays `exit_code: None` (inert).
+    #[tokio::test]
+    async fn blocking_event_timeout_fails_closed() {
+        let h = CommandHandler::new(CommandHookConfig {
+            command: "sleep 5".into(),
+            shell: Some(HookShell::Bash),
+            timeout: Some(1),
+            async_run: None,
+            status_message: None,
+            if_rule: None,
+            once: None,
+            async_rewake: None,
+        });
+        let r = h
+            .run(&pretooluse_input(), &HookEnv::empty(), deadline(1))
+            .await;
+        assert!(r.timed_out);
+        assert_eq!(r.exit_code, Some(2), "blocking timeout must Block");
     }
 
     #[tokio::test]

@@ -52,6 +52,22 @@ impl RawHookResult {
             timed_out: false,
         }
     }
+
+    /// A fail-closed block (exit 2 → parser yields `HookDecision::Block`) for a
+    /// degraded delivery on a gate-capable event ([`HookInput::is_blocking`]).
+    /// Infra failures (spawn error, IO error, timeout, unreachable endpoint)
+    /// on a blocking event must deny rather than fall through to `Allow`. Used
+    /// by both the `command` and `http` runners so the audit trail stays
+    /// uniform. Adversarial review HIGH.
+    pub fn blocked(stderr: impl Into<String>) -> Self {
+        Self {
+            exit_code: Some(2),
+            stdout: String::new(),
+            stderr: stderr.into(),
+            duration: Duration::ZERO,
+            timed_out: false,
+        }
+    }
 }
 
 /// A runnable hook handler.
