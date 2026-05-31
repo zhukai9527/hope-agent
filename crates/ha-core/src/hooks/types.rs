@@ -125,7 +125,10 @@ impl HookEvent {
                 | Self::ConfigChange
                 | Self::CwdChanged
                 | Self::FileChanged
-                | Self::PermissionRequest
+                // `PermissionRequest` is deliberately ABSENT: it is
+                // decision-capable (a hook can allow/deny a pending tool prompt
+                // — see `tools::approval::check_and_request_approval`), so its
+                // allow/deny must survive aggregation rather than be downgraded.
                 | Self::PermissionDenied
                 | Self::UserPromptExpansion
                 | Self::Elicitation
@@ -188,6 +191,13 @@ pub struct CommonHookInput {
     pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_type: Option<String>,
+    /// The parent session id when this event fires inside a sub-agent context;
+    /// `None` for the main conversation. Field-aligned with the Claude Code
+    /// sub-agent payload — lets a consumer (e.g. a desktop pet) tell sub-agent
+    /// activity apart from the user-facing conversation without leaning on the
+    /// (unstable) `agent_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
 }
 
 /// Source for a `SessionStart` event (design doc §5.1.1 matcher target).
@@ -332,6 +342,12 @@ pub enum HookInput {
         /// already in the continue loop. Block-to-continue is not implemented
         /// yet, so always `false`; the field keeps the payload field-aligned.
         stop_hook_active: bool,
+        /// The agent's final response text for this turn. Omitted when empty
+        /// (e.g. an interrupted turn with no text). Field-aligned with the
+        /// Claude Code Stop payload's `assistant_message` — lets a consumer
+        /// surface the reply opening without re-parsing the transcript.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        assistant_message: Option<String>,
     },
     StopFailure {
         #[serde(flatten)]
@@ -389,6 +405,20 @@ pub enum HookInput {
         /// The command / tool being approved (matcher target). For `exec` this
         /// is the shell command; for the tool gate, a `tool: <name> <args>` desc.
         command: String,
+        /// Claude Code-shaped tool name (`Bash` / `Write` / …) so a
+        /// decision-capable consumer (e.g. a desktop pet) renders the approval
+        /// card exactly like Claude's. **Not** the matcher target — that stays
+        /// `command`; this field is purely for display. Omitted when the
+        /// approval carries no structured tool identity (the consumer then falls
+        /// back to `command`).
+        #[serde(skip_serializing_if = "String::is_empty")]
+        tool_name: String,
+        /// Claude-shaped tool input for the same consumer — `{command}` for
+        /// shell tools, `{file_path, …}` for file tools (Hope Agent's `path` is
+        /// mirrored to `file_path` so the consumer's field read resolves).
+        /// Omitted (null) alongside an empty `tool_name`.
+        #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+        tool_input: serde_json::Value,
     },
     PermissionDenied {
         #[serde(flatten)]
@@ -412,6 +442,17 @@ pub enum HookInput {
         /// `ask_user_question` group id (correlates with ElicitationResult).
         request_id: String,
         question_count: usize,
+        /// Always `"AskUserQuestion"` — the elicitation is emitted in Claude
+        /// Code's AskUserQuestion shape so a consumer (e.g. a desktop pet) can
+        /// render the same interactive answer card and reply via the sync
+        /// `hookSpecificOutput.decision.updatedInput.answers` channel, with zero
+        /// special-casing. The hook returns the answers; the tool gate injects
+        /// them through the idempotent `submit_ask_user_question_response`.
+        tool_name: String,
+        /// `{ questions: [<Claude AskUserQuestion schema>], context? }` — the
+        /// questions mapped to `{ question, options: [{label, description}],
+        /// multiSelect }` so the consumer's existing card renders unchanged.
+        tool_input: serde_json::Value,
     },
     ElicitationResult {
         #[serde(flatten)]
@@ -553,6 +594,28 @@ pub struct HookSpecificOutput {
     pub permission_decision: Option<String>,
     #[serde(default)]
     pub permission_decision_reason: Option<String>,
+    #[serde(default)]
+    pub updated_input: Option<serde_json::Value>,
+    /// Nested permission-decision object (`decision: { behavior, message,
+    /// updatedInput }`) used by the **PermissionRequest** event's allow/deny
+    /// takeover — distinct from the flat `permissionDecision` string PreToolUse
+    /// uses. A hook (e.g. a desktop pet) returns this to approve/deny a pending
+    /// tool prompt.
+    #[serde(default)]
+    pub decision: Option<PermissionDecisionObject>,
+}
+
+/// The `hookSpecificOutput.decision` object a `PermissionRequest` hook returns
+/// to take over a tool approval prompt. `behavior` is `allow` / `deny`;
+/// `message` carries a deny reason; `updated_input` (allow only) can rewrite the
+/// tool input. Mirrors the SDK permission-result shape.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionDecisionObject {
+    #[serde(default)]
+    pub behavior: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
     #[serde(default)]
     pub updated_input: Option<serde_json::Value>,
 }
@@ -733,6 +796,7 @@ mod tests {
                 hook_event_name: "PostToolUse".into(),
                 agent_id: Some("ha-main".into()),
                 agent_type: None,
+                parent_session_id: None,
             },
             tool_name: "Write".into(),
             tool_input: serde_json::json!({"path": "/a"}),
@@ -760,6 +824,7 @@ mod tests {
             hook_event_name: "x".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         };
         let pre = HookInput::PreToolUse {
             common: common.clone(),
@@ -778,6 +843,7 @@ mod tests {
             common: common.clone(),
             status: "completed".into(),
             stop_hook_active: false,
+            assistant_message: None,
         };
         assert_eq!(stop.matcher_target(), None);
         let fail = HookInput::StopFailure {
@@ -798,6 +864,7 @@ mod tests {
             hook_event_name: "StopFailure".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         };
         let fail = HookInput::StopFailure {
             common,

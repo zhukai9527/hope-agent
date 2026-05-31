@@ -288,6 +288,7 @@ mod tests {
             hook_event_name: event.into(),
             agent_id: Some("ha-main".into()),
             agent_type: None,
+            parent_session_id: None,
         }
     }
 

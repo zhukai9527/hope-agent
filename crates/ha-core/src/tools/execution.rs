@@ -335,6 +335,16 @@ impl ToolExecContext {
         } else {
             crate::hooks::PermissionMode::Default
         };
+        // Sub-agent tool events carry the parent session id (Claude-Code-aligned)
+        // so a consumer (e.g. a desktop pet) can tell sub-agent activity apart
+        // from the user-facing conversation. Only sub-agents have a parent —
+        // gate on depth so the main-conversation path does zero extra work, and
+        // reuse the one session lookup the parent id needs.
+        let parent_session_id = if self.subagent_depth > 0 && !session_id.is_empty() {
+            crate::session::lookup_session_meta(Some(&session_id)).and_then(|m| m.parent_session_id)
+        } else {
+            None
+        };
         crate::hooks::CommonHookInput {
             session_id,
             transcript_path,
@@ -346,6 +356,7 @@ impl ToolExecContext {
             // doesn't carry — leave it unset rather than duplicating agent_id.
             // (A real subagent-type field lands with the subagent hook phase.)
             agent_type: None,
+            parent_session_id,
         }
     }
 
@@ -772,6 +783,37 @@ mod pre_tool_gate_tests {
     }
 }
 
+/// Build the Claude Code-shaped `(tool_name, tool_input)` a decision-capable
+/// hook consumer (the desktop-pet `PermissionRequest` card) renders. The hooks
+/// matcher maps Claude names → internal at config-compile time
+/// ([`crate::hooks::matcher`]); this is the inverse for the *outbound* payload,
+/// plus a `path`→`file_path` mirror, so a consumer reads `tool_input.command` /
+/// `tool_input.file_path` exactly as it does for Claude's payload. Hope
+/// Agent-specific tools with no Claude analogue pass through with their internal
+/// name unchanged.
+pub(super) fn claude_shaped_tool(name: &str, args: &Value) -> (String, Value) {
+    let claude_name = match name {
+        "exec" => "Bash",
+        "write" => "Write",
+        "edit" => "Edit",
+        "read" => "Read",
+        "web_fetch" => "WebFetch",
+        other => other,
+    };
+    let mut input = args.clone();
+    // Hope Agent's file tools take `path`; Claude's payload (and the consumer)
+    // expect `file_path`. Mirror it when absent so the consumer's field read
+    // resolves; leave an existing `file_path` (the documented alias) untouched.
+    if let Some(obj) = input.as_object_mut() {
+        if !obj.contains_key("file_path") {
+            if let Some(p) = obj.get("path").cloned() {
+                obj.insert("file_path".to_string(), p);
+            }
+        }
+    }
+    (claude_name.to_string(), input)
+}
+
 /// Show the user approval prompt and map the response to a result. `Ok(())`
 /// means proceed (approved, or timed-out-with-`proceed` policy); `Err` blocks
 /// the call. `reason_payload` drives the dialog's reason banner (`None` =
@@ -798,6 +840,7 @@ async fn run_tool_approval(
         cwd,
         ctx.session_id.as_deref(),
         reason_payload,
+        Some(claude_shaped_tool(name, args)),
     )
     .await
     {

@@ -302,7 +302,8 @@ pub(crate) async fn finalize_turn_context(
         // the failure category + error text. Mutually exclusive with the
         // success-path `Stop` fired in the engine, so a turn fires exactly one.
         if reason.is_user_initiated() {
-            crate::hooks::fire_stop(session_id, None, "interrupted");
+            // Interrupted before any complete reply — no assistant text to carry.
+            crate::hooks::fire_stop(session_id, None, "interrupted", None);
         } else {
             crate::hooks::fire_stop_failure(
                 session_id,

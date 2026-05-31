@@ -24,15 +24,16 @@
 
 按落地状态分三组。**Matcher 目标**列说明触发时 matcher 与哪个字段比对。**可阻断**列说明 `exit 2` / `{"decision":"block"}` 是否真能拦住流程。**触发位置**是当前代码的埋点（以代码为准）。
 
-### 2.1 真触发 · 阻断型（3）
+### 2.1 真触发 · 阻断 / 决策型（4）
 
 | 事件 | Matcher 目标 | 触发位置 | 备注 |
 |------|-------------|---------|------|
 | `UserPromptSubmit` | 无（始终触发） | `agent::preflight::user_prompt_preflight` → `hooks::fire_user_prompt_submit`（`mod.rs`）| `block`/`deny`/`continue:false` 拦住 prompt；可注入 `additionalContext` |
 | `PreToolUse` | `tool_name` | `tools::execution::fire_pre_tool_use_hook`（`execution.rs`，可见性闸后、权限引擎前）| `deny`/`ask`/`defer`/`allow` 决策 + `updatedInput` 改写入参 |
 | `PreCompact` | `trigger` ∈ {manual, auto} | `agent::context`（`run_compaction` 入口，使用率 ≥ `reactiveTriggerRatio` 时）| `block` 跳过本次压缩；使用率 ≥ `CACHE_TTL_EMERGENCY_RATIO` 强制覆盖 |
+| `PermissionRequest` | `command`（被审批的命令 / 工具） | `tools::approval::check_and_request_approval` → `hooks::dispatch_permission_request`（`mod.rs`，**spawned**）| **决策型**：hook 返回 `hookSpecificOutput.decision.behavior`（allow/deny，§8）经**幂等** `submit_approval_response` 接管审批，与 GUI / IM 决策源竞争（第一个生效）；deadline 钳到 `approval_timeout_secs`。非阻断式——不挂起 dispatch 调用方，主流程仍 `rx.await` 等任一决策源。payload 额外携带 Claude 形状 `tool_name` + `tool_input`（`tools::execution::claude_shaped_tool` 把内部名映射到 CC 名、`path`→`file_path` 镜像）供消费方渲染审批卡，**不**参与 matcher（matcher 仍用 `command`）|
 
-### 2.2 真触发 · 观察型（21）
+### 2.2 真触发 · 观察型（20）
 
 `block`/`deny` 决策被 `is_observation_only`（`types.rs`）降级为非阻断 + log。
 
@@ -44,8 +45,7 @@
 | `PostToolUse` | `tool_name` | `agent::streaming_loop::fire_post_tool_use_hook`（成功路径）|
 | `PostToolUseFailure` | `tool_name` | 同上（`is_error=true` 路径）|
 | `PostToolBatch` | 无 | `agent::streaming_loop`（每 API round 全部 tool settle 后一次）|
-| `PermissionRequest` | `tool_name` | `hooks::fire_permission_request`（`mod.rs`）|
-| `PermissionDenied` | `tool_name` | `hooks::fire_permission_denied`（`mod.rs`）|
+| `PermissionDenied` | `command` | `hooks::fire_permission_denied`（`mod.rs`）|
 | `Stop` | 无 | `hooks::fire_stop`（`mod.rs`，自然结束）|
 | `StopFailure` | error type | `chat_engine::finalize`（最终分类错误）|
 | `PostCompact` | `trigger` | `agent::context`（压缩完成后）|
@@ -56,10 +56,11 @@
 | `ConfigChange` | `source` | `config::persistence::fire_config_change` |
 | `CwdChanged` | 无 | `session::db::fire_cwd_changed` |
 | `FileChanged` | 文件绝对路径 | `tools::{write,edit,apply_patch}::fire_file_changed` |
-| `Elicitation` / `ElicitationResult` | 无 | `tools::ask_user_question`（原生问答触发，非 MCP）|
+| `Elicitation` / `ElicitationResult` | 无 | `tools::ask_user_question`（原生问答；`Elicitation` 决策型可交互，见下注）|
 
-> `Stop` / `StopFailure` 当前 fire-and-forget（未实现 block-to-continue）；落地该语义时移出 `is_observation_only`。
-> `Elicitation` / `ElicitationResult` 已重新用于原生 `ask_user_question`（payload 用 `request_id` / `question_count`，**非**官方 MCP elicitation schema）；MCP 落地后对齐官方 schema（见 Roadmap）。
+> `Stop` / `StopFailure` 当前 fire-and-forget（未实现 block-to-continue）；落地该语义时移出 `is_observation_only`。`Stop` payload 携带本轮 `assistant_message`（最终回复文本，空则省略，对齐官方 Stop 超集字段）。
+> `Elicitation` 决策型可交互：以 Claude AskUserQuestion 形状（`tool_name="AskUserQuestion"` + `tool_input.questions`）同步发出，消费方（如桌面宠物）渲染答题卡、经 `hookSpecificOutput.decision.{behavior:"allow", updatedInput.answers}` 回包，答案走**幂等** `submit_ask_user_question_response` 注入（与 GUI / IM 答案源竞争，第一个生效）；`deny` / 空回包（取消 / 超时）把裁决留给其它源。`ElicitationResult` 纯观察（`request_id` / `status`）。两者 payload **非**官方 MCP elicitation schema（Roadmap 对齐）。入口 `hooks::dispatch_elicitation`（`mod.rs`，由 `tools::ask_user_question` spawn，deadline 钳到 ask-user 超时）。
+> **`parent_session_id`（公共字段）**：子 agent 上下文的工具事件携带父 session id（`common_hook_input` 仅对 `subagent_depth>0` 复用既有 session 查询填入），主对话省略——对齐官方子 agent payload，供消费方区分子 agent 活动与用户对话。`PermissionRequest` **从观察型移入决策型**（§2.1），允许 hook 接管审批。
 
 ### 2.3 协议保留 · 不触发（4）
 
@@ -243,7 +244,7 @@ matcher 目标按事件取：`tool_name`（PreToolUse / PostToolUse / …）、`
 | `exit 0` + stdout 非 JSON | **仅** SessionStart / UserPromptSubmit 当作 `additionalContext`；其它忽略 |
 | 其它非零 / `None` | 非阻断（inert）|
 
-JSON stdout schema（`HookOutput`，camelCase）：`continue` / `stopReason` / `suppressOutput` / `systemMessage` / `decision`（top-level，block/deny/ask）/ `reason` / `hookSpecificOutput.{additionalContext, sessionTitle, permissionDecision, permissionDecisionReason, updatedInput}`。`permissionDecision`（allow/deny/ask）**仅 PreToolUse** 生效，优先于 top-level `decision`。
+JSON stdout schema（`HookOutput`，camelCase）：`continue` / `stopReason` / `suppressOutput` / `systemMessage` / `decision`（top-level，block/deny/ask）/ `reason` / `hookSpecificOutput.{additionalContext, sessionTitle, permissionDecision, permissionDecisionReason, updatedInput, decision}`。`permissionDecision`（allow/deny/ask）**仅 PreToolUse** 生效，优先于 top-level `decision`。`hookSpecificOutput.decision`（嵌套对象 `{behavior: allow|deny, message?, updatedInput?}`，SDK 风格）**仅 PermissionRequest / Elicitation** 生效——`allow` 置 `permission_allow`（PermissionRequest 自动批准审批 / Elicitation 用 `updatedInput.answers` 承载 ask-user 答案并注入），`deny` 拒绝（带 `message` 作 reason）；与 PreToolUse 的扁平 `permissionDecision` 字符串互不串用。
 
 ---
 

@@ -170,6 +170,20 @@ pub async fn submit_approval_response(request_id: &str, response: ApprovalRespon
         let session_id = entry.session_id.clone();
         let _ = entry.sender.send(response);
         drop(pending);
+        // Single chokepoint for EVERY external resolution (GUI dialog, IM button,
+        // desktop-pet hook): tell every UI surface this approval is settled so a
+        // card opened on one surface dismisses when another answers first.
+        // Mirrors `ask_user_resolved`; the GUI's own click already removed its
+        // card optimistically, so the echo is a harmless no-op there.
+        if let Some(bus) = crate::globals::get_event_bus() {
+            bus.emit(
+                "approval_resolved",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "session_id": session_id,
+                }),
+            );
+        }
         emit_pending_interactions_changed(session_id.as_deref());
         Ok(())
     } else {
@@ -296,6 +310,11 @@ pub(crate) async fn check_and_request_approval(
     cwd: &str,
     session_id: Option<&str>,
     reason: Option<ApprovalReasonPayload>,
+    // Claude Code-shaped `(tool_name, tool_input)` for the decision-capable
+    // `PermissionRequest` hook (the desktop-pet approval card). `None` leaves the
+    // hook payload without a structured identity — the consumer falls back to
+    // `command`. Purely for the hook's display; never gates the approval itself.
+    hook_tool: Option<(String, serde_json::Value)>,
 ) -> std::result::Result<ApprovalResponse, ApprovalCheckError> {
     let request_id = create_session_id();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -339,9 +358,40 @@ pub(crate) async fn check_and_request_approval(
             "permission_prompt",
             command,
         );
-        // PermissionRequest hook (observation): the structured permission event,
-        // matchable on the command. Single chokepoint for every approval prompt.
-        crate::hooks::fire_permission_request(session_id, command);
+        // PermissionRequest hook (decision-capable): let a hook (e.g. a desktop
+        // pet) take over this approval. Spawned so the main flow keeps waiting
+        // on `rx` — the hook's allow/deny is fed back through the SAME idempotent
+        // `submit_approval_response`, so whichever source (GUI / IM / hook) lands
+        // a decision first wins and the rest are harmless no-ops. The hook's
+        // deadline is the approval timeout, so its prompt stays live exactly as
+        // long as the GUI/IM prompt; `0` (no timeout) leaves the hook on its own
+        // default so a never-answered hook can't pin a blocked child forever.
+        {
+            let request_id = request_id.clone();
+            let session_id = session_id.map(|s| s.to_string());
+            let command = command.to_string();
+            let hook_tool = hook_tool.clone();
+            let max_wait = (timeout_secs > 0).then(|| std::time::Duration::from_secs(timeout_secs));
+            tokio::spawn(async move {
+                let outcome = crate::hooks::dispatch_permission_request(
+                    session_id.as_deref(),
+                    &command,
+                    hook_tool,
+                    max_wait,
+                )
+                .await;
+                let response = if outcome.permission_allow {
+                    Some(ApprovalResponse::AllowOnce)
+                } else if matches!(outcome.decision, crate::hooks::HookDecision::Deny { .. }) {
+                    Some(ApprovalResponse::Deny)
+                } else {
+                    None
+                };
+                if let Some(response) = response {
+                    let _ = submit_approval_response(&request_id, response).await;
+                }
+            });
+        }
         app_info!(
             "tool",
             "approval",

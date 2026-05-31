@@ -323,6 +323,25 @@ export function usePlanMode(
     return getTransport().listen("ask_user_request", handler)
   }, [currentSessionId])
 
+  // Dismiss the pending question block when its group reaches a terminal state
+  // via ANY path — an answer submitted from IM or a desktop-pet hook, or a
+  // timeout. The block otherwise only clears on its own GUI submit, so an
+  // external answer would leave a stale, still-interactive card. Matched on the
+  // globally unique `requestId` (a stale id for another session is a no-op).
+  useEffect(() => {
+    const handler = (raw: unknown) => {
+      // parsePayload normalizes the HTTP transport's string frames (Tauri
+      // already delivers an object); a bare cast would miss the string case and
+      // never dismiss on HTTP.
+      const requestId = parsePayload<{ requestId?: string }>(raw)?.requestId
+      if (!requestId) return
+      setPendingQuestionGroup((prev) =>
+        prev && prev.requestId === requestId ? null : prev
+      )
+    }
+    return getTransport().listen("ask_user_resolved", handler)
+  }, [])
+
   // Listen for plan_subagent_status events (plan sub-agent running/completed)
   useEffect(() => {
     return getTransport().listen("plan_subagent_status", (raw) => {

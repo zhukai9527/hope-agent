@@ -460,6 +460,10 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
                         &session_cwd,
                         ctx.session_id.as_deref(),
                         reason_payload,
+                        Some(super::execution::claude_shaped_tool(
+                            TOOL_EXEC,
+                            &serde_json::json!({ "command": command }),
+                        )),
                     )
                     .await
                     {

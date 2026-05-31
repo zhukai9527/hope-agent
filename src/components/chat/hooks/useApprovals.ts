@@ -34,6 +34,31 @@ export function useApprovals(currentSessionId: string | null): UseApprovalsRetur
     })
   }, [])
 
+  // Dismiss a card when its approval is settled via ANY path other than this
+  // GUI's own click — a desktop-pet hook / IM button answering first
+  // (`approval_resolved`), or a timeout (`approval_timed_out`). Without this the
+  // card only clears on its own submit, so an externally-answered approval would
+  // leave a stale, still-clickable dialog. Matched on the globally unique
+  // `request_id` (a stale id for another session just no-ops the filter).
+  useEffect(() => {
+    const transport = getTransport()
+    const dismiss = (raw: unknown) => {
+      try {
+        const requestId = parsePayload<{ request_id?: string }>(raw)?.request_id
+        if (!requestId) return
+        setAllApprovalRequests((prev) => prev.filter((r) => r.request_id !== requestId))
+      } catch (e) {
+        logger.error("ui", "ChatScreen::approval", "Failed to parse approval resolution", e)
+      }
+    }
+    const offResolved = transport.listen("approval_resolved", dismiss)
+    const offTimedOut = transport.listen("approval_timed_out", dismiss)
+    return () => {
+      offResolved()
+      offTimedOut()
+    }
+  }, [])
+
   async function handleApprovalResponse(
     requestId: string,
     response: "allow_once" | "allow_always" | "deny",
