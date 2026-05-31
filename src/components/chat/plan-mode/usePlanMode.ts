@@ -324,10 +324,11 @@ export function usePlanMode(
   }, [currentSessionId])
 
   // Dismiss the pending question block when its group reaches a terminal state
-  // via ANY path — an answer submitted from IM or a desktop-pet hook, or a
-  // timeout. The block otherwise only clears on its own GUI submit, so an
-  // external answer would leave a stale, still-interactive card. Matched on the
-  // globally unique `requestId` (a stale id for another session is a no-op).
+  // via ANY path — an answer submitted from IM or a desktop-pet hook
+  // (`ask_user_resolved`). The block otherwise only clears on its own GUI
+  // submit, so an external answer would leave a stale, still-interactive card.
+  // Matched on the globally unique `requestId` (a stale id for another session
+  // is a no-op).
   useEffect(() => {
     const handler = (raw: unknown) => {
       try {
@@ -346,6 +347,22 @@ export function usePlanMode(
     }
     return getTransport().listen("ask_user_resolved", handler)
   }, [])
+
+  // Mirror backend timeout cleanup locally so expired questions no longer
+  // accept responses in the active chat UI (`ask_user_timed_out`).
+  useEffect(() => {
+    return getTransport().listen("ask_user_timed_out", (raw) => {
+      try {
+        const payload = parsePayload<{ requestId?: string; sessionId?: string }>(raw)
+        if (payload.sessionId !== currentSessionId) return
+        setPendingQuestionGroup((prev) =>
+          prev?.requestId === payload.requestId ? null : prev,
+        )
+      } catch {
+        // ignore parse errors
+      }
+    })
+  }, [currentSessionId])
 
   // Listen for plan_subagent_status events (plan sub-agent running/completed)
   useEffect(() => {

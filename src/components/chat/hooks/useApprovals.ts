@@ -36,10 +36,11 @@ export function useApprovals(currentSessionId: string | null): UseApprovalsRetur
 
   // Dismiss a card when its approval is settled via ANY path other than this
   // GUI's own click — a desktop-pet hook / IM button answering first
-  // (`approval_resolved`), or a timeout (`approval_timed_out`). Without this the
-  // card only clears on its own submit, so an externally-answered approval would
-  // leave a stale, still-clickable dialog. Matched on the globally unique
-  // `request_id` (a stale id for another session just no-ops the filter).
+  // (`approval_resolved`), or a backend-enforced timeout (`approval_timed_out`).
+  // Without this the card only clears on its own submit, so an externally-
+  // answered or expired approval would leave a stale, still-clickable dialog.
+  // Both events carry snake_case `request_id`; matched on that globally unique
+  // id (a stale id for another session just no-ops the filter).
   useEffect(() => {
     const transport = getTransport()
     const dismiss = (raw: unknown) => {
