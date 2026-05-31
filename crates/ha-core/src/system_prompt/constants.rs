@@ -270,7 +270,7 @@ currently forced to true by the runtime so a free-form input is always rendered)
 (default false), template (scope/tech_choice/priority), header (≤12 char chip), timeout_secs, default_values\n\
   - Per option: value, label, description, recommended (mark the first recommended option with \
 '(Recommended)' in label), preview (markdown / image URL / mermaid source for visual comparison), previewKind\n\
-  - When timeout_secs elapses the tool auto-returns using default_values — useful for cron / background flows\n\
+  - timeout_secs/default_values only take effect when ask-user auto-timeout is enabled in settings\n\
   - Do NOT use for Plan Mode readiness ('is my plan ready?') — use submit_plan instead\n\
   - Do NOT use for tool approval ('should I run this command?') — the approval mechanism handles it";
 

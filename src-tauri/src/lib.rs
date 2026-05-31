@@ -437,7 +437,9 @@ pub fn run() {
             commands::config::get_tool_timeout,
             commands::config::set_tool_timeout,
             commands::config::get_approval_timeout,
+            commands::config::get_approval_timeout_enabled,
             commands::config::set_approval_timeout,
+            commands::config::set_approval_timeout_enabled,
             commands::config::get_approval_timeout_action,
             commands::config::set_approval_timeout_action,
             // Tool result disk persistence
@@ -452,7 +454,9 @@ pub fn run() {
             commands::config::get_plan_subagent,
             commands::config::set_plan_subagent,
             commands::config::get_ask_user_question_timeout,
+            commands::config::get_ask_user_question_timeout_enabled,
             commands::config::set_ask_user_question_timeout,
+            commands::config::set_ask_user_question_timeout_enabled,
             // Recap
             commands::config::get_recap_config,
             commands::config::save_recap_config,
