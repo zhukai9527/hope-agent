@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "Tệp",
+    "jumpToFile": "Hiển thị trong trình duyệt tệp",
     "copied": "Đã sao chép",
     "copyFailed": "Sao chép thất bại",
     "copySelection": "Sao chép vùng chọn",

@@ -59,6 +59,9 @@ export interface FileBrowserViewProps {
   editable?: boolean
   layout?: "split" | "stacked"
   onQuote?: (payload: QuotePayload) => void
+  /** Reveal + select this file (from a composer quote-chip click). The nonce
+   *  re-triggers selection even when the path is unchanged. */
+  revealFile?: { path: string; name: string; nonce: number } | null
   className?: string
 }
 
@@ -69,6 +72,7 @@ export function FileBrowserView({
   editable = false,
   layout = "split",
   onQuote,
+  revealFile,
   className,
 }: FileBrowserViewProps) {
   const { t } = useTranslation()
@@ -109,6 +113,27 @@ export function FileBrowserView({
     max: 560,
     onChange: setTreeWidth,
   })
+
+  // Reveal a file requested from a composer quote chip: return to the host scope
+  // (quotes reference host-scope files) and select it. The tree expands the
+  // ancestor chain + scrolls the row into view in response to `selectedPath`
+  // (see FileBrowserTree), so this stays pure render-phase state — no expansion
+  // side effects and no writes to the wrong (worktree) expansion scope. The null
+  // sentinel makes the FIRST mount fire: the panel mounts fresh on the very
+  // click that opens it, so seeding from the nonce would no-op the reveal.
+  const [trackedRevealNonce, setTrackedRevealNonce] = useState<number | null>(null)
+  if (revealFile && revealFile.nonce !== trackedRevealNonce) {
+    setTrackedRevealNonce(revealFile.nonce)
+    setActiveWorktree(null)
+    setSelected({
+      name: revealFile.name,
+      relPath: revealFile.path,
+      isDir: false,
+      isSymlink: false,
+      size: null,
+      modifiedMs: null,
+    })
+  }
 
   // Read-only git context (branch + worktrees) for the active root. The
   // host-change reset above clears stale git info; here we only ever set it

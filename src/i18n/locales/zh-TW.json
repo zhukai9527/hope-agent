@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "檔案",
+    "jumpToFile": "在檔案瀏覽器中顯示",
     "copied": "已複製",
     "copyFailed": "複製失敗",
     "copySelection": "複製所選",

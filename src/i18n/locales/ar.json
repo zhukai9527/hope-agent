@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "الملفات",
+    "jumpToFile": "عرض في متصفح الملفات",
     "copied": "تم النسخ",
     "copyFailed": "فشل النسخ",
     "copySelection": "نسخ التحديد",

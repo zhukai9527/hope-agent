@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "Arquivos",
+    "jumpToFile": "Mostrar no navegador de arquivos",
     "copied": "Copiado",
     "copyFailed": "Falha ao copiar",
     "copySelection": "Copiar seleção",

@@ -78,6 +78,8 @@ interface ChatInputProps {
   onRemoveFile: (index: number) => void
   pendingQuotes?: PendingFileQuote[]
   onRemoveQuote?: (index: number) => void
+  /** Click a staged quote chip to reveal that file in the file browser. */
+  onJumpToQuote?: (q: PendingFileQuote) => void
   pendingMessage?: string | null
   onCancelPending?: () => void
   onDiscardPending?: () => void
@@ -130,6 +132,7 @@ export default function ChatInput({
   onRemoveFile,
   pendingQuotes,
   onRemoveQuote,
+  onJumpToQuote,
   pendingMessage,
   onCancelPending,
   onDiscardPending,
@@ -570,18 +573,27 @@ export default function ChatInput({
               return (
                 <span
                   key={`${q.path}:${lines}:${index}`}
-                  className="inline-flex max-w-[260px] items-center gap-1 rounded-md border border-border/60 bg-secondary/40 py-0.5 pl-2 pr-1 text-xs text-foreground/80"
+                  className="inline-flex max-w-[260px] items-center gap-0.5 rounded-md border border-border/60 bg-secondary/40 py-0.5 pl-1 pr-1 text-xs text-foreground/80"
                 >
-                  <Quote className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">
-                    {q.name}
-                    <span className="ml-1 text-muted-foreground">L{lines}</span>
-                  </span>
+                  <IconTip label={t("fileBrowser.jumpToFile", "Show in file browser")}>
+                    <button
+                      type="button"
+                      onClick={() => onJumpToQuote?.(q)}
+                      disabled={!onJumpToQuote}
+                      className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-background/70 disabled:pointer-events-none"
+                    >
+                      <Quote className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <span className="truncate">
+                        {q.name}
+                        <span className="ml-1 text-muted-foreground">L{lines}</span>
+                      </span>
+                    </button>
+                  </IconTip>
                   {onRemoveQuote && (
                     <button
                       type="button"
                       onClick={() => onRemoveQuote(index)}
-                      className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-background/70 hover:text-foreground"
+                      className="rounded p-0.5 text-muted-foreground hover:bg-background/70 hover:text-foreground"
                     >
                       <X className="h-3 w-3" />
                     </button>

@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "파일",
+    "jumpToFile": "파일 브라우저에서 표시",
     "copied": "복사됨",
     "copyFailed": "복사 실패",
     "copySelection": "선택 항목 복사",

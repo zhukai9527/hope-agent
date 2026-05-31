@@ -46,6 +46,8 @@ interface FileBrowserPanelProps {
   panelWidth: number
   onPanelWidthChange: (w: number) => void
   onQuote?: (payload: QuotePayload) => void
+  /** A click on a quote chip in the composer: reveal + select this file. */
+  revealFile?: { path: string; name: string; nonce: number } | null
   onClose: () => void
 }
 
@@ -58,6 +60,7 @@ export function FileBrowserPanel({
   panelWidth,
   onPanelWidthChange,
   onQuote,
+  revealFile,
   onClose,
 }: FileBrowserPanelProps) {
   const { t } = useTranslation()
@@ -223,6 +226,7 @@ export function FileBrowserPanel({
         editable
         layout="split"
         onQuote={onQuote}
+        revealFile={revealFile}
         className="min-h-0 flex-1"
       />
     </div>

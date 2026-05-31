@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "Fail",
+    "jumpToFile": "Tunjuk dalam pelayar fail",
     "copied": "Disalin",
     "copyFailed": "Gagal menyalin",
     "copySelection": "Salin pilihan",

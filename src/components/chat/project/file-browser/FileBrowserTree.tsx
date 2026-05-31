@@ -109,6 +109,23 @@ export function FileBrowserTree({
     if (!rootState && fs.available) void fs.loadDir("")
   }, [rootState, fs])
 
+  // Reveal support: when the selection is set externally (a composer quote-chip
+  // click) onto a collapsed path, expand its ancestor directories so the row
+  // gets rendered + highlighted. This runs in an effect (not render) so the
+  // localStorage write inside setOpen stays out of render, and `expansion` is
+  // already the active (host) scope. The selected row scrolls itself into view
+  // once mounted (see TreeNode).
+  useEffect(() => {
+    if (!selectedPath) return
+    const parts = selectedPath.split("/").filter(Boolean)
+    parts.pop() // ancestors only — drop the file name
+    let dir = ""
+    for (const part of parts) {
+      dir = dir ? `${dir}/${part}` : part
+      expansion.setOpen(dir, true)
+    }
+  }, [selectedPath, expansion])
+
   const ctx: TreeContext = {
     fs,
     expansion,
@@ -221,6 +238,7 @@ function TreeNode({
   const { fs, expansion } = ctx
   const expanded = entry.isDir && expansion.isExpanded(entry.relPath)
   const childState = expanded ? fs.getDir(entry.relPath) : undefined
+  const rowRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (expanded && !childState) void fs.loadDir(entry.relPath)
@@ -229,6 +247,12 @@ function TreeNode({
   const icon = iconForEntry(entry.name, entry.isDir, expanded)
   const selected = ctx.selectedPath === entry.relPath
   const isRenaming = ctx.renaming === entry.relPath
+
+  // Scroll the selected row into view (e.g. after a reveal expands ancestors to
+  // it). `nearest` is a no-op when the row is already visible (ordinary clicks).
+  useEffect(() => {
+    if (selected) rowRef.current?.scrollIntoView({ block: "nearest" })
+  }, [selected])
 
   const onActivate = useCallback(() => {
     if (entry.isDir) expansion.toggle(entry.relPath)
@@ -267,6 +291,7 @@ function TreeNode({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            ref={rowRef}
             className={cn(
               ROW,
               selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",

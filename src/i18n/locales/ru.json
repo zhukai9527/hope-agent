@@ -1032,6 +1032,7 @@
   },
   "fileBrowser": {
     "panelTitle": "Файлы",
+    "jumpToFile": "Показать в файловом браузере",
     "copied": "Скопировано",
     "copyFailed": "Ошибка копирования",
     "copySelection": "Копировать выделенное",

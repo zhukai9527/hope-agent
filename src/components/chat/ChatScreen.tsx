@@ -271,6 +271,14 @@ export default function ChatScreen({
   const [showBrowserPanel, setShowBrowserPanel] = useState(false)
   const browserPanelDismissedRef = useRef(false)
   const [showFilesPanel, setShowFilesPanel] = useState(false)
+  // Clicking a staged quote chip reveals that file in the browser. The nonce
+  // makes each click a fresh signal, even when re-revealing the same path.
+  const revealQuoteNonce = useRef(0)
+  const [revealFile, setRevealFile] = useState<{
+    path: string
+    name: string
+    nonce: number
+  } | null>(null)
   const [showMacControlPanel, setShowMacControlPanel] = useState(false)
   const macControlPanelDismissedRef = useRef(false)
 
@@ -1499,6 +1507,12 @@ export default function ChatScreen({
     },
     [stream],
   )
+  // Reveal a quoted file in the browser: open the files panel + signal target.
+  const handleQuoteJump = useCallback((q: QuotePayload) => {
+    setShowFilesPanel(true)
+    revealQuoteNonce.current += 1
+    setRevealFile({ path: q.path, name: q.name, nonce: revealQuoteNonce.current })
+  }, [])
   const rightPanelKey = renderedExclusiveRightPanel
   const lastRightPanelKeyRef = useRef<string | null>(rightPanelKey)
 
@@ -1879,6 +1893,7 @@ export default function ChatScreen({
                     onRemoveQuote={(index) =>
                       stream.setPendingQuotes((prev) => prev.filter((_, i) => i !== index))
                     }
+                    onJumpToQuote={handleQuoteJump}
                     pendingMessage={stream.pendingMessage}
                     onCancelPending={() => {
                       stream.setInput(stream.pendingMessage || "")
@@ -2028,6 +2043,7 @@ export default function ChatScreen({
             panelWidth={rightPanelWidth}
             onPanelWidthChange={setRightPanelWidth}
             onQuote={handleFileQuote}
+            revealFile={revealFile}
             onClose={() => setShowFilesPanel(false)}
           />
 
