@@ -370,7 +370,8 @@ pub(crate) async fn check_and_request_approval(
             let request_id = request_id.clone();
             let session_id = session_id.map(|s| s.to_string());
             let command = command.to_string();
-            let hook_tool = hook_tool.clone();
+            // `hook_tool` is consumed only here — move it into the task rather
+            // than cloning the (possibly multi-MB) tool args a second time.
             let max_wait = (timeout_secs > 0).then(|| std::time::Duration::from_secs(timeout_secs));
             tokio::spawn(async move {
                 let outcome = crate::hooks::dispatch_permission_request(
@@ -380,10 +381,21 @@ pub(crate) async fn check_and_request_approval(
                     max_wait,
                 )
                 .await;
-                let response = if outcome.permission_allow {
-                    Some(ApprovalResponse::AllowOnce)
-                } else if matches!(outcome.decision, crate::hooks::HookDecision::Deny { .. }) {
+                // Deny / Block win over allow (fail-safe). `aggregate` OR-folds
+                // `permission_allow` but rank-orders the decision, so two
+                // PermissionRequest hooks that disagree yield BOTH
+                // permission_allow=true AND decision=Deny — check the deny first
+                // so one hook's allow can't override another's (or this hook's
+                // own) deny. A top-level `decision:"block"` (the PreToolUse-style
+                // reject a hook author may reach for) counts as a deny too.
+                let response = if matches!(
+                    outcome.decision,
+                    crate::hooks::HookDecision::Deny { .. }
+                        | crate::hooks::HookDecision::Block { .. }
+                ) {
                     Some(ApprovalResponse::Deny)
+                } else if outcome.permission_allow {
+                    Some(ApprovalResponse::AllowOnce)
                 } else {
                     None
                 };
@@ -441,6 +453,16 @@ pub(crate) async fn check_and_request_approval(
             // surfaced on a channel without buttons, the user would
             // otherwise see the prompt linger forever.
             crate::channel::worker::approval::drop_pending_by_request_id(&request_id).await;
+            // Dismiss the GUI / desktop-pet card too: the pending entry is gone
+            // but no decision was ever submitted, so emit the same resolution
+            // signal the submit path does or the card lingers, still clickable.
+            if let Some(bus) = crate::globals::get_event_bus() {
+                bus.emit(
+                    "approval_resolved",
+                    serde_json::json!({ "request_id": request_id, "session_id": session_id }),
+                );
+            }
+            emit_pending_interactions_changed(session_id);
             if let Some(logger) = crate::get_logger() {
                 logger.log(
                     "warn",

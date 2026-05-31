@@ -529,33 +529,44 @@ fn map_claude_answers_to_ha(
         let Some(answer_str) = map.get(q.text.fallback_text()).and_then(|v| v.as_str()) else {
             continue;
         };
-        let pieces: Vec<&str> = if q.multi_select {
+        let answer_str = answer_str.trim();
+        // Match the WHOLE answer against a single option label first. This
+        // covers single-select, and a multi-select pick whose own label contains
+        // the `", "` join separator (which the split below would otherwise
+        // shatter into non-matching fragments, losing the selection). Only fall
+        // back to `", "` splitting when the whole string matches no option.
+        let pieces: Vec<&str> = if answer_str.is_empty() {
+            Vec::new()
+        } else if q
+            .options
+            .iter()
+            .any(|o| o.label.fallback_text() == answer_str)
+        {
+            vec![answer_str]
+        } else if q.multi_select {
             answer_str
                 .split(", ")
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .collect()
         } else {
-            let t = answer_str.trim();
-            if t.is_empty() {
-                Vec::new()
-            } else {
-                vec![t]
-            }
+            vec![answer_str]
         };
         let mut selected = Vec::new();
-        let mut custom_input: Option<String> = None;
+        // Accumulate EVERY unmatched piece — a single `Option` would keep only
+        // the last free-form answer of a multi-select reply.
+        let mut custom: Vec<String> = Vec::new();
         for piece in pieces {
             match q.options.iter().find(|o| o.label.fallback_text() == piece) {
                 Some(opt) => selected.push(opt.value.clone()),
                 // A piece matching no option label → free-form custom answer.
-                None => custom_input = Some(piece.to_string()),
+                None => custom.push(piece.to_string()),
             }
         }
         out.push(AskUserQuestionAnswer {
             question_id: q.question_id.clone(),
             selected,
-            custom_input,
+            custom_input: (!custom.is_empty()).then(|| custom.join(", ")),
         });
     }
     (!out.is_empty()).then_some(out)
@@ -676,5 +687,37 @@ mod hopet_mapping_tests {
         assert!(map_claude_answers_to_ha(&qs, &json!({})).is_none());
         // An answers map with no matching question text → None.
         assert!(map_claude_answers_to_ha(&qs, &json!({ "别的问题": "x" })).is_none());
+    }
+
+    #[test]
+    fn multi_select_label_with_comma_space_is_matched_whole() {
+        // An option label that itself contains the ", " join separator must be
+        // matched as a whole, not shattered by the split.
+        let qs = vec![question(
+            "q_city",
+            "城市？",
+            true,
+            vec![opt("tokyo", "Tokyo, Japan"), opt("paris", "Paris")],
+        )];
+        let answers = json!({ "城市？": "Tokyo, Japan" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(mapped[0].selected, vec!["tokyo".to_string()]);
+        assert!(mapped[0].custom_input.is_none());
+    }
+
+    #[test]
+    fn multi_select_keeps_every_custom_piece() {
+        // Every unmatched piece accumulates into custom_input — a single Option
+        // would keep only the last.
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            true,
+            vec![opt("tea", "茶")],
+        )];
+        let answers = json!({ "喝点什么？": "茶, 气泡水, 椰子水" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(mapped[0].selected, vec!["tea".to_string()]);
+        assert_eq!(mapped[0].custom_input.as_deref(), Some("气泡水, 椰子水"));
     }
 }

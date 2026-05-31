@@ -33,6 +33,25 @@ pub(super) fn tool_alias(name: &str) -> &str {
     }
 }
 
+/// Inverse of [`tool_alias`]: map Hope Agent's internal tool name to the
+/// canonical Claude Code-style name an outbound hook payload should carry (so a
+/// decision-capable consumer — e.g. a desktop-pet approval card — renders the
+/// same tool identity it sees from Claude). Kept directly beside `tool_alias`
+/// **on purpose**: the two are a matched pair, so adding/renaming a tool alias
+/// here forces updating both directions in one place rather than letting the
+/// outbound name silently drift from the matcher surface. Unknown
+/// (Hope-Agent-specific / MCP-namespaced) tools pass through unchanged.
+pub(crate) fn internal_to_claude(name: &str) -> &str {
+    match name {
+        "exec" => "Bash",
+        "write" => "Write",
+        "edit" => "Edit",
+        "read" => "Read",
+        "web_fetch" => "WebFetch",
+        other => other,
+    }
+}
+
 /// Normalize tool aliases inside a literal/pipe matcher string. Each
 /// `|`-separated item is mapped via [`tool_alias`]; regex matchers (any char
 /// outside `[A-Za-z0-9_|]`) pass through unchanged because alias substitution

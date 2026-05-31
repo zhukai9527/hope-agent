@@ -722,7 +722,11 @@ pub fn fire_stop(
         assistant_message: assistant_message
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(str::to_string),
+            // Bound the reply text in the payload: a Stop hook surfaces the reply
+            // *opening* (a desktop pet re-truncates to ~120 chars), so a huge turn
+            // must not balloon a command hook's stdin / an http hook's body.
+            // 8 KiB is ample for an opening.
+            .map(|s| crate::truncate_utf8(s, 8192).to_string()),
     };
     fire_and_forget(HookEvent::Stop, input);
 }

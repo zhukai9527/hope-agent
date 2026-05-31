@@ -330,14 +330,19 @@ export function usePlanMode(
   // globally unique `requestId` (a stale id for another session is a no-op).
   useEffect(() => {
     const handler = (raw: unknown) => {
-      // parsePayload normalizes the HTTP transport's string frames (Tauri
-      // already delivers an object); a bare cast would miss the string case and
-      // never dismiss on HTTP.
-      const requestId = parsePayload<{ requestId?: string }>(raw)?.requestId
-      if (!requestId) return
-      setPendingQuestionGroup((prev) =>
-        prev && prev.requestId === requestId ? null : prev
-      )
+      try {
+        // parsePayload normalizes the HTTP transport's string frames (Tauri
+        // already delivers an object); a bare cast would miss the string case
+        // and never dismiss on HTTP. Guard the JSON.parse it does on strings so
+        // a malformed frame can't throw out of the listener.
+        const requestId = parsePayload<{ requestId?: string }>(raw)?.requestId
+        if (!requestId) return
+        setPendingQuestionGroup((prev) =>
+          prev && prev.requestId === requestId ? null : prev
+        )
+      } catch (e) {
+        logger.error("ui", "usePlanMode::askUserResolved", "Failed to parse ask_user_resolved", e)
+      }
     }
     return getTransport().listen("ask_user_resolved", handler)
   }, [])

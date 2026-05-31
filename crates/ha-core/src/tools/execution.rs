@@ -784,22 +784,13 @@ mod pre_tool_gate_tests {
 }
 
 /// Build the Claude Code-shaped `(tool_name, tool_input)` a decision-capable
-/// hook consumer (the desktop-pet `PermissionRequest` card) renders. The hooks
-/// matcher maps Claude names → internal at config-compile time
-/// ([`crate::hooks::matcher`]); this is the inverse for the *outbound* payload,
-/// plus a `path`→`file_path` mirror, so a consumer reads `tool_input.command` /
-/// `tool_input.file_path` exactly as it does for Claude's payload. Hope
-/// Agent-specific tools with no Claude analogue pass through with their internal
-/// name unchanged.
+/// hook consumer (the desktop-pet `PermissionRequest` card) renders. The name
+/// comes from [`crate::hooks::matcher::internal_to_claude`] — the inverse of the
+/// matcher's `tool_alias`, kept beside it so the two never drift — and a
+/// `path`→`file_path` mirror is added so a consumer reads `tool_input.command` /
+/// `tool_input.file_path` exactly as it does for Claude's payload.
 pub(super) fn claude_shaped_tool(name: &str, args: &Value) -> (String, Value) {
-    let claude_name = match name {
-        "exec" => "Bash",
-        "write" => "Write",
-        "edit" => "Edit",
-        "read" => "Read",
-        "web_fetch" => "WebFetch",
-        other => other,
-    };
+    let claude_name = crate::hooks::matcher::internal_to_claude(name);
     let mut input = args.clone();
     // Hope Agent's file tools take `path`; Claude's payload (and the consumer)
     // expect `file_path`. Mirror it when absent so the consumer's field read

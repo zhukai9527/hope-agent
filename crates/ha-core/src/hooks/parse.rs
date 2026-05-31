@@ -126,10 +126,18 @@ fn contribution_from_output(out: HookOutput, event: HookEvent) -> HookContributi
         additional_context: hso.additional_context,
         session_title: hso.session_title,
         // Flat `updatedInput` (PreToolUse rewrite) OR the nested
-        // `decision.updatedInput` (PermissionRequest / Elicitation answers).
-        updated_input: hso
-            .updated_input
-            .or_else(|| hso.decision.as_ref().and_then(|d| d.updated_input.clone())),
+        // `decision.updatedInput` — the latter ONLY for the two decision-capable
+        // events that use the nested object (PermissionRequest / Elicitation).
+        // Reading it for every event would let a PreToolUse hook that sent only
+        // the nested shape silently rewrite tool input, even though its
+        // `decision.behavior` is deliberately ignored for that event's verdict.
+        updated_input: hso.updated_input.or_else(|| {
+            if matches!(event, HookEvent::PermissionRequest | HookEvent::Elicitation) {
+                hso.decision.as_ref().and_then(|d| d.updated_input.clone())
+            } else {
+                None
+            }
+        }),
         updated_mcp_output: None,
         retry: false,
     }
