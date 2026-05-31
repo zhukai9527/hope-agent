@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "Arquivos",
+    "copied": "Copiado",
+    "copyFailed": "Falha ao copiar",
+    "copySelection": "Copiar seleção",
+    "copyAll": "Copiar tudo",
     "maximize": "Maximizar",
     "minimize": "Restaurar",
     "openInWindow": "Abrir em janela separada",

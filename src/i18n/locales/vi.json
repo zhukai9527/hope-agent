@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "Tệp",
+    "copied": "Đã sao chép",
+    "copyFailed": "Sao chép thất bại",
+    "copySelection": "Sao chép vùng chọn",
+    "copyAll": "Sao chép tất cả",
     "maximize": "Phóng to",
     "minimize": "Khôi phục",
     "openInWindow": "Mở trong cửa sổ riêng",

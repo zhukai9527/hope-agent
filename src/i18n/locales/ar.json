@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "الملفات",
+    "copied": "تم النسخ",
+    "copyFailed": "فشل النسخ",
+    "copySelection": "نسخ التحديد",
+    "copyAll": "نسخ الكل",
     "maximize": "تكبير",
     "minimize": "استعادة",
     "openInWindow": "فتح في نافذة منفصلة",

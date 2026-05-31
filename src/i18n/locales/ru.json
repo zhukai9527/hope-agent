@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "Файлы",
+    "copied": "Скопировано",
+    "copyFailed": "Ошибка копирования",
+    "copySelection": "Копировать выделенное",
+    "copyAll": "Копировать всё",
     "maximize": "Развернуть",
     "minimize": "Восстановить",
     "openInWindow": "Открыть в отдельном окне",

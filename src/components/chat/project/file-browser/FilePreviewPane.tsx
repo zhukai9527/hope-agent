@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Loader2, Quote, Code2, FileText as FileTextIcon, X } from "lucide-react"
+import { Loader2, Code2, FileText as FileTextIcon, X } from "lucide-react"
 import { toast } from "sonner"
 
 import MarkdownRenderer from "@/components/common/MarkdownRenderer"
@@ -50,11 +50,9 @@ export function FilePreviewPane({ fs, entry, onClose, onQuote, className }: File
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viewSource, setViewSource] = useState(false)
-  const [selection, setSelection] = useState<CodeSelection | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    setSelection(null)
     setViewSource(false)
     if (!entry) {
       setLoaded(null)
@@ -87,19 +85,20 @@ export function FilePreviewPane({ fs, entry, onClose, onQuote, className }: File
     }
   }, [entry, fs])
 
-  const handleQuote = useCallback(() => {
-    if (!entry || !onQuote || !selection) return
-    onQuote({
-      path: entry.relPath,
-      name: entry.name,
-      startLine: selection.startLine,
-      endLine: selection.endLine,
-      content: selection.text,
-    })
-    toast.success(t("fileBrowser.quoted", "Added to chat"))
-    setSelection(null)
-    window.getSelection()?.removeAllRanges()
-  }, [entry, onQuote, selection, t])
+  const handleQuoteSelection = useCallback(
+    (sel: CodeSelection) => {
+      if (!entry || !onQuote) return
+      onQuote({
+        path: entry.relPath,
+        name: entry.name,
+        startLine: sel.startLine,
+        endLine: sel.endLine,
+        content: sel.text,
+      })
+      toast.success(t("fileBrowser.quoted", "Added to chat"))
+    },
+    [entry, onQuote, t],
+  )
 
   if (!entry) {
     return (
@@ -133,13 +132,6 @@ export function FilePreviewPane({ fs, entry, onClose, onQuote, className }: File
               </Button>
             </IconTip>
           ) : null}
-          {onQuote && selection ? (
-            <IconTip label={t("fileBrowser.quoteToChat", "Quote to chat")}>
-              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleQuote}>
-                <Quote className="h-3.5 w-3.5" />
-              </Button>
-            </IconTip>
-          ) : null}
           {onClose ? (
             <IconTip label={t("common.close", "Close")}>
               <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onClose}>
@@ -163,7 +155,7 @@ export function FilePreviewPane({ fs, entry, onClose, onQuote, className }: File
             entry={entry}
             viewSource={viewSource}
             fs={fs}
-            onSelectionChange={onQuote ? setSelection : undefined}
+            onQuote={onQuote ? handleQuoteSelection : undefined}
           />
         )}
       </div>
@@ -176,13 +168,13 @@ function PreviewBody({
   entry,
   viewSource,
   fs,
-  onSelectionChange,
+  onQuote,
 }: {
   loaded: Loaded | null
   entry: WorkspaceEntry
   viewSource: boolean
   fs: ProjectFsApi
-  onSelectionChange?: (sel: CodeSelection | null) => void
+  onQuote?: (sel: CodeSelection) => void
 }) {
   const { t } = useTranslation()
   if (!loaded) return null
@@ -257,7 +249,7 @@ function PreviewBody({
         key={entry.relPath}
         content={loaded.data.content}
         lang={shikiLang(entry.name)}
-        onSelectionChange={onSelectionChange}
+        onQuote={onQuote}
         className="text-sm"
       />
     )

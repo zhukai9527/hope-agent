@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "Fail",
+    "copied": "Disalin",
+    "copyFailed": "Gagal menyalin",
+    "copySelection": "Salin pilihan",
+    "copyAll": "Salin semua",
     "maximize": "Maksimumkan",
     "minimize": "Pulihkan",
     "openInWindow": "Buka dalam tetingkap berasingan",

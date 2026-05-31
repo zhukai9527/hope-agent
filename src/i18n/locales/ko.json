@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "파일",
+    "copied": "복사됨",
+    "copyFailed": "복사 실패",
+    "copySelection": "선택 항목 복사",
+    "copyAll": "전체 복사",
     "maximize": "최대화",
     "minimize": "복원",
     "openInWindow": "별도 창에서 열기",

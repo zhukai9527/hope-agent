@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "Dosyalar",
+    "copied": "Kopyalandı",
+    "copyFailed": "Kopyalama başarısız",
+    "copySelection": "Seçimi kopyala",
+    "copyAll": "Tümünü kopyala",
     "maximize": "Büyüt",
     "minimize": "Geri yükle",
     "openInWindow": "Ayrı pencerede aç",

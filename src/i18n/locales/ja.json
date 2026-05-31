@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "ファイル",
+    "copied": "コピーしました",
+    "copyFailed": "コピーに失敗しました",
+    "copySelection": "選択範囲をコピー",
+    "copyAll": "すべてコピー",
     "maximize": "最大化",
     "minimize": "元に戻す",
     "openInWindow": "別ウィンドウで開く",

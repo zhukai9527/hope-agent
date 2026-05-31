@@ -1032,6 +1032,10 @@
   },
   "fileBrowser": {
     "panelTitle": "檔案",
+    "copied": "已複製",
+    "copyFailed": "複製失敗",
+    "copySelection": "複製所選",
+    "copyAll": "複製全部",
     "maximize": "最大化",
     "minimize": "還原",
     "openInWindow": "在獨立視窗開啟",
