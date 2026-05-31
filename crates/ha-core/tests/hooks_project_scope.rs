@@ -29,6 +29,7 @@ fn pre_tool_use(session_id: &str, cwd: PathBuf) -> HookInput {
             hook_event_name: "PreToolUse".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         },
         // Use the internal tool name — the dispatcher passes this verbatim,
         // and `matcher:"Bash"` is normalized to `exec` at compile time.

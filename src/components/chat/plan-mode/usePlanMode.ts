@@ -323,8 +323,33 @@ export function usePlanMode(
     return getTransport().listen("ask_user_request", handler)
   }, [currentSessionId])
 
+  // Dismiss the pending question block when its group reaches a terminal state
+  // via ANY path — an answer submitted from IM or a desktop-pet hook
+  // (`ask_user_resolved`). The block otherwise only clears on its own GUI
+  // submit, so an external answer would leave a stale, still-interactive card.
+  // Matched on the globally unique `requestId` (a stale id for another session
+  // is a no-op).
+  useEffect(() => {
+    const handler = (raw: unknown) => {
+      try {
+        // parsePayload normalizes the HTTP transport's string frames (Tauri
+        // already delivers an object); a bare cast would miss the string case
+        // and never dismiss on HTTP. Guard the JSON.parse it does on strings so
+        // a malformed frame can't throw out of the listener.
+        const requestId = parsePayload<{ requestId?: string }>(raw)?.requestId
+        if (!requestId) return
+        setPendingQuestionGroup((prev) =>
+          prev && prev.requestId === requestId ? null : prev
+        )
+      } catch (e) {
+        logger.error("ui", "usePlanMode::askUserResolved", "Failed to parse ask_user_resolved", e)
+      }
+    }
+    return getTransport().listen("ask_user_resolved", handler)
+  }, [])
+
   // Mirror backend timeout cleanup locally so expired questions no longer
-  // accept responses in the active chat UI.
+  // accept responses in the active chat UI (`ask_user_timed_out`).
   useEffect(() => {
     return getTransport().listen("ask_user_timed_out", (raw) => {
       try {

@@ -217,8 +217,41 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
         match serde_json::to_value(&group) {
             Ok(event_data) => {
                 bus.emit(ask_user::EVENT_ASK_USER_REQUEST, event_data);
-                // Elicitation hook (observation): a question prompt was raised.
-                crate::hooks::fire_elicitation(&effective_sid, &request_id, questions.len());
+                // Elicitation hook (decision-capable): let a hook (e.g. a
+                // desktop pet) render an interactive answer card and answer the
+                // prompt. Emitted in Claude's AskUserQuestion shape so the
+                // consumer reuses its existing card with zero special-casing.
+                // Spawned so the tool keeps waiting on `rx`; the hook's answers
+                // are fed back through the SAME idempotent
+                // `submit_ask_user_question_response`, so whichever source
+                // (GUI / IM / hook) answers first wins and the rest are no-ops.
+                {
+                    let request_id = request_id.clone();
+                    let sid = effective_sid.clone();
+                    let questions = questions.clone();
+                    let tool_input = build_claude_ask_user_tool_input(&questions, context.as_ref());
+                    let max_wait = (effective_timeout_secs > 0)
+                        .then(|| Duration::from_secs(effective_timeout_secs));
+                    tokio::spawn(async move {
+                        let outcome = crate::hooks::dispatch_elicitation(
+                            &sid,
+                            &request_id,
+                            tool_input,
+                            max_wait,
+                        )
+                        .await;
+                        if let Some(answers) = outcome
+                            .updated_input
+                            .as_ref()
+                            .and_then(|ui| ui.get("answers"))
+                            .and_then(|a| map_claude_answers_to_ha(&questions, a))
+                        {
+                            let _ =
+                                ask_user::submit_ask_user_question_response(&request_id, answers)
+                                    .await;
+                        }
+                    });
+                }
                 app_info!(
                     "ask_user",
                     "emit",
@@ -270,6 +303,22 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
         Outcome::TimedOut => "timeout",
     };
     crate::hooks::fire_elicitation_result(&effective_sid, &request_id, result_status);
+
+    // Tell the frontend this group is terminal so the GUI ask-user block
+    // dismisses — for ANY path, not just the local GUI submit. The block is
+    // otherwise only cleared by its own submit callback, so an answer from IM,
+    // a desktop-pet hook, or a timeout would leave a stale, still-interactive
+    // card on screen. Matched on the (globally unique) `requestId`.
+    if let Some(bus) = crate::globals::get_event_bus() {
+        bus.emit(
+            "ask_user_resolved",
+            serde_json::json!({
+                "requestId": request_id,
+                "sessionId": effective_sid,
+                "status": result_status,
+            }),
+        );
+    }
 
     match result {
         Outcome::Answered(answers) => {
@@ -447,4 +496,263 @@ pub(super) fn i18n_text(key: &str, params: Value, fallback: impl Into<String>) -
         "params": params,
         "fallback": fallback.into(),
     })
+}
+
+// ── Claude-AskUserQuestion shape mapping (interactive elicitation hook) ──
+//
+// The `Elicitation` hook is emitted in Claude Code's AskUserQuestion shape so a
+// Claude-aligned consumer (e.g. a desktop pet) renders its existing answer card
+// with zero special-casing, and answers via the same `updatedInput.answers`
+// channel. These two helpers translate between Hope Agent's richer question
+// schema and that flatter Claude shape.
+
+/// Map Hope Agent's questions to Claude's AskUserQuestion `tool_input`
+/// (`{ questions: [{ question, options: [{label, description}], multiSelect }],
+/// context? }`). The option `label` is the human text the consumer both shows
+/// and echoes back as the answer; its canonical `value` is recovered from the
+/// label in [`map_claude_answers_to_ha`].
+fn build_claude_ask_user_tool_input(
+    questions: &[AskUserQuestion],
+    context: Option<&AskUserText>,
+) -> Value {
+    let mapped: Vec<Value> = questions
+        .iter()
+        .map(|q| {
+            let options: Vec<Value> = q
+                .options
+                .iter()
+                .map(|o| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("label".into(), json!(o.label.fallback_text()));
+                    if let Some(desc) = o.description.as_ref() {
+                        obj.insert("description".into(), json!(desc.fallback_text()));
+                    }
+                    Value::Object(obj)
+                })
+                .collect();
+            json!({
+                "question": q.text.fallback_text(),
+                "options": options,
+                "multiSelect": q.multi_select,
+            })
+        })
+        .collect();
+    let mut input = serde_json::Map::new();
+    input.insert("questions".into(), Value::Array(mapped));
+    if let Some(ctx) = context {
+        input.insert("context".into(), json!(ctx.fallback_text()));
+    }
+    Value::Object(input)
+}
+
+/// Map the consumer's answers object (`{ "<question text>": "<label>" }`, with
+/// multi-select labels joined by `", "`) back to Hope Agent's answer rows.
+/// Questions match by text, options by label; a piece matching no option is the
+/// user's free-form `custom_input`. Returns `None` when there's nothing usable
+/// to inject (e.g. a `{}` cancel/timeout reply), so the tool keeps waiting on
+/// the other answer sources rather than injecting an empty answer.
+fn map_claude_answers_to_ha(
+    questions: &[AskUserQuestion],
+    answers: &Value,
+) -> Option<Vec<AskUserQuestionAnswer>> {
+    let map = answers.as_object()?;
+    if map.is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for q in questions {
+        let Some(answer_str) = map.get(q.text.fallback_text()).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let answer_str = answer_str.trim();
+        // Match the WHOLE answer against a single option label first. This
+        // covers single-select, and a multi-select pick whose own label contains
+        // the `", "` join separator (which the split below would otherwise
+        // shatter into non-matching fragments, losing the selection). Only fall
+        // back to `", "` splitting when the whole string matches no option.
+        let pieces: Vec<&str> = if answer_str.is_empty() {
+            Vec::new()
+        } else if q
+            .options
+            .iter()
+            .any(|o| o.label.fallback_text() == answer_str)
+        {
+            vec![answer_str]
+        } else if q.multi_select {
+            answer_str
+                .split(", ")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            vec![answer_str]
+        };
+        let mut selected = Vec::new();
+        // Accumulate EVERY unmatched piece — a single `Option` would keep only
+        // the last free-form answer of a multi-select reply.
+        let mut custom: Vec<String> = Vec::new();
+        for piece in pieces {
+            match q.options.iter().find(|o| o.label.fallback_text() == piece) {
+                Some(opt) => selected.push(opt.value.clone()),
+                // A piece matching no option label → free-form custom answer.
+                None => custom.push(piece.to_string()),
+            }
+        }
+        out.push(AskUserQuestionAnswer {
+            question_id: q.question_id.clone(),
+            selected,
+            custom_input: (!custom.is_empty()).then(|| custom.join(", ")),
+        });
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+#[cfg(test)]
+mod hopet_mapping_tests {
+    use super::*;
+    use crate::ask_user::AskUserQuestionOption;
+
+    fn opt(value: &str, label: &str) -> AskUserQuestionOption {
+        AskUserQuestionOption {
+            value: value.into(),
+            label: AskUserText::plain(label),
+            description: None,
+            recommended: false,
+            preview: None,
+            preview_kind: None,
+        }
+    }
+
+    fn question(
+        id: &str,
+        text: &str,
+        multi: bool,
+        options: Vec<AskUserQuestionOption>,
+    ) -> AskUserQuestion {
+        AskUserQuestion {
+            question_id: id.into(),
+            text: AskUserText::plain(text),
+            options,
+            allow_custom: true,
+            multi_select: multi,
+            template: None,
+            header: None,
+            timeout_secs: None,
+            default_values: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn builds_claude_shape_with_label_and_multiselect() {
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            false,
+            vec![opt("tea", "茶"), opt("coffee", "咖啡")],
+        )];
+        let v = build_claude_ask_user_tool_input(&qs, Some(&AskUserText::plain("随便选")));
+        assert_eq!(v["context"], "随便选");
+        let q0 = &v["questions"][0];
+        assert_eq!(q0["question"], "喝点什么？");
+        assert_eq!(q0["multiSelect"], false);
+        // Claude option label is the human text (not the canonical value).
+        assert_eq!(q0["options"][0]["label"], "茶");
+        assert_eq!(q0["options"][1]["label"], "咖啡");
+    }
+
+    #[test]
+    fn single_select_label_maps_to_value() {
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            false,
+            vec![opt("tea", "茶"), opt("coffee", "咖啡")],
+        )];
+        let answers = json!({ "喝点什么？": "咖啡" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].question_id, "q_drink");
+        assert_eq!(mapped[0].selected, vec!["coffee".to_string()]);
+        assert!(mapped[0].custom_input.is_none());
+    }
+
+    #[test]
+    fn multi_select_splits_on_comma_space() {
+        let qs = vec![question(
+            "q_relax",
+            "放松？",
+            true,
+            vec![
+                opt("music", "听歌"),
+                opt("walk", "散步"),
+                opt("video", "刷视频"),
+            ],
+        )];
+        let answers = json!({ "放松？": "听歌, 刷视频" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(
+            mapped[0].selected,
+            vec!["music".to_string(), "video".to_string()]
+        );
+    }
+
+    #[test]
+    fn unmatched_label_becomes_custom_input() {
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            false,
+            vec![opt("tea", "茶")],
+        )];
+        let answers = json!({ "喝点什么？": "气泡水" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert!(mapped[0].selected.is_empty());
+        assert_eq!(mapped[0].custom_input.as_deref(), Some("气泡水"));
+    }
+
+    #[test]
+    fn empty_or_missing_answers_yield_none() {
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            false,
+            vec![opt("tea", "茶")],
+        )];
+        // `{}` (cancel/timeout) → None, so nothing is injected.
+        assert!(map_claude_answers_to_ha(&qs, &json!({})).is_none());
+        // An answers map with no matching question text → None.
+        assert!(map_claude_answers_to_ha(&qs, &json!({ "别的问题": "x" })).is_none());
+    }
+
+    #[test]
+    fn multi_select_label_with_comma_space_is_matched_whole() {
+        // An option label that itself contains the ", " join separator must be
+        // matched as a whole, not shattered by the split.
+        let qs = vec![question(
+            "q_city",
+            "城市？",
+            true,
+            vec![opt("tokyo", "Tokyo, Japan"), opt("paris", "Paris")],
+        )];
+        let answers = json!({ "城市？": "Tokyo, Japan" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(mapped[0].selected, vec!["tokyo".to_string()]);
+        assert!(mapped[0].custom_input.is_none());
+    }
+
+    #[test]
+    fn multi_select_keeps_every_custom_piece() {
+        // Every unmatched piece accumulates into custom_input — a single Option
+        // would keep only the last.
+        let qs = vec![question(
+            "q_drink",
+            "喝点什么？",
+            true,
+            vec![opt("tea", "茶")],
+        )];
+        let answers = json!({ "喝点什么？": "茶, 气泡水, 椰子水" });
+        let mapped = map_claude_answers_to_ha(&qs, &answers).unwrap();
+        assert_eq!(mapped[0].selected, vec!["tea".to_string()]);
+        assert_eq!(mapped[0].custom_input.as_deref(), Some("气泡水, 椰子水"));
+    }
 }

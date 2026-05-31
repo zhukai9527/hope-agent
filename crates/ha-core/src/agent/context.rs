@@ -568,6 +568,7 @@ impl AssistantAgent {
             hook_event_name: event.to_string(),
             agent_id: Some(self.agent_id.clone()),
             agent_type: None,
+            parent_session_id: None,
         }
     }
 

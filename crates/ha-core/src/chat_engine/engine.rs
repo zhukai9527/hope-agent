@@ -958,8 +958,15 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
 
                     // Stop hook: the agent finished responding (normal
                     // completion, or a user-initiated stop that still drained
-                    // to here). Observation-only this phase.
-                    crate::hooks::fire_stop(&session_id, Some(&agent_id), terminal_status.as_str());
+                    // to here). Carries this turn's final assistant text so a
+                    // consumer can surface the reply opening (fire_stop drops it
+                    // when empty). Observation-only this phase.
+                    crate::hooks::fire_stop(
+                        &session_id,
+                        Some(&agent_id),
+                        terminal_status.as_str(),
+                        Some(response.as_str()),
+                    );
 
                     if post_turn_effects {
                         crate::session_title::maybe_schedule_after_success(

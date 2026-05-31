@@ -83,6 +83,7 @@ mod tests {
             hook_event_name: "PreToolUse".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         }
     }
 

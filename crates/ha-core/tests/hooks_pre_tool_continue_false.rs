@@ -31,6 +31,7 @@ fn pre_tool_use() -> HookInput {
             hook_event_name: "PreToolUse".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         },
         tool_name: "Bash".into(),
         tool_input: serde_json::json!({ "command": "ls" }),

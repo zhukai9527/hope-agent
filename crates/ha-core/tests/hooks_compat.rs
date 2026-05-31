@@ -73,6 +73,7 @@ fn pre_tool_use(cwd: PathBuf, command: &str) -> HookInput {
             hook_event_name: "PreToolUse".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         },
         // Internal tool name (not the Claude Code alias) — the fixtures gate on
         // `.tool_input.command`, which IS field-aligned, so the alias divergence
@@ -93,6 +94,7 @@ fn user_prompt_submit(prompt: &str) -> HookInput {
             hook_event_name: "UserPromptSubmit".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         },
         prompt: prompt.into(),
     }

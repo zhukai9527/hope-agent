@@ -201,11 +201,38 @@ impl HookDispatcher {
         Self::dispatch_with(&registry, event, input).await
     }
 
+    /// Like [`dispatch`], but caps every matched handler's run at `max_wait`
+    /// instead of its own `default_timeout`. Used by the permission-request
+    /// takeover so a prompt-driven hook (e.g. a desktop-pet approval bubble)
+    /// stays live exactly as long as the approval is pending (the approval
+    /// timeout), no longer.
+    pub async fn dispatch_with_deadline(
+        event: HookEvent,
+        input: HookInput,
+        max_wait: Duration,
+    ) -> HookOutcome {
+        let wd = session_working_dir(&input);
+        let registry = scopes::resolve_for_cwd(wd.as_deref().map(std::path::Path::new));
+        Self::dispatch_with_inner(&registry, event, input, Some(max_wait)).await
+    }
+
     /// Testable core: dispatch against an explicit registry.
     async fn dispatch_with(
         registry: &registry::HookRegistry,
         event: HookEvent,
         input: HookInput,
+    ) -> HookOutcome {
+        Self::dispatch_with_inner(registry, event, input, None).await
+    }
+
+    /// Shared dispatch core. `max_wait`, when `Some`, overrides each handler's
+    /// own `default_timeout` (the deadline-capped variant); `None` keeps the
+    /// per-handler default.
+    async fn dispatch_with_inner(
+        registry: &registry::HookRegistry,
+        event: HookEvent,
+        input: HookInput,
+        max_wait: Option<Duration>,
     ) -> HookOutcome {
         // Hot-path short-circuit: skip building anything when no hook listens
         // for this event.
@@ -249,7 +276,7 @@ impl HookDispatcher {
         // already-completed output — so a fast hook's context / decision is
         // never lost to a slow neighbor.
         let runs = handlers.iter().map(|h| {
-            let timeout = h.default_timeout();
+            let timeout = max_wait.unwrap_or_else(|| h.default_timeout());
             let deadline = Instant::now() + timeout;
             let backstop = timeout + Duration::from_secs(5);
             // Borrow (not move) the shared input/env so each future only holds a
@@ -538,6 +565,7 @@ fn observation_common(event: &str, session_id: &str) -> CommonHookInput {
         hook_event_name: event.to_string(),
         agent_id: None,
         agent_type: None,
+        parent_session_id: None,
     }
 }
 
@@ -676,15 +704,29 @@ pub fn fire_subagent_stop(session_id: &str, subagent_id: &str, run_id: &str, sta
 
 /// Fire the `Stop` observation hook — a turn finished responding without an
 /// error (normal completion or a user-initiated stop). `status` is the terminal
-/// turn status (`completed` / `interrupted`). Fire-and-forget; block-to-continue
-/// is not implemented this phase.
-pub fn fire_stop(session_id: &str, agent_id: Option<&str>, status: &str) {
+/// turn status (`completed` / `interrupted`); `assistant_message` is the turn's
+/// final response text (omitted when empty, e.g. an interrupted turn with no
+/// text). Fire-and-forget; block-to-continue is not implemented this phase.
+pub fn fire_stop(
+    session_id: &str,
+    agent_id: Option<&str>,
+    status: &str,
+    assistant_message: Option<&str>,
+) {
     let mut common = observation_common("Stop", session_id);
     common.agent_id = agent_id.map(|s| s.to_string());
     let input = HookInput::Stop {
         common,
         status: status.to_string(),
         stop_hook_active: false,
+        assistant_message: assistant_message
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            // Bound the reply text in the payload: a Stop hook surfaces the reply
+            // *opening* (a desktop pet re-truncates to ~120 chars), so a huge turn
+            // must not balloon a command hook's stdin / an http hook's body.
+            // 8 KiB is ample for an opening.
+            .map(|s| crate::truncate_utf8(s, 8192).to_string()),
     };
     fire_and_forget(HookEvent::Stop, input);
 }
@@ -764,14 +806,45 @@ pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
     fire_and_forget(HookEvent::FileChanged, input);
 }
 
-/// Fire a `PermissionRequest` observation hook (a tool approval prompt was
-/// raised). `command` is the matcher target (the command / tool being gated).
-pub fn fire_permission_request(session_id: Option<&str>, command: &str) {
+/// Dispatch the `PermissionRequest` hook as a **decision-capable** event and
+/// return its outcome, so the approval gate can let a hook (e.g. a desktop pet)
+/// approve/deny a pending tool prompt. Unlike the `fire_*` observation helpers
+/// this awaits the hook and surfaces its allow/deny verdict. `command` is the
+/// matcher target (the command / tool being gated); `tool`, when `Some`, carries
+/// the Claude Code-shaped `(tool_name, tool_input)` so a consumer renders the
+/// approval card identically to Claude's. `max_wait`, when `Some`, caps how long
+/// every matched handler may block (the approval timeout) so a prompt-driven hook
+/// stays live exactly as long as the approval is pending. No-op fast path
+/// (returns `HookOutcome::noop()`) when nothing is configured.
+pub async fn dispatch_permission_request(
+    session_id: Option<&str>,
+    command: &str,
+    tool: Option<(String, serde_json::Value)>,
+    max_wait: Option<Duration>,
+) -> HookOutcome {
+    let sid = session_id.unwrap_or("");
+    let wd = (!sid.is_empty())
+        .then(|| crate::session::effective_session_working_dir(Some(sid)))
+        .flatten();
+    if !scopes::any_handlers_for(
+        HookEvent::PermissionRequest,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
+    let (tool_name, tool_input) = tool.unwrap_or((String::new(), serde_json::Value::Null));
     let input = HookInput::PermissionRequest {
-        common: observation_common("PermissionRequest", session_id.unwrap_or("")),
+        common: observation_common("PermissionRequest", sid),
         command: command.to_string(),
+        tool_name,
+        tool_input,
     };
-    fire_and_forget(HookEvent::PermissionRequest, input);
+    match max_wait {
+        Some(d) => {
+            HookDispatcher::dispatch_with_deadline(HookEvent::PermissionRequest, input, d).await
+        }
+        None => HookDispatcher::dispatch(HookEvent::PermissionRequest, input).await,
+    }
 }
 
 /// Fire a `PermissionDenied` observation hook (a tool was denied). `reason` is
@@ -804,14 +877,47 @@ pub fn fire_user_prompt_expansion(
     fire_and_forget(HookEvent::UserPromptExpansion, input);
 }
 
-/// Fire an `Elicitation` observation hook (`ask_user_question` raised a prompt).
-pub fn fire_elicitation(session_id: &str, request_id: &str, question_count: usize) {
+/// Dispatch the `Elicitation` hook as a **decision-capable** event so a hook
+/// (e.g. a desktop pet) can render an interactive answer card and reply with the
+/// answers, taking over the `ask_user_question` prompt. The elicitation is
+/// emitted in Claude Code's AskUserQuestion shape (`tool_name="AskUserQuestion"`,
+/// `tool_input.questions` mapped to the Claude schema) so the consumer reuses its
+/// existing card with zero special-casing. Returns the hook outcome — its
+/// `updated_input.answers` is what the tool gate injects through the idempotent
+/// `submit_ask_user_question_response`. `max_wait`, when `Some`, caps how long
+/// the prompt-driven hook may block (the ask-user timeout); `None` uses the
+/// handler default. No-op fast path when nothing is configured.
+pub async fn dispatch_elicitation(
+    session_id: &str,
+    request_id: &str,
+    tool_input: serde_json::Value,
+    max_wait: Option<Duration>,
+) -> HookOutcome {
+    let wd = (!session_id.is_empty())
+        .then(|| crate::session::effective_session_working_dir(Some(session_id)))
+        .flatten();
+    if !scopes::any_handlers_for(
+        HookEvent::Elicitation,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
+    let question_count = tool_input
+        .get("questions")
+        .and_then(|q| q.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
     let input = HookInput::Elicitation {
         common: observation_common("Elicitation", session_id),
         request_id: request_id.to_string(),
         question_count,
+        tool_name: "AskUserQuestion".to_string(),
+        tool_input,
     };
-    fire_and_forget(HookEvent::Elicitation, input);
+    match max_wait {
+        Some(d) => HookDispatcher::dispatch_with_deadline(HookEvent::Elicitation, input, d).await,
+        None => HookDispatcher::dispatch(HookEvent::Elicitation, input).await,
+    }
 }
 
 /// Fire an `ElicitationResult` observation hook (an `ask_user_question` group
@@ -892,6 +998,7 @@ mod tests {
             hook_event_name: event.into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         }
     }
 

@@ -26,6 +26,7 @@ fn common(event: &str) -> CommonHookInput {
         hook_event_name: event.into(),
         agent_id: None,
         agent_type: None,
+        parent_session_id: None,
     }
 }
 

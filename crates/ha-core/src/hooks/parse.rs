@@ -88,6 +88,32 @@ fn contribution_from_output(out: HookOutput, event: HookEvent) -> HookContributi
             }
             _ => top_level_decision(),
         }
+    } else if matches!(event, HookEvent::PermissionRequest | HookEvent::Elicitation) {
+        // PermissionRequest / Elicitation are decision-capable: a hook (e.g. a
+        // desktop pet) returns `hookSpecificOutput.decision = { behavior:
+        // allow|deny, updatedInput? }` to take over the pending interaction.
+        // - PermissionRequest: `allow` auto-approves, `deny` blocks (with the
+        //   optional `message`).
+        // - Elicitation (ask-user): `allow` carries the answers in
+        //   `updatedInput.answers`; the tool gate injects them. `{}` (cancel /
+        //   timeout) leaves the verdict to the other answer sources (GUI / IM).
+        // Distinct from PreToolUse's flat `permissionDecision` string — this is
+        // the nested SDK-style object; its `updatedInput` is wired through below.
+        match hso.decision.as_ref().and_then(|d| d.behavior.as_deref()) {
+            Some("allow") => {
+                permission_allow = true;
+                HookDecision::Allow
+            }
+            Some("deny") => HookDecision::Deny {
+                reason: hso
+                    .decision
+                    .as_ref()
+                    .and_then(|d| d.message.clone())
+                    .or_else(|| out.reason.clone())
+                    .unwrap_or_default(),
+            },
+            _ => top_level_decision(),
+        }
     } else {
         top_level_decision()
     };
@@ -99,7 +125,19 @@ fn contribution_from_output(out: HookOutput, event: HookEvent) -> HookContributi
         system_message: out.system_message,
         additional_context: hso.additional_context,
         session_title: hso.session_title,
-        updated_input: hso.updated_input,
+        // Flat `updatedInput` (PreToolUse rewrite) OR the nested
+        // `decision.updatedInput` — the latter ONLY for the two decision-capable
+        // events that use the nested object (PermissionRequest / Elicitation).
+        // Reading it for every event would let a PreToolUse hook that sent only
+        // the nested shape silently rewrite tool input, even though its
+        // `decision.behavior` is deliberately ignored for that event's verdict.
+        updated_input: hso.updated_input.or_else(|| {
+            if matches!(event, HookEvent::PermissionRequest | HookEvent::Elicitation) {
+                hso.decision.as_ref().and_then(|d| d.updated_input.clone())
+            } else {
+                None
+            }
+        }),
         updated_mcp_output: None,
         retry: false,
     }
@@ -291,5 +329,67 @@ mod tests {
         );
         assert_eq!(ctx_only.decision, HookDecision::Allow);
         assert!(!ctx_only.permission_allow);
+    }
+
+    #[test]
+    fn permission_request_decision_allow_takes_over() {
+        // A PermissionRequest hook returning the nested decision object with
+        // `behavior:"allow"` approves the prompt (permission_allow = true).
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#,
+                "",
+            ),
+            HookEvent::PermissionRequest,
+        );
+        assert_eq!(c.decision, HookDecision::Allow);
+        assert!(c.permission_allow);
+    }
+
+    #[test]
+    fn permission_request_decision_deny_with_message() {
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"decision":{"behavior":"deny","message":"pet said no"}}}"#,
+                "",
+            ),
+            HookEvent::PermissionRequest,
+        );
+        assert_eq!(
+            c.decision,
+            HookDecision::Deny {
+                reason: "pet said no".into()
+            }
+        );
+        assert!(!c.permission_allow);
+    }
+
+    #[test]
+    fn permission_request_empty_decision_falls_through() {
+        // hopet-emit emits `{}` when there's no decision (ask / timeout / parse
+        // failure) — that must leave the verdict to the other approval sources,
+        // i.e. a plain non-approving Allow.
+        let c = parse(&raw(Some(0), "{}", ""), HookEvent::PermissionRequest);
+        assert_eq!(c.decision, HookDecision::Allow);
+        assert!(!c.permission_allow);
+    }
+
+    #[test]
+    fn nested_decision_object_is_permission_request_only() {
+        // The nested `decision` object must NOT drive a verdict for PreToolUse
+        // (which uses the flat `permissionDecision` string). A PreToolUse hook
+        // that only sent the nested object yields a plain non-approving Allow.
+        let c = parse(
+            &raw(
+                Some(0),
+                r#"{"hookSpecificOutput":{"decision":{"behavior":"deny"}}}"#,
+                "",
+            ),
+            HookEvent::PreToolUse,
+        );
+        assert_eq!(c.decision, HookDecision::Allow);
+        assert!(!c.permission_allow);
     }
 }

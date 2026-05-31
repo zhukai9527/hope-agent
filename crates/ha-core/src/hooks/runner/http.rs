@@ -601,6 +601,7 @@ mod tests {
                 hook_event_name: "PreToolUse".into(),
                 agent_id: None,
                 agent_type: None,
+                parent_session_id: None,
             },
             tool_name: "exec".into(),
             tool_input: serde_json::json!({}),
@@ -702,6 +703,7 @@ mod tests {
             hook_event_name: "PreToolUse".into(),
             agent_id: None,
             agent_type: None,
+            parent_session_id: None,
         };
         let env = HookEnv::build_for_command(&common);
         // Unique name to avoid colliding with any real env in CI.
@@ -737,6 +739,7 @@ mod tests {
                 hook_event_name: "Notification".into(),
                 agent_id: None,
                 agent_type: None,
+                parent_session_id: None,
             },
             notification_type: "idle_prompt".into(),
             message: "hi".into(),
@@ -760,6 +763,7 @@ mod tests {
                 hook_event_name: "UserPromptSubmit".into(),
                 agent_id: None,
                 agent_type: None,
+                parent_session_id: None,
             },
             prompt: "x".into(),
         };
@@ -773,6 +777,7 @@ mod tests {
                 hook_event_name: "PreCompact".into(),
                 agent_id: None,
                 agent_type: None,
+                parent_session_id: None,
             },
             trigger: crate::hooks::types::CompactTrigger::Auto,
             usage_ratio: 0.5,
