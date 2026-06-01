@@ -1,7 +1,7 @@
 import {
+  memo,
   useState,
   useEffect,
-  useRef,
   useMemo,
   type AnchorHTMLAttributes,
 } from "react"
@@ -92,13 +92,23 @@ function useHeavyPlugins(content: string) {
   ])
 }
 
-/** Word-level blurIn: each completed word gets a blur-to-clear entrance */
+/** Char-level fadeIn: each newly-appended character fades in, staggered for a
+ *  smooth flowing reveal. The animate plugin animates only the new tail (chars
+ *  below the prev-render baseline get duration=0), so no external slice
+ *  typewriter is needed — content is handed to Streamdown in full. */
 const streamingAnimation: AnimateOptions = {
-  animation: "blurIn",
-  sep: "word",
-  duration: 500,
+  animation: "fadeIn",
+  sep: "char",
+  duration: 200,
+  stagger: 16,
   easing: "cubic-bezier(0.22, 1, 0.36, 1)",
 }
+
+// char 级 animate 把每个字符 wrap 成一个 `<span>`，活跃块每帧重新 wrap 全部字符
+// （baseline 字符也是 duration=0 的 span）——O(n) span/帧，内容越长越爆。无空格的
+// 长中文尤其致命（一段 = 上千 span）。超过该阈值就关掉逐字动画：仍按流式渲染、
+// 保留 incomplete-markdown 处理，只是不再逐字渐显，长回复换来平滑出字。
+const ANIMATE_MAX_CHARS = 4000
 
 // Streamdown 默认 linkSafety 弹窗的 "Open link" 按钮调用 window.open，
 // Tauri webview 不支持该行为（点击无反应），改走 open_url 命令调起系统浏览器。
@@ -429,11 +439,6 @@ function autolinkRehypePlugin() {
   }
 }
 
-/** Start catching up when backlog exceeds this */
-const CATCHUP_THRESHOLD = 60
-/** Max chars per frame when catching up, prevents jarring jumps */
-const MAX_STEP = 8
-
 interface MarkdownRendererProps {
   content: string
   isStreaming?: boolean
@@ -460,7 +465,7 @@ function StreamdownMarkdownRenderer({ content, isStreaming = false }: MarkdownRe
   // `animated={AnimateOptions}` 简便用法把 plugin 实例藏在内部 useMemo，且
   // Block 组件每帧 render 会调 `setPrevContentLength(getLastRenderCharCount())`
   // —— 首次 render 时 lastRenderCharCount 还是 0，prevContentLength 被回写 0，
-  // 整段已渲染内容会被当成新内容跑 blurIn。组件 unmount + remount（切会话回到
+  // 整段已渲染内容会被当成新内容跑一遍入场动画。组件 unmount + remount（切会话回到
   // 流式输出中的会话 / 虚拟滚动剔出再返回视口）会重新走这条 0-baseline 路径，
   // 视觉上整段重放动画一次。
   //
@@ -478,18 +483,6 @@ function StreamdownMarkdownRenderer({ content, isStreaming = false }: MarkdownRe
     return plugin
   })
 
-  const [displayLen, setDisplayLen] = useState(() => content.length)
-
-  const cursorRef = useRef(content.length)
-  const targetRef = useRef(content.length)
-  const streamingRef = useRef(isStreaming)
-  const rafRef = useRef<number | null>(null)
-
-  // eslint-disable-next-line react-hooks/refs -- intentional "latest value" refs read only in rAF callback
-  targetRef.current = content.length
-  // eslint-disable-next-line react-hooks/refs
-  streamingRef.current = isStreaming
-
   // 每帧 commit 后把上一帧 rehype 跑出的字符数续写为下一帧的 baseline。
   // animate plugin 的 rehype 跑完会自动把 prevContentLength 清 0，因此必须
   // 每帧重新设。没有 deps：commit phase 都跑。
@@ -498,64 +491,29 @@ function StreamdownMarkdownRenderer({ content, isStreaming = false }: MarkdownRe
     if (count > 0) animatePlugin.setPrevContentLength(count)
   })
 
-  // Non-streaming (history): show full content immediately
-  useEffect(() => {
-    if (!isStreaming && rafRef.current === null) {
-      cursorRef.current = content.length
-      setDisplayLen(content.length)
-    }
-  }, [isStreaming, content.length])
-
-  // rAF loop: +1 char per frame, continues draining after stream ends (no jump)
-  useEffect(() => {
-    if (!isStreaming) return
-    if (rafRef.current !== null) return
-
-    const tick = () => {
-      const cursor = cursorRef.current
-      const target = targetRef.current
-
-      if (cursor >= target && !streamingRef.current) {
-        rafRef.current = null
-        return
-      }
-
-      if (cursor < target) {
-        const backlog = target - cursor
-        const step = backlog > CATCHUP_THRESHOLD ? Math.min(Math.ceil(backlog * 0.1), MAX_STEP) : 1
-        const next = Math.min(cursor + step, target)
-        cursorRef.current = next
-        setDisplayLen(next)
-      }
-
-      rafRef.current = requestAnimationFrame(tick)
-    }
-
-    rafRef.current = requestAnimationFrame(tick)
-  }, [isStreaming])
-
-  useEffect(() => {
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-    }
-  }, [])
-
-  if (!content) return null
-
-  const revealing = displayLen < content.length
-  const displayContent = revealing ? content.slice(0, displayLen) : content
-  const isActive = isStreaming || revealing
+  // content 全量交给 Streamdown：它按 block 分块 memo，只重解析变化的末块；
+  // 新增尾部由 animate plugin 按 stagger 逐字错峰渐显，无需外部 slice 打字机。
+  const isActive = isStreaming
 
   // 流式期间把外部 animate plugin 注入 rehype 链尾；静态历史消息直接复用
   // streamdown 默认 rehype（raw/sanitize/harden 安全基线）。`animated={false}`
   // 关掉 streamdown 内部建实例的路径，避免与外部 plugin 重复跑。
-  const defaultRehypePluginList = Object.values(defaultRehypePlugins)
-  const rehypePlugins = isActive
-    ? [...defaultRehypePluginList, autolinkRehypePlugin, animatePlugin.rehypePlugin]
-    : [...defaultRehypePluginList, autolinkRehypePlugin]
+  //
+  // 超长内容关掉逐字动画（见 ANIMATE_MAX_CHARS）；仍是流式渲染，只是不挂 animate
+  // plugin。布尔值跨帧只在跨阈值时翻转一次，不破坏下面 useMemo 的稳定性。
+  const animateActive = isActive && content.length <= ANIMATE_MAX_CHARS
+
+  // **必须 memo**：Streamdown 的 Block memo 比较器要求 `rehypePlugins` 引用相等
+  // 才跳过重渲染（vendored chunk 里 `e.rehypePlugins!==t.rehypePlugins` 即判失效），
+  // 且它把该数组 `useMemo([a,...])` 原样转发给每个 block。若每帧新建数组，流式每帧
+  // 都会让**所有** block（含已定稿的长 prose / Shiki 代码块）全量重渲染——内容越长
+  // 越卡。稳定引用后，每帧只重渲染正在增长的末块。
+  const rehypePlugins = useMemo(() => {
+    const base = [...Object.values(defaultRehypePlugins), autolinkRehypePlugin]
+    return animateActive ? [...base, animatePlugin.rehypePlugin] : base
+  }, [animateActive, animatePlugin])
+
+  if (!content) return null
 
   return (
     <div className="markdown-content">
@@ -569,16 +527,22 @@ function StreamdownMarkdownRenderer({ content, isStreaming = false }: MarkdownRe
           linkSafety={linkSafetyDisabled}
           components={markdownComponents}
         >
-          {displayContent}
+          {content}
         </Streamdown>
       </div>
     </div>
   )
 }
 
-export default function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
+// memo：props 仅 `content`(string) + `isStreaming`(bool)，默认浅比较即可。
+// 流式 bubble 每帧重建所有 text block 的 MarkdownRenderer 元素，已定稿 block 的
+// 这两个 prop 都稳定——memo 让它们整体跳过 render，避免无谓的 Streamdown 全量
+// re-lex，只剩正在增长的末块真正重渲染。
+function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
   if (shouldRenderAsBareJson(content)) {
     return <BareJsonRenderer content={content} isStreaming={isStreaming} />
   }
   return <StreamdownMarkdownRenderer content={content} isStreaming={isStreaming} />
 }
+
+export default memo(MarkdownRenderer)
