@@ -1,10 +1,8 @@
-import { useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import {
   ChevronRight,
-  Download,
   Files,
-  FolderOpen,
   GitCompare,
   Globe,
   LayoutDashboard,
@@ -15,12 +13,13 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { IconTip } from "@/components/ui/tooltip"
-import { getTransport } from "@/lib/transport-provider"
-import { logger } from "@/lib/logger"
 import { basename } from "@/lib/path"
 import { openExternalUrl } from "@/lib/openExternalUrl"
 import type { FileChangeMetadata, Message } from "@/types/chat"
 import { FileMimeIcon } from "@/components/chat/message/FileCard"
+import { FileContextMenu, FileActionsMoreButton } from "@/components/chat/files/FileActionMenu"
+import { useFileActions } from "@/components/chat/files/useFileActions"
+import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
 import TaskProgressPanel from "@/components/chat/tasks/TaskProgressPanel"
 import type { TaskProgressSnapshot } from "@/components/chat/tasks/taskProgress"
 import { useSessionFileChanges, type SessionFileEntry } from "./useSessionFileChanges"
@@ -34,6 +33,8 @@ interface WorkspacePanelProps {
   messages: Message[]
   /** 改写类文件「查看 diff」→ 右侧 diff 面板。 */
   onOpenDiff: (payload: FileChangeMetadata) => void
+  /** 预览文件 → 右侧预览面板（与下挂文件 / Markdown 链接同一策略）。 */
+  onPreviewFile?: (target: PreviewTarget) => void
   /** 当前会话 id,文件打开 / 下载需要它解析作用域。 */
   sessionId?: string | null
   onClose: () => void
@@ -89,87 +90,69 @@ function WorkspaceSection({
 }
 
 /**
- * 文件行 —— 样式与操作对齐消息下挂文件(FileAttachments / FileCard):
- * FileMimeIcon + 文件名,主点击打开文件,右侧 下载 / 在文件夹显示。改写类且有
- * 结构化 diff 的文件额外保留一个「查看 diff」按钮(工作台独有)。
+ * 文件行 —— 操作与消息下挂文件 / Markdown 链接完全一致:主点击按类型 × 模式决议
+ * (预览 / 打开 / 下载),右键 + ⋯ 出完整菜单。改写类且有结构化 diff 的文件额外保留
+ * 一个「查看 diff」按钮(工作台独有)。工作台在消息树外,故 sessionId / onPreviewFile
+ * 通过 overrides 显式传入。
  */
 function FileRow({
   entry,
   sessionId,
   onOpenDiff,
+  onPreviewFile,
 }: {
   entry: SessionFileEntry
   sessionId?: string | null
   onOpenDiff: (payload: FileChangeMetadata) => void
+  onPreviewFile?: (target: PreviewTarget) => void
 }) {
   const { t } = useTranslation()
-  const transport = getTransport()
-  const canReveal = transport.supportsLocalFileOps()
   const name = basename(entry.path)
   const diff = entry.diff
+  const target = useMemo<PreviewTarget>(
+    () => ({ kind: "path", path: entry.path, name }),
+    [entry.path, name],
+  )
+  const overrides = useMemo(() => ({ sessionId, onPreviewFile }), [sessionId, onPreviewFile])
+  const { primary, run } = useFileActions(target, overrides)
   const btnClass =
     "p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
 
-  const handleOpen = () => {
-    transport
-      .openFilePath(entry.path, { sessionId })
-      .catch((e) => logger.error("chat", "WorkspacePanel::openFile", "Failed to open file", e))
-  }
-  const handleDownload = () => {
-    transport
-      .downloadFilePath(entry.path, { sessionId, filename: name })
-      .catch((e) => logger.error("chat", "WorkspacePanel::download", "Failed to download file", e))
-  }
-  const handleReveal = () => {
-    transport
-      .call("reveal_in_folder", { path: entry.path })
-      .catch((e) => logger.error("chat", "WorkspacePanel::reveal", "Failed to reveal in folder", e))
-  }
-
   return (
-    <div className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/30 px-2.5 py-1.5 transition-colors hover:bg-secondary/50">
-      <FileMimeIcon mime="" name={name} className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <IconTip label={entry.path}>
-        <button
-          type="button"
-          onClick={handleOpen}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
-        >
-          <span className="truncate text-xs font-medium text-foreground/90">{name}</span>
-          {diff ? (
-            <span className="shrink-0 text-[10px] tabular-nums">
-              <span className="text-emerald-600 dark:text-emerald-400">+{diff.linesAdded}</span>{" "}
-              <span className="text-rose-600 dark:text-rose-400">-{diff.linesRemoved}</span>
-            </span>
-          ) : entry.kind === "read" ? (
-            <span className="shrink-0 text-[10px] text-muted-foreground/70">
-              {t("workspace.action.read")}
-            </span>
-          ) : null}
-        </button>
-      </IconTip>
-      <div className="flex shrink-0 items-center gap-0.5">
-        {diff && (
-          <IconTip label={t("diffPanel.openDiff", "查看 diff")}>
-            <button type="button" onClick={() => onOpenDiff(diff)} className={btnClass}>
-              <GitCompare className="h-3.5 w-3.5" />
-            </button>
-          </IconTip>
-        )}
-        <IconTip label={t("localModels.actions.download", { defaultValue: "Download" })}>
-          <button type="button" onClick={handleDownload} className={btnClass}>
-            <Download className="h-3.5 w-3.5" />
+    <FileContextMenu target={target} overrides={overrides}>
+      <div className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/30 px-2.5 py-1.5 transition-colors hover:bg-secondary/50">
+        <FileMimeIcon mime="" name={name} className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <IconTip label={entry.path}>
+          <button
+            type="button"
+            onClick={() => run(primary)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
+          >
+            <span className="truncate text-xs font-medium text-foreground/90">{name}</span>
+            {diff ? (
+              <span className="shrink-0 text-[10px] tabular-nums">
+                <span className="text-emerald-600 dark:text-emerald-400">+{diff.linesAdded}</span>{" "}
+                <span className="text-rose-600 dark:text-rose-400">-{diff.linesRemoved}</span>
+              </span>
+            ) : entry.kind === "read" ? (
+              <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                {t("workspace.action.read")}
+              </span>
+            ) : null}
           </button>
         </IconTip>
-        {canReveal && (
-          <IconTip label={t("chat.revealInFolder")}>
-            <button type="button" onClick={handleReveal} className={btnClass}>
-              <FolderOpen className="h-3.5 w-3.5" />
-            </button>
-          </IconTip>
-        )}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {diff && (
+            <IconTip label={t("diffPanel.openDiff", "查看 diff")}>
+              <button type="button" onClick={() => onOpenDiff(diff)} className={btnClass}>
+                <GitCompare className="h-3.5 w-3.5" />
+              </button>
+            </IconTip>
+          )}
+          <FileActionsMoreButton target={target} overrides={overrides} />
+        </div>
       </div>
-    </div>
+    </FileContextMenu>
   )
 }
 
@@ -209,6 +192,7 @@ export default function WorkspacePanel({
   taskExecutionState = "idle",
   messages,
   onOpenDiff,
+  onPreviewFile,
   sessionId,
   onClose,
 }: WorkspacePanelProps) {
@@ -248,7 +232,13 @@ export default function WorkspacePanel({
           {files.length > 0 ? (
             <div className="space-y-1">
               {files.map((entry) => (
-                <FileRow key={entry.path} entry={entry} sessionId={sessionId} onOpenDiff={onOpenDiff} />
+                <FileRow
+                  key={entry.path}
+                  entry={entry}
+                  sessionId={sessionId}
+                  onOpenDiff={onOpenDiff}
+                  onPreviewFile={onPreviewFile}
+                />
               ))}
             </div>
           ) : (

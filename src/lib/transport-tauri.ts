@@ -15,6 +15,8 @@ import type {
   FileSearchResponse,
   ExportSessionArgs,
   ExportSessionResult,
+  ExtractedContent,
+  FileTextContent,
   ProjectFsScope,
   UploadResult,
 } from "@/lib/transport";
@@ -145,6 +147,21 @@ export class TauriTransport implements Transport {
     } catch {
       return null;
     }
+  }
+
+  async previewReadText(path: string): Promise<FileTextContent> {
+    return invoke<FileTextContent>("preview_read_text", { path });
+  }
+
+  async previewExtractDoc(path: string): Promise<ExtractedContent> {
+    return invoke<ExtractedContent>("preview_extract", { path });
+  }
+
+  async previewRawUrl(path: string): Promise<string | null> {
+    // The local asset protocol serves the absolute path directly for
+    // `<img>/<iframe>/<video>` preview; `download` is irrelevant on desktop
+    // (open/download route through `open_directory`).
+    return this.resolveAssetUrl(path);
   }
 
   async projectFsUpload(

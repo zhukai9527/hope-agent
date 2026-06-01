@@ -241,6 +241,41 @@ export interface Transport {
   ): Promise<string | null>;
 
   /**
+   * Read a file's text content for the in-app preview panel, by **absolute
+   * path** (the path-based sibling of {@link ProjectFsApi.readFile}). Binary /
+   * oversized files come back `isBinary: true`.
+   * - Tauri: `preview_read_text` (trusts local paths).
+   * - HTTP: `GET /api/sessions/{id}/files/read`, gated by session reference +
+   *   working-dir containment. Requires `sessionId`; throws without one.
+   */
+  previewReadText(
+    path: string,
+    opts?: { sessionId?: string | null },
+  ): Promise<FileTextContent>;
+
+  /**
+   * Extract a PDF / Office document for the in-app preview panel, by absolute
+   * path. Same modes / authorization as {@link previewReadText}.
+   */
+  previewExtractDoc(
+    path: string,
+    opts?: { sessionId?: string | null },
+  ): Promise<ExtractedContent>;
+
+  /**
+   * Resolve a raw URL for an absolute file path, for `<img>` / `<iframe>` /
+   * `<video>` / `<audio>` preview (and binary-placeholder open/download).
+   * - Tauri: `resolveAssetUrl(path)` (`convertFileSrc`); `download` is ignored.
+   * - HTTP: a tokened `/api/sessions/{id}/files/by-path` URL (with `download=1`
+   *   when requested). Returns `null` without a `sessionId`.
+   */
+  previewRawUrl(
+    path: string,
+    opts?: { sessionId?: string | null },
+    download?: boolean,
+  ): Promise<string | null>;
+
+  /**
    * Upload a single file into a workspace directory. Multipart on HTTP;
    * `invoke` with a byte array on Tauri.
    */

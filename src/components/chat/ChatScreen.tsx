@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Eye,
   FolderTree,
   GitCompare,
   Globe,
@@ -65,6 +66,9 @@ import { usePlanMode } from "./plan-mode/usePlanMode"
 import { useTaskProgressSnapshot } from "./tasks/useTaskProgressSnapshot"
 import { useDiffPanel } from "./diff-panel/useDiffPanel"
 import { DiffPanel } from "./diff-panel/DiffPanel"
+import { useFilePreview } from "./files/useFilePreview"
+import FilePreviewPanel from "./files/FilePreviewPanel"
+import { FileActionsContext, type FileActionsContextValue } from "./files/fileActionsContext"
 import WorkspacePanel from "./workspace/WorkspacePanel"
 import { resolveWorkspaceTaskExecutionState } from "./workspace/taskExecutionState"
 import { messagesHaveFileActivity } from "./workspace/useSessionFileChanges"
@@ -106,7 +110,16 @@ interface ChatScreenProps {
   onChatInsertConsumed?: () => void
 }
 
-type ExclusiveRightPanel = "workspace" | "diff" | "plan" | "files" | "browser" | "mac-control" | "canvas" | "team"
+type ExclusiveRightPanel =
+  | "workspace"
+  | "diff"
+  | "plan"
+  | "files"
+  | "browser"
+  | "mac-control"
+  | "canvas"
+  | "team"
+  | "preview"
 type ExclusiveRightPanelVisibility = Record<ExclusiveRightPanel, boolean>
 
 const EXCLUSIVE_RIGHT_PANEL_ORDER: readonly ExclusiveRightPanel[] = [
@@ -118,6 +131,7 @@ const EXCLUSIVE_RIGHT_PANEL_ORDER: readonly ExclusiveRightPanel[] = [
   "canvas",
   "team",
   "workspace",
+  "preview",
 ]
 
 const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
@@ -129,6 +143,7 @@ const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
   "mac-control": false,
   canvas: false,
   team: false,
+  preview: false,
 }
 
 const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
@@ -140,6 +155,7 @@ const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
   "mac-control": MousePointer2,
   canvas: Monitor,
   team: Users,
+  preview: Eye,
 }
 
 const DEFAULT_RIGHT_PANEL_WIDTH = 520
@@ -272,6 +288,10 @@ export default function ChatScreen({
   // Right side diff panel (write/edit/apply_patch metadata viewer)
   const diffPanel = useDiffPanel()
 
+  // Right side file-preview panel (Markdown links / attachments / workspace
+  // files → in-app preview). Opened via `onPreviewFile` from the message tree.
+  const filePreview = useFilePreview()
+
   // Workspace 面板：聚合任务进度 / 碰到的文件 / 引用来源。首次有内容时自动
   // 展开一次，用户关闭后本会话不再自动弹（dismissedRef 跟踪，仿 browser 面板）。
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false)
@@ -401,6 +421,12 @@ export default function ChatScreen({
   const setAgentName = session.setAgentName
   const updateSessionMeta = session.updateSessionMeta
   const handleSwitchSession = session.handleSwitchSession
+
+  // Ambient file-action wiring for the message tree (preview opener + session).
+  const fileActionsValue = useMemo<FileActionsContextValue>(
+    () => ({ sessionId: currentSessionId, onPreviewFile: filePreview.openPreview }),
+    [currentSessionId, filePreview.openPreview],
+  )
 
   useEffect(() => {
     const previousKey = previousDisplayModeSessionKeyRef.current
@@ -1452,6 +1478,7 @@ export default function ChatScreen({
     planMode.planState !== "off" &&
     (planMode.planState === "planning" || planMode.planContent.trim().length > 0)
   const isDiffPanelVisible = diffPanel.showPanel && diffPanel.activeChanges.length > 0
+  const isFilePreviewVisible = filePreview.showPanel && !!filePreview.target
   const [activeExclusiveRightPanel, setActiveExclusiveRightPanel] =
     useState<ExclusiveRightPanel | null>(null)
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
@@ -1465,12 +1492,14 @@ export default function ChatScreen({
       "mac-control": showMacControlPanel,
       canvas: canvasPanelOpen,
       team: !!activeTeamId && showTeamPanel,
+      preview: isFilePreviewVisible,
     }),
     [
       activeTeamId,
       canvasPanelOpen,
       effectiveWorkingDir,
       isDiffPanelVisible,
+      isFilePreviewVisible,
       shouldShowPlanPanel,
       showBrowserPanel,
       showFilesPanel,
@@ -1512,6 +1541,8 @@ export default function ChatScreen({
           return t("canvas.panelTitle", "Canvas")
         case "team":
           return t("team.panelTitle", "Team")
+        case "preview":
+          return t("filePreview.panelTitle", "Preview")
       }
     },
     [t],
@@ -1578,7 +1609,11 @@ export default function ChatScreen({
   }, [activeExclusiveRightPanel, openExclusiveRightPanels, rightPanelVisibility])
 
   // Reset dismissal flags (and any open panel state) on session switch so each
-  // session gets a fresh chance to auto-open live mirror panels.
+  // session gets a fresh chance to auto-open live mirror panels. Bind the stable
+  // `closePreview` callback locally so this effect depends on it (not the
+  // per-render `filePreview` object, which would reset every panel on every
+  // preview toggle).
+  const closeFilePreview = filePreview.closePreview
   useEffect(() => {
     browserPanelDismissedRef.current = false
     macControlPanelDismissedRef.current = false
@@ -1586,7 +1621,8 @@ export default function ChatScreen({
     setShowBrowserPanel(false)
     setShowMacControlPanel(false)
     setShowWorkspacePanel(false)
-  }, [session.currentSessionId])
+    closeFilePreview()
+  }, [session.currentSessionId, closeFilePreview])
 
   // Auto-open the BrowserPanel only on the first `browser:frame` of a session
   // and only if the user hasn't already dismissed it.
@@ -1847,6 +1883,7 @@ export default function ChatScreen({
 
             <CrashRecoveryBanner />
 
+            <FileActionsContext.Provider value={fileActionsValue}>
             <MessageList
               messages={session.messages}
               loading={session.loading}
@@ -1887,6 +1924,7 @@ export default function ChatScreen({
               }}
               displayMode={displayMode}
             />
+            </FileActionsContext.Provider>
 
             {/* Memory extraction toast — absolute-positioned above ChatInput
              * so it doesn't shrink the MessageList scroll container when it
@@ -2162,11 +2200,30 @@ export default function ChatScreen({
                 taskExecutionState={workspaceTaskExecutionState}
                 messages={session.messages}
                 onOpenDiff={diffPanel.openDiff}
+                onPreviewFile={filePreview.openPreview}
                 sessionId={session.currentSessionId}
                 onClose={() => {
                   workspacePanelDismissedRef.current = true
                   setShowWorkspacePanel(false)
                 }}
+              />
+            </RightPanelShell>
+          )}
+
+          {/* File preview panel — single-file viewer opened from Markdown
+              links / attachments / the workspace panel (file-operations
+              unification). Reuses the file-browser FilePreviewPane. */}
+          {shouldRenderRightPanelContent && renderedExclusiveRightPanel === "preview" && (
+            <RightPanelShell
+              width={rightPanelWidth}
+              onWidthChange={setRightPanelWidth}
+              resizeLabel={t("filePreview.resizePanel", "Resize preview panel")}
+              maxWidth={860}
+            >
+              <FilePreviewPanel
+                target={filePreview.target}
+                sessionId={session.currentSessionId}
+                onClose={filePreview.closePreview}
               />
             </RightPanelShell>
           )}

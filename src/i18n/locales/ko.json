@@ -1030,6 +1030,17 @@
       }
     }
   },
+  "fileActions": {
+    "preview": "미리보기",
+    "open": "열기",
+    "download": "다운로드",
+    "revealInFolder": "폴더에서 표시",
+    "more": "추가 작업"
+  },
+  "filePreview": {
+    "panelTitle": "미리보기",
+    "resizePanel": "미리보기 패널 크기 조정"
+  },
   "fileBrowser": {
     "panelTitle": "파일",
     "jumpToFile": "파일 브라우저에서 표시",

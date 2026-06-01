@@ -1,5 +1,4 @@
-import React, { useCallback } from "react"
-import { useTranslation } from "react-i18next"
+import React, { useMemo } from "react"
 import {
   FileText,
   FileArchive,
@@ -10,14 +9,12 @@ import {
   FileVideo,
   FileImage,
   File as FileIcon,
-  FolderOpen,
-  Download,
 } from "lucide-react"
-import { getTransport } from "@/lib/transport-provider"
-import { IconTip } from "@/components/ui/tooltip"
-import { logger } from "@/lib/logger"
 import { formatBytes } from "@/lib/format"
 import type { MediaItem } from "@/types/chat"
+import { FileContextMenu, FileActionsMoreButton } from "@/components/chat/files/FileActionMenu"
+import { useFileActions } from "@/components/chat/files/useFileActions"
+import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
 
 type IconKey =
   | "image"
@@ -168,78 +165,36 @@ export function FileMimeIcon({
 }
 
 /** Downloadable file card rendered for `send_attachment` and any other tool
- *  that emits structured media items via the `__MEDIA_ITEMS__` prefix. */
+ *  that emits structured media items via the `__MEDIA_ITEMS__` prefix.
+ *  Primary click follows the unified policy (preview / open / download by kind ×
+ *  mode); right-click and the ⋯ button expose the full action menu. */
 function FileCard({ item }: { item: MediaItem }) {
-  const { t } = useTranslation()
-  const transport = getTransport()
-  const canRevealLocal = transport.supportsLocalFileOps()
-
-  const handleOpen = useCallback(async () => {
-    try {
-      await transport.openMedia(item)
-    } catch (e) {
-      logger.error("chat", "FileCard::open", "Failed to open attachment", e)
-    }
-  }, [item, transport])
-
-  const handleDownload = useCallback(async () => {
-    try {
-      await transport.downloadMedia(item)
-    } catch (e) {
-      logger.error("chat", "FileCard::download", "Failed to download attachment", e)
-    }
-  }, [item, transport])
-
-  const handleReveal = useCallback(async () => {
-    try {
-      await transport.revealMedia(item)
-    } catch (e) {
-      logger.error("chat", "FileCard::reveal", "Failed to reveal attachment", e)
-    }
-  }, [item, transport])
+  const target = useMemo<PreviewTarget>(() => ({ kind: "media", item }), [item])
+  const { primary, run } = useFileActions(target)
 
   return (
-    <div className="inline-flex items-center gap-2 max-w-sm rounded-md border border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors px-2.5 py-1.5 text-xs">
-      <FileMimeIcon
-        mime={item.mimeType}
-        name={item.name}
-        className="h-4 w-4 shrink-0 text-muted-foreground"
-      />
-      <button
-        type="button"
-        onClick={handleOpen}
-        className="flex flex-col items-start min-w-0 flex-1 text-left hover:text-foreground transition-colors"
-      >
-        <span className="truncate max-w-[240px] font-medium text-foreground/90">
-          {item.name}
-        </span>
-        <span className="text-[10px] text-muted-foreground/70 tabular-nums">
-          {formatBytes(item.sizeBytes)}
-        </span>
-      </button>
-      <div className="flex items-center gap-0.5 shrink-0">
-        <IconTip label={t("localModels.actions.download", { defaultValue: "Download" })}>
-          <button
-            type="button"
-            onClick={handleDownload}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Download className="h-3.5 w-3.5" />
-          </button>
-        </IconTip>
-        {canRevealLocal && (
-          <IconTip label={t("chat.revealInFolder")}>
-            <button
-              type="button"
-              onClick={handleReveal}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <FolderOpen className="h-3.5 w-3.5" />
-            </button>
-          </IconTip>
-        )}
+    <FileContextMenu target={target}>
+      <div className="inline-flex items-center gap-2 max-w-sm rounded-md border border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors px-2.5 py-1.5 text-xs">
+        <FileMimeIcon
+          mime={item.mimeType}
+          name={item.name}
+          className="h-4 w-4 shrink-0 text-muted-foreground"
+        />
+        <button
+          type="button"
+          onClick={() => run(primary)}
+          className="flex flex-col items-start min-w-0 flex-1 text-left hover:text-foreground transition-colors"
+        >
+          <span className="truncate max-w-[240px] font-medium text-foreground/90">
+            {item.name}
+          </span>
+          <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+            {formatBytes(item.sizeBytes)}
+          </span>
+        </button>
+        <FileActionsMoreButton target={target} className="shrink-0" />
       </div>
-    </div>
+    </FileContextMenu>
   )
 }
 

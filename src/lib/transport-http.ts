@@ -14,6 +14,8 @@ import type {
   FileSearchResponse,
   ExportSessionArgs,
   ExportSessionResult,
+  ExtractedContent,
+  FileTextContent,
   ProjectFsScope,
   UploadResult,
 } from "@/lib/transport";
@@ -64,6 +66,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   project_fs_delete:               { method: "DELETE", path: "/api/fs/entry" },
   project_fs_rename:               { method: "POST",   path: "/api/fs/rename" },
   project_fs_mkdir:                { method: "POST",   path: "/api/fs/mkdir" },
+  // Preview by absolute path (file-operations unification). Session-scoped +
+  // authorized server-side; `{sessionId}` is interpolated, `path` → query.
+  preview_read_text:               { method: "GET",    path: "/api/sessions/{sessionId}/files/read" },
+  preview_extract:                 { method: "GET",    path: "/api/sessions/{sessionId}/files/extract" },
 
   // -- Sessions --
   list_sessions_cmd:               { method: "GET",    path: "/api/sessions" },
@@ -1062,6 +1068,38 @@ export class HttpTransport implements Transport {
     if (args.download) url.searchParams.set("download", "1");
     if (this.apiKey) url.searchParams.set("token", this.apiKey);
     return url.toString();
+  }
+
+  async previewReadText(
+    path: string,
+    opts?: { sessionId?: string | null },
+  ): Promise<FileTextContent> {
+    if (!opts?.sessionId) throw new Error("preview requires a session id in HTTP mode");
+    return this.call<FileTextContent>("preview_read_text", {
+      sessionId: opts.sessionId,
+      path,
+    });
+  }
+
+  async previewExtractDoc(
+    path: string,
+    opts?: { sessionId?: string | null },
+  ): Promise<ExtractedContent> {
+    if (!opts?.sessionId) throw new Error("preview requires a session id in HTTP mode");
+    return this.call<ExtractedContent>("preview_extract", {
+      sessionId: opts.sessionId,
+      path,
+    });
+  }
+
+  async previewRawUrl(
+    path: string,
+    opts?: { sessionId?: string | null },
+    download?: boolean,
+  ): Promise<string | null> {
+    // The session-authorized by-path route serves inline (preview) or as an
+    // attachment (download) based on `?download=1`; reuse it as the raw src.
+    return this.sessionFileUrl(path, opts?.sessionId, download ?? false);
   }
 
   async projectFsUpload(

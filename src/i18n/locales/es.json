@@ -1030,6 +1030,17 @@
       }
     }
   },
+  "fileActions": {
+    "preview": "Vista previa",
+    "open": "Abrir",
+    "download": "Descargar",
+    "revealInFolder": "Mostrar en carpeta",
+    "more": "Más acciones"
+  },
+  "filePreview": {
+    "panelTitle": "Vista previa",
+    "resizePanel": "Redimensionar panel de vista previa"
+  },
   "fileBrowser": {
     "panelTitle": "Archivos",
     "jumpToFile": "Mostrar en el explorador de archivos",
