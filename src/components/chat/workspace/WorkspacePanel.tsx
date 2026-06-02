@@ -22,23 +22,32 @@ import { useFileActions } from "@/components/chat/files/useFileActions"
 import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
 import TaskProgressPanel from "@/components/chat/tasks/TaskProgressPanel"
 import type { TaskProgressSnapshot } from "@/components/chat/tasks/taskProgress"
-import { useSessionFileChanges, type SessionFileEntry } from "./useSessionFileChanges"
-import { useSessionUrlSources, type SessionUrlSource } from "./useSessionUrlSources"
+import type { SessionFileEntry } from "./useSessionFileChanges"
+import type { SessionUrlSource } from "./useSessionUrlSources"
+import { useWorkspaceArtifacts } from "./useWorkspaceArtifacts"
+import { useScrollPagedRender } from "./useScrollPagedRender"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
 
 interface WorkspacePanelProps {
   taskSnapshot: TaskProgressSnapshot | null
   taskExecutionState?: WorkspaceTaskExecutionState
-  /** 会话消息 —— 文件 / 来源聚合在面板内部进行,面板未打开时零成本。 */
+  /** 会话消息 —— 当前轮 live tail 在面板内部聚合,与后端历史全量合并。 */
   messages: Message[]
   /** 改写类文件「查看 diff」→ 右侧 diff 面板。 */
   onOpenDiff: (payload: FileChangeMetadata) => void
   /** 预览文件 → 右侧预览面板（与下挂文件 / Markdown 链接同一策略）。 */
   onPreviewFile?: (target: PreviewTarget) => void
-  /** 当前会话 id,文件打开 / 下载需要它解析作用域。 */
+  /** 当前会话 id,后端聚合 + 文件作用域解析都需要它。 */
   sessionId?: string | null
+  /** 无痕会话:跳过后端聚合,只用 live tail（守「关闭即焚」）。 */
+  incognito?: boolean
+  /** 当前会话是否正在跑一轮:true→false 跳变时面板重新拉后端聚合。 */
+  turnActive?: boolean
   onClose: () => void
 }
+
+/** 每段初始渲染条数;滚到底自动 +此值（无「加载更多」按钮）。 */
+const RENDER_STEP = 20
 
 function domainOf(url: string): string {
   try {
@@ -89,11 +98,21 @@ function WorkspaceSection({
   )
 }
 
+/** 段内末尾小字:被后端安全上限截断时提示「仅显示最近 N 条」。 */
+function TruncatedNote() {
+  const { t } = useTranslation()
+  return (
+    <div className="px-2 pt-1.5 text-center text-[11px] text-muted-foreground/60">
+      {t("workspace.truncatedNote", "仅显示最近 1000 条")}
+    </div>
+  )
+}
+
 /**
  * 文件行 —— 操作与消息下挂文件 / Markdown 链接完全一致:主点击按类型 × 模式决议
- * (预览 / 打开 / 下载),右键 + ⋯ 出完整菜单。改写类且有结构化 diff 的文件额外保留
- * 一个「查看 diff」按钮(工作台独有)。工作台在消息树外,故 sessionId / onPreviewFile
- * 通过 overrides 显式传入。
+ * (预览 / 打开 / 下载),右键 + ⋯ 出完整菜单。窗口内文件带结构化 diff 时额外保留
+ * 一个「查看 diff」按钮(工作台独有);窗口外(后端摘要)文件无 diff,点击走预览当前
+ * 内容。工作台在消息树外,故 sessionId / onPreviewFile 通过 overrides 显式传入。
  */
 function FileRow({
   entry,
@@ -109,6 +128,9 @@ function FileRow({
   const { t } = useTranslation()
   const name = basename(entry.path)
   const diff = entry.diff
+  // `+N -M` shows for any modified file with a known line delta (backend
+  // summary or live diff); the diff *button* needs the structured `diff`.
+  const showDelta = entry.kind === "modified" && (entry.linesAdded > 0 || entry.linesRemoved > 0)
   const target = useMemo<PreviewTarget>(
     () => ({ kind: "path", path: entry.path, name }),
     [entry.path, name],
@@ -129,10 +151,10 @@ function FileRow({
             className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
           >
             <span className="truncate text-xs font-medium text-foreground/90">{name}</span>
-            {diff ? (
+            {showDelta ? (
               <span className="shrink-0 text-[10px] tabular-nums">
-                <span className="text-emerald-600 dark:text-emerald-400">+{diff.linesAdded}</span>{" "}
-                <span className="text-rose-600 dark:text-rose-400">-{diff.linesRemoved}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">+{entry.linesAdded}</span>{" "}
+                <span className="text-rose-600 dark:text-rose-400">-{entry.linesRemoved}</span>
               </span>
             ) : entry.kind === "read" ? (
               <span className="shrink-0 text-[10px] text-muted-foreground/70">
@@ -184,8 +206,8 @@ function EmptyHint({ children }: { children: ReactNode }) {
 
 /**
  * 右侧「工作台」面板:把本会话的任务进度、碰到的文件、引用来源聚合到一处。
- * 文件 / 来源聚合在面板内部(useSessionFileChanges / useSessionUrlSources)进行,
- * 面板未打开时不挂载、零成本。结构骨架对齐 DiffPanel embedded 模式。
+ * 文件 / 来源走 useWorkspaceArtifacts —— 后端读时聚合全会话历史 + 当前轮 live tail
+ * 内存合并;输出 / 来源两段各自定高内部滚动,滚到底自动增量渲染(无按钮)。
  */
 export default function WorkspacePanel({
   taskSnapshot,
@@ -194,11 +216,27 @@ export default function WorkspacePanel({
   onOpenDiff,
   onPreviewFile,
   sessionId,
+  incognito = false,
+  turnActive = false,
   onClose,
 }: WorkspacePanelProps) {
   const { t } = useTranslation()
-  const files = useSessionFileChanges(messages)
-  const urlSources = useSessionUrlSources(messages)
+  const { files, sources, filesTruncated, sourcesTruncated } = useWorkspaceArtifacts(
+    sessionId,
+    messages,
+    { incognito, turnActive },
+  )
+
+  const {
+    visible: visibleFiles,
+    hasMore: hasMoreFiles,
+    setSentinel: setFilesSentinel,
+  } = useScrollPagedRender(files, { step: RENDER_STEP, resetKey: sessionId })
+  const {
+    visible: visibleSources,
+    hasMore: hasMoreSources,
+    setSentinel: setSourcesSentinel,
+  } = useScrollPagedRender(sources, { step: RENDER_STEP, resetKey: sessionId })
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
@@ -227,11 +265,11 @@ export default function WorkspacePanel({
           </WorkspaceSection>
         )}
 
-        {/* 输出 — 本会话碰到的文件(读 + 改)。 */}
+        {/* 输出 — 本会话碰到的文件(读 + 改),定高内部滚动 + 滚动增量渲染。 */}
         <WorkspaceSection title={t("workspace.sectionOutput", "输出")} count={files.length} icon={Files}>
           {files.length > 0 ? (
-            <div className="space-y-1">
-              {files.map((entry) => (
+            <div className="max-h-[40vh] space-y-1 overflow-y-auto pr-0.5">
+              {visibleFiles.map((entry) => (
                 <FileRow
                   key={entry.path}
                   entry={entry}
@@ -240,19 +278,23 @@ export default function WorkspacePanel({
                   onPreviewFile={onPreviewFile}
                 />
               ))}
+              {hasMoreFiles && <div ref={setFilesSentinel} className="h-px" />}
+              {filesTruncated && <TruncatedNote />}
             </div>
           ) : (
             <EmptyHint>{t("workspace.emptyOutput", "还没有碰到文件")}</EmptyHint>
           )}
         </WorkspaceSection>
 
-        {/* 来源 — web_search 命中 + 正文链接。 */}
-        <WorkspaceSection title={t("workspace.sectionSources", "来源")} count={urlSources.length} icon={Globe}>
-          {urlSources.length > 0 ? (
-            <div className="space-y-0.5">
-              {urlSources.map((source) => (
+        {/* 来源 — web_search 命中 + 正文链接,定高内部滚动 + 滚动增量渲染。 */}
+        <WorkspaceSection title={t("workspace.sectionSources", "来源")} count={sources.length} icon={Globe}>
+          {sources.length > 0 ? (
+            <div className="max-h-[40vh] space-y-0.5 overflow-y-auto pr-0.5">
+              {visibleSources.map((source) => (
                 <SourceRow key={source.url} source={source} />
               ))}
+              {hasMoreSources && <div ref={setSourcesSentinel} className="h-px" />}
+              {sourcesTruncated && <TruncatedNote />}
             </div>
           ) : (
             <EmptyHint>{t("workspace.emptySources", "还没有引用来源")}</EmptyHint>

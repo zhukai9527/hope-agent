@@ -4654,6 +4654,7 @@
     "openPanel": "Buka ruang kerja",
     "resizePanel": "Ubah saiz panel ruang kerja",
     "sourceFromSearch": "Carian",
+    "truncatedNote": "Memaparkan 1000 terkini",
     "action": {
       "create": "Baharu",
       "edit": "Sunting",

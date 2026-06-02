@@ -19,6 +19,7 @@ import type {
   FileTextContent,
   ProjectFsScope,
   UploadResult,
+  SessionArtifacts,
 } from "@/lib/transport";
 import type { MediaItem } from "@/types/chat";
 
@@ -162,6 +163,10 @@ export class TauriTransport implements Transport {
     // `<img>/<iframe>/<video>` preview; `download` is irrelevant on desktop
     // (open/download route through `open_directory`).
     return this.resolveAssetUrl(path);
+  }
+
+  async loadSessionArtifacts(sessionId: string): Promise<SessionArtifacts> {
+    return invoke<SessionArtifacts>("load_session_artifacts_cmd", { sessionId });
   }
 
   async projectFsUpload(

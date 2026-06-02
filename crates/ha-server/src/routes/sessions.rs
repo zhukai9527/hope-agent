@@ -772,6 +772,18 @@ pub async fn get_session_messages_after(
     Ok(Json(json!([messages, has_more])))
 }
 
+/// `GET /api/sessions/:id/artifacts` — aggregate the session's workspace
+/// artifacts (files touched + URL sources) over its FULL history. Read-only
+/// summary (paths + URLs, no file contents); behind the same Bearer auth as
+/// the other session endpoints.
+pub async fn get_session_artifacts(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<ha_core::session::SessionArtifacts>, AppError> {
+    let artifacts = ha_core::session::aggregate_session_artifacts(&ctx.session_db, &id)?;
+    Ok(Json(artifacts))
+}
+
 /// `GET /api/sessions/:id/messages?limit=N` — load latest messages for a session.
 ///
 /// Returns a JSON tuple `[messages, total, hasMore]` (same shape as Tauri IPC).
@@ -862,10 +874,11 @@ pub async fn read_session_file_by_path(
     }
     let messages = ctx.session_db.load_session_messages(&id)?;
     let file_canon = authorized_canonical_file_path(&id, requested, &messages).await?;
-    let content = tokio::task::spawn_blocking(move || ha_core::filesystem::read_text_abs(&file_canon))
-        .await
-        .map_err(|e| AppError::internal(format!("read task: {e}")))?
-        .map_err(map_fs_err)?;
+    let content =
+        tokio::task::spawn_blocking(move || ha_core::filesystem::read_text_abs(&file_canon))
+            .await
+            .map_err(|e| AppError::internal(format!("read task: {e}")))?
+            .map_err(map_fs_err)?;
     Ok(Json(content))
 }
 
@@ -883,10 +896,11 @@ pub async fn extract_session_file_by_path(
     }
     let messages = ctx.session_db.load_session_messages(&id)?;
     let file_canon = authorized_canonical_file_path(&id, requested, &messages).await?;
-    let content = tokio::task::spawn_blocking(move || ha_core::filesystem::extract_abs(&file_canon))
-        .await
-        .map_err(|e| AppError::internal(format!("extract task: {e}")))?
-        .map_err(map_fs_err)?;
+    let content =
+        tokio::task::spawn_blocking(move || ha_core::filesystem::extract_abs(&file_canon))
+            .await
+            .map_err(|e| AppError::internal(format!("extract task: {e}")))?
+            .map_err(map_fs_err)?;
     Ok(Json(content))
 }
 

@@ -229,6 +229,10 @@ fn build_router_with_cors(
             get(routes::sessions::search_session_messages),
         )
         .route(
+            "/sessions/{id}/artifacts",
+            get(routes::sessions::get_session_artifacts),
+        )
+        .route(
             "/sessions/{id}/stream-state",
             get(routes::sessions::get_session_stream_state),
         )

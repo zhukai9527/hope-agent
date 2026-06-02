@@ -288,6 +288,15 @@ export interface Transport {
       overwrite?: boolean;
     },
   ): Promise<UploadResult>;
+
+  /**
+   * Aggregate the session's workspace artifacts (files touched + URL sources)
+   * over its FULL history — the complete set the workspace panel merges with
+   * its in-memory live tail. Summary only (no diff snapshots).
+   * - Tauri: `load_session_artifacts_cmd`.
+   * - HTTP: `GET /api/sessions/{id}/artifacts`.
+   */
+  loadSessionArtifacts(sessionId: string): Promise<SessionArtifacts>;
 }
 
 /**
@@ -415,6 +424,37 @@ export interface ExtractedContent {
   kind: string;
   text: string | null;
   images: ExtractedImageDto[];
+}
+
+/**
+ * Backend-aggregated file summary — the `diff`-less sibling of
+ * `SessionFileEntry`. The workspace panel maps it back with `diff: null`
+ * (window-外 files have no historical diff; they preview current content).
+ */
+export interface FileArtifactSummary {
+  path: string;
+  kind: "modified" | "read";
+  linesAdded: number;
+  linesRemoved: number;
+  readLines: number | null;
+}
+
+/** Backend-aggregated URL source (mirror of `SessionUrlSource`). */
+export interface UrlSourceDto {
+  url: string;
+  origin: "web_search" | "message";
+}
+
+/**
+ * Full-session workspace artifacts aggregated server-side over the whole
+ * message history. `*Truncated` flags whether the list was capped (most-recent
+ * 1000). See {@link Transport.loadSessionArtifacts}.
+ */
+export interface SessionArtifacts {
+  files: FileArtifactSummary[];
+  sources: UrlSourceDto[];
+  filesTruncated: boolean;
+  sourcesTruncated: boolean;
 }
 
 export interface WriteResult {

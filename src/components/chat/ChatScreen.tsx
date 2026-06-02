@@ -2202,6 +2202,11 @@ export default function ChatScreen({
                 onOpenDiff={diffPanel.openDiff}
                 onPreviewFile={filePreview.openPreview}
                 sessionId={session.currentSessionId}
+                incognito={incognitoEnabled}
+                turnActive={
+                  workspaceTaskExecutionState === "running" ||
+                  workspaceTaskExecutionState === "cancelling"
+                }
                 onClose={() => {
                   workspacePanelDismissedRef.current = true
                   setShowWorkspacePanel(false)

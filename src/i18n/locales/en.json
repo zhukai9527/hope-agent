@@ -4654,6 +4654,7 @@
     "openPanel": "Open workspace",
     "resizePanel": "Resize workspace panel",
     "sourceFromSearch": "Search",
+    "truncatedNote": "Showing the most recent 1000",
     "action": {
       "create": "New",
       "edit": "Edit",

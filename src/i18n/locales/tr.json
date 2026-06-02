@@ -4654,6 +4654,7 @@
     "openPanel": "Çalışma alanını aç",
     "resizePanel": "Çalışma alanı panelini yeniden boyutlandır",
     "sourceFromSearch": "Arama",
+    "truncatedNote": "En son 1000 gösteriliyor",
     "action": {
       "create": "Yeni",
       "edit": "Düzenle",

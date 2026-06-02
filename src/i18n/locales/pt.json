@@ -4654,6 +4654,7 @@
     "openPanel": "Abrir espaço de trabalho",
     "resizePanel": "Redimensionar painel do espaço de trabalho",
     "sourceFromSearch": "Pesquisa",
+    "truncatedNote": "Mostrando os 1000 mais recentes",
     "action": {
       "create": "Novo",
       "edit": "Editar",

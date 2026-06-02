@@ -4654,6 +4654,7 @@
     "openPanel": "開啟工作台",
     "resizePanel": "調整工作台面板寬度",
     "sourceFromSearch": "搜尋",
+    "truncatedNote": "僅顯示最近 1000 條",
     "action": {
       "create": "新建",
       "edit": "修改",

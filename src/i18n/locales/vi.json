@@ -4654,6 +4654,7 @@
     "openPanel": "Mở không gian làm việc",
     "resizePanel": "Đổi kích thước bảng không gian làm việc",
     "sourceFromSearch": "Tìm kiếm",
+    "truncatedNote": "Hiển thị 1000 mục gần nhất",
     "action": {
       "create": "Mới",
       "edit": "Sửa",

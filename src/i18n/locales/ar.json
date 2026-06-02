@@ -4654,6 +4654,7 @@
     "openPanel": "فتح مساحة العمل",
     "resizePanel": "تغيير حجم لوحة مساحة العمل",
     "sourceFromSearch": "بحث",
+    "truncatedNote": "عرض أحدث 1000",
     "action": {
       "create": "جديد",
       "edit": "تعديل",
