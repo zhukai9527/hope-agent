@@ -15,14 +15,15 @@ import {
   FileText,
   FolderCheck,
   FolderTree,
-  ListChecks,
   Loader2,
-  MessageCircle,
   Search,
   Send,
   Ghost,
   Share2,
-  PanelLeft,
+  PanelLeftDashed,
+  PanelRight,
+  PanelRightDashed,
+  type LucideIcon,
 } from "lucide-react"
 import { ExportSessionDialog } from "@/components/chat/export/ExportSessionDialog"
 import ChannelIcon from "@/components/common/ChannelIcon"
@@ -39,9 +40,14 @@ import type {
   ActiveModel,
   SessionMeta,
   AgentSummaryForSidebar,
-  ChatDisplayMode,
 } from "@/types/chat"
 import type { ProjectMeta } from "@/types/project"
+
+interface RightPanelTitleBarItem {
+  id: string
+  label: string
+  icon: LucideIcon
+}
 
 interface ChatTitleBarProps {
   agentName: string
@@ -94,10 +100,6 @@ interface ChatTitleBarProps {
   sidebarCollapsed?: boolean
   /** Expands the session sidebar from the title bar. */
   onExpandSidebar?: () => void
-  /** Message presentation mode in the main conversation. */
-  displayMode?: ChatDisplayMode
-  /** Switches between bubble and task timeline presentation. */
-  onDisplayModeChange?: (mode: ChatDisplayMode) => void
   /** Draft/new-session incognito toggle, surfaced in the title bar. */
   incognitoEnabled?: boolean
   incognitoSaving?: boolean
@@ -107,6 +109,16 @@ interface ChatTitleBarProps {
   onToggleFilesPanel?: () => void
   /** Whether the file browser panel is currently open (controls active styling). */
   filesPanelOpen?: boolean
+  /** Open right-side panels available for switching/collapsing. */
+  rightPanels?: RightPanelTitleBarItem[]
+  /** Active right-side panel id. */
+  activeRightPanelId?: string | null
+  /** Whether the active right-side panel is collapsed. */
+  rightPanelCollapsed?: boolean
+  /** Switch to an already-open right-side panel. */
+  onSelectRightPanel?: (panelId: string) => void
+  /** Collapse/expand the active right-side panel. */
+  onToggleRightPanelCollapsed?: () => void
 }
 
 export default function ChatTitleBar({
@@ -136,19 +148,24 @@ export default function ChatTitleBar({
   onChangeAgent,
   sidebarCollapsed,
   onExpandSidebar,
-  displayMode = "bubble",
-  onDisplayModeChange,
   incognitoEnabled = false,
   incognitoSaving = false,
   incognitoDisabledReason,
   onIncognitoChange,
   onToggleFilesPanel,
   filesPanelOpen = false,
+  rightPanels = [],
+  activeRightPanelId,
+  rightPanelCollapsed = false,
+  onSelectRightPanel,
+  onToggleRightPanelCollapsed,
 }: ChatTitleBarProps) {
   const { t } = useTranslation()
   const appVersion = useAppVersion()
   const [showStatus, setShowStatus] = useState(false)
+  const [showRightPanelMenu, setShowRightPanelMenu] = useState(false)
   const statusRef = useRef<HTMLDivElement>(null)
+  const rightPanelMenuRef = useRef<HTMLDivElement>(null)
 
   // Compact result toast
   const [compactToast, setCompactToast] = useState<{ success: boolean; message: string } | null>(
@@ -202,6 +219,17 @@ export default function ChatTitleBar({
   }, [showStatus])
 
   useEffect(() => {
+    if (!showRightPanelMenu) return
+    const handler = (e: MouseEvent) => {
+      if (rightPanelMenuRef.current && !rightPanelMenuRef.current.contains(e.target as Node)) {
+        setShowRightPanelMenu(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showRightPanelMenu])
+
+  useEffect(() => {
     return () => {
       if (sessionIdCopiedTimer.current) clearTimeout(sessionIdCopiedTimer.current)
     }
@@ -225,6 +253,12 @@ export default function ChatTitleBar({
         (x) => x.providerId === activeModel.providerId && x.modelId === activeModel.modelId,
       )
     : null
+  const activeRightPanel =
+    rightPanels.find((panel) => panel.id === activeRightPanelId) ?? rightPanels[0] ?? null
+  const ActiveRightPanelIcon = activeRightPanel?.icon
+  const rightPanelToggleLabel = rightPanelCollapsed
+    ? t("chat.rightPanel.expand", "展开右侧面板")
+    : t("chat.rightPanel.collapse", "收起右侧面板")
   const workingDirChip = effectiveWorkingDir ? (
     <IconTip
       label={
@@ -246,6 +280,88 @@ export default function ChatTitleBar({
       </span>
     </IconTip>
   ) : null
+  const rightPanelControls =
+    rightPanels.length > 0 && (rightPanels.length > 1 || onToggleRightPanelCollapsed) ? (
+      <div className="ml-1 flex items-center gap-0.5 border-l border-border-soft pl-1">
+        {rightPanels.length > 1 && activeRightPanel && ActiveRightPanelIcon && (
+          <div className="relative" ref={rightPanelMenuRef}>
+            <IconTip label={t("chat.rightPanel.switch", "切换右侧面板")}>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground",
+                  showRightPanelMenu && "bg-secondary text-foreground",
+                )}
+                aria-label={t("chat.rightPanel.switch", "切换右侧面板")}
+                aria-haspopup="menu"
+                aria-expanded={showRightPanelMenu}
+                onClick={() => setShowRightPanelMenu((v) => !v)}
+              >
+                <ActiveRightPanelIcon className="h-4 w-4" />
+                <span className="max-w-[72px] truncate text-[11px] font-medium">
+                  {activeRightPanel.label}
+                </span>
+              </button>
+            </IconTip>
+            <div
+              className={cn(
+                "absolute right-0 top-full z-50 mt-1.5 min-w-[164px] rounded-lg border border-border bg-popover p-1 shadow-xl transition-all duration-150 origin-top-right",
+                showRightPanelMenu
+                  ? "scale-100 opacity-100 pointer-events-auto"
+                  : "scale-95 opacity-0 pointer-events-none",
+              )}
+              role="menu"
+            >
+              {rightPanels.map((panel) => {
+                const PanelIcon = panel.icon
+                const active = panel.id === activeRightPanel.id
+                return (
+                  <button
+                    key={panel.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={active}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors",
+                      active
+                        ? "bg-secondary text-foreground"
+                        : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
+                    )}
+                    onClick={() => {
+                      onSelectRightPanel?.(panel.id)
+                      setShowRightPanelMenu(false)
+                    }}
+                  >
+                    <PanelIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{panel.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        {onToggleRightPanelCollapsed && (
+          <IconTip label={rightPanelToggleLabel}>
+            <button
+              type="button"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-secondary/70 hover:text-foreground",
+                rightPanelCollapsed ? "text-muted-foreground" : "text-foreground",
+              )}
+              aria-label={rightPanelToggleLabel}
+              aria-expanded={!rightPanelCollapsed}
+              onClick={onToggleRightPanelCollapsed}
+            >
+              {rightPanelCollapsed ? (
+                <PanelRightDashed className="h-4 w-4" />
+              ) : (
+                <PanelRight className="h-4 w-4" />
+              )}
+            </button>
+          </IconTip>
+        )}
+      </div>
+    ) : null
 
   return (
     <div
@@ -260,7 +376,7 @@ export default function ChatTitleBar({
               aria-label={t("chat.expandSidebar")}
               onClick={onExpandSidebar}
             >
-              <PanelLeft className="h-4 w-4" />
+              <PanelLeftDashed className="h-4 w-4" />
             </button>
           </IconTip>
         )}
@@ -351,36 +467,6 @@ export default function ChatTitleBar({
             showLabel={false}
             onChange={onIncognitoChange}
           />
-        )}
-        {onDisplayModeChange && (
-          <IconTip
-            label={
-              displayMode === "timeline"
-                ? t("chat.viewModeBubble")
-                : t("chat.viewModeTimeline")
-            }
-          >
-            <button
-              className={cn(
-                "pb-1.5 text-muted-foreground hover:text-foreground transition-colors",
-              )}
-              aria-pressed={displayMode === "timeline"}
-              aria-label={
-                displayMode === "timeline"
-                  ? t("chat.viewModeBubble")
-                  : t("chat.viewModeTimeline")
-              }
-              onClick={() =>
-                onDisplayModeChange(displayMode === "timeline" ? "bubble" : "timeline")
-              }
-            >
-              {displayMode === "timeline" ? (
-                <MessageCircle className="h-4 w-4" />
-              ) : (
-                <ListChecks className="h-4 w-4" />
-              )}
-            </button>
-          </IconTip>
         )}
         {/* Show Files Button — opens the right-side file browser panel. */}
         {onToggleFilesPanel && (
@@ -800,6 +886,7 @@ export default function ChatTitleBar({
             </button>
           </IconTip>
         )}
+        {rightPanelControls}
       </div>
       {currentSessionId && exportOpen && (
         <ExportSessionDialog
