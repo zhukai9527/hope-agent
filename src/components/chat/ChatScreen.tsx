@@ -1835,6 +1835,15 @@ export default function ChatScreen({
             effectiveWorkingDir ? () => setShowFilesPanel((p) => !p) : undefined
           }
           filesPanelOpen={showFilesPanel}
+          onToggleWorkspacePanel={() => {
+            if (showWorkspacePanel) {
+              workspacePanelDismissedRef.current = true
+              setShowWorkspacePanel(false)
+            } else {
+              openWorkspacePanel()
+            }
+          }}
+          workspacePanelOpen={showWorkspacePanel}
           rightPanels={titleBarRightPanels}
           activeRightPanelId={renderedExclusiveRightPanel}
           rightPanelCollapsed={rightPanelCollapsed}
@@ -1994,7 +2003,6 @@ export default function ChatScreen({
                     onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
                     taskProgressSnapshot={taskProgressSnapshot}
                     onOpenWorkspace={openWorkspacePanel}
-                    workspaceHasContent={hasWorkspaceContent}
                     executionState={
                       session.currentSessionId
                         ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
