@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import {
   Brain,
   ClipboardList,
-  FolderTree,
+  FolderOpen,
   GitCompare,
   Globe,
   LayoutDashboard,
@@ -131,7 +131,7 @@ const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
   workspace: LayoutDashboard,
   diff: GitCompare,
   plan: ClipboardList,
-  files: FolderTree,
+  files: FolderOpen,
   browser: Globe,
   "mac-control": MousePointer2,
   canvas: Monitor,

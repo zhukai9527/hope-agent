@@ -14,7 +14,7 @@ import {
   X,
   FileText,
   FolderCheck,
-  FolderTree,
+  FolderOpen,
   Loader2,
   Search,
   Send,
@@ -298,7 +298,7 @@ export default function ChatTitleBar({
               aria-pressed={filesPanelOpen}
               onClick={onToggleFilesPanel}
             >
-              <FolderTree className="h-4 w-4" />
+              <FolderOpen className="h-4 w-4" />
             </button>
           </IconTip>
         )}
