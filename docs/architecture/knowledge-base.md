@@ -18,6 +18,7 @@
 - [Wikilink 语法与解析](#wikilink-语法与解析)
 - [与 Obsidian / Logseq 兼容性](#与-obsidian--logseq-兼容性)
 - [后端模块与作用域](#后端模块与作用域)
+- [外部目录绑定（Obsidian/Logseq vault）](#外部目录绑定obsidianlogseq-vault)
 - [AI 知识操作（完整读写 + 检索 + 自主维护）](#ai-知识操作完整读写--检索--自主维护)
 - [前端 UI](#前端-ui)
 - [跨端契约对齐](#跨端契约对齐)
@@ -118,14 +119,14 @@ Hope Agent 已有三层知识容器，知识库（Knowledge Base, KB）是平行
 | D3 | 挂载的容器概念 | **独立的「知识库」容器**（非复用 Project） | 用户要一级功能、独立心智模型。代价是新建一套容器/作用域/权限，已接受 |
 | D4 | 第一阶段 MVP | **双链基础：Wikilink 解析 + Backlinks 面板** | 最小可用、最快出效果，是图谱/嵌入/召回的地基 |
 | D5 | 对外命名（品牌） | **功能名 = 「知识空间 / Knowledge Space」**；**营销定位语可打「第二大脑 / Second Brain」**（slogan，非功能本名）；**代码内部保持中性**——模块 `knowledge/`、工具 `note_*`、作用域 `for_knowledge` 不变 | 「知识库」在中文被 RAG / 客服知识库语义占领，易误读成被动静态存储；「笔记」撑不起双链+图谱+AI 自主维护的体量；「空间」开放、非 RAG、可 i18n。功能名中性精确不误导，营销借「第二大脑」高认知度拉心智。**三层解耦**（代码标识符 / 功能展示名 / 营销 slogan），各自可独立低风险调整 |
+| D6 | 外部目录绑定（Obsidian/Logseq 互通） | **切「只读」一刀**：Phase 1 = 内部 `notes/` 完整读写 **+ 外部 vault 只读绑定**（索引/双链/反链/搜索/AI 读，AI 与工具对外部 root 的写一律禁用）；Phase 2 放开 AI 写外部（带冲突检测）+ 忽略规则配置 UI + 大库索引进度打磨 | A 纯内部（外部整体 Phase 2）/ C 全功能外部读写 Phase 1 | 外部绑定是最大获客杠杆（"指向你现成的 Obsidian vault，AI 瞬间点亮"）。读外部的成本（watcher/reconcile/大库索引/忽略规则/安全 review）本就在关键路径；**写外部的写冲突/lost-update 是回归风险最高的部分**，只读切法把它隔离到 Phase 2，早拿 demo 又不背最毒的债。详见 [外部目录绑定](#外部目录绑定obsidianlogseq-vault) |
 
 ### 待定决策（已填默认取向，待确认）
 
-> P1（命名）已拍板，转入上方已定决策 D5。
+> P1（命名）已拍板转入 D5；P2（外部目录绑定）已拍板转入 D6。
 
 | # | 决策点 | 默认取向 | 备选 | 取舍 |
 |---|---|---|---|---|
-| P2 | 外部目录绑定（Obsidian 互通） | **Phase 1 只做内置 `notes/` 目录**；Schema 从第一天就预留 `root_dir: Option<path>`，外部 vault 绑定放 **Phase 2** | Phase 1 即支持绑定现成 Obsidian vault | 绑外部目录要额外处理 `.obsidian`/`.git` 忽略、外部并发编辑冲突、watcher 噪声；MVP 先收敛风险，但数据模型不留债 |
 | P3 | 召回融合形态 | **Phase 1 独立 `note_search` 工具**；笔记与 memory 是否在 `recall_memory` 内融合检索，放 **Phase 3** 评估 | 直接折进 `recall_memory` 一次拿记忆+笔记 | 独立工具干净、不动成熟的 memory 路径；融合体验更好但改动面大、回归风险高 |
 | P4 | 文档优先 vs 大纲优先 | **以文档优先为基座（对齐 Obsidian）**；对 Logseq 做文件级 + 公共语法子集互通；深度大纲语义（block 树 / `((block-ref))`）放 **Phase 3** 可选 | 一开始就做 Logseq 式大纲优先 | Obsidian（文档优先）与 Logseq（大纲优先）数据模型不同，无法一套实现原生兼容两者；文档优先覆盖面更广、与现有 Markdown 渲染栈一致。详见 [兼容性](#与-obsidian--logseq-兼容性) |
 
@@ -190,6 +191,7 @@ Hope Agent 已有三层知识容器，知识库（Knowledge Base, KB）是平行
 - **索引 db 统一放 `~/.hope-agent/knowledge/index.db`**，带 `kb_id` 列区分多个 KB。**绝不写进笔记目录**——这样 KB 绑定外部目录（Obsidian vault）时，笔记目录保持纯净，双向互通无缝。
 - 索引是**缓存而非真相**；删除后能从 `.md` 文件全量重建（提供"重建索引"入口）。
 - 默认目录 `notes/` 走 lazy ensure（首次解析时 `ensure_dir_canonical` 创建），`root_dir` 留 NULL 保持 `HA_DATA_DIR` 可迁移，完全复刻 project 默认 workspace 的处理。
+- `root_dir` **非 NULL = 绑定外部目录**（如现成 Obsidian/Logseq vault）。Phase 1 外部 root **只读**，Phase 2 放开 AI 写，详见 [外部目录绑定](#外部目录绑定obsidianlogseq-vault)（D6）。
 
 ---
 
@@ -315,6 +317,37 @@ knowledge/
 
 ---
 
+## 外部目录绑定（Obsidian/Logseq vault）
+
+> 决策 D6：知识库的 `root_dir` 可指向用户**现成的外部目录**（如 Obsidian/Logseq vault），实现「指向你多年积累的 vault，AI 瞬间点亮它」——本系统最大的获客杠杆。Schema 第一天预留 `root_dir: Option`，**无迁移债**。
+
+### 「只读」一刀（Phase 1 vs Phase 2）
+
+两种 root 的本质差异：内部 `notes/` **只有我们一个写者**（写时同步索引、零写冲突）；外部 vault 被 Obsidian / Logseq / git / iCloud·Dropbox·Syncthing / 文本编辑器**多方并发改**。据此切一刀：
+
+| 能力 | 内部 `notes/` | 外部绑定 root |
+|---|---|---|
+| 索引 / 双链 / 反链 / 搜索 / AI 读 | ✅ Phase 1 | ✅ Phase 1 |
+| 用户在 GUI 内编辑 | ✅ Phase 1 | ✅ Phase 1（经我们写，可冲突检测） |
+| **AI / 工具自动写**（`note_create/update/patch/...`、Layer 2 提案落盘） | ✅ Phase 1 | ⛔ Phase 1 禁用 → ✅ **Phase 2**（带冲突检测） |
+
+**判定入口**：`WorkspaceScope::for_knowledge` 解析时若 root 为外部绑定且当前阶段未开放外部写，`resolve_writable` 一律拒绝——把回归风险最高的**写冲突 / lost-update**隔离到 Phase 2，Phase 1 仍拿到完整的"点亮老库"读体验。
+
+### 必须在 Phase 1 付清的成本（读外部即需要）
+
+1. **生产级 watcher**（`watcher.rs`）：扛同步工具批量重写（debounce + 批量 reindex）、编辑器 tmp+rename 原子保存噪声、半写文件（mtime 稳定后再索引）、外部删除/改名导致的反链失效。
+2. **绑定 / 启动 reconcile**：bind 时与每次启动扫 mtime，增量重索引变更文件、prune 已删文件——外部 vault 可能在 App 未运行时被其它设备/同步改动。
+3. **大库冷启动**：首次绑几千篇 = 全量解析 + 全量 embedding，走后台任务（复用 `async_jobs` / `local_model_jobs` 模式）+ 进度 UI + 断点续跑。
+4. **忽略规则**：gitignore 风格，默认排除 `.obsidian/` `logseq/` `.git/` `.trash/` 附件目录 `node_modules/` 等，防 watcher 自我抖动 + 索引污染（**可配 UI 放 Phase 2**，Phase 1 用内置默认列表）。
+5. **安全面收口（红线调整）**：绑外部目录后 KB 作用域**合法包含 `~/.hope-agent` 之外的主机路径**。preview-by-path 鉴权判定从「路径 ∈ `~/.hope-agent`」精确改为「路径 ∈ 已绑定 KB root（经 `WorkspaceScope` 容器校验）」。桌面信任本机；**HTTP/远端模式绑外部主机路径属敏感场景**，读由 scope 容器兜、写由 `allow_remote_writes` 兜，落地时**专门走一遍安全 review**。
+
+### 留给 Phase 2 的（写外部才付）
+
+- AI 写外部的**写冲突检测**：写前比对 mtime，自上次读后被改则中止或落 `.conflict` 旁车；Layer 2 提案制 apply 时同样校验。
+- 忽略规则配置 UI；大库索引进度的精细化打磨。
+
+---
+
 ## AI 知识操作（完整读写 + 检索 + 自主维护）
 
 本系统区别于 Obsidian/Logseq 的核心：别人的 AI 是事后插件，我们的 agent 对知识库有**第一公民级的完整读写与检索能力**，并能**自主维护**知识网络。能力分三层。所有工具均须 Tauri + HTTP 双适配，走 [`core_tools.rs`](../../crates/ha-core/src/tools/definitions/core_tools.rs) 定义 + dispatch。
@@ -422,21 +455,22 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 
 ## 分阶段路线图
 
-### Phase 1（双链地基 + 核心读写，对应 D4 选定的 MVP）
+### Phase 1（双链地基 + 核心读写 + 外部只读绑定，对应 D4/D6 选定的 MVP）
 
 1. KB 概念 + `index.db` schema + `WorkspaceScope::for_knowledge`。
-2. `notify` watcher + 增量索引（`note` + `note_link` 表）。
+2. `notify` watcher（生产级）+ 增量索引（`note` + `note_link` 表）+ 绑定/启动 reconcile。
 3. Wikilink 解析（`[[ ]]` / 别名 / `#heading` / `#tag`）+ 反链查询。
 4. 前端「知识空间」Tab + 笔记 CRUD + **Backlinks 面板** + 悬空链接提示。
 5. Layer 1 核心工具：`note_create / read / update / patch / append / search / link / backlinks`（agent 完整读写 + 检索）。
+6. **外部 vault 只读绑定（D6）**：`root_dir` 指向现成 Obsidian/Logseq vault → 索引/双链/搜索/AI 读；外部 root 的 AI/工具写禁用；内置默认忽略列表；大库冷启动后台索引 + 进度。
 
-### Phase 2（图谱 + 完整 AI 操作面 + 自主维护起步）
+### Phase 2（图谱 + 完整 AI 操作面 + 自主维护 + 外部可写）
 
 - 图谱视图（`react-force-graph`，数据源 `note_graph`）。
 - `![[ ]]` 嵌入 / transclusion；`[[` 自动补全。
 - Layer 1 进阶工具：`note_rename/move`（链接完整性改写）、`note_similar / related / suggest_links / graph / orphans / broken_links`、`note_distill / moc / session_to_note`。
 - Layer 2 自主维护起步：自动建链提案、MOC 自动维护、记忆 → 笔记写入桥。
-- **外部目录绑定（Obsidian vault 互通，P2）**。
+- **外部 root 放开 AI 写（D6）**：写冲突检测（mtime 比对 / `.conflict` 旁车）+ 忽略规则配置 UI + 大库索引进度打磨。
 - 富文本编辑器评估（Tiptap / Milkdown）。
 
 ### Phase 3（深度网络 + 融合）
@@ -451,11 +485,12 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 
 ## 安全约束
 
-- **作用域闭合**：所有读写经 `WorkspaceScope::for_knowledge`，canonicalize + `starts_with` 失败即拒，禁止越出 `root_dir`。
+- **作用域闭合**：所有读写经 `WorkspaceScope::for_knowledge`，canonicalize + `starts_with` 失败即拒，禁止越出 `root_dir`（含外部绑定 root）。
+- **外部 root 写隔离（D6）**：Phase 1 外部绑定 root 一律只读，`resolve_writable` 对外部 root 拒绝 AI/工具写；Phase 2 放开时叠加写冲突检测。
 - **远端写门控**：HTTP `/api/knowledge/*` 写端点受 `filesystem.allow_remote_writes`（默认 false）闸门；桌面 Tauri 不受限。
-- **preview-by-path 红线**：HTTP 按路径取笔记内容只放行 KB 目录内路径，主机任意路径一律 403（= 远程任意文件读防护）。
+- **preview-by-path 红线（外部绑定后收口）**：HTTP 按路径取笔记内容的鉴权判定为「路径 ∈ 已绑定 KB root（经 `WorkspaceScope` 容器校验）」，**而非** `~/.hope-agent` 前缀；二者之外的主机任意路径一律 403。HTTP/远端模式绑外部主机路径属敏感场景，落地走专门安全 review。
 - **索引不含敏感凭据**：`index.db` 只存笔记结构/向量，不存任何 API Key / Token。
-- **无痕互斥**：与现有 incognito 语义一致——无痕会话的 AI 写入桥不落知识库（守"关闭即焚"）。
+- **无痕互斥**：与现有 incognito 语义一致——无痕会话的 AI 写入不落知识库（守"关闭即焚"）。
 
 ---
 
