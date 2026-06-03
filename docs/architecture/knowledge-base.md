@@ -121,14 +121,11 @@ Hope Agent 已有三层知识容器，知识库（Knowledge Base, KB）是平行
 | D5 | 对外命名（品牌） | **功能名 = 「知识空间 / Knowledge Space」**；**营销定位语可打「第二大脑 / Second Brain」**（slogan，非功能本名）；**代码内部保持中性**——模块 `knowledge/`、工具 `note_*`、作用域 `for_knowledge` 不变 | 「知识库」在中文被 RAG / 客服知识库语义占领，易误读成被动静态存储；「笔记」撑不起双链+图谱+AI 自主维护的体量；「空间」开放、非 RAG、可 i18n。功能名中性精确不误导，营销借「第二大脑」高认知度拉心智。**三层解耦**（代码标识符 / 功能展示名 / 营销 slogan），各自可独立低风险调整 |
 | D6 | 外部目录绑定（Obsidian/Logseq 互通） | **切「只读」一刀**：Phase 1 = 内部 `notes/` 完整读写 **+ 外部 vault 只读绑定**（索引/双链/反链/搜索/AI 读，AI 与工具对外部 root 的写一律禁用）；Phase 2 放开 AI 写外部（带冲突检测）+ 忽略规则配置 UI + 大库索引进度打磨 | A 纯内部（外部整体 Phase 2）/ C 全功能外部读写 Phase 1 | 外部绑定是最大获客杠杆（"指向你现成的 Obsidian vault，AI 瞬间点亮"）。读外部的成本（watcher/reconcile/大库索引/忽略规则/安全 review）本就在关键路径；**写外部的写冲突/lost-update 是回归风险最高的部分**，只读切法把它隔离到 Phase 2，早拿 demo 又不背最毒的债。详见 [外部目录绑定](#外部目录绑定obsidianlogseq-vault) |
 | D7 | 召回形态（笔记 vs 记忆） | 笔记检索是**独立通道**，Phase 1 出独立工具 `note_search`，**绝不折进 `recall_memory`**；笔记走自己完整的检索逻辑（向量化 + 图谱感知），知识库检索做成旗舰最强。聊天内 `[[ ]]` 确定性引用注入提到 **Phase 1**。若日后要「一次拿记忆+笔记」，**加薄编排工具**分别查两 store 再 store-aware 合并，仍不动 `recall_memory` | 折进 `recall_memory` 一次拿全 | 记忆=一句话事实、笔记=整篇文档，性质/作用域/排序不可比，混排会污染成熟 memory 路径。**影响方向反过来**：知识库检索做强后，反哺给记忆系统借鉴，而非笔记降格塞进记忆 |
+| D8 | 文档优先 vs 大纲优先 | **文档优先打底（对齐 Obsidian）**：一篇笔记 = 一段自由 Markdown，数据模型 `Note{title, body, frontmatter}`，Phase 1 复用现有 Markdown 编辑/渲染栈。对 Logseq 做文件级 + 公共语法子集互通（能索引/双链/搜索/AI 读，但编辑形态是文档非大纲）。**原生大纲（block 树 + `((块引用))`）作 Phase 3 可选层**，不永久放弃 | 一开始就做 Logseq 式大纲优先 | Obsidian（文档优先）与 Logseq（大纲优先）数据模型从根上不同（文本 vs 带 ID 的块树），无法一套实现原生兼容两者；文档优先覆盖人群最广、顺现有 Markdown 栈、Phase 1 最轻。详见 [兼容性](#与-obsidian--logseq-兼容性) |
 
-### 待定决策（已填默认取向，待确认）
+### 待定决策
 
-> P1（命名）已拍板转入 D5；P2（外部目录绑定）已拍板转入 D6；P3（召回形态）已拍板转入 D7。
-
-| # | 决策点 | 默认取向 | 备选 | 取舍 |
-|---|---|---|---|---|
-| P4 | 文档优先 vs 大纲优先 | **以文档优先为基座（对齐 Obsidian）**；对 Logseq 做文件级 + 公共语法子集互通；深度大纲语义（block 树 / `((block-ref))`）放 **Phase 3** 可选 | 一开始就做 Logseq 式大纲优先 | Obsidian（文档优先）与 Logseq（大纲优先）数据模型不同，无法一套实现原生兼容两者；文档优先覆盖面更广、与现有 Markdown 渲染栈一致。详见 [兼容性](#与-obsidian--logseq-兼容性) |
+> **全部待定项已拍板**：P1→D5（命名）、P2→D6（外部绑定）、P3→D7（召回形态）、P4→D8（文档优先）。设计契约定型，进入实现阶段。后续如需新增取舍，在此另起 P5…。
 
 ---
 
@@ -293,7 +290,7 @@ CREATE INDEX idx_link_target ON note_link(target_note_id);   -- 反链查询
 | Canvas | `.canvas`（JSON） | 白板 | 复用本项目 Canvas 子系统，Phase 3 评估 |
 | 配置目录 | `.obsidian/` | `logseq/` | 忽略不碰 |
 
-### 关键架构分叉（P4）
+### 关键架构分叉（D8）
 
 Obsidian 是**文档优先**（自由 markdown），Logseq 是**大纲优先**（每行一个带缩进层级的 block，块引用 `((uuid))`）。两种模型数据结构不同，无法一套实现「原生」同时满足。**默认取向**：以文档优先为基座（对齐 Obsidian），对 Logseq 做文件级 + 公共语法子集互通；深度大纲语义（block 树、`((block-ref))`）作为 Phase 3 可选项。
 
@@ -486,7 +483,7 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 ### Phase 3（深度网络 + 融合）
 
 - 块级引用（读 Obsidian `^block-id` + Logseq `((uuid))`）。
-- 深度大纲语义（Logseq block 树，P4）。
+- 原生大纲可选层（Logseq block 树 + `((块引用))`，D8）。
 - Layer 2 进阶：去重合并、孤岛救援、知识缺口检测、自动打标签。
 - 读取桥通道 ③：被动「相关笔记标题」提示（awareness 风格 cache block，opt-in）。
 - 可选编排工具「一次拿记忆 + 笔记」（store-aware 合并，**不动 `recall_memory`**，D7）；记忆系统反向借鉴知识库检索。
