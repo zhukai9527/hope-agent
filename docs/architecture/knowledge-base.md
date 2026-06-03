@@ -1,6 +1,6 @@
 # Knowledge Base 知识库系统架构（设计草案）
 
-> 返回 [文档索引](../README.md) | 状态：**设计草案 v4 定稿（Draft，尚未实现，契约就绪可进 Phase 1）** | 创建时间：2026-06-02 | 修订：2026-06-03（v2：拆 registry/index、KB 访问作用域、收紧预览鉴权、chunk 检索、外部只读；v3：source-aware 上下文、两鉴权平面、明文索引措辞、note_tag、向量单存、attach FK、access 叠加公式；v4 定稿：KB 端点收纯 owner 平面、subagent 调用链 cap、archived 过滤、工具表加 Phase 列、index.db FK cascade + 事务重索引契约、D13 编辑器选型 CodeMirror 6；v4.1：清端点旧两平面残留、D14 offset 坐标系契约、外部只读编辑器硬禁用、账本同步 origin_source/D13/D14；v4.2：D14 钉死 base/换行/tab + note_patch 文本式、模块/路线图补 origin_source、工具 kb 参数约定、D12 账本补 line/col；v4.3：note_link 加链接位置/alias/raw_text、note_patch 唯一命中契约、坐标相对原文件、incognito 入 ctx short-circuit、工具签名展开）
+> 返回 [文档索引](../README.md) | 状态：**设计草案 v4 定稿（Draft，尚未实现，契约就绪可进 Phase 1）** | 创建时间：2026-06-02 | 修订：2026-06-03（v2：拆 registry/index、KB 访问作用域、收紧预览鉴权、chunk 检索、外部只读；v3：source-aware 上下文、两鉴权平面、明文索引措辞、note_tag、向量单存、attach FK、access 叠加公式；v4 定稿：KB 端点收纯 owner 平面、subagent 调用链 cap、archived 过滤、工具表加 Phase 列、index.db FK cascade + 事务重索引契约、D13 编辑器选型 CodeMirror 6；v4.1：清端点旧两平面残留、D14 offset 坐标系契约、外部只读编辑器硬禁用、账本同步 origin_source/D13/D14；v4.2：D14 钉死 base/换行/tab + note_patch 文本式、模块/路线图补 origin_source、工具 kb 参数约定、D12 账本补 line/col；v4.3：note_link 加链接位置/alias/raw_text、note_patch 唯一命中契约、坐标相对原文件、incognito 入 ctx short-circuit、工具签名展开；v4.4：note.content_hash + expected_file_hash guard、note_link 同 KB 约束 + 插入位置、清 incognito 残留、note_read kb? 统一）
 
 > ⚠️ 本文是**设计契约文档**，不是已落地子系统的描述。它先于实现存在，用于锁定方向、记录取舍、指导分阶段迭代。每次方案打磨都应回到本文更新「决策账本」与「路线图」，保持单一真相源。代码落地后，本文逐步转为实现描述，并把 `规划中` 的源码路径替换为真实链接。
 
@@ -177,6 +177,7 @@ Hope Agent 已有三层知识容器，知识库（Knowledge Base, KB）是平行
 | `title` | `String` | 取自 frontmatter `title` > 首个 H1 > 文件名（去扩展名） |
 | `frontmatter_json` | `Option<String>` | YAML frontmatter 解析后的 JSON |
 | `mtime` / `size` | `i64` | 文件修改时间 / 字节数，增量索引判脏用 |
+| `content_hash` | `String` | **整篇文件** hash（区别于 chunk 级 `note_chunk.content_hash`）——stale-write guard `expected_file_hash` 的比对源、mtime 不可靠时的兜底判脏 |
 
 > Note 行**不再直接挂 embedding/fts**——正文检索全下沉到 `NoteChunk`（D12）。
 
@@ -293,6 +294,7 @@ CREATE TABLE note (
   title TEXT NOT NULL,
   frontmatter_json TEXT,
   mtime INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,    -- 整篇文件 hash（≠ note_chunk.content_hash）；expected_file_hash 比对源
   size INTEGER NOT NULL,
   UNIQUE(kb_id, rel_path)
 );
@@ -546,9 +548,9 @@ agent 在对话中可直接调用，覆盖 CRUD / 链接 / 图谱 / 检索 / 元
 | 工具 | 作用 | Phase |
 |---|---|---|
 | `note_create({kb, path, title, content, frontmatter?, template?})` | 新建笔记（可套模板） | 1 |
-| `note_read({kb, path\|title, include?})` | 读原文 + 出链 / 反链 / 标签 | 1 |
-| `note_update({kb, path, content})` | 全量替换 | 1 |
-| `note_patch({kb, path, old, new, expected_content_hash?})` | 局部编辑（仿 `edit`）：`old` **必须全文唯一命中一次**，0 次/多次都**拒绝**并返候选上下文；给 `expected_content_hash` 则文件 hash 不符也拒（防 stale write）。**禁止"悄悄替换第一处"** | 1 |
+| `note_read({kb?, path\|title, include?})` | 读原文 + 出链 / 反链 / 标签 | 1 |
+| `note_update({kb, path, content, expected_file_hash?})` | 全量替换；给 `expected_file_hash` 则与 `note.content_hash` 不符即拒（防 stale write） | 1 |
+| `note_patch({kb, path, old, new, expected_file_hash?})` | 局部编辑（仿 `edit`）：`old` **必须全文唯一命中一次**，0 次/多次都**拒绝**并返候选上下文；给 `expected_file_hash` 则与 `note.content_hash` 不符也拒（防 stale write）。**禁止"悄悄替换第一处"** | 1 |
 | `note_append({kb, path, content, section?})` | 追加（可指定 heading 下，适配每日笔记） | 1 |
 | `note_delete({kb, path})` | 删除（只留悬空链接，不连带改其它文件） | 1 |
 | `note_rename` / `note_move` | 改名 / 移动 — **批量改写指向它的 `[[ ]]`（多文件写）** | **2** |
@@ -557,7 +559,7 @@ agent 在对话中可直接调用，覆盖 CRUD / 链接 / 图谱 / 检索 / 元
 
 | 工具 | 作用 | Phase |
 |---|---|---|
-| `note_link({from:{kb,path}, to:{kb,path}, alias?})` | 插入 `[[ ]]` | 1 |
+| `note_link({from:{kb,path}, to:{kb,path}, alias?, section?})` | 在 `from` 插入指向 `to` 的 `[[ ]]`。**Phase 1 要求 `from.kb == to.kb`，跨 KB 拒绝**（wikilink 无 KB 概念）；插入位置默认追加到 `section`（缺省 `Related` heading，无则创建） | 1 |
 | `note_backlinks({kb?, note})` | 谁链接到本页（返回带 `src_*_line/col` 可精确跳转） | 1 |
 | `note_graph({note, depth})` | N 跳邻域（nodes+edges），图谱视图数据源 | **2** |
 | `note_broken_links({kb})` | 悬空链接清单 | **2** |
@@ -654,7 +656,7 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 ### Phase 1（双链地基 + 核心读写 + 外部只读绑定，对应 D4/D6 选定的 MVP）
 
 1. KB 概念：`sessions.db` 的 `knowledge_bases` registry（D9）+ `index.db` 缓存 schema（chunk 级 + `note_tag`，D12/#5）+ `WorkspaceScope::for_knowledge`。
-2. **KB 访问作用域（D10）**：`session/project_knowledge_bases`（带 FK/cascade/CHECK，#7）+ **`effective_kb_access(ctx{session,source,origin_source,channel})`**（source-aware + 调用链 cap，#2）+ 叠加公式 max-then-min-cap（#8）+ UI 列出当前生效 KB；incognito/IM 零访问。
+2. **KB 访问作用域（D10）**：`session/project_knowledge_bases`（带 FK/cascade/CHECK，#7）+ **`effective_kb_access(ctx{session,source,origin_source,is_incognito,channel})`**（source-aware + 调用链 cap + incognito short-circuit，#2/#4）+ 叠加公式 max-then-min-cap（#8）+ UI 列出当前生效 KB；incognito/IM 零访问。
 3. `notify` watcher（生产级）+ 增量索引（`note` + `note_chunk` + `note_tag` + `note_link`）+ 绑定/启动 reconcile + chunker。
 4. Wikilink 扫描 + **确定性 resolve**（#8，路径式 / basename / 稳定歧义，不用 mtime，跳过 code）+ 反链查询。
 5. 前端「知识空间」Tab + **CodeMirror 6 编辑器（D13，三模式 + `[[`/`#` 补全 + wikilink chip decoration + broken-link lint，预览复用 streamdown）** + 笔记 CRUD（含 `delete`，**不含 rename/move**）+ **Backlinks 面板** + 悬空链接提示 + 当前生效 KB 列表。
@@ -694,7 +696,7 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 - **外部 root 写隔离（D11）**：Phase 1 外部绑定 root 彻底只读，`resolve_writable` 对外部 root 拒绝一切写（AI + GUI）；Phase 2 放开时叠加 actor 拆分 + 写冲突检测。
 - **远端写门控**：HTTP `/api/knowledge/*` 写端点受 `filesystem.allow_remote_writes`（默认 false）闸门；桌面 Tauri 不受限。
 - **preview-by-path 红线（#1/#2 收口）**：**不放宽**现有 `/api/sessions/{id}/files/*` 端点；KB 文件读取走**独立** `/api/knowledge/{kb_id}/files/*` = **纯 owner/管理平面**（API key=owner / 本机信任，无 session 参数、无 owner fallback）+ `WorkspaceScope` scope contains，**不是**「路径命中任意 KB root」。agent/session 访问不经此端点，走工具层 `effective_kb_access(ctx)`。非授权 / 越界路径一律 403。
-- **subagent 不洗权限（#2）**：`effective_kb_access` 按调用链 cap——origin 为 IM(Phase 1)/incognito 时全链归零，子 Agent 不能借 `source=Subagent` 重新拿回 KB 权限。
+- **subagent 不洗权限（#2）**：`effective_kb_access` 按调用链 cap——lineage 中 **IM origin（Phase 1）→ 全链归零**，子 Agent 不能借 `source=Subagent` 重新拿回 KB 权限；`is_incognito` 则在第一步 short-circuit 归零（#4，incognito 是会话标志非 source/origin）。
 - **archived 隔离（#3）**：归档 KB 不进 agent/session effective access（attach 保留挂起），仅 owner 管理平面可见。
 - **注入即非可信（#7）**：笔记内容注入上下文一律套 `<untrusted_external_data>` 信封 + 来源 + 截断，永不提升为 system 指令。
 
