@@ -78,6 +78,10 @@
         "body": "The Smart-mode judge model decided this call needs human confirmation.",
         "title": "Smart-mode judge"
       },
+      "browser_evaluate": {
+        "body": "This browser action will run arbitrary JavaScript in the active tab. Smart mode may auto-allow it via a high-confidence tag or judge model.",
+        "title": "Browser JavaScript"
+      },
       "mac_control_action": {
         "title": "Mac Control action",
         "body": "This macOS control call changes desktop focus/state. Confirm before Hope Agent activates another app."

@@ -78,6 +78,10 @@
         "body": "Smart モードの判定モデルが、この呼び出しには人の確認が必要だと判断しました。",
         "title": "Smart モード判定"
       },
+      "browser_evaluate": {
+        "body": "このブラウザ操作はアクティブなタブで任意の JavaScript を実行します。Smart モードでは高信頼タグまたは判定モデルにより自動許可される場合があります。",
+        "title": "ブラウザ JavaScript"
+      },
       "mac_control_action": {
         "title": "Mac 制御操作",
         "body": "この macOS 制御呼び出しはデスクトップのフォーカス/状態を変更します。Hope Agent が別のアプリをアクティブにする前に確認してください。"
