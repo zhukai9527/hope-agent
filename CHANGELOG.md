@@ -13,7 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **聊天左右面板窄窗口响应式与动画优化**：窗口缩小时右侧工作面板会先自动折叠，继续缩小时左侧会话栏再自动折叠，窗口变宽后仅恢复由响应式路径自动折叠的面板，不覆盖用户手动折叠选择；聊天输入框保留最小交互宽度，极窄宽度下工具栏改为上下布局。自动折叠阈值改用 `matchMedia` 监听，避免拖拽窗口时每个 resize 像素都触发 React 重渲染；左右面板动画拆为短布局占位过渡与 `transform`/`opacity` 视觉滑动，降低重排压力。
+- **聊天左右面板窄窗口响应式与动画优化**：窗口缩小时右侧工作面板会先自动折叠，继续缩小时左侧会话栏再自动折叠，窗口变宽后仅恢复由响应式路径自动折叠的面板，不覆盖用户手动折叠选择；右侧面板自动折叠阈值会参考用户当前面板宽度并设置舒适上限，避免超宽面板被硬挤压或轻微缩窗就过激收起；主窗口默认启动尺寸小幅调大，聊天输入框保留最小交互宽度，极窄宽度下工具栏改为上下布局。自动折叠阈值改用 `matchMedia` 监听，避免拖拽窗口时每个 resize 像素都触发 React 重渲染；左右面板动画拆为短布局占位过渡与 `transform`/`opacity` 视觉滑动，降低重排压力。
+- **浏览器脚本执行审批接入统一权限引擎**：`browser.control.evaluate` 不再绕过 session 权限模式单独走 `ask_user_question`，而是作为 `BrowserEvaluate` soft approval 进入统一工具审批链；Default 继续弹审批，Smart 可按高置信标记或 judge model 自动放行，Yolo / Global YOLO / 自动批准工具场景直接放行，同时保留 SSRF 字面量扫描。
+
+### Fixed
+
+- **ask_user_question 卡片自动滚动**：修复结构化提问卡片出现在消息列表 footer 时，因为没有新增 message 而不会触发自动追底、导致待回答卡片藏在屏幕下方的问题；现在新问题出现时会自动滚到卡片位置，并跟随展开动画保持可见。
 
 ### Fixed
 

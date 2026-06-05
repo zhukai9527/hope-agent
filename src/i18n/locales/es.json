@@ -78,6 +78,10 @@
         "body": "El modelo juez del modo Smart decidió que esta llamada necesita confirmación humana.",
         "title": "Juez de modo Smart"
       },
+      "browser_evaluate": {
+        "body": "Esta acción del navegador ejecutará JavaScript arbitrario en la pestaña activa. El modo Smart puede permitirla automáticamente con una etiqueta de alta confianza o un modelo juez.",
+        "title": "JavaScript del navegador"
+      },
       "mac_control_action": {
         "title": "Acción de Mac Control",
         "body": "Esta llamada de control de macOS cambia el foco o estado del escritorio. Confirma antes de que Hope Agent active otra app."
