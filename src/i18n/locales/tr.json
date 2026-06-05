@@ -78,6 +78,10 @@
         "body": "Smart modu yargıç modeli bu çağrının insan onayı gerektirdiğine karar verdi.",
         "title": "Smart modu yargıcı"
       },
+      "browser_evaluate": {
+        "body": "Bu tarayıcı işlemi etkin sekmede rastgele JavaScript çalıştırır. Smart modu bunu yüksek güven etiketi veya yargıç modeliyle otomatik olarak izinli sayabilir.",
+        "title": "Tarayıcı JavaScript"
+      },
       "mac_control_action": {
         "title": "Mac Control işlemi",
         "body": "Bu macOS kontrol çağrısı masaüstü odağını/durumunu değiştirir. Hope Agent başka bir uygulamayı etkinleştirmeden önce onaylayın."

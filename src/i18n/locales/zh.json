@@ -78,6 +78,10 @@
         "body": "智能审批模式下判官模型判定本次调用需要人工确认。",
         "title": "智能审批判官建议"
       },
+      "browser_evaluate": {
+        "body": "这次浏览器操作会在当前标签页运行任意 JavaScript。Smart 模式可由高置信标记或判官模型自动放行。",
+        "title": "浏览器执行脚本"
+      },
       "mac_control_action": {
         "title": "Mac 控制操作",
         "body": "这次 macOS 控制会改变桌面焦点/状态。Hope Agent 激活其他 App 前需要你确认。"

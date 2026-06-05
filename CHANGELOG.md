@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **工作台环境信息面板**：工作台顶部新增只读「环境」区块，按普通会话、项目会话、无痕、IM、Cron、Subagent、Plan Mode 与远端 Server 等场景展示运行位置、工作目录来源、权限模式、计划状态、模型与来源信息；Git 工作区会展示分支 / worktree、变更统计、ahead/behind、upstream 与最后提交，remote URL 展示前会移除凭据、query 与 fragment。新增 Tauri / HTTP 会话级环境快照接口，仅通过会话工作区读取本地状态，不注入模型上下文，也不会主动 `git fetch`。 (#269)
 
+### Changed
+
+- **浏览器脚本执行审批接入统一权限引擎**：`browser.control.evaluate` 不再绕过 session 权限模式单独走 `ask_user_question`，而是作为 `BrowserEvaluate` soft approval 进入统一工具审批链；Default 继续弹审批，Smart 可按高置信标记或 judge model 自动放行，Yolo / Global YOLO / 自动批准工具场景直接放行，同时保留 SSRF 字面量扫描。
+
+### Fixed
+
+- **ask_user_question 卡片自动滚动**：修复结构化提问卡片出现在消息列表 footer 时，因为没有新增 message 而不会触发自动追底、导致待回答卡片藏在屏幕下方的问题；现在新问题出现时会自动滚到卡片位置，并跟随展开动画保持可见。
+
 ## [0.5.1] - 2026-06-03
 
 ### Fixed
