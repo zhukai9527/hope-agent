@@ -156,6 +156,10 @@ pub async fn chat(
     // when this call also creates the session — applies via the same
     // `update_session_working_dir` validation as the explicit setter command.
     working_dir: Option<String>,
+    // Composer-staged KB attaches. Only honored when this call also creates the
+    // session (mirrors `working_dir`); applied before the engine runs so the
+    // first turn already sees the access. No-op for incognito.
+    kb_attachments: Option<Vec<ha_core::knowledge::types::KbAttachInput>>,
     on_event: tauri::ipc::Channel<String>,
     state: State<'_, AppState>,
 ) -> Result<String, CmdError> {
@@ -231,6 +235,13 @@ pub async fn chat(
                 "Applied draft working_dir on new session: session={} dir={}",
                 sid,
                 wd
+            );
+        }
+        if let Some(attaches) = kb_attachments.as_ref() {
+            ha_core::knowledge::service::apply_draft_attachments(
+                &sid,
+                incognito.unwrap_or(false),
+                attaches,
             );
         }
     }
@@ -811,6 +822,7 @@ pub async fn chat(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: crate::chat_engine::stream_seq::ChatSource::Desktop,
+        origin_source: None,
         event_sink: Arc::new(ChannelSink {
             channel: on_event.clone(),
         }),

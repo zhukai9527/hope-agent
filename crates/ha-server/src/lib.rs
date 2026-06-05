@@ -212,6 +212,111 @@ fn build_router_with_cors(
             "/projects/{id}/memories",
             get(routes::projects::list_project_memories),
         )
+        // ── Knowledge Base ──
+        .route(
+            "/knowledge",
+            get(routes::knowledge::list_kbs).post(routes::knowledge::create_kb),
+        )
+        .route("/knowledge/search", get(routes::knowledge::kb_search))
+        .route("/knowledge/attach", post(routes::knowledge::attach_kb))
+        .route("/knowledge/detach", post(routes::knowledge::detach_kb))
+        .route(
+            "/knowledge/attachments",
+            get(routes::knowledge::list_session_kbs),
+        )
+        .route(
+            "/knowledge/project-attachments",
+            get(routes::knowledge::list_project_kbs),
+        )
+        .route(
+            "/knowledge/{kb_id}",
+            get(routes::knowledge::get_kb)
+                .patch(routes::knowledge::update_kb)
+                .delete(routes::knowledge::delete_kb),
+        )
+        .route(
+            "/knowledge/{kb_id}/reindex",
+            post(routes::knowledge::reindex_kb),
+        )
+        .route(
+            "/knowledge/{kb_id}/notes",
+            get(routes::knowledge::list_kb_notes),
+        )
+        .route(
+            "/knowledge/{kb_id}/note",
+            get(routes::knowledge::kb_note_read)
+                .put(routes::knowledge::kb_note_save)
+                .delete(routes::knowledge::kb_note_delete),
+        )
+        .route(
+            "/knowledge/{kb_id}/note/rename",
+            post(routes::knowledge::kb_note_rename),
+        )
+        .route(
+            "/knowledge/{kb_id}/note/reindex",
+            post(routes::knowledge::reindex_note),
+        )
+        .route(
+            "/knowledge/{kb_id}/dir/reindex",
+            post(routes::knowledge::reindex_dir),
+        )
+        .route(
+            "/knowledge/{kb_id}/dirs",
+            get(routes::knowledge::kb_list_dirs),
+        )
+        .route(
+            "/knowledge/{kb_id}/tags",
+            get(routes::knowledge::kb_list_tags),
+        )
+        .route(
+            "/knowledge/referenceable-notes",
+            post(routes::knowledge::list_referenceable_notes),
+        )
+        .route(
+            "/knowledge/embedding",
+            get(routes::knowledge::knowledge_embedding_get),
+        )
+        .route(
+            "/knowledge/embedding/set-default",
+            post(routes::knowledge::knowledge_embedding_set_default),
+        )
+        .route(
+            "/knowledge/embedding/disable",
+            post(routes::knowledge::knowledge_embedding_disable),
+        )
+        .route(
+            "/knowledge/embedding/rebuild",
+            post(routes::knowledge::knowledge_embedding_rebuild),
+        )
+        .route(
+            "/knowledge/chunk",
+            get(routes::knowledge::knowledge_chunk_get)
+                .post(routes::knowledge::knowledge_chunk_set),
+        )
+        .route(
+            "/knowledge/{kb_id}/dir",
+            post(routes::knowledge::kb_mkdir).delete(routes::knowledge::kb_delete_dir),
+        )
+        .route(
+            "/knowledge/{kb_id}/dir/rename",
+            post(routes::knowledge::kb_rename_dir),
+        )
+        .route(
+            "/knowledge/{kb_id}/backlinks",
+            get(routes::knowledge::kb_backlinks),
+        )
+        .route(
+            "/knowledge/{kb_id}/files/read",
+            get(routes::knowledge::kb_file_read),
+        )
+        .route(
+            "/knowledge/{kb_id}/files/extract",
+            get(routes::knowledge::kb_file_extract),
+        )
+        .route(
+            "/knowledge/{kb_id}/files/raw",
+            get(routes::knowledge::kb_file_raw),
+        )
         .route(
             "/sessions/{id}/messages/around",
             get(routes::sessions::get_session_messages_around),

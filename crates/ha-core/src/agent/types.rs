@@ -182,6 +182,14 @@ pub struct AssistantAgent {
     pub(crate) incognito_cached: std::sync::atomic::AtomicBool,
     /// Sub-agent nesting depth (0 = top-level)
     pub(super) subagent_depth: u32,
+    /// Turn source for knowledge-base access scoping (design D10). Set per-turn
+    /// by `configure_agent`; flows into `ToolExecContext.chat_source`.
+    pub(super) chat_source: Option<crate::knowledge::KbAccessSource>,
+    /// Origin of the whole call chain for KB access (design D10). Set per-turn
+    /// by `configure_agent`; flows into `ToolExecContext.origin_chat_source`.
+    /// Equals `chat_source` for top-level turns; a subagent carries its parent
+    /// turn's origin so IM-origin chains can't launder access via `Subagent`.
+    pub(super) origin_chat_source: Option<crate::knowledge::KbAccessSource>,
     /// Run ID for steer mailbox (set only when running as a sub-agent)
     pub(super) steer_run_id: Option<String>,
     /// Tools denied for this agent (used for depth-based tool policy)

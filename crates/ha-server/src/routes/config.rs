@@ -669,8 +669,8 @@ pub async fn embedding_model_config_test(
     ))
 }
 
-pub async fn memory_embedding_get() -> Result<Json<ha_core::memory::MemoryEmbeddingState>, AppError>
-{
+pub async fn memory_embedding_get(
+) -> Result<Json<ha_core::memory::EmbeddingSelectionState>, AppError> {
     Ok(Json(ha_core::memory::get_memory_embedding_state()))
 }
 
@@ -683,7 +683,7 @@ pub struct MemoryEmbeddingSetDefaultBody {
 
 pub async fn memory_embedding_set_default(
     Json(body): Json<MemoryEmbeddingSetDefaultBody>,
-) -> Result<Json<ha_core::memory::MemoryEmbeddingSetDefaultResult>, AppError> {
+) -> Result<Json<ha_core::memory::EmbeddingSetDefaultResult>, AppError> {
     Ok(Json(ha_core::memory::set_memory_embedding_default(
         &body.model_config_id,
         body.mode,
@@ -693,7 +693,7 @@ pub async fn memory_embedding_set_default(
 }
 
 pub async fn memory_embedding_disable(
-) -> Result<Json<ha_core::memory::MemoryEmbeddingState>, AppError> {
+) -> Result<Json<ha_core::memory::EmbeddingSelectionState>, AppError> {
     Ok(Json(ha_core::memory::disable_memory_embedding("http")?))
 }
 

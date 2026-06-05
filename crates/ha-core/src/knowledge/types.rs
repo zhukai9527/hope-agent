@@ -1,0 +1,327 @@
+//! Knowledge Base types.
+//!
+//! Two storage classes, deliberately kept apart (design D9):
+//!
+//! - [`KnowledgeBase`] and the access bindings are the **truth source**, persisted
+//!   in `sessions.db` next to `projects` (registry, cannot be rebuilt from disk).
+//! - [`Note`] / [`NoteChunk`] / [`NoteLink`] / [`NoteTag`] are **rebuildable cache
+//!   rows** living in `~/.hope-agent/knowledge/index.db` — every field, including
+//!   `rel_path`, is reconstructable by re-scanning the `.md` files.
+//!
+//! Coordinate contract (design D14): persistent `*_offset` fields are **Unicode
+//! code-point offsets** relative to the *original full file* (frontmatter +
+//! original CRLF included). The cross-end UI positioning fields are `*_line`
+//! (1-based) + `*_col` (0-based code-point column, tab counted as one). `body`
+//! is normalized search text and is decoupled from the coordinates.
+
+use serde::{Deserialize, Serialize};
+
+// ── KnowledgeBase (truth source, sessions.db) ────────────────────
+
+/// A knowledge base = a notes container with a single storage root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeBase {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
+    /// Notes root absolute path. `None` = default internal
+    /// `~/.hope-agent/knowledge/{id}/notes/` (lazy ensure). `Some(_)` = bound to
+    /// an external directory (e.g. an Obsidian/Logseq vault) — **read-only in
+    /// Phase 1** (design D11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+    /// Unix milliseconds.
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl KnowledgeBase {
+    /// Whether this KB is bound to an external (out-of-app) directory. External
+    /// roots are browse-only in Phase 1.
+    pub fn is_external(&self) -> bool {
+        self.root_dir
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Emoji-prefixed label for pickers / IM bodies without a separate emoji slot.
+    pub fn display_label(&self) -> String {
+        match self.emoji.as_deref().filter(|e| !e.is_empty()) {
+            Some(e) => format!("{} {}", e, self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// KnowledgeBase with aggregated counts for listing / UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeBaseMeta {
+    #[serde(flatten)]
+    pub kb: KnowledgeBase,
+    /// Indexed note count (from index.db; the registry fills 0 and the command
+    /// layer enriches it, mirroring `ProjectMeta::memory_count`).
+    pub note_count: u32,
+    /// Whether the KB root is external (browse-only in Phase 1).
+    pub external: bool,
+}
+
+/// Access level granted to a session / project over a KB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KbAccess {
+    /// `note_search` / `note_read` only.
+    Read,
+    /// Read + mutating tools (`note_create/update/patch/append/delete/link`).
+    Write,
+}
+
+impl KbAccess {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KbAccess::Read => "read",
+            KbAccess::Write => "write",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> KbAccess {
+        match s {
+            "write" => KbAccess::Write,
+            _ => KbAccess::Read,
+        }
+    }
+}
+
+// ── Input DTOs ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeBaseInput {
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+    /// External vault path. Empty string → `NULL` (internal default).
+    #[serde(default)]
+    pub root_dir: Option<String>,
+}
+
+/// Patch DTO. `None` = leave unchanged; empty/whitespace string clears to `NULL`
+/// (same convention as `UpdateProjectInput`). `root_dir` is intentionally **not**
+/// patchable after creation in Phase 1 — switching a KB's root would invalidate
+/// the whole index; recreate the KB instead.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKnowledgeBaseInput {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub emoji: Option<String>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+}
+
+// ── Access bindings (truth source, sessions.db) ──────────────────
+
+/// A KB visible to a session / project, with the granted access level. Returned
+/// for the "currently effective knowledge bases" UI list (the last human-facing
+/// line of defense against leakage, design D10).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbAttachment {
+    #[serde(flatten)]
+    pub kb: KnowledgeBase,
+    pub access: KbAccess,
+    /// `"session"` or `"project"` — where this attach was granted.
+    pub via: String,
+}
+
+/// A composer-staged KB attach carried on the `chat` command and applied on the
+/// auto-create branch (mirrors draft `working_dir`). `access` is lenient
+/// (`"read"` / `"write"`). camelCase over the wire (`kbId`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbAttachInput {
+    pub kb_id: String,
+    pub access: String,
+}
+
+/// A note the chat composer can reference via `[[ ]]`, flattened across every KB
+/// reachable from the current chat (session ∪ project attaches, or staged draft
+/// attaches for a brand-new chat). Owner plane — the user picks their own notes;
+/// `[[note]]` injection re-gates through `effective_kb_access` at send time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceableNote {
+    pub kb_id: String,
+    pub kb_name: String,
+    pub kb_emoji: Option<String>,
+    /// Path relative to the KB root, `/`-separated (token + secondary display).
+    pub rel_path: String,
+    /// frontmatter title > first H1 > file stem (primary display).
+    pub title: String,
+}
+
+// ── Note (index cache rows, index.db) ────────────────────────────
+
+/// File-level note metadata. The real content lives in the `.md` file; this row
+/// is rebuildable. Body search/embedding is delegated to [`NoteChunk`] (D12).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: i64,
+    pub kb_id: String,
+    /// Path relative to the KB root, `/`-separated.
+    pub rel_path: String,
+    /// frontmatter `title` > first H1 > file stem.
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontmatter_json: Option<String>,
+    pub mtime: i64,
+    pub size: i64,
+    /// Whole-file BLAKE3 over raw bytes (no newline normalization, CRLF kept).
+    /// A "most-recent-index token" for optimistic concurrency — **never** the
+    /// write-time staleness source (that re-hashes the disk file). See the
+    /// stale-write guard contract in [`crate::knowledge`].
+    pub content_hash: String,
+}
+
+/// chunk-level retrieval unit. FTS5 + vec0 both index this table (D12).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteChunk {
+    pub id: i64,
+    pub note_id: i64,
+    pub chunk_index: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<String>,
+    /// Normalized search text (frontmatter stripped). Not used for coordinates.
+    pub body: String,
+    /// Unicode code-point offsets relative to the original full file (D14).
+    pub start_offset: u32,
+    pub end_offset: u32,
+    /// Cross-end UI positioning (D14): 1-based line, 0-based code-point column.
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+    /// chunk content hash, drives per-chunk incremental re-embedding.
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_signature: Option<String>,
+}
+
+/// Link type for a [`NoteLink`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkType {
+    /// `[[ ]]`
+    Wiki,
+    /// `![[ ]]` (Phase 2)
+    Embed,
+    /// standard `[]()`
+    Md,
+}
+
+impl LinkType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LinkType::Wiki => "wiki",
+            LinkType::Embed => "embed",
+            LinkType::Md => "md",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> LinkType {
+        match s {
+            "embed" => LinkType::Embed,
+            "md" => LinkType::Md,
+            _ => LinkType::Wiki,
+        }
+    }
+}
+
+/// A directed wikilink edge. Backlinks = rows where `target_note_id = ?`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLink {
+    pub src_note_id: i64,
+    /// Raw target inside `[[ ]]` (title or `folder/note` path form).
+    pub target_ref: String,
+    /// Resolved target; `None` = dangling/broken link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_note_id: Option<i64>,
+    pub link_type: LinkType,
+    /// `[[Note#Heading]]` slug, or `^block-id` (Phase 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// `[[note|alias]]` display alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    /// Link source text (e.g. `[[folder/note#H|alias]]`), for UI / backlink context.
+    pub raw_text: String,
+    /// Link position inside the source file (D14 coords) — backlink jump target.
+    pub src_start_line: u32,
+    pub src_start_col: u32,
+    pub src_end_line: u32,
+    pub src_end_col: u32,
+    /// Heading section the link sits under, for backlink context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_heading_path: Option<String>,
+}
+
+// ── Search result types ──────────────────────────────────────────
+
+/// A note returned by `note_search`, with the best-matching chunk snippet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSearchHit {
+    pub kb_id: String,
+    pub note_id: i64,
+    pub rel_path: String,
+    pub title: String,
+    /// Fused relevance score (RRF, post-decay) of the best chunk.
+    pub score: f32,
+    /// Best-chunk snippet (already truncated).
+    pub snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<String>,
+    /// Best-chunk start line (1-based) for jump-to.
+    pub start_line: u32,
+}
+
+/// A backlink with enough context to jump to the exact link occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Backlink {
+    pub src_note_id: i64,
+    pub src_rel_path: String,
+    pub src_title: String,
+    pub raw_text: String,
+    pub src_start_line: u32,
+    pub src_start_col: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_heading_path: Option<String>,
+}
+
+/// Full note read result: raw content + outgoing links + backlinks + tags.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteReadResult {
+    pub kb_id: String,
+    pub note_id: i64,
+    pub rel_path: String,
+    pub title: String,
+    /// Raw file content (markdown including frontmatter).
+    pub content: String,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontmatter_json: Option<String>,
+    pub outgoing_links: Vec<NoteLink>,
+    pub backlinks: Vec<Backlink>,
+    pub tags: Vec<String>,
+}

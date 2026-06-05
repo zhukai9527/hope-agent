@@ -45,6 +45,7 @@ import {
 const DashboardView = lazy(() => import("@/components/dashboard/DashboardView"))
 const CronCalendarView = lazy(() => import("@/components/cron/CronCalendarView"))
 const PlansView = lazy(() => import("@/components/plans/PlansView"))
+const KnowledgeView = lazy(() => import("@/components/knowledge/KnowledgeView"))
 
 export default function App() {
   const { t, i18n } = useTranslation()
@@ -63,6 +64,7 @@ export default function App() {
     | "calendar"
     | "dashboard"
     | "plans"
+    | "knowledge"
   >("loading")
   const [agentIdForSettings, setAgentIdForSettings] = useState<string | undefined>(undefined)
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(
@@ -220,6 +222,10 @@ export default function App() {
 
     const handleSnapshot = (raw: unknown) => {
       const job = parsePayload<LocalModelJobSnapshot>(raw)
+      // Reembed / reindex jobs aren't installs — their progress + completion is
+      // shown in the memory / knowledge panels. Skip the install-flavored global
+      // toast ("{model} 已安装" / "安装失败" 等), which only fits model installs.
+      if (job.kind === "memory_reembed" || job.kind === "knowledge_reembed") return
       if (completedLocalModelJobToasts.current.has(job.jobId)) return
       completedLocalModelJobToasts.current.add(job.jobId)
       if (job.status === "completed") {
@@ -457,6 +463,7 @@ export default function App() {
                 onOpenCalendar={() => setView("calendar")}
                 onOpenDashboard={() => handleOpenDashboard()}
                 onOpenPlans={() => setView("plans")}
+                onOpenKnowledge={() => setView("knowledge")}
                 userAvatar={userAvatar}
                 totalUnreadCount={totalUnreadCount}
                 onMarkAllRead={() => setSessionsRefreshTrigger((n) => n + 1)}
@@ -574,6 +581,20 @@ export default function App() {
                       setPendingChatInsert(token)
                       setView("chat")
                     }}
+                  />
+                </Suspense>
+              )}
+              {view === "knowledge" && (
+                <Suspense
+                  fallback={
+                    <div className="flex-1 flex items-center justify-center">
+                      <div className="animate-spin h-6 w-6 border-2 border-foreground border-t-transparent rounded-full" />
+                    </div>
+                  }
+                >
+                  <KnowledgeView
+                    onBack={() => setView("chat")}
+                    onOpenSettings={() => handleOpenSettings("knowledge")}
                   />
                 </Suspense>
               )}

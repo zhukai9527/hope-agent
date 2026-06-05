@@ -569,7 +569,9 @@
     "select": "Chọn",
     "settings": "Cài đặt",
     "test": "Kiểm tra kết nối",
-    "testing": "Đang kiểm tra..."
+    "testing": "Đang kiểm tra...",
+    "create": "Tạo",
+    "clear": "Xóa"
   },
   "context": {
     "ago": "trước",
@@ -1972,6 +1974,10 @@
       "label": "Thư mục làm việc của dự án",
       "pick": "Chọn thư mục",
       "placeholder": "Chưa đặt (phiên có thể ghi đè)"
+    },
+    "knowledge": {
+      "label": "Không gian kiến thức",
+      "hint": "Các không gian đã đính kèm cho phép các cuộc trò chuyện của dự án này tìm kiếm và trích dẫn ghi chú."
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "Thêm trình xử lý",
       "advanced": "Nâng cao",
       "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse)."
+    },
+    "knowledge": {
+      "tab": "Kiến thức"
+    },
+    "knowledgeEmbedding": {
+      "title": "Tìm kiếm vector (embedding)",
+      "description": "Cấu hình mô hình embedding cho tìm kiếm ngữ nghĩa của kho kiến thức. Độc lập với bộ nhớ — chọn từ cùng thư viện mô hình dùng chung, nhưng bật và xây dựng lại riêng, nên vẫn hoạt động ngay cả khi embedding của bộ nhớ tắt.",
+      "enabled": "Bật tìm kiếm vector",
+      "enabledDesc": "Tạo embedding cho ghi chú để truy xuất ngữ nghĩa. Khi tắt, tìm kiếm ghi chú chỉ dùng toàn văn.",
+      "changeModel": "Đổi mô hình",
+      "activated": "Đã kích hoạt mô hình embedding kiến thức",
+      "reembed": {
+        "title": "Lập chỉ mục lại",
+        "idle": "Vector ghi chú đã cập nhật.",
+        "needs": "Ghi chú cần được embedding lại với mô hình hiện tại.",
+        "startNow": "Xây dựng lại ngay",
+        "cancel": "Hủy",
+        "retry": "Thử lại",
+        "progress": "{{done}} / {{total}} kho kiến thức",
+        "phase": "Đang embedding lại ghi chú"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "Nâng cao · phân đoạn",
+      "description": "Cách ghi chú được chia thành các đơn vị truy xuất. Giá trị mặc định phù hợp với hầu hết.",
+      "maxChars": "Kích thước đoạn (ký tự)",
+      "overlap": "Chồng lấn (ký tự)",
+      "rebuildWarning": "Lưu sẽ dựng lại chỉ mục cho mọi không gian kiến thức.",
+      "saved": "Đã lưu — đang dựng lại mọi không gian"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "Sửa",
       "delete": "Xóa",
       "read": "Đọc"
+    }
+  },
+  "knowledge": {
+    "title": "Không gian kiến thức",
+    "searchPlaceholder": "Tìm ghi chú…",
+    "newKb": "Không gian mới",
+    "spaces": "Không gian",
+    "noSpaces": "Chưa có không gian kiến thức nào.",
+    "notes": "Ghi chú",
+    "reindex": "Lập chỉ mục lại",
+    "newNote": "Ghi chú mới",
+    "readOnly": "Chỉ đọc (kho ngoài)",
+    "mode": {
+      "source": "Nguồn",
+      "split": "Chia đôi",
+      "preview": "Xem trước"
+    },
+    "emptyEditor": "Chọn một ghi chú để xem hoặc chỉnh sửa.",
+    "searchResults": "Kết quả tìm kiếm",
+    "backlinks": "Liên kết ngược",
+    "outgoingLinks": "Liên kết",
+    "tags": "Thẻ",
+    "backlinksHint": "Mở một ghi chú để xem liên kết ngược.",
+    "kbNamePlaceholder": "Tên không gian",
+    "kbRootPlaceholder": "Đường dẫn kho ngoài (tùy chọn, chỉ đọc)",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "Cài đặt truy xuất",
+    "reindexing": "Đang lập chỉ mục lại…",
+    "reindexDone": "Đã xây dựng lại chỉ mục",
+    "jobs": {
+      "tooltip": "Tác vụ xây dựng lại",
+      "title": "Tác vụ xây dựng lại",
+      "empty": "Chưa có tác vụ xây dựng lại.",
+      "kindReindex": "Dựng lại chỉ mục",
+      "kindReembed": "Nhúng lại vector",
+      "fts": "Chỉ mục toàn văn",
+      "result": "Đã dựng lại {{notes}} ghi chú · {{kbs}} không gian",
+      "emptyHint": "Lập chỉ mục lại một không gian hoặc đổi mô hình nhúng, tiến trình sẽ hiện ở đây.",
+      "model": "Mô hình: {{name}}"
+    },
+    "embeddingOff": "Tìm kiếm vector đang tắt",
+    "embeddingModelTip": "Mô hình nhúng: {{name}} — mở cài đặt",
+    "embeddingOffTip": "Tìm kiếm vector đang tắt — mở cài đặt",
+    "kbRootPick": "Chọn…",
+    "kbRootHint": "Để trống để tạo không gian nội bộ. Kho ngoài chỉ đọc ở Giai đoạn 1.",
+    "kbRootInvalid": "Không thể chọn thư mục đó",
+    "picker": {
+      "read": "Đọc",
+      "write": "Đọc+ghi",
+      "empty": "Chưa có không gian kiến thức — tạo một cái trong Kiến thức.",
+      "noteCount": "{{count}} ghi chú"
     }
   }
 }

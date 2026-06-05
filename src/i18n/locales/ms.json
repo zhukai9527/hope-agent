@@ -569,7 +569,9 @@
     "select": "Pilih",
     "settings": "Tetapan",
     "test": "Uji sambungan",
-    "testing": "Menguji..."
+    "testing": "Menguji...",
+    "create": "Cipta",
+    "clear": "Kosongkan"
   },
   "context": {
     "ago": "yang lalu",
@@ -1972,6 +1974,10 @@
       "label": "Direktori kerja projek",
       "pick": "Pilih direktori",
       "placeholder": "Tidak ditetapkan (sesi boleh menimpa)"
+    },
+    "knowledge": {
+      "label": "Ruang pengetahuan",
+      "hint": "Ruang yang dilampirkan membolehkan sembang projek ini mencari dan memetik notanya."
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "Tambah pengendali",
       "advanced": "Lanjutan",
       "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse)."
+    },
+    "knowledge": {
+      "tab": "Pengetahuan"
+    },
+    "knowledgeEmbedding": {
+      "title": "Carian vektor (embedding)",
+      "description": "Konfigurasikan model embedding untuk carian semantik pangkalan pengetahuan. Bebas daripada memori — memilih dari pustaka model dikongsi yang sama, tetapi diaktifkan dan dibina semula secara berasingan, jadi ia berfungsi walaupun embedding memori dimatikan.",
+      "enabled": "Aktifkan carian vektor",
+      "enabledDesc": "Menjana embedding nota untuk perolehan semantik. Apabila dimatikan, carian nota hanya menggunakan teks penuh.",
+      "changeModel": "Tukar model",
+      "activated": "Model embedding pengetahuan diaktifkan",
+      "reembed": {
+        "title": "Indeks semula",
+        "idle": "Vektor nota adalah terkini.",
+        "needs": "Nota perlu di-embed semula dengan model semasa.",
+        "startNow": "Bina semula sekarang",
+        "cancel": "Batal",
+        "retry": "Cuba semula",
+        "progress": "{{done}} / {{total}} pangkalan pengetahuan",
+        "phase": "Meng-embed semula nota"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "Lanjutan · pemotongan",
+      "description": "Cara nota dipecah kepada unit dapatan. Nilai lalai sesuai untuk kebanyakan nota.",
+      "maxChars": "Saiz cebisan (aksara)",
+      "overlap": "Pertindihan (aksara)",
+      "rebuildWarning": "Menyimpan akan membina semula indeks bagi setiap ruang pengetahuan.",
+      "saved": "Disimpan — membina semula semua ruang"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "Sunting",
       "delete": "Padam",
       "read": "Baca"
+    }
+  },
+  "knowledge": {
+    "title": "Ruang Pengetahuan",
+    "searchPlaceholder": "Cari nota…",
+    "newKb": "Ruang baharu",
+    "spaces": "Ruang",
+    "noSpaces": "Belum ada ruang pengetahuan.",
+    "notes": "Nota",
+    "reindex": "Indeks semula",
+    "newNote": "Nota baharu",
+    "readOnly": "Baca sahaja (bilik kebal luaran)",
+    "mode": {
+      "source": "Sumber",
+      "split": "Pisah",
+      "preview": "Pratonton"
+    },
+    "emptyEditor": "Pilih nota untuk dilihat atau disunting.",
+    "searchResults": "Hasil carian",
+    "backlinks": "Pautan balik",
+    "outgoingLinks": "Pautan",
+    "tags": "Tag",
+    "backlinksHint": "Buka nota untuk melihat pautan baliknya.",
+    "kbNamePlaceholder": "Nama ruang",
+    "kbRootPlaceholder": "Laluan bilik kebal luaran (pilihan, baca sahaja)",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "Tetapan perolehan",
+    "reindexing": "Mengindeks semula…",
+    "reindexDone": "Indeks dibina semula",
+    "jobs": {
+      "tooltip": "Tugas bina semula",
+      "title": "Tugas bina semula",
+      "empty": "Belum ada tugas bina semula.",
+      "kindReindex": "Bina semula indeks",
+      "kindReembed": "Benam semula vektor",
+      "fts": "Indeks teks penuh",
+      "result": "{{notes}} nota · {{kbs}} ruang dibina semula",
+      "emptyHint": "Indeks semula sesuatu ruang, atau tukar model benaman, dan kemajuan akan muncul di sini.",
+      "model": "Model: {{name}}"
+    },
+    "embeddingOff": "Carian vektor dimatikan",
+    "embeddingModelTip": "Model benaman: {{name}} — buka tetapan",
+    "embeddingOffTip": "Carian vektor dimatikan — buka tetapan",
+    "kbRootPick": "Pilih…",
+    "kbRootHint": "Biarkan kosong untuk ruang dalaman. Bilik kebal luaran hanya-baca pada Fasa 1.",
+    "kbRootInvalid": "Tidak dapat memilih folder itu",
+    "picker": {
+      "read": "Baca",
+      "write": "Baca+tulis",
+      "empty": "Belum ada ruang pengetahuan — cipta satu di Pengetahuan.",
+      "noteCount": "{{count}} nota"
     }
   }
 }

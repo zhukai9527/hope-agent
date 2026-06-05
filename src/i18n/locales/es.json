@@ -569,7 +569,9 @@
     "select": "Seleccionar",
     "settings": "Ajustes",
     "test": "Probar conexión",
-    "testing": "Probando..."
+    "testing": "Probando...",
+    "create": "Crear",
+    "clear": "Borrar"
   },
   "context": {
     "ago": "atrás",
@@ -1972,6 +1974,10 @@
       "label": "Directorio de trabajo del proyecto",
       "pick": "Elegir directorio",
       "placeholder": "No establecido (las sesiones pueden anular)"
+    },
+    "knowledge": {
+      "label": "Espacios de conocimiento",
+      "hint": "Los espacios adjuntos permiten que los chats de este proyecto busquen y citen sus notas."
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "Añadir handler",
       "advanced": "Avanzado",
       "slowHandlerWarning": "Este handler ejecuta un LLM / subagente en línea y ralentizará cada vez que se dispare este evento de bloqueo. Prefiere command / http aquí, o muévelo a un evento de observación (p. ej., PostToolUse)."
+    },
+    "knowledge": {
+      "tab": "Conocimiento"
+    },
+    "knowledgeEmbedding": {
+      "title": "Búsqueda vectorial (embedding)",
+      "description": "Configura el modelo de embedding para la búsqueda semántica de la base de conocimiento. Es independiente de la memoria: elige de la misma biblioteca compartida de modelos, pero se activa y reconstruye por separado, por lo que funciona aunque el embedding de memoria esté desactivado.",
+      "enabled": "Activar búsqueda vectorial",
+      "enabledDesc": "Genera embeddings de las notas para la recuperación semántica. Si está desactivado, la búsqueda de notas usa solo texto completo.",
+      "changeModel": "Cambiar modelo",
+      "activated": "Modelo de embedding de conocimiento activado",
+      "reembed": {
+        "title": "Reindexar",
+        "idle": "Los vectores de las notas están actualizados.",
+        "needs": "Las notas necesitan reincrustarse con el modelo actual.",
+        "startNow": "Reconstruir ahora",
+        "cancel": "Cancelar",
+        "retry": "Reintentar",
+        "progress": "{{done}} / {{total}} bases de conocimiento",
+        "phase": "Reincrustando notas"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "Avanzado · fragmentación",
+      "description": "Cómo se dividen las notas en unidades de recuperación. Los valores por defecto sirven para la mayoría.",
+      "maxChars": "Tamaño de fragmento (caracteres)",
+      "overlap": "Solapamiento (caracteres)",
+      "rebuildWarning": "Guardar reconstruye el índice de todos los espacios de conocimiento.",
+      "saved": "Guardado — reconstruyendo todos los espacios"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "Editar",
       "delete": "Eliminar",
       "read": "Leer"
+    }
+  },
+  "knowledge": {
+    "title": "Espacio de conocimiento",
+    "searchPlaceholder": "Buscar notas…",
+    "newKb": "Nuevo espacio",
+    "spaces": "Espacios",
+    "noSpaces": "Aún no hay espacios de conocimiento.",
+    "notes": "Notas",
+    "reindex": "Reindexar",
+    "newNote": "Nueva nota",
+    "readOnly": "Solo lectura (almacén externo)",
+    "mode": {
+      "source": "Origen",
+      "split": "Dividido",
+      "preview": "Vista previa"
+    },
+    "emptyEditor": "Selecciona una nota para ver o editar.",
+    "searchResults": "Resultados de búsqueda",
+    "backlinks": "Vínculos entrantes",
+    "outgoingLinks": "Vínculos",
+    "tags": "Etiquetas",
+    "backlinksHint": "Abre una nota para ver sus vínculos entrantes.",
+    "kbNamePlaceholder": "Nombre del espacio",
+    "kbRootPlaceholder": "Ruta del almacén externo (opcional, solo lectura)",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "Configuración de recuperación",
+    "reindexing": "Reindexando…",
+    "reindexDone": "Índice reconstruido",
+    "jobs": {
+      "tooltip": "Tareas de reindexación",
+      "title": "Tareas de reindexación",
+      "empty": "Aún no hay tareas de reindexación.",
+      "kindReindex": "Reconstruir índice",
+      "kindReembed": "Reincrustar vectores",
+      "fts": "Índice de texto completo",
+      "result": "{{notes}} notas · {{kbs}} espacios reconstruidos",
+      "emptyHint": "Reindexa un espacio o cambia el modelo de incrustación y el progreso aparecerá aquí.",
+      "model": "Modelo: {{name}}"
+    },
+    "embeddingOff": "Búsqueda vectorial desactivada",
+    "embeddingModelTip": "Modelo de incrustación: {{name}} — abrir ajustes",
+    "embeddingOffTip": "La búsqueda vectorial está desactivada — abrir ajustes",
+    "kbRootPick": "Elegir…",
+    "kbRootHint": "Déjalo vacío para un espacio interno. Las bóvedas externas son de solo lectura en la Fase 1.",
+    "kbRootInvalid": "No se pudo seleccionar esa carpeta",
+    "picker": {
+      "read": "Lectura",
+      "write": "Lectura y escritura",
+      "empty": "Aún no hay espacios de conocimiento; crea uno en Conocimiento.",
+      "noteCount": "{{count}} notas"
     }
   }
 }

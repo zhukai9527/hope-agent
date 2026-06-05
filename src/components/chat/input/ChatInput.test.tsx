@@ -128,12 +128,14 @@ describe("IncognitoToggle", () => {
 })
 
 describe("ChatInput", () => {
-  test("forwards textarea changes and disables empty sends", () => {
+  test("forwards composer changes and disables empty sends", () => {
     const onInputChange = vi.fn()
     const onSend = vi.fn()
     const { props, view } = renderChatInput({ onInputChange, onSend })
 
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "hello" } })
+    const textbox = screen.getByRole("textbox")
+    textbox.textContent = "hello"
+    fireEvent.input(textbox)
     expect(onInputChange).toHaveBeenCalledWith("hello")
     expect((screen.getByRole("button", { name: "chat.send" }) as HTMLButtonElement).disabled).toBe(
       true,

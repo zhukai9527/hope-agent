@@ -4,6 +4,7 @@ use axum::Json;
 use super::helpers::parse_file_upload;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -66,6 +67,11 @@ pub struct ChatRequest {
     /// `chat` command).
     #[serde(default)]
     pub working_dir: Option<String>,
+    /// Composer-staged KB attaches. Only honored when this call also creates the
+    /// session (mirrors `working_dir` / the Tauri `chat` command). No-op for
+    /// incognito.
+    #[serde(default)]
+    pub kb_attachments: Vec<ha_core::knowledge::types::KbAttachInput>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,15 +90,44 @@ pub struct ChatResponse {
     pub blocked_reason: Option<String>,
 }
 
-fn validate_http_chat_attachments(attachments: &[Attachment]) -> Result<(), AppError> {
+fn validate_http_mention_attachment(session_id: &str, file_path: &str) -> Result<(), AppError> {
+    let requested = PathBuf::from(file_path);
+    if !requested.is_absolute() {
+        return Err(AppError::bad_request(
+            "mention attachment path must be absolute",
+        ));
+    }
+
+    let canon = requested
+        .canonicalize()
+        .map_err(|_| AppError::forbidden("mention attachment is outside the session workspace"))?;
+    let scope = ha_core::filesystem::WorkspaceScope::for_session(session_id)
+        .map_err(|_| AppError::forbidden("mention attachment is outside the session workspace"))?;
+    if scope.contains(&canon) {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "mention attachment is outside the session workspace",
+        ))
+    }
+}
+
+fn validate_http_chat_attachments(
+    session_id: &str,
+    attachments: &[Attachment],
+) -> Result<(), AppError> {
     for att in attachments {
         // "quote" attachments carry the snippet in `data`; their `file_path` is
         // only a reference label (never read from disk), so it's safe.
-        let allowed_with_path = matches!(att.source.as_deref(), Some("upload") | Some("quote"));
-        if att.file_path.is_some() && !allowed_with_path {
-            return Err(AppError::bad_request(
-                "HTTP chat attachments must be uploaded through /api/chat/attachment",
-            ));
+        match (att.source.as_deref(), att.file_path.as_deref()) {
+            (_, None) => {}
+            (Some("upload") | Some("quote"), Some(_)) => {}
+            (Some("mention"), Some(path)) => validate_http_mention_attachment(session_id, path)?,
+            _ => {
+                return Err(AppError::bad_request(
+                    "HTTP chat attachments must be uploaded through /api/chat/attachment",
+                ));
+            }
         }
     }
     Ok(())
@@ -199,6 +234,11 @@ pub async fn chat(
             db.update_session_working_dir(&sid, Some(wd.clone()))
                 .map_err(|e| AppError::bad_request(e.to_string()))?;
         }
+        ha_core::knowledge::service::apply_draft_attachments(
+            &sid,
+            body.incognito.unwrap_or(false),
+            &body.kb_attachments,
+        );
     }
 
     // Persist per-session permission mode if the body included one.
@@ -298,7 +338,7 @@ pub async fn chat(
     // hook-rewritten `effective_prompt`, so the separate `persisted_content`
     // main computed (identical to `raw_prompt`, now consumed by the preflight) is
     // dropped.
-    validate_http_chat_attachments(&body.attachments)?;
+    validate_http_chat_attachments(&sid, &body.attachments)?;
     let attachments_meta =
         ha_core::attachments::persist_chat_user_attachments_meta(&sid, &mut body.attachments)
             .map_err(|e| AppError::internal(e.to_string()))?;
@@ -458,6 +498,7 @@ pub async fn chat(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: ha_core::chat_engine::stream_seq::ChatSource::Http,
+        origin_source: None,
         event_sink,
     };
 
@@ -761,7 +802,7 @@ mod tests {
             quote_lines: None,
         }];
 
-        assert!(validate_http_chat_attachments(&attachments).is_err());
+        assert!(validate_http_chat_attachments("missing-session", &attachments).is_err());
     }
 
     #[test]
@@ -775,6 +816,6 @@ mod tests {
             quote_lines: None,
         }];
 
-        assert!(validate_http_chat_attachments(&attachments).is_ok());
+        assert!(validate_http_chat_attachments("missing-session", &attachments).is_ok());
     }
 }

@@ -91,7 +91,7 @@ skills/                 内置技能（meta / 编程方法论 vendor / 办公方
 docs/architecture/      子系统设计文档（39 篇，跨 PR 必读单一真相源）
 ```
 
-ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `skills/` `tools/` `channel/` `subagent/` `team/` `cron/` `acp/` `dashboard/` `recap/` `awareness/` `config/` `session/` `project/` `plan/` `ask_user/` `async_jobs/` `failover/` `platform/` `security/` `logging/` `local_llm/`。Vendor skill 来源记录在 `THIRD_PARTY_NOTICES.md`。
+ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `knowledge/` `skills/` `tools/` `channel/` `subagent/` `team/` `cron/` `acp/` `dashboard/` `recap/` `awareness/` `config/` `session/` `project/` `plan/` `ask_user/` `async_jobs/` `failover/` `platform/` `security/` `logging/` `local_llm/`。Vendor skill 来源记录在 `THIRD_PARTY_NOTICES.md`。
 
 ## 技术栈
 
@@ -153,6 +153,24 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `ski
 - **`recall_memory` / `memory_get` 工具返回完整原文**，预算只约束 system prompt 注入
 - Active Memory / Awareness / User Profile 都作为**独立 cache block** 注入，不作废静态前缀缓存
 - **会话级无痕（`sessions.incognito`）**：单一真相源；不注入 Memory / Active Memory / Awareness、跳过自动提取；**关闭即焚**——不进侧边栏列表 / 全局 FTS / Dashboard 统计；**与 Project / IM Channel 互斥**（前端灰化 + 后端入口防御）
+
+### Knowledge Base（知识空间）
+
+详见 [`knowledge-base.md`](docs/architecture/knowledge-base.md)（实现）/ [`docs/plans/knowledge-base.md`](docs/plans/knowledge-base.md)（设计契约 D1–D14）。对外名「知识空间」，代码中性（模块 `knowledge/`、工具 `note_*`、作用域 `for_knowledge`）。
+
+- **两类存储分明（D9）**：KB 注册表 + 访问绑定（`KnowledgeRegistry`）落 `sessions.db`（真相源，包 `Arc<SessionDB>`）；`note/chunk/link/tag` + FTS5 + vec0 落 `~/.hope-agent/knowledge/index.db`（`IndexDb`，纯可重建缓存，删了从 `.md` 全量重建）。笔记 = 真实 `.md` 文件，唯一真相源
+- **访问默认 deny + 显式 attach（D10）**：唯一入口 `effective_kb_access(KnowledgeAccessContext)`——incognito short-circuit 归零 → 全链含 IM 归零（Phase 1 IM 禁用 KB；**subagent 不洗权限**：血缘 cap 查 `source.is_im() || origin_source.is_im()`）→ `max(session_attach, project_attach)` → 滤 archived → 外部 root cap `read`。**source 来自 `ChatSource` 经 `configure_agent` 映射成 `KbAccessSource` 透传进 `ToolExecContext.chat_source`**（`ChatSource` 不在 tool ctx 上，必须这样透传）；**`origin_source` 同样真接线**：`ChatEngineParams.origin_source`（顶层 `None`→origin=source）→ `configure_agent(kb_origin)` → `agent.origin_chat_source` → `ToolExecContext.origin_chat_source`；`subagent` 工具 spawn 时把父轮 `ctx.origin_chat_source.or(chat_source)` 透传给子 `ChatEngineParams.origin_source`，故 IM-origin 子代理被血缘 cap 归零（即便子会话隔离也是第二道防线）。incognito 由 `is_session_incognito` 取。`access.rs` 有短路规则单测（incognito / IM / IM-origin 血缘 / 默认 deny）
+- **两鉴权平面物理隔离（D10）**：owner 平面（HTTP 端点 / Tauri 命令，`service.rs`）= API key/本机信任，看全部 KB **不经 attach**；agent 平面（`note_*` 工具）走 `effective_kb_access`。`/api/knowledge/{kb}/files/*` 纯 owner、**无 session 参数 / 无 fallback**，与 `/api/sessions/{id}/files/*` 不互相放宽
+- **作用域闭合（D11）**：所有读写经 `WorkspaceScope::for_knowledge`，外部绑定 root `read_only=true` 拒一切写（桌面也拒）；HTTP 写叠加 `allow_remote_writes`。外部 vault Phase 1 只读
+- **stale-write guard 真相源**：`expected_file_hash` 比**磁盘当前 raw BLAKE3**（`mod.rs::blake3_hex`，over raw bytes，不归一化换行），**不比 `note.content_hash`**（索引缓存）。`note_patch` 走 `old/new` 唯一文本命中（0/多次都拒）
+- **坐标系契约（D14）**：持久 offset = 码点偏移；跨端定位 = `line`（1-based）+ `col`（0-based 码点列，tab=1），相对原始全文（含 frontmatter / 原 CRLF）；`PosMap` 算。`note_patch` 不用坐标寻址
+- **resolve 确定性（#8）**：`resolver::resolve` 路径式 > 唯一 basename > 最短路径再字典序，NFC + 大小写不敏感，**不用 mtime**。任何 note add/delete 后 `reresolve_kb_links` 全 KB 重解析（broken↔resolved 翻转）
+- **检索独立旗舰（D7）**：chunk FTS5 + vec0 → RRF → MMR → 聚合回 note，算法复用 memory 但**独立 store、绝不折进 `recall_memory`**；向量单存 `note_vec`
+- **embedding 独立 selector（D7）**：知识空间有**自己的 `knowledge_embedding` selector**（`AppConfig.knowledge_embedding: EmbeddingSelection`——独立 enable / model / signature / reembed），与 `memory_embedding` 物理隔离、**不寄生不回退**（记忆没配 ≠ 知识空间没配，记忆关了知识空间向量检索照常）。两者**共享 `embedding_models` 命名库**（apiKey 配一次两处可选）+ 复用 `create_embedding_provider` 工厂 + signature 算法 + `embedding_cache`。索引/检索读 `knowledge::knowledge_active_embedding_signature()`（**不读** `memory::active_embedding_signature`）；切模型走 owner 命令 `knowledge_embedding_{get,set_default,disable}`（后台 `KnowledgeReembed` job 全 KB full reindex）。`embedding_models` CRUD 对 memory **与** knowledge 的 active model 双向交叉保护。GUI 在「设置 → 知识空间」（`KnowledgePanel`，知识空间视图标题栏的**向量模型徽章** `KnowledgeEmbeddingBadge` 显示当前模型 / 「未开启」并可跳转，替代旧齿轮）；与 `memory_embedding` 一致**不进 `ha-settings`**（模型选择 + reembed 副作用，类比 `active_model` 的 GUI-only 豁免）
+- **chunk 参数同 GUI-only（D12）**：`AppConfig.knowledge_chunk: ChunkConfig`（`max_chars` / `overlap_chars`，server 端 `clamped()` 钳到 `[200,8000]` / `[0,max/2]`）。owner 命令 `knowledge_chunk_{get,set}_cmd`（HTTP `GET|POST /api/knowledge/chunk`），set 经 `service::set_chunk_config` 写 config + 触发 `start_knowledge_reembed_job(Some(all_ids))` 全 KB 重切（向量开→重嵌、关→FTS-only，**不 stamp signature**——chunk 改动非模型覆盖事件）。与 `knowledge_embedding` 同归 **GUI-only**（重 reindex 副作用）**不进 `ha-settings`**。`chunker::chunk(full, parsed, &cfg)` 取参；`reindex_one` 索引前读 `cached_config().knowledge_chunk.clamped()`
+- **读取桥①**：用户消息 `[[note]]` 经 `knowledge::inject` 确定性注入，套 `<untrusted_external_data>` 信封 + 来源 + 截断，受 `effective_kb_access` 约束，**永不提升为 system 指令**
+- **外部 vault 实时同步（D6）**：`notify` watcher（per-KB 线程 + debounce）+ bind/启动 reconcile（mtime 增量 + prune）。内部 `notes/` 写时同步索引
+- **新增 KB 工具 / 端点**：工具走 `tools/note.rs` + `core_tools.rs` 注册 + `execution.rs` dispatch；Tauri/HTTP owner 平面薄壳调 `knowledge::service`；逻辑全在 ha-core（红线）
 
 ### 工具 & 审批
 

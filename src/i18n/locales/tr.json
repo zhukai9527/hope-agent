@@ -569,7 +569,9 @@
     "select": "Seç",
     "settings": "Ayarlar",
     "test": "Bağlantıyı test et",
-    "testing": "Test ediliyor..."
+    "testing": "Test ediliyor...",
+    "create": "Oluştur",
+    "clear": "Temizle"
   },
   "context": {
     "ago": "önce",
@@ -1972,6 +1974,10 @@
       "label": "Proje çalışma dizini",
       "pick": "Dizin seç",
       "placeholder": "Ayarlanmadı (oturumlar geçersiz kılabilir)"
+    },
+    "knowledge": {
+      "label": "Bilgi alanları",
+      "hint": "Eklenen alanlar, bu projenin sohbetlerinin notlarını aramasına ve alıntılamasına olanak tanır."
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "İşleyici ekle",
       "advanced": "Gelişmiş",
       "slowHandlerWarning": "Bu işleyici LLM / alt ajanı satır içi çalıştırır ve bu engelleyici olay her tetiklendiğinde gecikmeye yol açar. Burada command / http tercih edin veya bir gözlem olayına (örn. PostToolUse) taşıyın."
+    },
+    "knowledge": {
+      "tab": "Bilgi"
+    },
+    "knowledgeEmbedding": {
+      "title": "Vektör arama (gömme)",
+      "description": "Bilgi tabanı anlamsal araması için gömme modelini yapılandırın. Bellekten bağımsızdır — aynı paylaşılan model kitaplığından seçer, ancak ayrı olarak etkinleştirilir ve yeniden oluşturulur, bu yüzden bellek gömmesi kapalı olsa bile çalışır.",
+      "enabled": "Vektör aramayı etkinleştir",
+      "enabledDesc": "Anlamsal erişim için notları gömer. Kapalıyken not araması yalnızca tam metne döner.",
+      "changeModel": "Modeli değiştir",
+      "activated": "Bilgi gömme modeli etkinleştirildi",
+      "reembed": {
+        "title": "Yeniden dizinle",
+        "idle": "Not vektörleri güncel.",
+        "needs": "Notların geçerli modelle yeniden gömülmesi gerekiyor.",
+        "startNow": "Şimdi yeniden oluştur",
+        "cancel": "İptal",
+        "retry": "Yeniden dene",
+        "progress": "{{done}} / {{total}} bilgi tabanı",
+        "phase": "Notlar yeniden gömülüyor"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "Gelişmiş · parçalama",
+      "description": "Notların alma birimlerine nasıl bölüneceği. Varsayılanlar çoğu not için uygundur.",
+      "maxChars": "Parça boyutu (karakter)",
+      "overlap": "Örtüşme (karakter)",
+      "rebuildWarning": "Kaydetmek tüm bilgi alanlarının dizinini yeniden oluşturur.",
+      "saved": "Kaydedildi — tüm alanlar yeniden oluşturuluyor"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "Düzenle",
       "delete": "Sil",
       "read": "Oku"
+    }
+  },
+  "knowledge": {
+    "title": "Bilgi Alanı",
+    "searchPlaceholder": "Notlarda ara…",
+    "newKb": "Yeni alan",
+    "spaces": "Alanlar",
+    "noSpaces": "Henüz bilgi alanı yok.",
+    "notes": "Notlar",
+    "reindex": "Yeniden dizinle",
+    "newNote": "Yeni not",
+    "readOnly": "Salt okunur (harici kasa)",
+    "mode": {
+      "source": "Kaynak",
+      "split": "Bölünmüş",
+      "preview": "Önizleme"
+    },
+    "emptyEditor": "Görüntülemek veya düzenlemek için bir not seçin.",
+    "searchResults": "Arama sonuçları",
+    "backlinks": "Geri bağlantılar",
+    "outgoingLinks": "Bağlantılar",
+    "tags": "Etiketler",
+    "backlinksHint": "Geri bağlantılarını görmek için bir not açın.",
+    "kbNamePlaceholder": "Alan adı",
+    "kbRootPlaceholder": "Harici kasa yolu (isteğe bağlı, salt okunur)",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "Erişim ayarları",
+    "reindexing": "Yeniden dizinleniyor…",
+    "reindexDone": "Dizin yeniden oluşturuldu",
+    "jobs": {
+      "tooltip": "Yeniden oluşturma görevleri",
+      "title": "Yeniden oluşturma görevleri",
+      "empty": "Henüz yeniden oluşturma görevi yok.",
+      "kindReindex": "Dizini yeniden oluştur",
+      "kindReembed": "Vektörleri yeniden gömme",
+      "fts": "Tam metin dizini",
+      "result": "{{notes}} not · {{kbs}} alan yeniden oluşturuldu",
+      "emptyHint": "Bir alanı yeniden dizinleyin veya gömme modelini değiştirin; ilerleme burada görünür.",
+      "model": "Model: {{name}}"
+    },
+    "embeddingOff": "Vektör arama kapalı",
+    "embeddingModelTip": "Gömme modeli: {{name}} — ayarları aç",
+    "embeddingOffTip": "Vektör arama kapalı — ayarları aç",
+    "kbRootPick": "Seç…",
+    "kbRootHint": "Dahili alan için boş bırakın. Harici kasalar 1. Aşamada salt okunurdur.",
+    "kbRootInvalid": "Bu klasör seçilemedi",
+    "picker": {
+      "read": "Okuma",
+      "write": "Okuma+yazma",
+      "empty": "Henüz bilgi alanı yok — Bilgi bölümünde oluşturun.",
+      "noteCount": "{{count}} not"
     }
   }
 }

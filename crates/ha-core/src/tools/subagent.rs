@@ -172,6 +172,7 @@ async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
         skill_allowed_tools: Vec::new(),
         reasoning_effort: None,
         skill_name: None,
+        origin_source: ctx.origin_chat_source.or(ctx.chat_source),
     };
 
     let run_id = subagent::spawn_subagent(params, session_db, cancel_registry).await?;
@@ -438,6 +439,7 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
             skill_allowed_tools: Vec::new(),
             reasoning_effort: None,
             skill_name: None,
+            origin_source: ctx.origin_chat_source.or(ctx.chat_source),
         };
 
         match subagent::spawn_subagent(params, session_db.clone(), cancel_registry.clone()).await {

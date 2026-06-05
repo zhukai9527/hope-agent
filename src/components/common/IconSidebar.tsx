@@ -27,6 +27,7 @@ import {
   CalendarDays,
   BarChart3,
   ClipboardList,
+  Library,
   Server,
   Sun,
   Moon,
@@ -51,6 +52,7 @@ interface IconSidebarProps {
     | "calendar"
     | "dashboard"
     | "plans"
+    | "knowledge"
   onOpenSettings: (section?: SettingsSection) => void
   onOpenChat: () => void
   onOpenAgents: () => void
@@ -62,6 +64,7 @@ interface IconSidebarProps {
   onOpenCalendar: () => void
   onOpenDashboard: () => void
   onOpenPlans: () => void
+  onOpenKnowledge: () => void
   userAvatar?: string | null
   totalUnreadCount?: number
   onMarkAllRead?: () => void
@@ -80,6 +83,7 @@ export default function IconSidebar({
   onOpenCalendar,
   onOpenDashboard,
   onOpenPlans,
+  onOpenKnowledge,
   userAvatar,
   totalUnreadCount,
   onMarkAllRead,
@@ -254,6 +258,25 @@ export default function IconSidebar({
         </div>
 
         <div className="my-1 h-px w-6 bg-border-soft/60" />
+
+        {/* Knowledge Space entry */}
+        <div className="w-full flex justify-center mt-1">
+          <IconTip label={t("knowledge.title", "Knowledge Space")} side="right">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "rounded-xl h-8 w-8",
+                view === "knowledge"
+                  ? "bg-primary/10 text-primary hover:bg-primary/20"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={onOpenKnowledge}
+            >
+              <Library className="h-4 w-4" />
+            </Button>
+          </IconTip>
+        </div>
 
         {/* Calendar / Scheduled Tasks entry */}
         <div className="w-full flex justify-center mt-1">

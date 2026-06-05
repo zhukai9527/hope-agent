@@ -152,6 +152,9 @@ pub async fn spawn_subagent(
     let skill_allowed_tools = params.skill_allowed_tools.clone();
     let reasoning_effort = params.reasoning_effort.clone();
     let skill_name_for_events = params.skill_name.clone();
+    // Parent turn's KB-access origin (D10) — forwarded to the child engine so an
+    // IM-origin chain can't reacquire KB access via the neutral Subagent source.
+    let origin_source = params.origin_source;
 
     tokio::spawn(async move {
         let start = std::time::Instant::now();
@@ -207,6 +210,7 @@ pub async fn spawn_subagent(
                 extra_system_context_exec,
                 skill_allowed_tools_exec,
                 reasoning_effort_exec,
+                origin_source,
             ),
         ));
         let result = futures_util::FutureExt::catch_unwind(exec_result).await;
@@ -405,6 +409,7 @@ fn execute_subagent(
     extra_system_context_override: Option<String>,
     skill_allowed_tools: Vec<String>,
     reasoning_effort: Option<String>,
+    origin_source: Option<crate::knowledge::KbAccessSource>,
 ) -> impl std::future::Future<Output = Result<(String, Option<String>)>> + Send {
     async move {
         use crate::provider;
@@ -553,6 +558,7 @@ fn execute_subagent(
             abort_on_cancel: true,
             persist_final_error_event: false,
             source: crate::chat_engine::stream_seq::ChatSource::Subagent,
+            origin_source,
             event_sink: Arc::new(crate::chat_engine::NoopEventSink),
         })
         .await

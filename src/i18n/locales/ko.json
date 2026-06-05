@@ -569,7 +569,9 @@
     "select": "선택",
     "settings": "설정",
     "test": "연결 테스트",
-    "testing": "테스트 중..."
+    "testing": "테스트 중...",
+    "create": "만들기",
+    "clear": "지우기"
   },
   "context": {
     "ago": "전",
@@ -1972,6 +1974,10 @@
       "label": "프로젝트 작업 디렉터리",
       "pick": "디렉터리 선택",
       "placeholder": "설정 안 됨 (세션에서 재정의 가능)"
+    },
+    "knowledge": {
+      "label": "지식 공간",
+      "hint": "첨부한 공간의 노트를 이 프로젝트의 대화에서 검색하고 인용할 수 있습니다."
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "핸들러 추가",
       "advanced": "고급",
       "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요."
+    },
+    "knowledge": {
+      "tab": "지식"
+    },
+    "knowledgeEmbedding": {
+      "title": "벡터 검색(임베딩)",
+      "description": "지식 베이스 시맨틱 검색에 사용할 임베딩 모델을 구성합니다. 메모리와 독립적이며 동일한 공유 모델 라이브러리에서 선택하지만, 활성화와 재구축은 별도로 이루어지므로 메모리 임베딩이 꺼져 있어도 작동합니다.",
+      "enabled": "벡터 검색 활성화",
+      "enabledDesc": "노트를 임베딩하여 시맨틱 검색을 지원합니다. 끄면 노트 검색은 전문 검색만 사용합니다.",
+      "changeModel": "모델 변경",
+      "activated": "지식 임베딩 모델이 활성화되었습니다",
+      "reembed": {
+        "title": "재색인",
+        "idle": "노트 벡터가 최신 상태입니다.",
+        "needs": "현재 모델로 노트를 다시 임베딩해야 합니다.",
+        "startNow": "지금 재구축",
+        "cancel": "취소",
+        "retry": "재시도",
+        "progress": "{{done}} / {{total}}개 지식 공간",
+        "phase": "노트 재임베딩 중"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "고급 · 청크",
+      "description": "노트를 검색 단위로 나누는 방식입니다. 기본값이 대부분의 노트에 적합합니다.",
+      "maxChars": "청크 크기(글자)",
+      "overlap": "겹침(글자)",
+      "rebuildWarning": "저장하면 모든 지식 공간의 색인을 다시 만듭니다.",
+      "saved": "저장됨 — 모든 공간 재구축 중"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "편집",
       "delete": "삭제",
       "read": "읽기"
+    }
+  },
+  "knowledge": {
+    "title": "지식 공간",
+    "searchPlaceholder": "노트 검색…",
+    "newKb": "새 공간",
+    "spaces": "공간",
+    "noSpaces": "아직 지식 공간이 없습니다.",
+    "notes": "노트",
+    "reindex": "재색인",
+    "newNote": "새 노트",
+    "readOnly": "읽기 전용(외부 보관소)",
+    "mode": {
+      "source": "소스",
+      "split": "분할",
+      "preview": "미리보기"
+    },
+    "emptyEditor": "보거나 편집할 노트를 선택하세요.",
+    "searchResults": "검색 결과",
+    "backlinks": "백링크",
+    "outgoingLinks": "링크",
+    "tags": "태그",
+    "backlinksHint": "노트를 열면 백링크가 표시됩니다.",
+    "kbNamePlaceholder": "공간 이름",
+    "kbRootPlaceholder": "외부 보관소 경로(선택 사항, 읽기 전용)",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "검색 설정",
+    "reindexing": "재색인 중…",
+    "reindexDone": "색인을 재구축했습니다",
+    "jobs": {
+      "tooltip": "재색인 작업",
+      "title": "재색인 작업",
+      "empty": "재색인 작업이 없습니다",
+      "kindReindex": "색인 재구축",
+      "kindReembed": "벡터 재생성",
+      "fts": "전문 색인",
+      "result": "노트 {{notes}}개 · 공간 {{kbs}}개 재구축",
+      "emptyHint": "공간을 재색인하거나 임베딩 모델을 전환하면 여기에 진행 상황이 표시됩니다.",
+      "model": "모델: {{name}}"
+    },
+    "embeddingOff": "벡터 검색 꺼짐",
+    "embeddingModelTip": "임베딩 모델: {{name}} · 설정 열기",
+    "embeddingOffTip": "벡터 검색이 꺼져 있습니다 · 설정 열기",
+    "kbRootPick": "선택…",
+    "kbRootHint": "비워 두면 내부 공간을 만듭니다. 외부 보관소는 1단계에서 읽기 전용입니다.",
+    "kbRootInvalid": "해당 폴더를 선택할 수 없습니다",
+    "picker": {
+      "read": "읽기",
+      "write": "읽기+쓰기",
+      "empty": "아직 지식 공간이 없습니다. 「지식 공간」에서 만드세요.",
+      "noteCount": "노트 {{count}}개"
     }
   }
 }

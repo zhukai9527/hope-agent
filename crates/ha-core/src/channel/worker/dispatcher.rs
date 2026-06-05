@@ -751,6 +751,7 @@ async fn handle_inbound_message(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: crate::chat_engine::stream_seq::ChatSource::Channel,
+        origin_source: None,
         event_sink,
     };
 

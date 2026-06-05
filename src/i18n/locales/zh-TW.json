@@ -569,7 +569,9 @@
     "select": "選擇",
     "settings": "設置",
     "test": "測試連接",
-    "testing": "測試中..."
+    "testing": "測試中...",
+    "create": "建立",
+    "clear": "清除"
   },
   "context": {
     "ago": "前",
@@ -1972,6 +1974,10 @@
       "label": "專案工作目錄",
       "pick": "選擇目錄",
       "placeholder": "未設定（會話可單獨覆寫）"
+    },
+    "knowledge": {
+      "label": "知識空間",
+      "hint": "附加的空間讓該專案的對話可以檢索並引用其中的筆記。"
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "新增處理器",
       "advanced": "進階",
       "slowHandlerWarning": "此處理器會內聯執行 LLM / 子 Agent，每次該阻斷事件觸發都會拖慢。建議這裡改用 command / http，或移至觀察型事件（如 PostToolUse）。"
+    },
+    "knowledge": {
+      "tab": "知識空間"
+    },
+    "knowledgeEmbedding": {
+      "title": "向量檢索（Embedding）",
+      "description": "設定知識空間語義檢索使用的 embedding 模型。獨立於記憶——從同一個共用模型庫中選擇，但啟用與重建各自獨立，即使記憶未啟用 embedding 也能正常運作。",
+      "enabled": "啟用向量檢索",
+      "enabledDesc": "為筆記產生向量以支援語義檢索。關閉時筆記檢索僅使用全文比對。",
+      "changeModel": "更換模型",
+      "activated": "知識空間 embedding 模型已啟用",
+      "reembed": {
+        "title": "重建索引",
+        "idle": "筆記向量已是最新。",
+        "needs": "目前模型下筆記需要重新向量化。",
+        "startNow": "立即重建",
+        "cancel": "取消",
+        "retry": "重試",
+        "progress": "{{done}} / {{total}} 個知識空間",
+        "phase": "正在重新向量化筆記"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "進階 · 分塊",
+      "description": "控制筆記如何切分成檢索單元。預設值適合大多數筆記。",
+      "maxChars": "分塊大小（字元）",
+      "overlap": "重疊（字元）",
+      "rebuildWarning": "儲存會重建所有知識空間的索引。",
+      "saved": "已儲存，正在重建所有空間"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "修改",
       "delete": "刪除",
       "read": "讀取"
+    }
+  },
+  "knowledge": {
+    "title": "知識空間",
+    "searchPlaceholder": "搜尋筆記…",
+    "newKb": "新增空間",
+    "spaces": "空間",
+    "noSpaces": "尚無知識空間。",
+    "notes": "筆記",
+    "reindex": "重建索引",
+    "newNote": "新增筆記",
+    "readOnly": "唯讀（外部庫）",
+    "mode": {
+      "source": "原始碼",
+      "split": "分割",
+      "preview": "預覽"
+    },
+    "emptyEditor": "選取筆記以檢視或編輯。",
+    "searchResults": "搜尋結果",
+    "backlinks": "反向連結",
+    "outgoingLinks": "連結",
+    "tags": "標籤",
+    "backlinksHint": "開啟筆記以檢視其反向連結。",
+    "kbNamePlaceholder": "空間名稱",
+    "kbRootPlaceholder": "外部庫路徑（選填，唯讀）",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "檢索設定",
+    "reindexing": "重新索引中…",
+    "reindexDone": "索引已重建",
+    "jobs": {
+      "tooltip": "重建任務",
+      "title": "重建任務",
+      "empty": "尚無重建任務",
+      "kindReindex": "重建索引（全文）",
+      "kindReembed": "重新向量化",
+      "fts": "全文索引",
+      "result": "已重建 {{notes}} 篇筆記 · {{kbs}} 個知識空間",
+      "emptyHint": "重建某個空間，或切換向量模型，進度會顯示在這裡。",
+      "model": "模型：{{name}}"
+    },
+    "embeddingOff": "向量檢索未開啟",
+    "embeddingModelTip": "向量模型：{{name}} · 點擊進入設定",
+    "embeddingOffTip": "向量檢索未開啟 · 點擊進入設定",
+    "kbRootPick": "選擇…",
+    "kbRootHint": "留空則建立內部空間。外部庫在第一階段為唯讀。",
+    "kbRootInvalid": "無法選擇該資料夾",
+    "picker": {
+      "read": "讀",
+      "write": "讀寫",
+      "empty": "還沒有知識空間，先到「知識空間」中建立。",
+      "noteCount": "{{count}} 篇筆記"
     }
   }
 }

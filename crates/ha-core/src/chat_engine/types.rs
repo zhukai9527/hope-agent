@@ -542,6 +542,11 @@ pub struct ChatEngineParams {
     /// Which caller opened this stream. Drives the `activeChatCounts`
     /// breakdown surfaced in `/api/server/status`.
     pub source: ChatSource,
+    /// Origin of the whole call chain for KB access (design D10). `None` =
+    /// top-level (origin == `source`). A subagent sets this to its parent
+    /// turn's effective origin so an IM-originated chain can't reacquire KB
+    /// access through the neutral `Subagent` source. See `effective_kb_access`.
+    pub origin_source: Option<crate::knowledge::KbAccessSource>,
 
     // Output
     pub event_sink: Arc<dyn EventSink>,

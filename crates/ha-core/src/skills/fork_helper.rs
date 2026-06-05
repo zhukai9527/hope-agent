@@ -94,6 +94,7 @@ pub async fn spawn_skill_fork(
         skill_allowed_tools: skill.allowed_tools.clone(),
         reasoning_effort: skill.effort.clone(),
         skill_name: Some(skill.name.clone()),
+        origin_source: None,
     };
 
     subagent::spawn_subagent(params, session_db, cancel_registry)

@@ -404,6 +404,7 @@ pub(crate) async fn inject_and_run_parent(
             abort_on_cancel: true,
             persist_final_error_event: false,
             source: crate::chat_engine::stream_seq::ChatSource::ParentInjection,
+            origin_source: None,
             event_sink: Arc::new(ParentInjectionSink {
                 parent_session_id: parent_session_id.clone(),
                 run_id: run_id.clone(),

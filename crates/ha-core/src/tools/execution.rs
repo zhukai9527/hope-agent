@@ -10,8 +10,8 @@ use super::issue_report;
 use super::send_attachment;
 use super::skill;
 use super::{
-    acp_spawn, browser, cron, mac_control, memory, notification, settings, subagent, team, weather,
-    web_fetch, web_search,
+    acp_spawn, browser, cron, mac_control, memory, note, notification, settings, subagent, team,
+    weather, web_fetch, web_search,
 };
 use super::{
     agents, ask_user_question, canvas, enter_plan_mode, image, image_generate, job_status, pdf,
@@ -29,6 +29,11 @@ use super::{
     TOOL_SESSION_STATUS, TOOL_SUBAGENT, TOOL_SUBMIT_PLAN, TOOL_TASK_CREATE, TOOL_TASK_LIST,
     TOOL_TASK_UPDATE, TOOL_TEAM, TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS,
     TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WRITE,
+};
+use super::{
+    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BY_TAG, TOOL_NOTE_CREATE, TOOL_NOTE_DELETE,
+    TOOL_NOTE_LINK, TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_SEARCH, TOOL_NOTE_TAGS,
+    TOOL_NOTE_UPDATE,
 };
 use crate::agent_config::AsyncToolPolicy;
 use crate::async_jobs::{self, JobOrigin};
@@ -214,6 +219,15 @@ pub struct ToolExecContext {
     pub agent_custom_approval_tools: Vec<String>,
     /// Project id (if any) for AllowAlways scope resolution.
     pub project_id: Option<String>,
+    /// Turn source for knowledge-base access scoping (design D10). `None` =
+    /// unknown (treated as owner/GUI). Set by the chat engine; IM turns set
+    /// `Im` so KB access is denied even on project-attached sessions (Phase 1).
+    pub chat_source: Option<crate::knowledge::KbAccessSource>,
+    /// Call-chain origin for KB access scoping (design D10). `None` = same as
+    /// `chat_source` (top-level turn). A subagent carries its parent turn's
+    /// origin so an IM-origin chain can't reacquire KB access through the
+    /// neutral `Subagent` source. Consumed by `effective_kb_access`.
+    pub origin_chat_source: Option<crate::knowledge::KbAccessSource>,
     /// Per-agent async tool backgrounding policy (mirrors AgentConfig.capabilities.async_tool_policy).
     pub async_tool_policy: AsyncToolPolicy,
     /// Internal flag set by the async-job spawner when re-dispatching an
@@ -1277,6 +1291,18 @@ pub async fn execute_tool_with_context(
             TOOL_TEAM => team::tool_team(args, dispatch_ctx).await,
             TOOL_ACP_SPAWN => acp_spawn::tool_acp_spawn(args, dispatch_ctx).await,
             TOOL_MEMORY_GET => memory::tool_memory_get(args).await,
+            // Knowledge base (note_*) tools.
+            TOOL_NOTE_CREATE => note::tool_note_create(args, dispatch_ctx).await,
+            TOOL_NOTE_READ => note::tool_note_read(args, dispatch_ctx).await,
+            TOOL_NOTE_UPDATE => note::tool_note_update(args, dispatch_ctx).await,
+            TOOL_NOTE_PATCH => note::tool_note_patch(args, dispatch_ctx).await,
+            TOOL_NOTE_APPEND => note::tool_note_append(args, dispatch_ctx).await,
+            TOOL_NOTE_DELETE => note::tool_note_delete(args, dispatch_ctx).await,
+            TOOL_NOTE_SEARCH => note::tool_note_search(args, dispatch_ctx).await,
+            TOOL_NOTE_LINK => note::tool_note_link(args, dispatch_ctx).await,
+            TOOL_NOTE_BACKLINKS => note::tool_note_backlinks(args, dispatch_ctx).await,
+            TOOL_NOTE_BY_TAG => note::tool_note_by_tag(args, dispatch_ctx).await,
+            TOOL_NOTE_TAGS => note::tool_note_tags(args, dispatch_ctx).await,
             TOOL_AGENTS_LIST => agents::tool_agents_list(args).await,
             TOOL_SESSIONS_LIST => sessions::tool_sessions_list(args).await,
             TOOL_SESSION_STATUS => sessions::tool_session_status(args).await,

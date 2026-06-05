@@ -27,6 +27,7 @@ pub(crate) mod job_status;
 mod ls;
 mod mac_control;
 mod memory;
+pub(crate) mod note;
 mod notification;
 pub(crate) mod pdf;
 mod process;
@@ -90,6 +91,19 @@ pub const TOOL_SEND_NOTIFICATION: &str = "send_notification";
 pub const TOOL_SUBAGENT: &str = "subagent";
 pub const TOOL_MEMORY_GET: &str = "memory_get";
 pub const TOOL_AGENTS_LIST: &str = "agents_list";
+
+// Knowledge base (note_*) tools.
+pub const TOOL_NOTE_CREATE: &str = "note_create";
+pub const TOOL_NOTE_READ: &str = "note_read";
+pub const TOOL_NOTE_UPDATE: &str = "note_update";
+pub const TOOL_NOTE_PATCH: &str = "note_patch";
+pub const TOOL_NOTE_APPEND: &str = "note_append";
+pub const TOOL_NOTE_DELETE: &str = "note_delete";
+pub const TOOL_NOTE_SEARCH: &str = "note_search";
+pub const TOOL_NOTE_LINK: &str = "note_link";
+pub const TOOL_NOTE_BACKLINKS: &str = "note_backlinks";
+pub const TOOL_NOTE_BY_TAG: &str = "note_by_tag";
+pub const TOOL_NOTE_TAGS: &str = "note_tags";
 pub const TOOL_SESSIONS_LIST: &str = "sessions_list";
 pub const TOOL_SESSION_STATUS: &str = "session_status";
 pub const TOOL_SESSIONS_HISTORY: &str = "sessions_history";

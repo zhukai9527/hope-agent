@@ -124,6 +124,8 @@ impl AssistantAgent {
             session_id: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
+            chat_source: None,
+            origin_chat_source: None,
             steer_run_id: None,
             denied_tools: Vec::new(),
             skill_allowed_tools: Vec::new(),
@@ -174,6 +176,8 @@ impl AssistantAgent {
             session_id: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
+            chat_source: None,
+            origin_chat_source: None,
             steer_run_id: None,
             denied_tools: Vec::new(),
             skill_allowed_tools: Vec::new(),
@@ -349,6 +353,8 @@ impl AssistantAgent {
             session_id: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
+            chat_source: None,
+            origin_chat_source: None,
             steer_run_id: None,
             denied_tools: Vec::new(),
             skill_allowed_tools: Vec::new(),
@@ -902,6 +908,19 @@ impl AssistantAgent {
         self.subagent_depth = depth;
     }
 
+    /// Set the turn source used for knowledge-base access scoping (D10).
+    pub fn set_chat_source(&mut self, source: crate::knowledge::KbAccessSource) {
+        self.chat_source = Some(source);
+    }
+
+    /// Set the call-chain origin used for knowledge-base access scoping (D10).
+    /// For top-level turns this equals the chat source; a subagent carries its
+    /// parent turn's origin so an IM-origin chain can't launder KB access via
+    /// the neutral `Subagent` source.
+    pub fn set_origin_chat_source(&mut self, origin: crate::knowledge::KbAccessSource) {
+        self.origin_chat_source = Some(origin);
+    }
+
     /// Set the run ID for steer mailbox (only used when running as a sub-agent).
     pub fn set_steer_run_id(&mut self, run_id: String) {
         self.steer_run_id = Some(run_id);
@@ -1387,6 +1406,8 @@ impl AssistantAgent {
             tool_call_id: None,
             agent_id: Some(self.agent_id.clone()),
             subagent_depth: self.subagent_depth,
+            chat_source: self.chat_source,
+            origin_chat_source: self.origin_chat_source,
             agent_tool_filter,
             denied_tools: self.denied_tools.clone(),
             skill_allowed_tools: self.skill_allowed_tools.clone(),

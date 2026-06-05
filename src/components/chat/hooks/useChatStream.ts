@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import type { ChatAttachment } from "@/lib/transport"
+import type { KbDraftAttachment } from "@/types/knowledge"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
 import {
@@ -178,6 +179,14 @@ export interface UseChatStreamOptions {
    * on the auto-create branch.
    */
   draftWorkingDir?: string | null
+  /**
+   * KB attaches staged before the session existed (composer draft mode). Like
+   * draftWorkingDir, they ride on the `chat` command payload (`kbAttachments`)
+   * as a send-time snapshot and the backend applies them on the auto-create
+   * branch via `apply_draft_attachments` — sent only when no `sessionId` is set
+   * yet and not incognito.
+   */
+  draftKbAttachments?: KbDraftAttachment[]
 }
 
 export interface UseChatStreamReturn {
@@ -236,7 +245,13 @@ export function useChatStream({
   reasoningEffort,
   incognitoEnabled = false,
   draftWorkingDir = null,
+  draftKbAttachments = [],
 }: UseChatStreamOptions): UseChatStreamReturn {
+  // Latest draft attaches, snapshotted into the startChat payload at send time
+  // (mirrors how draftWorkingDir is baked into the create call) so a later
+  // New Chat / session switch can't redirect them onto the wrong session.
+  const draftKbAttachmentsRef = useRef(draftKbAttachments)
+  draftKbAttachmentsRef.current = draftKbAttachments
   const { t } = useTranslation()
   const [input, setInputState] = useState("")
   const [attachedFiles, setAttachedFilesState] = useState<File[]>([])
@@ -886,6 +901,14 @@ export function useChatStream({
           isPlanTrigger: options?.isPlanTrigger,
           planComment: options?.planComment,
           workingDir: currentSessionId ? undefined : draftWorkingDir ?? undefined,
+          // Send-time snapshot: only on the auto-create send, never incognito.
+          kbAttachments:
+            currentSessionId || incognitoEnabled
+              ? undefined
+              : draftKbAttachmentsRef.current.map((a) => ({
+                  kbId: a.kbId,
+                  access: a.access,
+                })),
         },
         onEvent,
       )

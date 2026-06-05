@@ -136,6 +136,7 @@ pub async fn spawn_plan_subagent(
         skill_allowed_tools: Vec::new(),
         reasoning_effort: None,
         skill_name: None,
+        origin_source: None,
     };
 
     let run_id =

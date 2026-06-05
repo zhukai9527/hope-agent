@@ -561,6 +561,7 @@
     "nextStep": "下一步",
     "other": "其他",
     "refresh": "刷新",
+    "rename": "重命名",
     "save": "保存",
     "saveFailed": "保存失败",
     "saved": "已保存",
@@ -569,7 +570,9 @@
     "select": "选择",
     "settings": "设置",
     "test": "测试连接",
-    "testing": "测试中..."
+    "testing": "测试中...",
+    "create": "创建",
+    "clear": "清除"
   },
   "context": {
     "ago": "前",
@@ -1972,6 +1975,10 @@
       "label": "项目工作目录",
       "pick": "选择目录",
       "placeholder": "未设置（会话可单独覆盖）"
+    },
+    "knowledge": {
+      "label": "知识空间",
+      "hint": "附加的空间让该项目的对话可以检索并引用其中的笔记。"
     }
   },
   "provider": {
@@ -4239,6 +4246,35 @@
       "addHandler": "添加处理器",
       "advanced": "高级",
       "slowHandlerWarning": "此处理器会内联运行 LLM / 子 Agent，每次该阻断事件触发都会拖慢。建议这里改用 command / http，或挪到观察型事件（如 PostToolUse）。"
+    },
+    "knowledge": {
+      "tab": "知识空间"
+    },
+    "knowledgeEmbedding": {
+      "title": "向量检索（Embedding）",
+      "description": "配置知识空间语义检索使用的 embedding 模型。独立于记忆——从同一个共享模型库中选择，但启用与重建各自独立，即使记忆未启用 embedding 也能正常工作。",
+      "enabled": "启用向量检索",
+      "enabledDesc": "为笔记生成向量以支持语义检索。关闭时笔记检索仅使用全文匹配。",
+      "changeModel": "更换模型",
+      "activated": "知识空间 embedding 模型已激活",
+      "reembed": {
+        "title": "重建索引",
+        "idle": "笔记向量已是最新。",
+        "needs": "当前模型下笔记需要重新向量化。",
+        "startNow": "立即重建",
+        "cancel": "取消",
+        "retry": "重试",
+        "progress": "{{done}} / {{total}} 个知识空间",
+        "phase": "正在重新向量化笔记"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "高级 · 分块",
+      "description": "控制笔记如何切分成检索单元。默认值适合大多数笔记。",
+      "maxChars": "分块大小（字符）",
+      "overlap": "重叠（字符）",
+      "rebuildWarning": "保存会重建所有知识空间的索引。",
+      "saved": "已保存，正在重建所有空间"
     }
   },
   "shortcuts": {
@@ -4661,5 +4697,97 @@
       "delete": "删除",
       "read": "读取"
     }
+  },
+  "knowledge": {
+    "picker": {
+      "title": "知识空间",
+      "heading": "本会话可用的知识空间",
+      "incognitoDisabled": "无痕会话不支持挂载知识空间",
+      "needSession": "发送首条消息后即可挂载知识空间",
+      "empty": "还没有知识空间，先到「知识空间」中创建。",
+      "viaProject": "来自所属项目",
+      "noteCount": "{{count}} 篇笔记",
+      "read": "读",
+      "write": "读写",
+      "hint": "挂载后助手即可检索并引用其中的笔记；也可在消息里用 [[笔记名]] 直接引用。"
+    },
+    "mention": {
+      "heading": "知识空间笔记",
+      "empty": "没有可引用的笔记 —— 先挂载一个知识空间。"
+    },
+    "title": "知识空间",
+    "searchPlaceholder": "搜索笔记…",
+    "newKb": "新建空间",
+    "spaces": "空间",
+    "noSpaces": "还没有知识空间。",
+    "notes": "笔记",
+    "reindex": "重建索引",
+    "newNote": "新建笔记",
+    "readOnly": "只读（外部库）",
+    "mode": {
+      "source": "源码",
+      "split": "分屏",
+      "preview": "预览"
+    },
+    "emptyEditor": "选择一篇笔记以查看或编辑。",
+    "searchResults": "搜索结果",
+    "backlinks": "反向链接",
+    "outgoingLinks": "链接",
+    "createMissingNote": "新建该笔记",
+    "tags": "标签",
+    "backlinksHint": "打开一篇笔记以查看其反向链接。",
+    "kbNamePlaceholder": "空间名称",
+    "kbRootPlaceholder": "外部库路径（可选，只读）",
+    "notePathPlaceholder": "folder/note-name",
+    "titlePlaceholder": "无标题",
+    "nameNote": "为笔记命名",
+    "clickToRename": "点击重命名",
+    "deleteNoteTitle": "删除笔记",
+    "deleteNoteBody": "确定删除「{{name}}」？该 Markdown 文件将从磁盘移除，此操作不可撤销。",
+    "newFolder": "新建文件夹",
+    "newSubfolder": "新建子文件夹",
+    "folderNamePlaceholder": "文件夹名称",
+    "renameFolder": "重命名文件夹",
+    "deleteFolder": "删除文件夹",
+    "deleteFolderTitle": "删除文件夹",
+    "deleteFolderBody": "确定删除文件夹「{{name}}」及其中的 {{count}} 篇笔记？这些 Markdown 文件将从磁盘移除，此操作不可撤销。",
+    "editSpace": "编辑空间",
+    "emojiPlaceholder": "图标（可选）",
+    "archive": "归档",
+    "unarchive": "取消归档",
+    "archived": "已归档",
+    "showArchived": "显示归档",
+    "deleteSpace": "删除空间",
+    "deleteSpaceTitle": "删除空间",
+    "deleteSpaceBody": "确定删除空间「{{name}}」及其所有笔记？内部空间的笔记将从磁盘移除；外部库不受影响。此操作不可撤销。",
+    "unsavedTitle": "未保存的修改",
+    "unsavedBody": "有未保存的修改，离开前要保存吗？",
+    "discardChanges": "不保存",
+    "renameMoveFailed": "无法重命名/移动「{{name}}」——可能已存在同名笔记。",
+    "noteRemovedExternally": "该笔记已在应用外被移除或移动。",
+    "moveTo": "移动到…",
+    "moveToTitle": "将「{{name}}」移动到…",
+    "rootFolder": "根目录",
+    "remoteWritesDisabled": "远程写入已关闭。请在 设置 → 服务器 → 允许远程写入文件 中开启（在 server 主机上）。",
+    "retrievalSettings": "检索设置",
+    "reindexing": "重新索引中…",
+    "reindexDone": "索引已重建",
+    "jobs": {
+      "tooltip": "重建任务",
+      "title": "重建任务",
+      "empty": "暂无重建任务",
+      "kindReindex": "重建索引（全文）",
+      "kindReembed": "重新向量化",
+      "fts": "全文索引",
+      "result": "已重建 {{notes}} 篇笔记 · {{kbs}} 个知识空间",
+      "emptyHint": "重建某个空间，或切换向量模型，进度会显示在这里。",
+      "model": "模型：{{name}}"
+    },
+    "embeddingOff": "向量检索未开启",
+    "embeddingModelTip": "向量模型：{{name}} · 点击进入设置",
+    "embeddingOffTip": "向量检索未开启 · 点击进入设置",
+    "kbRootPick": "选择…",
+    "kbRootHint": "留空则创建内部空间。外部库在第一阶段为只读。",
+    "kbRootInvalid": "无法选择该文件夹"
   }
 }

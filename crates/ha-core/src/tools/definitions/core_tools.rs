@@ -4,9 +4,11 @@ use super::super::{
     TOOL_AGENTS_LIST, TOOL_APPLY_PATCH, TOOL_BROWSER, TOOL_DELETE_MEMORY, TOOL_EDIT, TOOL_EXEC,
     TOOL_FIND, TOOL_GET_SETTINGS, TOOL_GET_WEATHER, TOOL_GREP, TOOL_IMAGE, TOOL_ISSUE_REPORT,
     TOOL_LIST_SETTINGS_BACKUPS, TOOL_LS, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON, TOOL_MEMORY_GET,
-    TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY, TOOL_RESTORE_SETTINGS_BACKUP,
-    TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT, TOOL_SESSIONS_HISTORY,
-    TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEND, TOOL_SESSION_STATUS, TOOL_SKILL,
+    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BY_TAG, TOOL_NOTE_CREATE, TOOL_NOTE_DELETE,
+    TOOL_NOTE_LINK, TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_SEARCH, TOOL_NOTE_TAGS,
+    TOOL_NOTE_UPDATE, TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY,
+    TOOL_RESTORE_SETTINGS_BACKUP, TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT,
+    TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEND, TOOL_SESSION_STATUS, TOOL_SKILL,
     TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS, TOOL_WEB_FETCH, TOOL_WRITE,
 };
 use super::types::{CoreSubclass, ToolDefinition, ToolTier};
@@ -1736,7 +1738,206 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
 
     // ── Cross-Session Peek (deferred, read-only) ──
     tools.push(crate::awareness::peek_sessions_schema());
+
+    // ── Knowledge base (note_*) tools ──
+    tools.extend(note_tools());
     tools
+}
+
+/// Knowledge base (`note_*`) tool definitions (design Layer 1). Core/Interaction
+/// tier so they are always loaded; not internal so they pass through the
+/// permission engine + plan-mode gating. `kb` is scoped by `effective_kb_access`
+/// at execution time; writes are confined to `WorkspaceScope::for_knowledge`.
+fn note_tools() -> Vec<ToolDefinition> {
+    let interaction = || ToolTier::Core {
+        subclass: CoreSubclass::Interaction,
+    };
+    let read_tool = |name: &str, description: &str, params: serde_json::Value| ToolDefinition {
+        name: name.into(),
+        description: description.into(),
+        tier: interaction(),
+        internal: false,
+        concurrent_safe: true,
+        async_capable: false,
+        parameters: params,
+    };
+    let write_tool = |name: &str, description: &str, params: serde_json::Value| ToolDefinition {
+        name: name.into(),
+        description: description.into(),
+        tier: interaction(),
+        internal: false,
+        concurrent_safe: false,
+        async_capable: false,
+        parameters: params,
+    };
+
+    vec![
+        write_tool(
+            TOOL_NOTE_CREATE,
+            "Create a new note (markdown file) in a knowledge base. `kb` is required and must be attached with write access. `path` is relative to the KB root (`.md` appended if missing).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string", "description": "Knowledge base id (write access required)." },
+                    "path": { "type": "string", "description": "Note path relative to the KB root, e.g. 'Zettelkasten/idea'." },
+                    "title": { "type": "string", "description": "Optional title (becomes an H1 if no frontmatter given)." },
+                    "content": { "type": "string", "description": "Markdown body." },
+                    "frontmatter": { "type": "object", "description": "Optional YAML frontmatter as key/value pairs (e.g. {title, tags})." }
+                },
+                "required": ["kb", "path"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_READ,
+            "Read a note's raw content plus its outgoing links, backlinks, and tags. `kb` optional — when omitted, searches the accessible KB set (returns a disambiguation error on cross-KB ties). Identify the note by `path` or `title`.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string", "description": "Optional knowledge base id." },
+                    "path": { "type": "string", "description": "Note path (folder/note) or basename." },
+                    "title": { "type": "string", "description": "Note title (alternative to path)." }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_UPDATE,
+            "Replace a note's full content. Pass `expected_file_hash` (from a prior note_read) to reject the write if the file changed on disk since (stale-write guard).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "path": { "type": "string" },
+                    "content": { "type": "string", "description": "New full markdown content." },
+                    "expected_file_hash": { "type": "string", "description": "Optional BLAKE3 of the file you read; write is rejected on mismatch." }
+                },
+                "required": ["kb", "path", "content"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_PATCH,
+            "Edit a note by replacing a uniquely-matching `old` snippet with `new` (like the `edit` tool). `old` must match exactly once — 0 or 2+ matches are rejected. Optional `expected_file_hash` stale-write guard.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "path": { "type": "string" },
+                    "old": { "type": "string", "description": "Exact text to replace (must be unique in the file)." },
+                    "new": { "type": "string", "description": "Replacement text." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "path", "old", "new"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_APPEND,
+            "Append content to a note, optionally under a specific `## section` heading (created if missing). Good for daily notes. Optional `expected_file_hash` stale-write guard.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "path": { "type": "string" },
+                    "content": { "type": "string" },
+                    "section": { "type": "string", "description": "Optional heading to append under." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "path", "content"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_DELETE,
+            "Delete a note. Links pointing to it become broken (no other files are modified). Optional `expected_file_hash` stale-write guard.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "path": { "type": "string" },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "path"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_SEARCH,
+            "Hybrid (full-text + vector) search over notes, returning the best-matching notes with a snippet + heading location. `kb` optional — searches the accessible KB set when omitted. Never searches inaccessible knowledge bases.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query." },
+                    "kb": { "type": "string", "description": "Optional knowledge base id to restrict the search." },
+                    "limit": { "type": "integer", "description": "Max notes to return (default 10, max 50)." }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_LINK,
+            "Insert a wikilink from one note to another. Phase 1: from.kb must equal to.kb. The link is appended under a section (default 'Related'). Optional `expected_file_hash` stale-write guard on the source note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "from": {
+                        "type": "object",
+                        "properties": { "kb": { "type": "string" }, "path": { "type": "string" } },
+                        "required": ["kb", "path"]
+                    },
+                    "to": {
+                        "type": "object",
+                        "properties": { "kb": { "type": "string" }, "path": { "type": "string" } },
+                        "required": ["kb", "path"]
+                    },
+                    "alias": { "type": "string", "description": "Optional display alias for the link." },
+                    "section": { "type": "string", "description": "Heading to insert under (default 'Related')." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_BACKLINKS,
+            "List the notes that link to a given note, with the exact link occurrence (line/column) for jump-to. `kb` optional.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "note": { "type": "string", "description": "Target note path or title." }
+                },
+                "required": ["note"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_BY_TAG,
+            "List notes carrying a tag (frontmatter or inline #tag). `kb` optional — searches the accessible KB set.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "tag": { "type": "string", "description": "Tag (with or without leading #)." }
+                },
+                "required": ["tag"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_TAGS,
+            "Enumerate tags (with counts) across the accessible knowledge bases. `kb` optional.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+    ]
 }
 
 #[cfg(test)]

@@ -278,8 +278,14 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         abort_on_cancel,
         persist_final_error_event,
         source,
+        origin_source,
         event_sink,
     } = params;
+
+    // Effective KB-access origin for this turn (design D10): top-level turns
+    // have origin == source; a subagent carries its parent turn's origin so an
+    // IM-origin chain can't reacquire KB access via the neutral Subagent source.
+    let kb_origin = origin_source.unwrap_or_else(|| kb_access_source(source));
 
     // Wrap attachments in Arc<[T]> so the failover-executor closure's per-
     // retry capture is a pointer bump instead of a deep clone of base64
@@ -389,6 +395,22 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
     // (and survives failover for the same reason — it lives in this run-local).
     // Drained exactly once per turn.
     if let Some(extra) = crate::hooks::take_user_prompt_context(&session_id) {
+        extra_system_context = Some(match extra_system_context.take() {
+            Some(e) => format!("{e}\n\n{extra}"),
+            None => extra,
+        });
+    }
+
+    // Knowledge read bridge channel ① (D7): deterministically inject notes the
+    // user referenced inline with `[[ ]]`, scoped by `effective_kb_access` (D10)
+    // and wrapped as untrusted external data (#7). Skipped for incognito inside
+    // the resolver (zero KB access).
+    if let Some(extra) = crate::knowledge::inject::resolve_inline_injections(
+        &message,
+        &session_id,
+        kb_access_source(source),
+        kb_origin,
+    ) {
         extra_system_context = Some(match extra_system_context.take() {
             Some(e) => format!("{e}\n\n{extra}"),
             None => extra,
@@ -677,6 +699,8 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                             plan_context_locked,
                             auto_approve_tools,
                             follow_global_reasoning_effort,
+                            source,
+                            kb_origin,
                         );
                         restore_agent_context(&db_owned, &session_id_owned, &agent);
 
@@ -1162,6 +1186,8 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         plan_context_locked,
                         auto_approve_tools,
                         follow_global_reasoning_effort,
+                        source,
+                        kb_origin,
                     );
                     restore_agent_context(&db, &session_id, &compact_agent);
 
@@ -1483,6 +1509,21 @@ fn collect_partial_meta_from_runtime(
     meta
 }
 
+/// Map the chat-engine turn source to a knowledge-base access source (design
+/// D10). IM (`Channel`) turns are denied KB access in Phase 1 even on a
+/// project-attached session; `ParentInjection` is treated conservatively.
+fn kb_access_source(source: stream_seq::ChatSource) -> crate::knowledge::KbAccessSource {
+    use crate::knowledge::KbAccessSource;
+    use stream_seq::ChatSource;
+    match source {
+        ChatSource::Desktop => KbAccessSource::Gui,
+        ChatSource::Http => KbAccessSource::Http,
+        ChatSource::Channel => KbAccessSource::Im,
+        ChatSource::Subagent => KbAccessSource::Subagent,
+        ChatSource::ParentInjection => KbAccessSource::Other,
+    }
+}
+
 /// Apply common agent configuration. Extracted to avoid duplication between
 /// initial agent setup and profile-rotation rebuild.
 ///
@@ -1504,9 +1545,13 @@ fn configure_agent(
     plan_locked: bool,
     auto_approve_tools: bool,
     follow_global_reasoning_effort: bool,
+    source: stream_seq::ChatSource,
+    kb_origin: crate::knowledge::KbAccessSource,
 ) {
     agent.set_agent_id(agent_id);
     agent.set_session_id(session_id);
+    agent.set_chat_source(kb_access_source(source));
+    agent.set_origin_chat_source(kb_origin);
     agent.set_temperature(temperature);
     if let Some(ctx) = extra_system_context {
         agent.set_extra_system_context(ctx.to_string());
@@ -1692,6 +1737,7 @@ mod stream_lifecycle_tests {
             abort_on_cancel: false,
             persist_final_error_event: true,
             source: stream_seq::ChatSource::Desktop,
+            origin_source: None,
             event_sink: Arc::new(NoopEventSink),
         }
     }

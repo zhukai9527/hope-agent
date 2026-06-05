@@ -225,6 +225,51 @@ Tauri ↔ COMMAND_MAP 差集为 7 条合法非 REST 命令（4 条 Desktop-only 
 | `preview_read_text` | `GET /api/sessions/{id}/files/read?path=` | ✅ (preview-by-path，绝对路径，会话鉴权) |
 | `preview_extract` | `GET /api/sessions/{id}/files/extract?path=` | ✅ (preview-by-path，绝对路径，会话鉴权) |
 
+### Knowledge Base（知识空间）
+
+**Owner / 管理平面**——API key 持有者 = owner-equivalent，看自己全部 KB，**不经 `effective_kb_access`**（那是 agent `note_*` 工具平面）。详见 [knowledge-base.md](./knowledge-base.md) 与 [`docs/plans/knowledge-base.md`](../plans/knowledge-base.md) 设计契约。
+
+| Tauri 命令 | HTTP 路由 | 对齐 |
+|---|---|---|
+| `list_kbs_cmd` | `GET /api/knowledge?includeArchived=` | ✅ |
+| `get_kb_cmd` | `GET /api/knowledge/{id}` | ✅ |
+| `create_kb_cmd` | `POST /api/knowledge` (`{ input }`) | ✅ |
+| `update_kb_cmd` | `PATCH /api/knowledge/{id}` (`{ patch }`) | ✅ |
+| `delete_kb_cmd` | `DELETE /api/knowledge/{id}` | ✅ (级联 registry+index+磁盘) |
+| `reindex_kb_cmd` | `POST /api/knowledge/{id}/reindex` | ✅ |
+| `attach_session_kb_cmd` | `POST /api/knowledge/attach` (`{ sessionId, kbId, access }`) | ✅ |
+| `attach_project_kb_cmd` | `POST /api/knowledge/attach` (`{ projectId, kbId, access }`) | ✅ |
+| `detach_session_kb_cmd` | `POST /api/knowledge/detach` (`{ sessionId, kbId }`) | ✅ |
+| `detach_project_kb_cmd` | `POST /api/knowledge/detach` (`{ projectId, kbId }`) | ✅ |
+| `list_session_kbs_cmd` | `GET /api/knowledge/attachments?sessionId=&projectId=` | ✅ (当前生效 KB 列表) |
+| `list_project_kbs_cmd` | `GET /api/knowledge/project-attachments?projectId=` | ✅ (项目级绑定列表，项目设置 UI) |
+| `list_kb_notes_cmd` | `GET /api/knowledge/{kbId}/notes` | ✅ |
+| `kb_note_read_cmd` | `GET /api/knowledge/{kbId}/note?path=` | ✅ (含出链/反链/标签) |
+| `kb_note_save_cmd` | `PUT /api/knowledge/{kbId}/note` | ✅ (写闸门 + stale-write guard) |
+| `kb_note_delete_cmd` | `DELETE /api/knowledge/{kbId}/note?path=` | ✅ (写闸门) |
+| `kb_note_rename_cmd` | `POST /api/knowledge/{kbId}/note/rename` | ✅ (写闸门 + 重解析全 KB 链接) |
+| `kb_list_dirs_cmd` | `GET /api/knowledge/{kbId}/dirs` | ✅ (含空目录，读盘) |
+| `kb_list_tags_cmd` | `GET /api/knowledge/{kbId}/tags` | ✅ (owner 平面，编辑器 `#tag` 补全词表) |
+| `knowledge_embedding_get_cmd` | `GET /api/knowledge/embedding` | ✅ (D7 独立 selector 状态) |
+| `knowledge_embedding_set_default_cmd` | `POST /api/knowledge/embedding/set-default` | ✅ (装 embedder + 后台 KnowledgeReembed) |
+| `knowledge_embedding_disable_cmd` | `POST /api/knowledge/embedding/disable` | ✅ (pause 语义，清 index embedder) |
+| `knowledge_embedding_rebuild_cmd` | `POST /api/knowledge/embedding/rebuild` | ✅ (强制全 KB 重建，无 same-signature 短路) |
+| `knowledge_chunk_get_cmd` | `GET /api/knowledge/chunk` | ✅ (D12 分块参数，GUI-only) |
+| `knowledge_chunk_set_cmd` | `POST /api/knowledge/chunk` | ✅ (写参数 clamp + 触发全 KB 重切) |
+| `reindex_note_cmd` | `POST /api/knowledge/{kbId}/note/reindex` | ✅ (单篇重建，同步) |
+| `reindex_dir_cmd` | `POST /api/knowledge/{kbId}/dir/reindex` | ✅ (文件夹子树重建，同步) |
+| `kb_mkdir_cmd` | `POST /api/knowledge/{kbId}/dir` | ✅ (写闸门) |
+| `kb_rename_dir_cmd` | `POST /api/knowledge/{kbId}/dir/rename` | ✅ (写闸门 + reindex 重解析) |
+| `kb_delete_dir_cmd` | `DELETE /api/knowledge/{kbId}/dir?path=` | ✅ (写闸门，rm -rf + prune) |
+| `kb_backlinks_cmd` | `GET /api/knowledge/{kbId}/backlinks?path=` | ✅ |
+| `kb_search_cmd` | `GET /api/knowledge/search?query=&kbId=&limit=` | ✅ (FTS+向量混合) |
+| `kb_file_read_cmd` | `GET /api/knowledge/{kbId}/files/read?path=` | ✅ (纯 owner 平面 + scope contains) |
+| `kb_file_extract_cmd` | `GET /api/knowledge/{kbId}/files/extract?path=` | ✅ |
+| `kb_file_resolve_cmd` | —（Tauri-only，`convertFileSrc`） | N/A |
+| —（HTTP-only raw serve） | `GET /api/knowledge/{kbId}/files/raw?path=&download=` | N/A |
+
+KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fallback**——与 `/api/sessions/{id}/files/*` 物理隔离，不放宽其判定。外部绑定 vault Phase 1 只读（写经 `WorkspaceScope::resolve_writable` 拒绝 + HTTP `allow_remote_writes` 闸门双拒）。agent 读笔记不经此端点，走 `note_*` 工具（`effective_kb_access` 校验）。`knowledge:changed` 事件 `{ kbId, op }` 经 EventBus fan-out 到两端前端。
+
 **preview-by-path（文件操作统一）**：`preview_read_text` / `preview_extract` 按**绝对路径**读取，供 Markdown 链接 / 下挂文件 / 工作台产物文件统一预览。桌面信任本机路径直接读；HTTP 经 `/api/sessions/{id}/files/{read,extract}`，与既有 `/files/by-path` 共用授权 `authorized_canonical_file_path` = **被会话 tool 消息引用 ∪ 落在会话工作目录内**，二者皆非的主机任意路径一律 403。详见 [file-operations.md](./file-operations.md)。
 
 写端点（write/delete/rename/mkdir/upload）在 HTTP handler 层读 `filesystem.allow_remote_writes`（默认 false）闸门，为 false 返 403；桌面 Tauri 不受限。配置读写：`get_filesystem_config` / `save_filesystem_config` ↔ `GET/PUT /api/config/filesystem`。

@@ -324,6 +324,7 @@ pub async fn build_and_run_agent_with_context(
         // Cron is a background/non-interactive runner. Reuse the channel bucket
         // until the status UI grows a dedicated cron source.
         source: crate::chat_engine::stream_seq::ChatSource::Channel,
+        origin_source: None,
         event_sink: Arc::new(crate::chat_engine::NoopEventSink),
     };
 

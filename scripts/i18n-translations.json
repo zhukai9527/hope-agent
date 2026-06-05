@@ -490,7 +490,28 @@
         "allowProjectScopeDesc": "作業ディレクトリの .hope-agent/hooks.json と hooks.local.json から Hook を追加できます（チームでの共有に便利）。コマンドを自分で実行できるため既定はオフ。信頼できるプロジェクトでのみオンにしてください。"
       },
       "fsRemoteWrites": "リモートからのファイル書き込みを許可",
-      "fsRemoteWritesDesc": "HTTP クライアントがプロジェクト作業ディレクトリ内でファイルの作成・編集・削除・アップロードを行えるようにします。既定はオフ — デスクトップアプリはこの設定に関係なく常にローカルへ書き込めます。"
+      "fsRemoteWritesDesc": "HTTP クライアントがプロジェクト作業ディレクトリ内でファイルの作成・編集・削除・アップロードを行えるようにします。既定はオフ — デスクトップアプリはこの設定に関係なく常にローカルへ書き込めます。",
+      "knowledge": {
+        "tab": "ナレッジ"
+      },
+      "knowledgeEmbedding": {
+        "title": "ベクトル検索（埋め込み）",
+        "description": "ナレッジベースのセマンティック検索に使う埋め込みモデルを設定します。メモリとは独立しており、同じ共有モデルライブラリから選びますが、有効化と再構築は個別に行われるため、メモリの埋め込みが無効でも動作します。",
+        "enabled": "ベクトル検索を有効化",
+        "enabledDesc": "ノートを埋め込んでセマンティック検索を可能にします。無効の場合、ノート検索は全文検索のみになります。",
+        "changeModel": "モデルを変更",
+        "activated": "ナレッジの埋め込みモデルを有効化しました",
+        "reembed": {
+          "title": "再インデックス",
+          "idle": "ノートのベクトルは最新です。",
+          "needs": "現在のモデルでノートの再埋め込みが必要です。",
+          "startNow": "今すぐ再構築",
+          "cancel": "キャンセル",
+          "retry": "再試行",
+          "progress": "{{done}} / {{total}} 件のナレッジ",
+          "phase": "ノートを再埋め込み中"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "このエージェントは削除されました",
@@ -939,6 +960,38 @@
     "filePreview": {
       "panelTitle": "プレビュー",
       "resizePanel": "プレビューパネルの幅を調整"
+    },
+    "knowledge": {
+      "title": "ナレッジスペース",
+      "searchPlaceholder": "ノートを検索…",
+      "newKb": "新規スペース",
+      "spaces": "スペース",
+      "noSpaces": "ナレッジスペースがまだありません。",
+      "notes": "ノート",
+      "reindex": "再インデックス",
+      "newNote": "新規ノート",
+      "readOnly": "読み取り専用（外部ボールト）",
+      "mode": {
+        "source": "ソース",
+        "split": "分割",
+        "preview": "プレビュー"
+      },
+      "emptyEditor": "表示または編集するノートを選択してください。",
+      "searchResults": "検索結果",
+      "backlinks": "バックリンク",
+      "outgoingLinks": "リンク",
+      "tags": "タグ",
+      "backlinksHint": "ノートを開くとバックリンクが表示されます。",
+      "kbNamePlaceholder": "スペース名",
+      "kbRootPlaceholder": "外部ボールトのパス（任意、読み取り専用）",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "検索設定",
+      "reindexing": "再インデックス中…",
+      "reindexDone": "インデックスを再構築しました"
+    },
+    "common": {
+      "create": "作成",
+      "clear": "クリア"
     }
   },
   "ko": {
@@ -1432,7 +1485,28 @@
         "allowProjectScopeDesc": "작업 디렉터리의 .hope-agent/hooks.json 및 hooks.local.json에서 Hook을 추가할 수 있습니다(팀과 공유하기 편리). 스스로 명령을 실행할 수 있어 기본은 꺼짐 — 신뢰하는 프로젝트에서만 켜세요."
       },
       "fsRemoteWrites": "원격 파일 쓰기 허용",
-      "fsRemoteWritesDesc": "HTTP 클라이언트가 프로젝트 작업 디렉터리에서 파일을 만들고 편집·삭제·업로드할 수 있도록 합니다. 기본값은 꺼짐 — 데스크톱 앱은 이 설정과 관계없이 항상 로컬에 쓸 수 있습니다."
+      "fsRemoteWritesDesc": "HTTP 클라이언트가 프로젝트 작업 디렉터리에서 파일을 만들고 편집·삭제·업로드할 수 있도록 합니다. 기본값은 꺼짐 — 데스크톱 앱은 이 설정과 관계없이 항상 로컬에 쓸 수 있습니다.",
+      "knowledge": {
+        "tab": "지식"
+      },
+      "knowledgeEmbedding": {
+        "title": "벡터 검색(임베딩)",
+        "description": "지식 베이스 시맨틱 검색에 사용할 임베딩 모델을 구성합니다. 메모리와 독립적이며 동일한 공유 모델 라이브러리에서 선택하지만, 활성화와 재구축은 별도로 이루어지므로 메모리 임베딩이 꺼져 있어도 작동합니다.",
+        "enabled": "벡터 검색 활성화",
+        "enabledDesc": "노트를 임베딩하여 시맨틱 검색을 지원합니다. 끄면 노트 검색은 전문 검색만 사용합니다.",
+        "changeModel": "모델 변경",
+        "activated": "지식 임베딩 모델이 활성화되었습니다",
+        "reembed": {
+          "title": "재색인",
+          "idle": "노트 벡터가 최신 상태입니다.",
+          "needs": "현재 모델로 노트를 다시 임베딩해야 합니다.",
+          "startNow": "지금 재구축",
+          "cancel": "취소",
+          "retry": "재시도",
+          "progress": "{{done}} / {{total}}개 지식 공간",
+          "phase": "노트 재임베딩 중"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "이 에이전트는 삭제되었습니다",
@@ -1881,6 +1955,38 @@
     "filePreview": {
       "panelTitle": "미리보기",
       "resizePanel": "미리보기 패널 크기 조정"
+    },
+    "knowledge": {
+      "title": "지식 공간",
+      "searchPlaceholder": "노트 검색…",
+      "newKb": "새 공간",
+      "spaces": "공간",
+      "noSpaces": "아직 지식 공간이 없습니다.",
+      "notes": "노트",
+      "reindex": "재색인",
+      "newNote": "새 노트",
+      "readOnly": "읽기 전용(외부 보관소)",
+      "mode": {
+        "source": "소스",
+        "split": "분할",
+        "preview": "미리보기"
+      },
+      "emptyEditor": "보거나 편집할 노트를 선택하세요.",
+      "searchResults": "검색 결과",
+      "backlinks": "백링크",
+      "outgoingLinks": "링크",
+      "tags": "태그",
+      "backlinksHint": "노트를 열면 백링크가 표시됩니다.",
+      "kbNamePlaceholder": "공간 이름",
+      "kbRootPlaceholder": "외부 보관소 경로(선택 사항, 읽기 전용)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "검색 설정",
+      "reindexing": "재색인 중…",
+      "reindexDone": "색인을 재구축했습니다"
+    },
+    "common": {
+      "create": "만들기",
+      "clear": "지우기"
     }
   },
   "zh-TW": {
@@ -2374,7 +2480,28 @@
         "allowProjectScopeDesc": "允許工作目錄下的 .hope-agent/hooks.json 與 hooks.local.json 新增 Hook，方便與團隊共享。由於它們會自行執行命令，預設關閉——僅對你信任的專案開啟即可。"
       },
       "fsRemoteWrites": "允許遠端寫入檔案",
-      "fsRemoteWritesDesc": "允許 HTTP 用戶端在專案工作目錄中新增、編輯、刪除與上傳檔案。預設關閉 —— 無論此開關如何，桌面應用程式皆可在本機寫入。"
+      "fsRemoteWritesDesc": "允許 HTTP 用戶端在專案工作目錄中新增、編輯、刪除與上傳檔案。預設關閉 —— 無論此開關如何，桌面應用程式皆可在本機寫入。",
+      "knowledge": {
+        "tab": "知識空間"
+      },
+      "knowledgeEmbedding": {
+        "title": "向量檢索（Embedding）",
+        "description": "設定知識空間語義檢索使用的 embedding 模型。獨立於記憶——從同一個共用模型庫中選擇，但啟用與重建各自獨立，即使記憶未啟用 embedding 也能正常運作。",
+        "enabled": "啟用向量檢索",
+        "enabledDesc": "為筆記產生向量以支援語義檢索。關閉時筆記檢索僅使用全文比對。",
+        "changeModel": "更換模型",
+        "activated": "知識空間 embedding 模型已啟用",
+        "reembed": {
+          "title": "重建索引",
+          "idle": "筆記向量已是最新。",
+          "needs": "目前模型下筆記需要重新向量化。",
+          "startNow": "立即重建",
+          "cancel": "取消",
+          "retry": "重試",
+          "progress": "{{done}} / {{total}} 個知識空間",
+          "phase": "正在重新向量化筆記"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "此 Agent 已被刪除",
@@ -2804,6 +2931,38 @@
     "filePreview": {
       "panelTitle": "預覽",
       "resizePanel": "調整預覽面板寬度"
+    },
+    "knowledge": {
+      "title": "知識空間",
+      "searchPlaceholder": "搜尋筆記…",
+      "newKb": "新增空間",
+      "spaces": "空間",
+      "noSpaces": "尚無知識空間。",
+      "notes": "筆記",
+      "reindex": "重建索引",
+      "newNote": "新增筆記",
+      "readOnly": "唯讀（外部庫）",
+      "mode": {
+        "source": "原始碼",
+        "split": "分割",
+        "preview": "預覽"
+      },
+      "emptyEditor": "選取筆記以檢視或編輯。",
+      "searchResults": "搜尋結果",
+      "backlinks": "反向連結",
+      "outgoingLinks": "連結",
+      "tags": "標籤",
+      "backlinksHint": "開啟筆記以檢視其反向連結。",
+      "kbNamePlaceholder": "空間名稱",
+      "kbRootPlaceholder": "外部庫路徑（選填，唯讀）",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "檢索設定",
+      "reindexing": "重新索引中…",
+      "reindexDone": "索引已重建"
+    },
+    "common": {
+      "create": "建立",
+      "clear": "清除"
     }
   },
   "tr": {
@@ -3297,7 +3456,28 @@
         "allowProjectScopeDesc": "Çalışma dizinindeki .hope-agent/hooks.json ve hooks.local.json dosyalarının hook eklemesine izin verir — ekibinizle paylaşmak için kullanışlı. Kendi başlarına komut çalıştırabildikleri için varsayılan kapalıdır; yalnızca güvendiğiniz projeler için açın."
       },
       "fsRemoteWrites": "Uzaktan dosya yazmaya izin ver",
-      "fsRemoteWritesDesc": "HTTP istemcilerinin proje çalışma dizininde dosya oluşturmasına, düzenlemesine, silmesine ve yüklemesine izin verir. Varsayılan olarak kapalı — masaüstü uygulaması bu ayardan bağımsız olarak her zaman yerel olarak yazabilir."
+      "fsRemoteWritesDesc": "HTTP istemcilerinin proje çalışma dizininde dosya oluşturmasına, düzenlemesine, silmesine ve yüklemesine izin verir. Varsayılan olarak kapalı — masaüstü uygulaması bu ayardan bağımsız olarak her zaman yerel olarak yazabilir.",
+      "knowledge": {
+        "tab": "Bilgi"
+      },
+      "knowledgeEmbedding": {
+        "title": "Vektör arama (gömme)",
+        "description": "Bilgi tabanı anlamsal araması için gömme modelini yapılandırın. Bellekten bağımsızdır — aynı paylaşılan model kitaplığından seçer, ancak ayrı olarak etkinleştirilir ve yeniden oluşturulur, bu yüzden bellek gömmesi kapalı olsa bile çalışır.",
+        "enabled": "Vektör aramayı etkinleştir",
+        "enabledDesc": "Anlamsal erişim için notları gömer. Kapalıyken not araması yalnızca tam metne döner.",
+        "changeModel": "Modeli değiştir",
+        "activated": "Bilgi gömme modeli etkinleştirildi",
+        "reembed": {
+          "title": "Yeniden dizinle",
+          "idle": "Not vektörleri güncel.",
+          "needs": "Notların geçerli modelle yeniden gömülmesi gerekiyor.",
+          "startNow": "Şimdi yeniden oluştur",
+          "cancel": "İptal",
+          "retry": "Yeniden dene",
+          "progress": "{{done}} / {{total}} bilgi tabanı",
+          "phase": "Notlar yeniden gömülüyor"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Bu ajan silindi",
@@ -3746,6 +3926,38 @@
     "filePreview": {
       "panelTitle": "Önizleme",
       "resizePanel": "Önizleme panelini yeniden boyutlandır"
+    },
+    "knowledge": {
+      "title": "Bilgi Alanı",
+      "searchPlaceholder": "Notlarda ara…",
+      "newKb": "Yeni alan",
+      "spaces": "Alanlar",
+      "noSpaces": "Henüz bilgi alanı yok.",
+      "notes": "Notlar",
+      "reindex": "Yeniden dizinle",
+      "newNote": "Yeni not",
+      "readOnly": "Salt okunur (harici kasa)",
+      "mode": {
+        "source": "Kaynak",
+        "split": "Bölünmüş",
+        "preview": "Önizleme"
+      },
+      "emptyEditor": "Görüntülemek veya düzenlemek için bir not seçin.",
+      "searchResults": "Arama sonuçları",
+      "backlinks": "Geri bağlantılar",
+      "outgoingLinks": "Bağlantılar",
+      "tags": "Etiketler",
+      "backlinksHint": "Geri bağlantılarını görmek için bir not açın.",
+      "kbNamePlaceholder": "Alan adı",
+      "kbRootPlaceholder": "Harici kasa yolu (isteğe bağlı, salt okunur)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Erişim ayarları",
+      "reindexing": "Yeniden dizinleniyor…",
+      "reindexDone": "Dizin yeniden oluşturuldu"
+    },
+    "common": {
+      "create": "Oluştur",
+      "clear": "Temizle"
     }
   },
   "vi": {
@@ -4239,7 +4451,28 @@
         "allowProjectScopeDesc": "Cho phép .hope-agent/hooks.json và hooks.local.json trong thư mục làm việc thêm hook — tiện để chia sẻ với nhóm của bạn. Mặc định tắt vì chúng có thể tự chạy lệnh, nên chỉ bật cho các dự án bạn tin tưởng."
       },
       "fsRemoteWrites": "Cho phép ghi tệp từ xa",
-      "fsRemoteWritesDesc": "Cho phép máy khách HTTP tạo, chỉnh sửa, xóa và tải tệp lên trong thư mục làm việc của dự án. Tắt theo mặc định — ứng dụng máy tính luôn có thể ghi cục bộ bất kể cài đặt này."
+      "fsRemoteWritesDesc": "Cho phép máy khách HTTP tạo, chỉnh sửa, xóa và tải tệp lên trong thư mục làm việc của dự án. Tắt theo mặc định — ứng dụng máy tính luôn có thể ghi cục bộ bất kể cài đặt này.",
+      "knowledge": {
+        "tab": "Kiến thức"
+      },
+      "knowledgeEmbedding": {
+        "title": "Tìm kiếm vector (embedding)",
+        "description": "Cấu hình mô hình embedding cho tìm kiếm ngữ nghĩa của kho kiến thức. Độc lập với bộ nhớ — chọn từ cùng thư viện mô hình dùng chung, nhưng bật và xây dựng lại riêng, nên vẫn hoạt động ngay cả khi embedding của bộ nhớ tắt.",
+        "enabled": "Bật tìm kiếm vector",
+        "enabledDesc": "Tạo embedding cho ghi chú để truy xuất ngữ nghĩa. Khi tắt, tìm kiếm ghi chú chỉ dùng toàn văn.",
+        "changeModel": "Đổi mô hình",
+        "activated": "Đã kích hoạt mô hình embedding kiến thức",
+        "reembed": {
+          "title": "Lập chỉ mục lại",
+          "idle": "Vector ghi chú đã cập nhật.",
+          "needs": "Ghi chú cần được embedding lại với mô hình hiện tại.",
+          "startNow": "Xây dựng lại ngay",
+          "cancel": "Hủy",
+          "retry": "Thử lại",
+          "progress": "{{done}} / {{total}} kho kiến thức",
+          "phase": "Đang embedding lại ghi chú"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Agent này đã bị xoá",
@@ -4688,6 +4921,38 @@
     "filePreview": {
       "panelTitle": "Xem trước",
       "resizePanel": "Đổi kích thước bảng xem trước"
+    },
+    "knowledge": {
+      "title": "Không gian kiến thức",
+      "searchPlaceholder": "Tìm ghi chú…",
+      "newKb": "Không gian mới",
+      "spaces": "Không gian",
+      "noSpaces": "Chưa có không gian kiến thức nào.",
+      "notes": "Ghi chú",
+      "reindex": "Lập chỉ mục lại",
+      "newNote": "Ghi chú mới",
+      "readOnly": "Chỉ đọc (kho ngoài)",
+      "mode": {
+        "source": "Nguồn",
+        "split": "Chia đôi",
+        "preview": "Xem trước"
+      },
+      "emptyEditor": "Chọn một ghi chú để xem hoặc chỉnh sửa.",
+      "searchResults": "Kết quả tìm kiếm",
+      "backlinks": "Liên kết ngược",
+      "outgoingLinks": "Liên kết",
+      "tags": "Thẻ",
+      "backlinksHint": "Mở một ghi chú để xem liên kết ngược.",
+      "kbNamePlaceholder": "Tên không gian",
+      "kbRootPlaceholder": "Đường dẫn kho ngoài (tùy chọn, chỉ đọc)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Cài đặt truy xuất",
+      "reindexing": "Đang lập chỉ mục lại…",
+      "reindexDone": "Đã xây dựng lại chỉ mục"
+    },
+    "common": {
+      "create": "Tạo",
+      "clear": "Xóa"
     }
   },
   "pt": {
@@ -5181,7 +5446,28 @@
         "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json e hooks.local.json no diretório de trabalho adicionem hooks — útil para compartilhar com sua equipe. Desativado por padrão porque podem executar comandos sozinhos, então ative apenas para projetos em que você confia."
       },
       "fsRemoteWrites": "Permitir gravação remota de arquivos",
-      "fsRemoteWritesDesc": "Permite que clientes HTTP criem, editem, excluam e enviem arquivos no diretório de trabalho do projeto. Desativado por padrão — o aplicativo desktop sempre pode gravar localmente, independentemente desta configuração."
+      "fsRemoteWritesDesc": "Permite que clientes HTTP criem, editem, excluam e enviem arquivos no diretório de trabalho do projeto. Desativado por padrão — o aplicativo desktop sempre pode gravar localmente, independentemente desta configuração.",
+      "knowledge": {
+        "tab": "Conhecimento"
+      },
+      "knowledgeEmbedding": {
+        "title": "Busca vetorial (embedding)",
+        "description": "Configure o modelo de embedding para a busca semântica da base de conhecimento. É independente da memória: escolhe da mesma biblioteca compartilhada de modelos, mas é ativado e reconstruído separadamente, funcionando mesmo que o embedding da memória esteja desativado.",
+        "enabled": "Ativar busca vetorial",
+        "enabledDesc": "Gera embeddings das notas para recuperação semântica. Quando desativado, a busca de notas usa apenas texto completo.",
+        "changeModel": "Alterar modelo",
+        "activated": "Modelo de embedding de conhecimento ativado",
+        "reembed": {
+          "title": "Reindexar",
+          "idle": "Os vetores das notas estão atualizados.",
+          "needs": "As notas precisam ser reincorporadas com o modelo atual.",
+          "startNow": "Reconstruir agora",
+          "cancel": "Cancelar",
+          "retry": "Tentar novamente",
+          "progress": "{{done}} / {{total}} bases de conhecimento",
+          "phase": "Reincorporando notas"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Este agente foi excluído",
@@ -5630,6 +5916,38 @@
     "filePreview": {
       "panelTitle": "Pré-visualização",
       "resizePanel": "Redimensionar painel de pré-visualização"
+    },
+    "knowledge": {
+      "title": "Espaço de conhecimento",
+      "searchPlaceholder": "Pesquisar notas…",
+      "newKb": "Novo espaço",
+      "spaces": "Espaços",
+      "noSpaces": "Ainda não há espaços de conhecimento.",
+      "notes": "Notas",
+      "reindex": "Reindexar",
+      "newNote": "Nova nota",
+      "readOnly": "Somente leitura (cofre externo)",
+      "mode": {
+        "source": "Origem",
+        "split": "Dividido",
+        "preview": "Visualização"
+      },
+      "emptyEditor": "Selecione uma nota para ver ou editar.",
+      "searchResults": "Resultados da pesquisa",
+      "backlinks": "Backlinks",
+      "outgoingLinks": "Links",
+      "tags": "Etiquetas",
+      "backlinksHint": "Abra uma nota para ver seus backlinks.",
+      "kbNamePlaceholder": "Nome do espaço",
+      "kbRootPlaceholder": "Caminho do cofre externo (opcional, somente leitura)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Configurações de recuperação",
+      "reindexing": "Reindexando…",
+      "reindexDone": "Índice reconstruído"
+    },
+    "common": {
+      "create": "Criar",
+      "clear": "Limpar"
     }
   },
   "ru": {
@@ -6123,7 +6441,28 @@
         "allowProjectScopeDesc": "Позволяет файлам .hope-agent/hooks.json и hooks.local.json в рабочем каталоге добавлять хуки — удобно для общего доступа в команде. По умолчанию выключено, потому что они могут сами выполнять команды; включайте только для проектов, которым доверяете."
       },
       "fsRemoteWrites": "Разрешить удалённую запись файлов",
-      "fsRemoteWritesDesc": "Позволяет HTTP-клиентам создавать, изменять, удалять и загружать файлы в рабочем каталоге проекта. По умолчанию выключено — настольное приложение всегда может писать локально независимо от этой настройки."
+      "fsRemoteWritesDesc": "Позволяет HTTP-клиентам создавать, изменять, удалять и загружать файлы в рабочем каталоге проекта. По умолчанию выключено — настольное приложение всегда может писать локально независимо от этой настройки.",
+      "knowledge": {
+        "tab": "База знаний"
+      },
+      "knowledgeEmbedding": {
+        "title": "Векторный поиск (эмбеддинг)",
+        "description": "Настройте модель эмбеддинга для семантического поиска по базе знаний. Независима от памяти — выбирается из той же общей библиотеки моделей, но включается и перестраивается отдельно, поэтому работает даже если эмбеддинг памяти отключён.",
+        "enabled": "Включить векторный поиск",
+        "enabledDesc": "Создаёт эмбеддинги заметок для семантического поиска. Когда выключено, поиск по заметкам использует только полнотекстовый режим.",
+        "changeModel": "Сменить модель",
+        "activated": "Модель эмбеддинга знаний активирована",
+        "reembed": {
+          "title": "Переиндексация",
+          "idle": "Векторы заметок актуальны.",
+          "needs": "Заметки нужно переэмбеддить с текущей моделью.",
+          "startNow": "Перестроить сейчас",
+          "cancel": "Отмена",
+          "retry": "Повторить",
+          "progress": "{{done}} / {{total}} баз знаний",
+          "phase": "Переэмбеддинг заметок"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Этот агент был удалён",
@@ -6572,6 +6911,38 @@
     "filePreview": {
       "panelTitle": "Просмотр",
       "resizePanel": "Изменить размер панели просмотра"
+    },
+    "knowledge": {
+      "title": "Пространство знаний",
+      "searchPlaceholder": "Поиск заметок…",
+      "newKb": "Новое пространство",
+      "spaces": "Пространства",
+      "noSpaces": "Пространств знаний пока нет.",
+      "notes": "Заметки",
+      "reindex": "Переиндексировать",
+      "newNote": "Новая заметка",
+      "readOnly": "Только для чтения (внешнее хранилище)",
+      "mode": {
+        "source": "Исходник",
+        "split": "Разделённый",
+        "preview": "Предпросмотр"
+      },
+      "emptyEditor": "Выберите заметку для просмотра или редактирования.",
+      "searchResults": "Результаты поиска",
+      "backlinks": "Обратные ссылки",
+      "outgoingLinks": "Ссылки",
+      "tags": "Теги",
+      "backlinksHint": "Откройте заметку, чтобы увидеть обратные ссылки.",
+      "kbNamePlaceholder": "Название пространства",
+      "kbRootPlaceholder": "Путь к внешнему хранилищу (необязательно, только для чтения)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Настройки поиска",
+      "reindexing": "Переиндексация…",
+      "reindexDone": "Индекс перестроен"
+    },
+    "common": {
+      "create": "Создать",
+      "clear": "Очистить"
     }
   },
   "ar": {
@@ -7065,7 +7436,28 @@
         "allowProjectScopeDesc": "يسمح لملفّي .hope-agent/hooks.json و hooks.local.json في دليل العمل بإضافة خطافات — مفيد للمشاركة مع فريقك. مُعطَّل افتراضيًا لأنها قد تنفِّذ أوامر من تلقاء نفسها، لذا فعِّله فقط للمشاريع التي تثق بها."
       },
       "fsRemoteWrites": "السماح بالكتابة عن بُعد للملفات",
-      "fsRemoteWritesDesc": "السماح لعملاء HTTP بإنشاء الملفات وتحريرها وحذفها ورفعها داخل دليل عمل المشروع. مُعطّل افتراضيًا — يمكن لتطبيق سطح المكتب الكتابة محليًا دائمًا بغض النظر عن هذا الإعداد."
+      "fsRemoteWritesDesc": "السماح لعملاء HTTP بإنشاء الملفات وتحريرها وحذفها ورفعها داخل دليل عمل المشروع. مُعطّل افتراضيًا — يمكن لتطبيق سطح المكتب الكتابة محليًا دائمًا بغض النظر عن هذا الإعداد.",
+      "knowledge": {
+        "tab": "المعرفة"
+      },
+      "knowledgeEmbedding": {
+        "title": "البحث المتجه (التضمين)",
+        "description": "اضبط نموذج التضمين للبحث الدلالي في قاعدة المعرفة. مستقل عن الذاكرة — يختار من نفس مكتبة النماذج المشتركة، لكنه يُفعَّل ويُعاد بناؤه بشكل منفصل، لذا يعمل حتى لو كان تضمين الذاكرة معطّلاً.",
+        "enabled": "تفعيل البحث المتجه",
+        "enabledDesc": "ينشئ تضمينات للملاحظات لدعم الاسترجاع الدلالي. عند الإيقاف، يقتصر بحث الملاحظات على النص الكامل فقط.",
+        "changeModel": "تغيير النموذج",
+        "activated": "تم تفعيل نموذج تضمين المعرفة",
+        "reembed": {
+          "title": "إعادة الفهرسة",
+          "idle": "متجهات الملاحظات محدثة.",
+          "needs": "تحتاج الملاحظات إلى إعادة التضمين بالنموذج الحالي.",
+          "startNow": "إعادة البناء الآن",
+          "cancel": "إلغاء",
+          "retry": "إعادة المحاولة",
+          "progress": "{{done}} / {{total}} قاعدة معرفية",
+          "phase": "إعادة تضمين الملاحظات"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "تم حذف هذا العميل",
@@ -7514,6 +7906,38 @@
     "filePreview": {
       "panelTitle": "معاينة",
       "resizePanel": "تغيير حجم لوحة المعاينة"
+    },
+    "knowledge": {
+      "title": "مساحة المعرفة",
+      "searchPlaceholder": "بحث في الملاحظات…",
+      "newKb": "مساحة جديدة",
+      "spaces": "المساحات",
+      "noSpaces": "لا توجد مساحات معرفة بعد.",
+      "notes": "الملاحظات",
+      "reindex": "إعادة الفهرسة",
+      "newNote": "ملاحظة جديدة",
+      "readOnly": "للقراءة فقط (خزنة خارجية)",
+      "mode": {
+        "source": "المصدر",
+        "split": "مقسَّم",
+        "preview": "معاينة"
+      },
+      "emptyEditor": "اختر ملاحظة لعرضها أو تحريرها.",
+      "searchResults": "نتائج البحث",
+      "backlinks": "الروابط الخلفية",
+      "outgoingLinks": "الروابط",
+      "tags": "الوسوم",
+      "backlinksHint": "افتح ملاحظة لعرض روابطها الخلفية.",
+      "kbNamePlaceholder": "اسم المساحة",
+      "kbRootPlaceholder": "مسار الخزنة الخارجية (اختياري، للقراءة فقط)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "إعدادات الاسترجاع",
+      "reindexing": "جارٍ إعادة الفهرسة…",
+      "reindexDone": "تمت إعادة بناء الفهرس"
+    },
+    "common": {
+      "create": "إنشاء",
+      "clear": "مسح"
     }
   },
   "es": {
@@ -8007,7 +8431,28 @@
         "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json y hooks.local.json del directorio de trabajo añadan hooks — práctico para compartir con tu equipo. Desactivado por defecto porque pueden ejecutar comandos por su cuenta, así que actívalo solo para proyectos en los que confíes."
       },
       "fsRemoteWrites": "Permitir escritura remota de archivos",
-      "fsRemoteWritesDesc": "Permite que los clientes HTTP creen, editen, eliminen y suban archivos en el directorio de trabajo del proyecto. Desactivado de forma predeterminada — la aplicación de escritorio siempre puede escribir localmente sin importar este ajuste."
+      "fsRemoteWritesDesc": "Permite que los clientes HTTP creen, editen, eliminen y suban archivos en el directorio de trabajo del proyecto. Desactivado de forma predeterminada — la aplicación de escritorio siempre puede escribir localmente sin importar este ajuste.",
+      "knowledge": {
+        "tab": "Conocimiento"
+      },
+      "knowledgeEmbedding": {
+        "title": "Búsqueda vectorial (embedding)",
+        "description": "Configura el modelo de embedding para la búsqueda semántica de la base de conocimiento. Es independiente de la memoria: elige de la misma biblioteca compartida de modelos, pero se activa y reconstruye por separado, por lo que funciona aunque el embedding de memoria esté desactivado.",
+        "enabled": "Activar búsqueda vectorial",
+        "enabledDesc": "Genera embeddings de las notas para la recuperación semántica. Si está desactivado, la búsqueda de notas usa solo texto completo.",
+        "changeModel": "Cambiar modelo",
+        "activated": "Modelo de embedding de conocimiento activado",
+        "reembed": {
+          "title": "Reindexar",
+          "idle": "Los vectores de las notas están actualizados.",
+          "needs": "Las notas necesitan reincrustarse con el modelo actual.",
+          "startNow": "Reconstruir ahora",
+          "cancel": "Cancelar",
+          "retry": "Reintentar",
+          "progress": "{{done}} / {{total}} bases de conocimiento",
+          "phase": "Reincrustando notas"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Este agente ha sido eliminado",
@@ -8456,6 +8901,38 @@
     "filePreview": {
       "panelTitle": "Vista previa",
       "resizePanel": "Redimensionar panel de vista previa"
+    },
+    "knowledge": {
+      "title": "Espacio de conocimiento",
+      "searchPlaceholder": "Buscar notas…",
+      "newKb": "Nuevo espacio",
+      "spaces": "Espacios",
+      "noSpaces": "Aún no hay espacios de conocimiento.",
+      "notes": "Notas",
+      "reindex": "Reindexar",
+      "newNote": "Nueva nota",
+      "readOnly": "Solo lectura (almacén externo)",
+      "mode": {
+        "source": "Origen",
+        "split": "Dividido",
+        "preview": "Vista previa"
+      },
+      "emptyEditor": "Selecciona una nota para ver o editar.",
+      "searchResults": "Resultados de búsqueda",
+      "backlinks": "Vínculos entrantes",
+      "outgoingLinks": "Vínculos",
+      "tags": "Etiquetas",
+      "backlinksHint": "Abre una nota para ver sus vínculos entrantes.",
+      "kbNamePlaceholder": "Nombre del espacio",
+      "kbRootPlaceholder": "Ruta del almacén externo (opcional, solo lectura)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Configuración de recuperación",
+      "reindexing": "Reindexando…",
+      "reindexDone": "Índice reconstruido"
+    },
+    "common": {
+      "create": "Crear",
+      "clear": "Borrar"
     }
   },
   "ms": {
@@ -8949,7 +9426,28 @@
         "allowProjectScopeDesc": "Membolehkan .hope-agent/hooks.json dan hooks.local.json dalam direktori kerja menambah hook — sesuai untuk dikongsi dengan pasukan anda. Dimatikan secara lalai kerana ia boleh menjalankan perintah sendiri, jadi hidupkan hanya untuk projek yang anda percayai."
       },
       "fsRemoteWrites": "Benarkan tulisan fail jarak jauh",
-      "fsRemoteWritesDesc": "Benarkan pelanggan HTTP mencipta, menyunting, memadam dan memuat naik fail dalam direktori kerja projek. Dimatikan secara lalai — aplikasi desktop sentiasa boleh menulis secara setempat tanpa mengira tetapan ini."
+      "fsRemoteWritesDesc": "Benarkan pelanggan HTTP mencipta, menyunting, memadam dan memuat naik fail dalam direktori kerja projek. Dimatikan secara lalai — aplikasi desktop sentiasa boleh menulis secara setempat tanpa mengira tetapan ini.",
+      "knowledge": {
+        "tab": "Pengetahuan"
+      },
+      "knowledgeEmbedding": {
+        "title": "Carian vektor (embedding)",
+        "description": "Konfigurasikan model embedding untuk carian semantik pangkalan pengetahuan. Bebas daripada memori — memilih dari pustaka model dikongsi yang sama, tetapi diaktifkan dan dibina semula secara berasingan, jadi ia berfungsi walaupun embedding memori dimatikan.",
+        "enabled": "Aktifkan carian vektor",
+        "enabledDesc": "Menjana embedding nota untuk perolehan semantik. Apabila dimatikan, carian nota hanya menggunakan teks penuh.",
+        "changeModel": "Tukar model",
+        "activated": "Model embedding pengetahuan diaktifkan",
+        "reembed": {
+          "title": "Indeks semula",
+          "idle": "Vektor nota adalah terkini.",
+          "needs": "Nota perlu di-embed semula dengan model semasa.",
+          "startNow": "Bina semula sekarang",
+          "cancel": "Batal",
+          "retry": "Cuba semula",
+          "progress": "{{done}} / {{total}} pangkalan pengetahuan",
+          "phase": "Meng-embed semula nota"
+        }
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Agen ini telah dipadam",
@@ -9398,6 +9896,38 @@
     "filePreview": {
       "panelTitle": "Pratonton",
       "resizePanel": "Ubah saiz panel pratonton"
+    },
+    "knowledge": {
+      "title": "Ruang Pengetahuan",
+      "searchPlaceholder": "Cari nota…",
+      "newKb": "Ruang baharu",
+      "spaces": "Ruang",
+      "noSpaces": "Belum ada ruang pengetahuan.",
+      "notes": "Nota",
+      "reindex": "Indeks semula",
+      "newNote": "Nota baharu",
+      "readOnly": "Baca sahaja (bilik kebal luaran)",
+      "mode": {
+        "source": "Sumber",
+        "split": "Pisah",
+        "preview": "Pratonton"
+      },
+      "emptyEditor": "Pilih nota untuk dilihat atau disunting.",
+      "searchResults": "Hasil carian",
+      "backlinks": "Pautan balik",
+      "outgoingLinks": "Pautan",
+      "tags": "Tag",
+      "backlinksHint": "Buka nota untuk melihat pautan baliknya.",
+      "kbNamePlaceholder": "Nama ruang",
+      "kbRootPlaceholder": "Laluan bilik kebal luaran (pilihan, baca sahaja)",
+      "notePathPlaceholder": "folder/note-name",
+      "retrievalSettings": "Tetapan perolehan",
+      "reindexing": "Mengindeks semula…",
+      "reindexDone": "Indeks dibina semula"
+    },
+    "common": {
+      "create": "Cipta",
+      "clear": "Kosongkan"
     }
   },
   "zh": {
@@ -9555,6 +10085,35 @@
       "boundAgentHint": "本渠道新建会话的默认 Agent — 切换不会迁移已存在的会话,已建会话用 /agent(桌面)或 /handover 调整。",
       "notifyPrimaryChanges": "primary 变化提醒",
       "notifyPrimaryChangesHint": "当该账号成为(或不再是)某 session 的 primary 接收方时,在 IM 中发送系统消息提示。"
+    },
+    "knowledge": {
+      "title": "知识空间",
+      "searchPlaceholder": "搜索笔记…",
+      "newKb": "新建空间",
+      "spaces": "空间",
+      "noSpaces": "还没有知识空间。",
+      "notes": "笔记",
+      "reindex": "重建索引",
+      "newNote": "新建笔记",
+      "readOnly": "只读（外部库）",
+      "mode": {
+        "source": "源码",
+        "split": "分屏",
+        "preview": "预览"
+      },
+      "emptyEditor": "选择一篇笔记以查看或编辑。",
+      "searchResults": "搜索结果",
+      "backlinks": "反向链接",
+      "outgoingLinks": "链接",
+      "tags": "标签",
+      "backlinksHint": "打开一篇笔记以查看其反向链接。",
+      "kbNamePlaceholder": "空间名称",
+      "kbRootPlaceholder": "外部库路径（可选，只读）",
+      "notePathPlaceholder": "folder/note-name"
+    },
+    "common": {
+      "create": "创建",
+      "clear": "清除"
     }
   }
 }

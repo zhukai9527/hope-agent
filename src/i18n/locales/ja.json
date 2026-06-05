@@ -569,7 +569,9 @@
     "select": "選択",
     "settings": "設定",
     "test": "接続テスト",
-    "testing": "テスト中..."
+    "testing": "テスト中...",
+    "create": "作成",
+    "clear": "クリア"
   },
   "context": {
     "ago": "前",
@@ -1972,6 +1974,10 @@
       "label": "プロジェクト作業ディレクトリ",
       "pick": "ディレクトリを選択",
       "placeholder": "未設定（セッションごとに上書き可能）"
+    },
+    "knowledge": {
+      "label": "ナレッジ空間",
+      "hint": "添付した空間のノートを、このプロジェクトの会話が検索・引用できます。"
     }
   },
   "provider": {
@@ -4239,6 +4245,35 @@
       "addHandler": "ハンドラーを追加",
       "advanced": "詳細",
       "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。"
+    },
+    "knowledge": {
+      "tab": "ナレッジ"
+    },
+    "knowledgeEmbedding": {
+      "title": "ベクトル検索（埋め込み）",
+      "description": "ナレッジベースのセマンティック検索に使う埋め込みモデルを設定します。メモリとは独立しており、同じ共有モデルライブラリから選びますが、有効化と再構築は個別に行われるため、メモリの埋め込みが無効でも動作します。",
+      "enabled": "ベクトル検索を有効化",
+      "enabledDesc": "ノートを埋め込んでセマンティック検索を可能にします。無効の場合、ノート検索は全文検索のみになります。",
+      "changeModel": "モデルを変更",
+      "activated": "ナレッジの埋め込みモデルを有効化しました",
+      "reembed": {
+        "title": "再インデックス",
+        "idle": "ノートのベクトルは最新です。",
+        "needs": "現在のモデルでノートの再埋め込みが必要です。",
+        "startNow": "今すぐ再構築",
+        "cancel": "キャンセル",
+        "retry": "再試行",
+        "progress": "{{done}} / {{total}} 件のナレッジ",
+        "phase": "ノートを再埋め込み中"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "詳細設定 · チャンク",
+      "description": "ノートを検索単位に分割する方法。既定値はほとんどのノートに適しています。",
+      "maxChars": "チャンクサイズ（文字）",
+      "overlap": "オーバーラップ（文字）",
+      "rebuildWarning": "保存するとすべての知識空間のインデックスを再構築します。",
+      "saved": "保存しました — 全空間を再構築中"
     }
   },
   "shortcuts": {
@@ -4660,6 +4695,57 @@
       "edit": "編集",
       "delete": "削除",
       "read": "読み取り"
+    }
+  },
+  "knowledge": {
+    "title": "ナレッジスペース",
+    "searchPlaceholder": "ノートを検索…",
+    "newKb": "新規スペース",
+    "spaces": "スペース",
+    "noSpaces": "ナレッジスペースがまだありません。",
+    "notes": "ノート",
+    "reindex": "再インデックス",
+    "newNote": "新規ノート",
+    "readOnly": "読み取り専用（外部ボールト）",
+    "mode": {
+      "source": "ソース",
+      "split": "分割",
+      "preview": "プレビュー"
+    },
+    "emptyEditor": "表示または編集するノートを選択してください。",
+    "searchResults": "検索結果",
+    "backlinks": "バックリンク",
+    "outgoingLinks": "リンク",
+    "tags": "タグ",
+    "backlinksHint": "ノートを開くとバックリンクが表示されます。",
+    "kbNamePlaceholder": "スペース名",
+    "kbRootPlaceholder": "外部ボールトのパス（任意、読み取り専用）",
+    "notePathPlaceholder": "folder/note-name",
+    "retrievalSettings": "検索設定",
+    "reindexing": "再インデックス中…",
+    "reindexDone": "インデックスを再構築しました",
+    "jobs": {
+      "tooltip": "再構築タスク",
+      "title": "再構築タスク",
+      "empty": "再構築タスクはありません",
+      "kindReindex": "インデックス再構築",
+      "kindReembed": "ベクトル再生成",
+      "fts": "全文インデックス",
+      "result": "{{notes}} 件のノート · {{kbs}} 個の空間を再構築",
+      "emptyHint": "空間を再インデックス、または埋め込みモデルを切り替えると、ここに進捗が表示されます。",
+      "model": "モデル：{{name}}"
+    },
+    "embeddingOff": "ベクトル検索オフ",
+    "embeddingModelTip": "埋め込みモデル：{{name}} · 設定を開く",
+    "embeddingOffTip": "ベクトル検索はオフです · 設定を開く",
+    "kbRootPick": "選択…",
+    "kbRootHint": "空欄なら内部空間を作成します。外部Vaultは第1段階では読み取り専用です。",
+    "kbRootInvalid": "そのフォルダーを選択できませんでした",
+    "picker": {
+      "read": "読み取り",
+      "write": "読み書き",
+      "empty": "ナレッジ空間がまだありません。「ナレッジ空間」で作成してください。",
+      "noteCount": "{{count}} 件のノート"
     }
   }
 }

@@ -154,6 +154,7 @@ pub async fn spawn_member(
         skill_allowed_tools: Vec::new(),
         reasoning_effort: None,
         skill_name: None,
+        origin_source: None,
     };
 
     let run_id = subagent::spawn_subagent(params, db.clone(), cancel_registry.clone()).await?;

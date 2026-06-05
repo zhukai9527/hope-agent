@@ -561,6 +561,7 @@
     "nextStep": "Next",
     "other": "Other",
     "refresh": "Refresh",
+    "rename": "Rename",
     "save": "Save",
     "saveFailed": "Save failed",
     "saved": "Saved",
@@ -569,7 +570,9 @@
     "select": "Select",
     "settings": "Settings",
     "test": "Test Connection",
-    "testing": "Testing..."
+    "testing": "Testing...",
+    "create": "Create",
+    "clear": "Clear"
   },
   "context": {
     "ago": "ago",
@@ -1972,6 +1975,10 @@
       "label": "Working Directory",
       "pick": "Pick directory",
       "placeholder": "Not set (sessions can override)"
+    },
+    "knowledge": {
+      "label": "Knowledge spaces",
+      "hint": "Attached spaces let this project's chats search and cite their notes."
     }
   },
   "provider": {
@@ -4239,6 +4246,35 @@
       "addHandler": "Add handler",
       "advanced": "Advanced",
       "slowHandlerWarning": "This handler runs an LLM / sub-agent inline and will delay every time this blocking event fires. Prefer command / http here, or move it to an observation event (e.g. PostToolUse)."
+    },
+    "knowledge": {
+      "tab": "Knowledge"
+    },
+    "knowledgeEmbedding": {
+      "title": "Vector search (embedding)",
+      "description": "Configure the embedding model for knowledge-base semantic search. Independent of memory — it picks from the same shared model library, but enables and rebuilds on its own, so it works even if memory embedding is off.",
+      "enabled": "Enable vector search",
+      "enabledDesc": "Embed notes for semantic retrieval. When off, note search falls back to full-text only.",
+      "changeModel": "Change model",
+      "activated": "Knowledge embedding model activated",
+      "reembed": {
+        "title": "Reindex",
+        "idle": "Note vectors are up to date.",
+        "needs": "Notes need re-embedding under the current model.",
+        "startNow": "Rebuild now",
+        "cancel": "Cancel",
+        "retry": "Retry",
+        "progress": "{{done}} / {{total}} knowledge bases",
+        "phase": "Re-embedding notes"
+      }
+    },
+    "knowledgeChunk": {
+      "title": "Advanced · chunking",
+      "description": "How notes are split into retrieval units. Defaults suit most notes.",
+      "maxChars": "Chunk size (chars)",
+      "overlap": "Overlap (chars)",
+      "rebuildWarning": "Saving rebuilds the index for every knowledge space.",
+      "saved": "Saved — rebuilding every space"
     }
   },
   "shortcuts": {
@@ -4661,5 +4697,97 @@
       "delete": "Delete",
       "read": "Read"
     }
+  },
+  "knowledge": {
+    "picker": {
+      "title": "Knowledge spaces",
+      "heading": "Knowledge spaces for this chat",
+      "incognitoDisabled": "Incognito sessions can't attach knowledge spaces",
+      "needSession": "Send your first message to attach a knowledge space",
+      "empty": "No knowledge spaces yet — create one under Knowledge.",
+      "viaProject": "From the parent project",
+      "noteCount": "{{count}} notes",
+      "read": "Read",
+      "write": "Read+write",
+      "hint": "Attached spaces let the assistant search and cite their notes; you can also reference them inline with [[note]]."
+    },
+    "mention": {
+      "heading": "Knowledge notes",
+      "empty": "No notes — attach a knowledge space first."
+    },
+    "title": "Knowledge Space",
+    "searchPlaceholder": "Search notes…",
+    "newKb": "New space",
+    "spaces": "Spaces",
+    "noSpaces": "No knowledge spaces yet.",
+    "notes": "Notes",
+    "reindex": "Reindex",
+    "newNote": "New note",
+    "readOnly": "Read-only (external vault)",
+    "mode": {
+      "source": "Source",
+      "split": "Split",
+      "preview": "Preview"
+    },
+    "emptyEditor": "Select a note to view or edit.",
+    "searchResults": "Search results",
+    "backlinks": "Backlinks",
+    "outgoingLinks": "Links",
+    "createMissingNote": "Create this note",
+    "tags": "Tags",
+    "backlinksHint": "Open a note to see its backlinks.",
+    "kbNamePlaceholder": "Space name",
+    "kbRootPlaceholder": "External vault path (optional, read-only)",
+    "notePathPlaceholder": "folder/note-name",
+    "titlePlaceholder": "Untitled",
+    "nameNote": "Name this note",
+    "clickToRename": "Click to rename",
+    "deleteNoteTitle": "Delete note",
+    "deleteNoteBody": "Delete \"{{name}}\"? The Markdown file will be removed from disk. This cannot be undone.",
+    "newFolder": "New folder",
+    "newSubfolder": "New subfolder",
+    "folderNamePlaceholder": "Folder name",
+    "renameFolder": "Rename folder",
+    "deleteFolder": "Delete folder",
+    "deleteFolderTitle": "Delete folder",
+    "deleteFolderBody": "Delete folder \"{{name}}\" and its {{count}} note(s)? The Markdown files will be removed from disk. This cannot be undone.",
+    "editSpace": "Edit space",
+    "emojiPlaceholder": "Emoji (optional)",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "archived": "Archived",
+    "showArchived": "Show archived",
+    "deleteSpace": "Delete space",
+    "deleteSpaceTitle": "Delete space",
+    "deleteSpaceBody": "Delete space \"{{name}}\" and all its notes? For internal spaces the notes are removed from disk; external vaults are left untouched. This cannot be undone.",
+    "unsavedTitle": "Unsaved changes",
+    "unsavedBody": "You have unsaved changes. Save before leaving?",
+    "discardChanges": "Discard",
+    "renameMoveFailed": "Couldn't rename/move \"{{name}}\" — a note with that name may already exist.",
+    "noteRemovedExternally": "This note was removed or moved outside the app.",
+    "moveTo": "Move to…",
+    "moveToTitle": "Move \"{{name}}\" to…",
+    "rootFolder": "Root",
+    "remoteWritesDisabled": "Remote file writing is off. Turn it on in Settings → Server → Allow remote file writes (on the server host).",
+    "retrievalSettings": "Retrieval settings",
+    "reindexing": "Reindexing…",
+    "reindexDone": "Index rebuilt",
+    "jobs": {
+      "tooltip": "Rebuild tasks",
+      "title": "Rebuild tasks",
+      "empty": "No rebuild tasks yet.",
+      "kindReindex": "Rebuild index",
+      "kindReembed": "Re-embed vectors",
+      "fts": "Full-text index",
+      "result": "Rebuilt {{notes}} notes · {{kbs}} spaces",
+      "emptyHint": "Reindex a space, or switch the embedding model, and progress shows up here.",
+      "model": "Model: {{name}}"
+    },
+    "embeddingOff": "Vector search off",
+    "embeddingModelTip": "Embedding model: {{name}} — open settings",
+    "embeddingOffTip": "Vector search is off — open settings",
+    "kbRootPick": "Choose…",
+    "kbRootHint": "Leave empty for an internal space. External vaults are read-only in Phase 1.",
+    "kbRootInvalid": "Could not select that folder"
   }
 }

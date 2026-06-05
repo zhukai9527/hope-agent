@@ -514,7 +514,18 @@ pub struct AppConfig {
     pub embedding_models: Vec<crate::memory::EmbeddingModelConfig>,
     /// Active memory vector-search embedding selection.
     #[serde(default)]
-    pub memory_embedding: crate::memory::MemoryEmbeddingSelection,
+    pub memory_embedding: crate::memory::EmbeddingSelection,
+    /// Active knowledge-base vector-search embedding selection. Independent of
+    /// `memory_embedding` (knowledge has its own enable / model / signature /
+    /// reembed lifecycle) but draws from the same shared `embedding_models`
+    /// library — see D7.
+    #[serde(default)]
+    pub knowledge_embedding: crate::memory::EmbeddingSelection,
+    /// Knowledge note chunking parameters (D12, advanced). Changing them
+    /// triggers a full reindex (re-chunk + re-embed) of every KB. GUI-only
+    /// (dedicated owner commands, not `update_settings`) like `knowledge_embedding`.
+    #[serde(default)]
+    pub knowledge_chunk: crate::knowledge::ChunkConfig,
     /// Deprecated legacy embedding config. Kept as a deserialization sink only;
     /// user-facing embedding config lives in `embedding_models` +
     /// `memory_embedding`.
@@ -810,7 +821,9 @@ impl Default for AppConfig {
             skill_env_check: true,
             conditional_skills_enabled: true,
             embedding_models: Vec::new(),
-            memory_embedding: crate::memory::MemoryEmbeddingSelection::default(),
+            memory_embedding: crate::memory::EmbeddingSelection::default(),
+            knowledge_embedding: crate::memory::EmbeddingSelection::default(),
+            knowledge_chunk: crate::knowledge::ChunkConfig::default(),
             embedding: crate::memory::EmbeddingConfig::default(),
             memory_extract: crate::memory::MemoryExtractConfig::default(),
             memory_selection: crate::memory::MemorySelectionConfig::default(),

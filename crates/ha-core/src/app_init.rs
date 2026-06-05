@@ -4,9 +4,10 @@ use crate::cron;
 use crate::globals::AppState;
 use crate::globals::{
     ACP_MANAGER, APP_LOGGER, CACHED_AGENT, CHANNEL_CANCELS, CHANNEL_DB, CHANNEL_REGISTRY,
-    CODEX_TOKEN_CACHE, CRON_DB, EVENT_BUS, IDLE_EXTRACT_HANDLES, LOG_DB, MEMORY_BACKEND,
-    PROJECT_DB, REASONING_EFFORT, SESSION_DB, SUBAGENT_CANCELS,
+    CODEX_TOKEN_CACHE, CRON_DB, EVENT_BUS, IDLE_EXTRACT_HANDLES, KNOWLEDGE_DB, LOG_DB,
+    MEMORY_BACKEND, PROJECT_DB, REASONING_EFFORT, SESSION_DB, SUBAGENT_CANCELS,
 };
+use crate::knowledge::KnowledgeRegistry;
 use crate::logging::{self, AppLogger, LogDB};
 use crate::memory;
 use crate::paths;
@@ -136,6 +137,22 @@ pub fn init_runtime(role: &'static str) {
         panic!("project DB migration failed: {e}");
     }
     let _ = PROJECT_DB.set(project_db);
+
+    // Initialize the KnowledgeRegistry (also shares the SessionDB connection).
+    // Its migration creates `knowledge_bases` + `session/project_knowledge_bases`
+    // before any command or tool touches them.
+    let knowledge_db = Arc::new(KnowledgeRegistry::new(session_db.clone()));
+    if let Err(e) = knowledge_db.migrate() {
+        eprintln!("[FATAL] Cannot run knowledge DB migration: {e}");
+        panic!("knowledge DB migration failed: {e}");
+    }
+    let _ = KNOWLEDGE_DB.set(knowledge_db);
+
+    // Open the knowledge index cache (index.db) + install the note embedder.
+    // Non-fatal: notes degrade to FTS-only / no search if this fails.
+    if let Err(e) = crate::knowledge::index::init_index_db() {
+        eprintln!("[runtime] knowledge index init failed: {e}");
+    }
 
     // Initialize the LogDB and AppLogger. `LogDB` captures the db path
     // internally so we don't need to keep it around in this scope.
@@ -445,6 +462,9 @@ pub fn build_app_state() -> AppState {
     let project_db = crate::require_project_db()
         .expect("init_runtime contract")
         .clone();
+    let knowledge_db = crate::require_knowledge_db()
+        .expect("init_runtime contract")
+        .clone();
     let log_db = crate::require_log_db()
         .expect("init_runtime contract")
         .clone();
@@ -478,6 +498,7 @@ pub fn build_app_state() -> AppState {
         current_agent_id: Mutex::new(crate::agent_loader::DEFAULT_AGENT_ID.to_string()),
         session_db,
         project_db,
+        knowledge_db,
         chat_cancel: Arc::new(AtomicBool::new(false)),
         log_db,
         logger,
@@ -911,6 +932,12 @@ pub async fn start_background_tasks() {
                 }
             }
         });
+
+        // Knowledge base index: reconcile every KB against disk (catches edits
+        // made while the app was off) and start a live watcher per KB root so
+        // external-vault edits stay indexed (D6).
+        crate::knowledge::index::spawn_startup_reconcile();
+        crate::knowledge::watcher::start_all_watchers();
 
         // One-shot reconciler for orphan project-scoped memory rows. The
         // delete_project cascade touches both `session.db` and `memory.db` and
