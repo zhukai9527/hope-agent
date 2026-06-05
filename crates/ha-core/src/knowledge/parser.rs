@@ -351,6 +351,132 @@ fn unquote(s: &str) -> &str {
     }
 }
 
+/// Merge `props` into the note's frontmatter, returning the full file text.
+///
+/// **Non-destructive, line-level edit**: existing frontmatter lines are preserved
+/// verbatim (original order, and any structure the minimal parser can't model —
+/// nested maps, block scalars — is left untouched). Only the specific top-level
+/// keys in `props` are rewritten: a value updates/inserts that key's line, and a
+/// `null` value removes it (with its indented continuation lines). If the block
+/// ends up empty the frontmatter fence is dropped entirely. (Rebuilding the whole
+/// block from the lossy parser would silently destroy unrepresentable YAML.)
+pub fn merge_frontmatter(full: &str, props: &serde_json::Map<String, serde_json::Value>) -> String {
+    let (fm_raw, body_start) = split_frontmatter(full);
+    let mut lines: Vec<String> = match fm_raw {
+        Some(yaml) => yaml.lines().map(|l| l.to_string()).collect(),
+        None => Vec::new(),
+    };
+    for (k, v) in props {
+        apply_frontmatter_prop(&mut lines, k, v);
+    }
+
+    let body = &full[body_start..];
+    // No frontmatter left → drop the fence; trim the blank line it used to leave.
+    if !lines.iter().any(|l| !l.trim().is_empty()) {
+        return body.trim_start_matches('\n').to_string();
+    }
+    let mut out = String::from("---\n");
+    for l in &lines {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str("---\n");
+    if !body.starts_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(body);
+    out
+}
+
+/// Update / insert / remove one top-level key in raw frontmatter lines, leaving
+/// every other line (including nested structures under untouched keys) intact.
+fn apply_frontmatter_prop(lines: &mut Vec<String>, key: &str, value: &serde_json::Value) {
+    let span = find_top_level_key_span(lines, key);
+    if value.is_null() {
+        if let Some((start, len)) = span {
+            lines.drain(start..start + len);
+        }
+        return;
+    }
+    let new_line = emit_yaml_kv(key, value).trim_end_matches('\n').to_string();
+    match span {
+        Some((start, len)) => {
+            lines.splice(start..start + len, std::iter::once(new_line));
+        }
+        None => lines.push(new_line),
+    }
+}
+
+/// Find the `(start, len)` span of a top-level `key:` entry — the matching line
+/// plus its following indented continuation lines (nested map / block scalar) up
+/// to the next top-level key or blank line. `None` if the key is absent.
+fn find_top_level_key_span(lines: &[String], key: &str) -> Option<(usize, usize)> {
+    for (i, l) in lines.iter().enumerate() {
+        if l.starts_with(char::is_whitespace) {
+            continue; // not a top-level line
+        }
+        let Some(colon) = l.find(':') else { continue };
+        if l[..colon].trim() != key {
+            continue;
+        }
+        let mut j = i + 1;
+        while j < lines.len()
+            && lines[j].starts_with(char::is_whitespace)
+            && !lines[j].trim().is_empty()
+        {
+            j += 1;
+        }
+        return Some((i, j - i));
+    }
+    None
+}
+
+fn emit_yaml_kv(key: &str, v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => format!("{key}: {}\n", yaml_scalar(s)),
+        Value::Bool(b) => format!("{key}: {b}\n"),
+        Value::Number(n) => format!("{key}: {n}\n"),
+        Value::Array(arr) => {
+            let items: Vec<String> = arr
+                .iter()
+                .map(|it| match it {
+                    Value::String(s) => yaml_scalar(s),
+                    other => other.to_string(),
+                })
+                .collect();
+            format!("{key}: [{}]\n", items.join(", "))
+        }
+        Value::Null => String::new(),
+        // Nested object / unexpected → inline JSON (a valid YAML flow value).
+        other => format!("{key}: {other}\n"),
+    }
+}
+
+/// Quote a YAML scalar that could be misparsed; otherwise emit it bare. Quotes
+/// for: empty / padded / metacharacter strings, **and** strings that a YAML
+/// consumer would otherwise coerce to another type — reserved words
+/// (true/false/null/yes/no/on/off/~) and number-like strings — so an external
+/// vault app reads back the exact string we stored (the `.md` is the truth source).
+fn yaml_scalar(s: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let reserved = matches!(
+        lower.as_str(),
+        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
+    );
+    let number_like = s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok();
+    let needs_quote = s.is_empty()
+        || s != s.trim()
+        || s.contains([':', '#', '[', ']', ',', '"', '\'', '\n'])
+        || reserved
+        || number_like;
+    if needs_quote {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn collect_frontmatter_tags(fm: &serde_json::Value, out: &mut Vec<String>) {
     let Some(tags) = fm.get("tags").or_else(|| fm.get("tag")) else {
         return;
@@ -597,6 +723,106 @@ mod tests {
     fn heading_marker_is_not_a_tag() {
         let doc = parse_document("# Heading\n\ntext\n");
         assert!(doc.tags.is_empty());
+    }
+
+    #[test]
+    fn merge_frontmatter_creates_block_when_absent() {
+        let mut props = serde_json::Map::new();
+        props.insert("status".into(), serde_json::Value::String("active".into()));
+        let out = merge_frontmatter("# Title\n\nbody\n", &props);
+        assert!(out.starts_with("---\nstatus: active\n---\n\n# Title"));
+        // Re-parsing keeps the title + sees the new key.
+        let doc = parse_document(&out);
+        assert_eq!(doc.title.as_deref(), Some("Title"));
+        assert_eq!(
+            doc.frontmatter_json
+                .as_deref()
+                .map(|s| s.contains("active")),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn merge_frontmatter_updates_and_removes_keys() {
+        let full = "---\ntitle: T\nstatus: draft\n---\n\nbody\n";
+        let mut props = serde_json::Map::new();
+        props.insert("status".into(), serde_json::Value::String("done".into()));
+        props.insert("title".into(), serde_json::Value::Null); // null → remove
+        let out = merge_frontmatter(full, &props);
+        let doc = parse_document(&out);
+        let fm = doc.frontmatter_json.unwrap();
+        assert!(fm.contains("done"));
+        assert!(!fm.contains("\"title\""));
+        assert!(out.ends_with("\nbody\n"));
+    }
+
+    #[test]
+    fn merge_frontmatter_emits_string_array() {
+        let mut props = serde_json::Map::new();
+        props.insert("tags".into(), serde_json::json!(["alpha", "beta gamma"]));
+        let out = merge_frontmatter("body\n", &props);
+        // A plain space needs no quoting inside a flow sequence (valid plain
+        // scalar); only a comma would (and is quoted by `yaml_scalar`).
+        assert!(out.contains("tags: [alpha, beta gamma]"), "got: {out}");
+        // Round-trips: re-parsing recovers both tag items.
+        let doc = parse_document(&out);
+        assert!(doc.tags.contains(&"alpha".to_string()));
+        assert!(doc.tags.contains(&"beta gamma".to_string()));
+    }
+
+    #[test]
+    fn merge_frontmatter_preserves_nested_and_order() {
+        // A nested map + a block scalar the minimal parser can't model, and a
+        // deliberate (non-alphabetical) key order. Setting one unrelated key must
+        // leave all of that intact (no data loss, no reorder).
+        let full = "---\ntitle: T\nauthor:\n  name: X\n  email: y@z\ndesc: |\n  line one\n  line two\n---\n\nbody\n";
+        let mut props = serde_json::Map::new();
+        props.insert("status".into(), serde_json::Value::String("active".into()));
+        let out = merge_frontmatter(full, &props);
+        assert!(
+            out.contains("author:\n  name: X\n  email: y@z"),
+            "nested map lost: {out}"
+        );
+        assert!(
+            out.contains("desc: |\n  line one\n  line two"),
+            "block scalar lost: {out}"
+        );
+        // Original order preserved (title before author), new key appended.
+        assert!(out.find("title:").unwrap() < out.find("author:").unwrap());
+        assert!(out.contains("status: active"));
+        assert!(out.ends_with("\nbody\n"));
+    }
+
+    #[test]
+    fn merge_frontmatter_removes_nested_key_with_children() {
+        let full = "---\ntitle: T\nauthor:\n  name: X\n---\n\nbody\n";
+        let mut props = serde_json::Map::new();
+        props.insert("author".into(), serde_json::Value::Null);
+        let out = merge_frontmatter(full, &props);
+        assert!(!out.contains("author"), "author block not removed: {out}");
+        assert!(!out.contains("name: X"));
+        assert!(out.contains("title: T"));
+    }
+
+    #[test]
+    fn merge_frontmatter_quotes_type_coercing_strings() {
+        let mut props = serde_json::Map::new();
+        props.insert("flag".into(), serde_json::Value::String("true".into()));
+        props.insert("code".into(), serde_json::Value::String("42".into()));
+        let out = merge_frontmatter("body\n", &props);
+        // Bare `true`/`42` would read back as bool/int in any real YAML parser.
+        assert!(out.contains("flag: \"true\""), "got: {out}");
+        assert!(out.contains("code: \"42\""), "got: {out}");
+    }
+
+    #[test]
+    fn merge_frontmatter_drops_empty_block() {
+        let full = "---\ntitle: T\n---\n\nbody\n";
+        let mut props = serde_json::Map::new();
+        props.insert("title".into(), serde_json::Value::Null);
+        let out = merge_frontmatter(full, &props);
+        assert!(!out.contains("---"), "stray fence left: {out}");
+        assert!(out.contains("body"));
     }
 
     #[test]

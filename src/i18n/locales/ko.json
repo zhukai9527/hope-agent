@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "아직 지식 공간이 없습니다. 「지식 공간」에서 만드세요.",
+      "noteCount": "노트 {{count}}개",
+      "read": "읽기",
+      "write": "읽기+쓰기"
+    },
     "title": "지식 공간",
     "searchPlaceholder": "노트 검색…",
     "newKb": "새 공간",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "공간 이름",
     "kbRootPlaceholder": "외부 보관소 경로(선택 사항, 읽기 전용)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "다른 노트의 링크 참조 {{count}}개를 업데이트했습니다.",
     "retrievalSettings": "검색 설정",
     "reindexing": "재색인 중…",
     "reindexDone": "색인을 재구축했습니다",
@@ -4735,17 +4742,20 @@
       "emptyHint": "공간을 재색인하거나 임베딩 모델을 전환하면 여기에 진행 상황이 표시됩니다.",
       "model": "모델: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "유지 관리",
+      "title": "유지 관리",
+      "healthy": "모두 잘 연결되어 있습니다.",
+      "healthyHint": "이 공간에는 끊어진 링크나 고립된 노트가 없습니다.",
+      "brokenLinks": "끊어진 링크",
+      "orphans": "고립된 노트",
+      "inNote": "위치:"
+    },
     "embeddingOff": "벡터 검색 꺼짐",
     "embeddingModelTip": "임베딩 모델: {{name}} · 설정 열기",
     "embeddingOffTip": "벡터 검색이 꺼져 있습니다 · 설정 열기",
     "kbRootPick": "선택…",
     "kbRootHint": "비워 두면 내부 공간을 만듭니다. 외부 보관소는 1단계에서 읽기 전용입니다.",
-    "kbRootInvalid": "해당 폴더를 선택할 수 없습니다",
-    "picker": {
-      "read": "읽기",
-      "write": "읽기+쓰기",
-      "empty": "아직 지식 공간이 없습니다. 「지식 공간」에서 만드세요.",
-      "noteCount": "노트 {{count}}개"
-    }
+    "kbRootInvalid": "해당 폴더를 선택할 수 없습니다"
   }
 }

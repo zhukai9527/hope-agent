@@ -19,6 +19,7 @@ pub mod inject;
 pub mod parser;
 pub mod reembed;
 pub mod registry;
+pub mod rename;
 pub mod resolver;
 pub mod search;
 pub mod service;
@@ -35,6 +36,7 @@ pub use embedding::{
 };
 pub use reembed::{cancel_active_knowledge_reembed_jobs, start_knowledge_reembed_job};
 pub use registry::{resolve_kb_dir, KnowledgeRegistry};
+pub use rename::{rename_dir, rename_note};
 pub use service::{get_chunk_config, set_chunk_config};
 pub use types::*;
 

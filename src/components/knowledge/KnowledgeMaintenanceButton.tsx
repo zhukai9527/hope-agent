@@ -1,0 +1,210 @@
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
+import { Stethoscope, Unlink2, CircleOff, FileText } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
+import { IconTip } from "@/components/ui/tooltip"
+import { getTransport } from "@/lib/transport-provider"
+import { logger } from "@/lib/logger"
+import type { BrokenLink, Note } from "@/types/knowledge"
+
+interface Props {
+  /** The active knowledge space; the panel is empty/disabled when null. */
+  kbId: string | null
+  /** Open a note (optionally scrolling to a 1-based line) — closes the panel. */
+  onOpenNote: (path: string, line?: number) => void
+}
+
+/** Drop the `.md`/`.markdown` extension for display. */
+function stem(rel: string): string {
+  return rel.replace(/\.(md|markdown)$/i, "")
+}
+
+/**
+ * Top-right "maintenance" entry for the Knowledge view: a stethoscope icon that
+ * pulses when the active space has broken links, opening a floating panel that
+ * lists every broken (dangling) `[[ ]]` link and every orphan note (no links).
+ * Click a row to jump to it. Owner plane (`kb_broken_links_cmd` /
+ * `kb_orphans_cmd`); refreshes on open + on `knowledge:changed`.
+ */
+export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [broken, setBroken] = useState<BrokenLink[]>([])
+  const [orphans, setOrphans] = useState<Note[]>([])
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Async load — setState lands only after the `await`, so the effect that calls
+  // it stays cascade-free (mirrors KnowledgeJobsButton's loader). The badge/panel
+  // gate display on `kbId`, so a null space shows nothing until the next load.
+  const refresh = useCallback(async () => {
+    if (!kbId) return
+    try {
+      const b = await getTransport().call<BrokenLink[]>("kb_broken_links_cmd", { kbId })
+      const o = await getTransport().call<Note[]>("kb_orphans_cmd", { kbId })
+      setBroken(b)
+      setOrphans(o)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeMaintenanceButton::refresh", "load failed", e)
+    }
+  }, [kbId])
+
+  // Keep the badge fresh as the space mutates (links resolve/break on edits).
+  useEffect(() => {
+    // `refresh` only setStates after an `await` (a microtask, not a synchronous
+    // cascade) — same deferred-load shape as KnowledgeJobsButton; the linter
+    // false-positives here because the loader closes over the reactive `kbId`.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refresh()
+    const un = getTransport().listen("knowledge:changed", refresh)
+    return un
+  }, [refresh])
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onDown)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  const issueCount = broken.length + orphans.length
+
+  const jump = useCallback(
+    (path: string, line?: number) => {
+      setOpen(false)
+      onOpenNote(path, line)
+    },
+    [onOpenNote],
+  )
+
+  return (
+    <div ref={rootRef} className="relative">
+      <IconTip label={t("knowledge.maintenance.tooltip", "Maintenance")} side="bottom">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative h-8 w-8"
+          disabled={!kbId}
+          onClick={() => {
+            if (!open) void refresh()
+            setOpen((v) => !v)
+          }}
+        >
+          <Stethoscope className="h-4 w-4" />
+          {kbId && broken.length > 0 && (
+            <span className="absolute right-1 top-1 flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+            </span>
+          )}
+        </Button>
+      </IconTip>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-[340px] rounded-lg border border-border bg-popover shadow-lg">
+          <div className="flex items-center justify-between border-b border-border-soft/60 px-3 py-2">
+            <span className="text-xs font-medium">
+              {t("knowledge.maintenance.title", "Maintenance")}
+            </span>
+          </div>
+          <div className="max-h-[360px] overflow-y-auto p-2">
+            {issueCount === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-8 text-center">
+                <Stethoscope className="h-6 w-6 text-muted-foreground/70" />
+                <span className="text-xs font-medium">
+                  {t("knowledge.maintenance.healthy", "Everything looks connected.")}
+                </span>
+                <span className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t(
+                    "knowledge.maintenance.healthyHint",
+                    "No broken links or orphan notes in this space.",
+                  )}
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {broken.length > 0 && (
+                  <Section
+                    icon={<Unlink2 className="h-3.5 w-3.5 text-amber-500" />}
+                    label={t("knowledge.maintenance.brokenLinks", "Broken links")}
+                    count={broken.length}
+                  >
+                    {broken.map((b, i) => (
+                      <button
+                        key={`${b.srcRelPath}:${b.srcStartLine}:${b.srcStartCol}:${i}`}
+                        type="button"
+                        onClick={() => jump(b.srcRelPath, b.srcStartLine)}
+                        className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+                      >
+                        <span className="flex items-center gap-1 text-xs">
+                          <span className="rounded bg-amber-500/10 px-1 font-mono text-[11px] text-amber-700 dark:text-amber-300">
+                            [[{b.targetRef}]]
+                          </span>
+                        </span>
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {t("knowledge.maintenance.inNote", "in")} {stem(b.srcRelPath)}
+                        </span>
+                      </button>
+                    ))}
+                  </Section>
+                )}
+                {orphans.length > 0 && (
+                  <Section
+                    icon={<CircleOff className="h-3.5 w-3.5 text-muted-foreground" />}
+                    label={t("knowledge.maintenance.orphans", "Orphan notes")}
+                    count={orphans.length}
+                  >
+                    {orphans.map((o) => (
+                      <button
+                        key={o.relPath}
+                        type="button"
+                        onClick={() => jump(o.relPath)}
+                        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+                      >
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate text-xs">{o.title}</span>
+                      </button>
+                    ))}
+                  </Section>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Section({
+  icon,
+  label,
+  count,
+  children,
+}: {
+  icon: React.ReactNode
+  label: string
+  count: number
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+        {icon}
+        <span>{label}</span>
+        <span className="rounded-full bg-muted px-1.5 text-[10px]">{count}</span>
+      </div>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  )
+}

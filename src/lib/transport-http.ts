@@ -91,6 +91,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_rename_dir_cmd:               { method: "POST",   path: "/api/knowledge/{kbId}/dir/rename" },
   kb_delete_dir_cmd:               { method: "DELETE", path: "/api/knowledge/{kbId}/dir" },
   kb_backlinks_cmd:                { method: "GET",    path: "/api/knowledge/{kbId}/backlinks" },
+  kb_broken_links_cmd:             { method: "GET",    path: "/api/knowledge/{kbId}/broken-links" },
+  kb_orphans_cmd:                  { method: "GET",    path: "/api/knowledge/{kbId}/orphans" },
   kb_search_cmd:                   { method: "GET",    path: "/api/knowledge/search" },
   kb_file_read_cmd:                { method: "GET",    path: "/api/knowledge/{kbId}/files/read" },
   kb_file_extract_cmd:             { method: "GET",    path: "/api/knowledge/{kbId}/files/extract" },

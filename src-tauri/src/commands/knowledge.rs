@@ -8,9 +8,9 @@
 use crate::commands::CmdError;
 use ha_core::filesystem::{self, ExtractedContent, FileTextContent, WorkspaceScope};
 use ha_core::knowledge::{
-    self, service, Backlink, CreateKnowledgeBaseInput, KbAccess, KbAttachment, KnowledgeBase,
-    KnowledgeBaseMeta, Note, NoteReadResult, NoteSearchHit, ReferenceableNote,
-    UpdateKnowledgeBaseInput,
+    self, service, Backlink, BrokenLink, CreateKnowledgeBaseInput, KbAccess, KbAttachment,
+    KnowledgeBase, KnowledgeBaseMeta, Note, NoteReadResult, NoteSearchHit, ReferenceableNote,
+    RenameOutcome, UpdateKnowledgeBaseInput,
 };
 
 fn registry() -> Result<&'static std::sync::Arc<knowledge::KnowledgeRegistry>, CmdError> {
@@ -247,8 +247,10 @@ pub async fn kb_note_rename_cmd(
     kb_id: String,
     path: String,
     new_path: String,
-) -> Result<String, CmdError> {
-    service::note_rename(&kb_id, &path, &new_path).map_err(Into::into)
+) -> Result<RenameOutcome, CmdError> {
+    service::note_rename(&kb_id, &path, &new_path)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -337,7 +339,7 @@ pub async fn kb_rename_dir_cmd(
     kb_id: String,
     path: String,
     new_path: String,
-) -> Result<String, CmdError> {
+) -> Result<RenameOutcome, CmdError> {
     service::rename_dir(&kb_id, &path, &new_path)
         .await
         .map_err(Into::into)
@@ -351,6 +353,16 @@ pub async fn kb_delete_dir_cmd(kb_id: String, path: String) -> Result<(), CmdErr
 #[tauri::command]
 pub async fn kb_backlinks_cmd(kb_id: String, path: String) -> Result<Vec<Backlink>, CmdError> {
     service::backlinks(&kb_id, &path).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_broken_links_cmd(kb_id: String) -> Result<Vec<BrokenLink>, CmdError> {
+    service::broken_links(&kb_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_orphans_cmd(kb_id: String) -> Result<Vec<Note>, CmdError> {
+    service::orphans(&kb_id).map_err(Into::into)
 }
 
 #[tauri::command]

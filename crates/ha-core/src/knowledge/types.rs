@@ -294,6 +294,37 @@ pub struct NoteSearchHit {
     pub start_line: u32,
 }
 
+/// A broken (dangling) link: a `[[ ]]` whose target resolves to nothing. Carries
+/// the source note + exact occurrence for jump-to + the unresolved `target_ref`
+/// so the UI can offer "create this note" (design: `note_broken_links`, Phase 2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrokenLink {
+    pub src_note_id: i64,
+    pub src_rel_path: String,
+    pub src_title: String,
+    /// The unresolved target inside `[[ ]]` (title or `folder/note`).
+    pub target_ref: String,
+    pub raw_text: String,
+    pub src_start_line: u32,
+    pub src_start_col: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_heading_path: Option<String>,
+}
+
+/// Outcome of a note/folder rename or move that also rewrites inbound `[[ ]]`
+/// links in other notes (design `note_rename`/`note_move`, #9). `filesChanged`
+/// counts distinct source notes whose link text was updated; `linksRewritten`
+/// counts individual link occurrences.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameOutcome {
+    /// The normalized new relative path of the renamed note/folder.
+    pub new_rel: String,
+    pub files_changed: usize,
+    pub links_rewritten: usize,
+}
+
 /// A backlink with enough context to jump to the exact link occurrence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

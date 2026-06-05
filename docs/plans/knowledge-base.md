@@ -555,7 +555,7 @@ agent 在对话中可直接调用，覆盖 CRUD / 链接 / 图谱 / 检索 / 元
 | `note_patch({kb, path, old, new, expected_file_hash?})` | 局部编辑（仿 `edit`）：`old` **必须全文唯一命中一次**，0 次/多次都**拒绝**并返候选上下文；给 `expected_file_hash` 则与**磁盘当前 raw BLAKE3**不符也拒。**禁止"悄悄替换第一处"** | 1 |
 | `note_append({kb, path, content, section?, expected_file_hash?})` | 追加（可指定 heading 下，适配每日笔记）；RMW，支持 stale-write guard | 1 |
 | `note_delete({kb, path, expected_file_hash?})` | 删除（破坏性写）；给 `expected_file_hash` 则写锁内重读磁盘 raw BLAKE3 校验、不符拒删；只留悬空链接，不连带改其它文件 | 1 |
-| `note_rename` / `note_move` | 改名 / 移动 — **批量改写指向它的 `[[ ]]`（多文件写）** | **2** |
+| `note_rename` / `note_move` | 改名 / 移动 — **批量改写指向它的 `[[ ]]`（多文件写）** | **2 ✅** |
 
 > **stale-write guard 真相源（#1，强契约）**：`expected_file_hash` **不与 `note.content_hash`（索引缓存，watcher 可能滞后）比**。所有带 `expected_file_hash` 的写工具（RMW 的 `note_update/patch/append/link` + 破坏性的 `note_delete`）在**同一写锁内**：① 重读磁盘**当前文件**算 raw BLAKE3 → ② 与 `expected_file_hash` 比，不符即拒（返回最新 token + 当前内容）→ ③ 写盘/删除 → ④ 同步更新 index（含 `note.content_hash`）。`note.content_hash` 只是**返给调用方的最近索引 token**，写入判定一律以磁盘为准。
 
@@ -566,8 +566,8 @@ agent 在对话中可直接调用，覆盖 CRUD / 链接 / 图谱 / 检索 / 元
 | `note_link({from:{kb,path}, to:{kb,path}, alias?, section?, expected_file_hash?})` | 在 `from` 插入指向 `to` 的 `[[ ]]`。**Phase 1 要求 `from.kb == to.kb`，跨 KB 拒绝**（wikilink 无 KB 概念）；插入位置默认追加到 `section`（缺省 `Related` heading，无则创建）；RMW，支持 stale-write guard | 1 |
 | `note_backlinks({kb?, note})` | 谁链接到本页（返回带 `src_*_line/col` 可精确跳转） | 1 |
 | `note_graph({note, depth})` | N 跳邻域（nodes+edges），图谱视图数据源 | **2** |
-| `note_broken_links({kb})` | 悬空链接清单 | **2** |
-| `note_orphans({kb})` | 孤岛笔记（无任何链接） | **2** |
+| `note_broken_links({kb})` | 悬空链接清单 | **2 ✅** |
+| `note_orphans({kb})` | 孤岛笔记（无任何链接） | **2 ✅** |
 
 **检索**
 
@@ -583,7 +583,7 @@ agent 在对话中可直接调用，覆盖 CRUD / 链接 / 图谱 / 检索 / 元
 | 工具 | 作用 | Phase |
 |---|---|---|
 | `note_by_tag({kb?, tag})` / `note_tags({kb?})` | 标签过滤 / 枚举 | 1 |
-| `note_set_frontmatter({note, props})` | 读写 frontmatter 属性 | **2** |
+| `note_set_frontmatter({note, props})` | 读写 frontmatter 属性 | **2 ✅** |
 
 **高阶知识操作（AI 原生）**
 

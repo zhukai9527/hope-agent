@@ -21,9 +21,9 @@ use ha_core::filesystem::{
     self, ExtractedContent, FileTextContent, FilesystemError, WorkspaceScope,
 };
 use ha_core::knowledge::{
-    self, service, Backlink, CreateKnowledgeBaseInput, KbAccess, KbAttachment, KnowledgeBase,
-    KnowledgeBaseMeta, Note, NoteReadResult, NoteSearchHit, ReferenceableNote,
-    UpdateKnowledgeBaseInput,
+    self, service, Backlink, BrokenLink, CreateKnowledgeBaseInput, KbAccess, KbAttachment,
+    KnowledgeBase, KnowledgeBaseMeta, Note, NoteReadResult, NoteSearchHit, ReferenceableNote,
+    RenameOutcome, UpdateKnowledgeBaseInput,
 };
 
 use super::file_serve::{
@@ -407,13 +407,11 @@ pub async fn kb_note_delete(
 pub async fn kb_note_rename(
     Path(kb_id): Path<String>,
     Json(body): Json<KbNoteRenameBody>,
-) -> Result<Json<String>, AppError> {
+) -> Result<Json<RenameOutcome>, AppError> {
     ensure_writes_allowed()?;
-    Ok(Json(service::note_rename(
-        &kb_id,
-        &body.path,
-        &body.new_path,
-    )?))
+    Ok(Json(
+        service::note_rename(&kb_id, &body.path, &body.new_path).await?,
+    ))
 }
 
 /// `GET /api/knowledge/{kb_id}/dirs`
@@ -527,7 +525,7 @@ pub async fn kb_mkdir(
 pub async fn kb_rename_dir(
     Path(kb_id): Path<String>,
     Json(body): Json<KbNoteRenameBody>,
-) -> Result<Json<String>, AppError> {
+) -> Result<Json<RenameOutcome>, AppError> {
     ensure_writes_allowed()?;
     Ok(Json(
         service::rename_dir(&kb_id, &body.path, &body.new_path).await?,
@@ -550,6 +548,16 @@ pub async fn kb_backlinks(
     Query(q): Query<KbNotePathQuery>,
 ) -> Result<Json<Vec<Backlink>>, AppError> {
     Ok(Json(service::backlinks(&kb_id, &q.path)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/broken-links`
+pub async fn kb_broken_links(Path(kb_id): Path<String>) -> Result<Json<Vec<BrokenLink>>, AppError> {
+    Ok(Json(service::broken_links(&kb_id)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/orphans`
+pub async fn kb_orphans(Path(kb_id): Path<String>) -> Result<Json<Vec<Note>>, AppError> {
+    Ok(Json(service::orphans(&kb_id)?))
 }
 
 /// `GET /api/knowledge/search?query=&kbId=&limit=`

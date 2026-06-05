@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "Belum ada ruang pengetahuan — cipta satu di Pengetahuan.",
+      "noteCount": "{{count}} nota",
+      "read": "Baca",
+      "write": "Baca+tulis"
+    },
     "title": "Ruang Pengetahuan",
     "searchPlaceholder": "Cari nota…",
     "newKb": "Ruang baharu",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "Nama ruang",
     "kbRootPlaceholder": "Laluan bilik kebal luaran (pilihan, baca sahaja)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "Mengemas kini {{count}} rujukan pautan dalam nota lain.",
     "retrievalSettings": "Tetapan perolehan",
     "reindexing": "Mengindeks semula…",
     "reindexDone": "Indeks dibina semula",
@@ -4735,17 +4742,20 @@
       "emptyHint": "Indeks semula sesuatu ruang, atau tukar model benaman, dan kemajuan akan muncul di sini.",
       "model": "Model: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "Penyelenggaraan",
+      "title": "Penyelenggaraan",
+      "healthy": "Semuanya kelihatan terhubung.",
+      "healthyHint": "Tiada pautan rosak atau nota yatim dalam ruang ini.",
+      "brokenLinks": "Pautan rosak",
+      "orphans": "Nota yatim",
+      "inNote": "dalam"
+    },
     "embeddingOff": "Carian vektor dimatikan",
     "embeddingModelTip": "Model benaman: {{name}} — buka tetapan",
     "embeddingOffTip": "Carian vektor dimatikan — buka tetapan",
     "kbRootPick": "Pilih…",
     "kbRootHint": "Biarkan kosong untuk ruang dalaman. Bilik kebal luaran hanya-baca pada Fasa 1.",
-    "kbRootInvalid": "Tidak dapat memilih folder itu",
-    "picker": {
-      "read": "Baca",
-      "write": "Baca+tulis",
-      "empty": "Belum ada ruang pengetahuan — cipta satu di Pengetahuan.",
-      "noteCount": "{{count}} nota"
-    }
+    "kbRootInvalid": "Tidak dapat memilih folder itu"
   }
 }

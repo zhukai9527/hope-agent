@@ -55,6 +55,7 @@ import type {
   NoteEditorMode,
   NoteReadResult,
   NoteSearchHit,
+  RenameOutcome,
 } from "@/types/knowledge"
 
 import { useReembedJob } from "@/hooks/useReembedJob"
@@ -62,6 +63,7 @@ import { isLocalModelJobActive } from "@/types/local-model-jobs"
 
 import KnowledgeEmbeddingBadge from "./KnowledgeEmbeddingBadge"
 import KnowledgeJobsButton from "./KnowledgeJobsButton"
+import KnowledgeMaintenanceButton from "./KnowledgeMaintenanceButton"
 import NoteEditor from "./NoteEditor"
 import { buildKnownTargets, type WikilinkData } from "./cm/wikilinkExtensions"
 
@@ -622,13 +624,15 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
       if (!/\.(md|markdown)$/i.test(to)) to = `${to}.md`
       if (to === fromRel) return
       try {
-        const newRel = await tx.call<string>("kb_note_rename_cmd", {
+        const outcome = await tx.call<RenameOutcome>("kb_note_rename_cmd", {
           kbId: activeKbId,
           path: fromRel,
           newPath: to,
         })
         await loadNotes(activeKbId)
-        if (openPath === fromRel) await openNote(activeKbId, newRel)
+        if (openPath === fromRel) await openNote(activeKbId, outcome.newRel)
+        if (outcome.linksRewritten > 0)
+          toast.success(t("knowledge.linksRewritten", { count: outcome.linksRewritten }))
       } catch (e) {
         console.error("rename note failed", e)
         toast.error(
@@ -694,11 +698,17 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
       if (!activeKbId || readOnly) return
       if (newPath === oldPath || newPath.startsWith(`${oldPath}/`)) return
       try {
-        await tx.call("kb_rename_dir_cmd", { kbId: activeKbId, path: oldPath, newPath })
+        const outcome = await tx.call<RenameOutcome>("kb_rename_dir_cmd", {
+          kbId: activeKbId,
+          path: oldPath,
+          newPath,
+        })
         await Promise.all([loadNotes(activeKbId), loadDirs(activeKbId)])
         if (openPath && openPath.startsWith(`${oldPath}/`)) {
           await openNote(activeKbId, `${newPath}${openPath.slice(oldPath.length)}`)
         }
+        if (outcome.linksRewritten > 0)
+          toast.success(t("knowledge.linksRewritten", { count: outcome.linksRewritten }))
         // Keep a draft scoped to the moved folder pointing at the new path so it
         // doesn't resurrect the old one on save (#5).
         setDraftFolder((cur) =>
@@ -1270,6 +1280,16 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
           />
         </div>
         {onOpenSettings && <KnowledgeEmbeddingBadge onOpenSettings={onOpenSettings} />}
+        <KnowledgeMaintenanceButton
+          // Remount per space so a previous KB's broken/orphan lists never render
+          // under the new one, and an in-flight refresh for the old KB can't
+          // overwrite the new KB's state (it resolves on the unmounted instance).
+          key={activeKbId ?? "none"}
+          kbId={activeKbId}
+          onOpenNote={(path, line) => {
+            if (activeKbId) void openNote(activeKbId, path, line ? { line } : undefined)
+          }}
+        />
         <KnowledgeJobsButton />
       </div>
 

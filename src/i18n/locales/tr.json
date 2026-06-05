@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "Henüz bilgi alanı yok — Bilgi bölümünde oluşturun.",
+      "noteCount": "{{count}} not",
+      "read": "Okuma",
+      "write": "Okuma+yazma"
+    },
     "title": "Bilgi Alanı",
     "searchPlaceholder": "Notlarda ara…",
     "newKb": "Yeni alan",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "Alan adı",
     "kbRootPlaceholder": "Harici kasa yolu (isteğe bağlı, salt okunur)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "Diğer notlardaki {{count}} bağlantı referansı güncellendi.",
     "retrievalSettings": "Erişim ayarları",
     "reindexing": "Yeniden dizinleniyor…",
     "reindexDone": "Dizin yeniden oluşturuldu",
@@ -4735,17 +4742,20 @@
       "emptyHint": "Bir alanı yeniden dizinleyin veya gömme modelini değiştirin; ilerleme burada görünür.",
       "model": "Model: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "Bakım",
+      "title": "Bakım",
+      "healthy": "Her şey bağlı görünüyor.",
+      "healthyHint": "Bu alanda kırık bağlantı veya yetim not yok.",
+      "brokenLinks": "Kırık bağlantılar",
+      "orphans": "Yetim notlar",
+      "inNote": "konum:"
+    },
     "embeddingOff": "Vektör arama kapalı",
     "embeddingModelTip": "Gömme modeli: {{name}} — ayarları aç",
     "embeddingOffTip": "Vektör arama kapalı — ayarları aç",
     "kbRootPick": "Seç…",
     "kbRootHint": "Dahili alan için boş bırakın. Harici kasalar 1. Aşamada salt okunurdur.",
-    "kbRootInvalid": "Bu klasör seçilemedi",
-    "picker": {
-      "read": "Okuma",
-      "write": "Okuma+yazma",
-      "empty": "Henüz bilgi alanı yok — Bilgi bölümünde oluşturun.",
-      "noteCount": "{{count}} not"
-    }
+    "kbRootInvalid": "Bu klasör seçilemedi"
   }
 }

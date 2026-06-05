@@ -17,7 +17,7 @@ use crate::memory::EmbeddingProvider;
 use super::chunker::ParsedChunk;
 use super::parser::ParsedLink;
 use super::resolver::{self, NoteRef};
-use super::types::{Backlink, LinkType, Note, NoteLink};
+use super::types::{Backlink, BrokenLink, LinkType, Note, NoteLink};
 
 const READ_POOL_SIZE: usize = 4;
 
@@ -875,6 +875,59 @@ impl IndexDb {
         )?;
         Ok(n as u32)
     }
+
+    /// Every broken (dangling) link in a KB, with the source note + exact
+    /// occurrence + unresolved `target_ref` (so the UI can offer "create note").
+    pub fn list_broken_links(&self, kb_id: &str) -> Result<Vec<BrokenLink>> {
+        let conn = self.read_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT l.src_note_id, n.rel_path, n.title, l.target_ref, l.raw_text,
+                    l.src_start_line, l.src_start_col, l.src_heading_path
+             FROM note_link l JOIN note n ON n.id = l.src_note_id
+             WHERE n.kb_id = ?1 AND l.target_note_id IS NULL
+             ORDER BY n.rel_path, l.src_start_line, l.src_start_col",
+        )?;
+        let rows = stmt.query_map(params![kb_id], |r| {
+            Ok(BrokenLink {
+                src_note_id: r.get(0)?,
+                src_rel_path: r.get(1)?,
+                src_title: r.get(2)?,
+                target_ref: r.get(3)?,
+                raw_text: r.get(4)?,
+                src_start_line: r.get::<_, i64>(5)? as u32,
+                src_start_col: r.get::<_, i64>(6)? as u32,
+                src_heading_path: r.get::<_, Option<String>>(7)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Orphan notes: no resolved inbound link **and** no resolved outbound link
+    /// (broken links don't count as a connection). The "islands" in the graph.
+    pub fn list_orphan_notes(&self, kb_id: &str) -> Result<Vec<Note>> {
+        let conn = self.read_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, kb_id, rel_path, title, frontmatter_json, mtime, content_hash, size
+             FROM note n
+             WHERE n.kb_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM note_link l WHERE l.target_note_id = n.id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM note_link l
+                   WHERE l.src_note_id = n.id AND l.target_note_id IS NOT NULL
+               )
+             ORDER BY n.rel_path",
+        )?;
+        let rows = stmt.query_map(params![kb_id], row_to_note)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 // ── Free helpers ────────────────────────────────────────────────
@@ -1060,6 +1113,33 @@ mod tests {
         db.reresolve_kb_links(kb).unwrap();
         assert_eq!(db.count_broken_links(kb).unwrap(), 1);
         assert_eq!(db.count_notes(kb).unwrap(), 1);
+    }
+
+    #[test]
+    fn broken_links_and_orphans() {
+        let dir = tempdir().unwrap();
+        let db = IndexDb::open(&dir.path().join("index.db")).unwrap();
+        let kb = "kb1";
+        // A → B (resolves); C → [[missing]] (broken); D has no links.
+        db.replace_note_index(input(kb, "A.md", "# A\n\nSee [[B]].\n"))
+            .unwrap();
+        db.replace_note_index(input(kb, "B.md", "# B\n\nbody.\n"))
+            .unwrap();
+        db.replace_note_index(input(kb, "C.md", "# C\n\nSee [[missing]].\n"))
+            .unwrap();
+        db.replace_note_index(input(kb, "D.md", "# D\n\njust text.\n"))
+            .unwrap();
+        db.reresolve_kb_links(kb).unwrap();
+
+        let broken = db.list_broken_links(kb).unwrap();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].src_rel_path, "C.md");
+        assert_eq!(broken[0].target_ref, "missing");
+
+        // Orphans: C (only a broken outbound) + D (nothing). A/B are connected.
+        let orphans = db.list_orphan_notes(kb).unwrap();
+        let paths: Vec<&str> = orphans.iter().map(|n| n.rel_path.as_str()).collect();
+        assert_eq!(paths, vec!["C.md", "D.md"]);
     }
 
     #[test]

@@ -4764,6 +4764,7 @@
     "unsavedBody": "有未保存的修改，离开前要保存吗？",
     "discardChanges": "不保存",
     "renameMoveFailed": "无法重命名/移动「{{name}}」——可能已存在同名笔记。",
+    "linksRewritten": "已更新其他笔记中的 {{count}} 处链接引用。",
     "noteRemovedExternally": "该笔记已在应用外被移除或移动。",
     "moveTo": "移动到…",
     "moveToTitle": "将「{{name}}」移动到…",
@@ -4782,6 +4783,15 @@
       "result": "已重建 {{notes}} 篇笔记 · {{kbs}} 个知识空间",
       "emptyHint": "重建某个空间，或切换向量模型，进度会显示在这里。",
       "model": "模型：{{name}}"
+    },
+    "maintenance": {
+      "tooltip": "维护",
+      "title": "维护",
+      "healthy": "连接状况良好。",
+      "healthyHint": "此空间没有失效链接或孤立笔记。",
+      "brokenLinks": "失效链接",
+      "orphans": "孤立笔记",
+      "inNote": "位于"
     },
     "embeddingOff": "向量检索未开启",
     "embeddingModelTip": "向量模型：{{name}} · 点击进入设置",

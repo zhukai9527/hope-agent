@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "Ainda não há espaços de conhecimento; crie um em Conhecimento.",
+      "noteCount": "{{count}} notas",
+      "read": "Leitura",
+      "write": "Leitura e escrita"
+    },
     "title": "Espaço de conhecimento",
     "searchPlaceholder": "Pesquisar notas…",
     "newKb": "Novo espaço",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "Nome do espaço",
     "kbRootPlaceholder": "Caminho do cofre externo (opcional, somente leitura)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "Foram atualizadas {{count}} referências de link em outras notas.",
     "retrievalSettings": "Configurações de recuperação",
     "reindexing": "Reindexando…",
     "reindexDone": "Índice reconstruído",
@@ -4735,17 +4742,20 @@
       "emptyHint": "Reindexe um espaço ou troque o modelo de incorporação e o progresso aparecerá aqui.",
       "model": "Modelo: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "Manutenção",
+      "title": "Manutenção",
+      "healthy": "Tudo parece conectado.",
+      "healthyHint": "Nenhum link quebrado ou nota órfã neste espaço.",
+      "brokenLinks": "Links quebrados",
+      "orphans": "Notas órfãs",
+      "inNote": "em"
+    },
     "embeddingOff": "Busca vetorial desativada",
     "embeddingModelTip": "Modelo de incorporação: {{name}} — abrir configurações",
     "embeddingOffTip": "A busca vetorial está desativada — abrir configurações",
     "kbRootPick": "Escolher…",
     "kbRootHint": "Deixe vazio para um espaço interno. Cofres externos são somente leitura na Fase 1.",
-    "kbRootInvalid": "Não foi possível selecionar essa pasta",
-    "picker": {
-      "read": "Leitura",
-      "write": "Leitura e escrita",
-      "empty": "Ainda não há espaços de conhecimento; crie um em Conhecimento.",
-      "noteCount": "{{count}} notas"
-    }
+    "kbRootInvalid": "Não foi possível selecionar essa pasta"
   }
 }

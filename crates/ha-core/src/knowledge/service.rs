@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Result};
 use super::index;
 use super::types::{
     Backlink, KbAccess, KbAttachInput, KnowledgeBaseMeta, Note, NoteReadResult, NoteSearchHit,
-    ReferenceableNote,
+    ReferenceableNote, RenameOutcome,
 };
 use crate::filesystem::{self, WorkspaceScope};
 
@@ -144,40 +144,20 @@ pub fn note_delete(kb_id: &str, rel_path: &str) -> Result<()> {
 }
 
 /// Owner rename/move. Rejects read-only roots. Moves the `.md` file, rebuilds
-/// the index entry, and re-resolves the whole KB's links (so backlinks to the
-/// old path flip to broken and any that now match the new path resolve). Does
-/// **not** rewrite `[[old]]` link text inside other notes — that stays explicit.
-/// Returns the normalized new rel path.
-pub fn note_rename(kb_id: &str, from_rel: &str, to_rel: &str) -> Result<String> {
-    let scope =
-        WorkspaceScope::for_knowledge(kb_id).map_err(|e| anyhow!(e.message().to_string()))?;
-    if scope.is_read_only() {
-        bail!("knowledge base '{}' root is read-only", kb_id);
-    }
-    // Always land on a markdown extension.
-    let to_rel = if to_rel.to_ascii_lowercase().ends_with(".md")
-        || to_rel.to_ascii_lowercase().ends_with(".markdown")
-    {
-        to_rel.to_string()
-    } else {
-        format!("{to_rel}.md")
-    };
-    let res = filesystem::project_rename(&scope, from_rel, &to_rel, false)
-        .map_err(|e| anyhow!(e.message().to_string()))?;
-    let new_rel = res.rel_path;
-    if let Err(e) = index::remove_note(kb_id, from_rel) {
-        crate::app_warn!(
-            "knowledge",
-            "service",
-            "rename drop old index failed: {}",
-            e
-        );
-    }
-    if let Err(e) = index::reindex_note(kb_id, scope.root(), &new_rel) {
-        crate::app_warn!("knowledge", "service", "rename reindex new failed: {}", e);
-    }
-    emit(kb_id, "rename");
-    Ok(new_rel)
+/// the index entry, and **rewrites inbound `[[ ]]` links** in other notes so
+/// path-form / filename-derived references stay intact (#9). Returns the new rel
+/// path + how many references were rewritten (for the "updated N references" UI).
+///
+/// Runs on a blocking worker (like `rename_dir`): the rewrite reads/reindexes —
+/// and, with knowledge embedding on, re-embeds — every linking note, which must
+/// not block a tokio runtime thread.
+pub async fn note_rename(kb_id: &str, from_rel: &str, to_rel: &str) -> Result<RenameOutcome> {
+    let kb = kb_id.to_string();
+    let from = from_rel.to_string();
+    let to = to_rel.to_string();
+    tokio::task::spawn_blocking(move || super::rename::rename_note(&kb, &from, &to, None))
+        .await
+        .map_err(|e| anyhow!("note_rename task failed: {e}"))?
 }
 
 /// Owner: list every directory under the KB root (relative, "/"-joined). Lets the
@@ -243,10 +223,11 @@ pub fn mkdir(kb_id: &str, rel: &str) -> Result<String> {
 }
 
 /// Owner: rename/move a folder and everything inside it (one fs rename), then
-/// reconcile the index (prune old paths, index new) + re-resolve links. The
-/// reconcile (re-embeds every moved note) runs off the async worker but completes
-/// before returning, so the caller can immediately reopen the moved note.
-pub async fn rename_dir(kb_id: &str, from_rel: &str, to_rel: &str) -> Result<String> {
+/// reconcile the index (prune old paths, index new) + **rewrite inbound path-form
+/// `[[ ]]` links** across the KB so they follow the moved notes (#9). Runs off
+/// the async worker but completes before returning, so the caller can immediately
+/// reopen the moved notes.
+pub async fn rename_dir(kb_id: &str, from_rel: &str, to_rel: &str) -> Result<RenameOutcome> {
     let scope =
         WorkspaceScope::for_knowledge(kb_id).map_err(|e| anyhow!(e.message().to_string()))?;
     if scope.is_read_only() {
@@ -256,20 +237,20 @@ pub async fn rename_dir(kb_id: &str, from_rel: &str, to_rel: &str) -> Result<Str
     let kb = kb_id.to_string();
     let from = from_rel.to_string();
     let to = to_rel.to_string();
-    let new_rel = tokio::task::spawn_blocking(move || -> Result<String> {
-        let scope =
-            WorkspaceScope::for_knowledge(&kb).map_err(|e| anyhow!(e.message().to_string()))?;
-        let res = filesystem::project_rename(&scope, &from, &to, false)
-            .map_err(|e| anyhow!(e.message().to_string()))?;
-        if let Err(e) = index::reindex_kb(&kb, false) {
-            crate::app_warn!("knowledge", "service", "rename_dir reindex failed: {}", e);
-        }
-        Ok(res.rel_path)
-    })
-    .await
-    .map_err(|e| anyhow!("rename_dir task failed: {e}"))??;
-    emit(kb_id, "rename");
-    Ok(new_rel)
+    let outcome = tokio::task::spawn_blocking(move || super::rename::rename_dir(&kb, &from, &to))
+        .await
+        .map_err(|e| anyhow!("rename_dir task failed: {e}"))??;
+    Ok(outcome)
+}
+
+/// Owner: every broken (dangling) link in a KB — the "maintenance" panel feed.
+pub fn broken_links(kb_id: &str) -> Result<Vec<super::types::BrokenLink>> {
+    index_db()?.list_broken_links(kb_id)
+}
+
+/// Owner: orphan notes (no resolved inbound or outbound link) in a KB.
+pub fn orphans(kb_id: &str) -> Result<Vec<Note>> {
+    index_db()?.list_orphan_notes(kb_id)
 }
 
 /// Owner: delete a folder and all its contents (recursive), then reconcile index.

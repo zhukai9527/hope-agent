@@ -15,9 +15,31 @@ vi.mock("react-i18next", () => ({
   }),
 }))
 
+// MentionComposerInput is a heavy CodeMirror 6 editor (Phase 1 composer refactor)
+// that doesn't drive its updateListener reliably under jsdom. Stub it with a
+// plain contenteditable so these ChatInput-wiring tests can fire onChange without
+// simulating CM internals; the editor's own behavior is covered elsewhere.
+vi.mock("./MentionComposerInput", async () => {
+  const React = await import("react")
+  return {
+    default: React.forwardRef(function MockComposer(props: { onChange?: (v: string) => void }) {
+      return React.createElement("div", {
+        role: "textbox",
+        "aria-multiline": "true",
+        contentEditable: true,
+        suppressContentEditableWarning: true,
+        onInput: (e: React.FormEvent<HTMLDivElement>) =>
+          props.onChange?.(e.currentTarget.textContent ?? ""),
+      })
+    }),
+  }
+})
+
 const transportMock = vi.hoisted(() => ({
   call: vi.fn(() => Promise.resolve([])),
   searchFiles: vi.fn(() => Promise.resolve({ entries: [], truncated: false })),
+  supportsLocalFileOps: () => false,
+  listen: vi.fn(() => () => {}),
 }))
 
 vi.mock("@/lib/transport-provider", () => ({

@@ -4764,6 +4764,7 @@
     "unsavedBody": "You have unsaved changes. Save before leaving?",
     "discardChanges": "Discard",
     "renameMoveFailed": "Couldn't rename/move \"{{name}}\" — a note with that name may already exist.",
+    "linksRewritten": "Updated {{count}} link reference(s) in other notes.",
     "noteRemovedExternally": "This note was removed or moved outside the app.",
     "moveTo": "Move to…",
     "moveToTitle": "Move \"{{name}}\" to…",
@@ -4782,6 +4783,15 @@
       "result": "Rebuilt {{notes}} notes · {{kbs}} spaces",
       "emptyHint": "Reindex a space, or switch the embedding model, and progress shows up here.",
       "model": "Model: {{name}}"
+    },
+    "maintenance": {
+      "tooltip": "Maintenance",
+      "title": "Maintenance",
+      "healthy": "Everything looks connected.",
+      "healthyHint": "No broken links or orphan notes in this space.",
+      "brokenLinks": "Broken links",
+      "orphans": "Orphan notes",
+      "inNote": "in"
     },
     "embeddingOff": "Vector search off",
     "embeddingModelTip": "Embedding model: {{name}} — open settings",

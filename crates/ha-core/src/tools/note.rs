@@ -451,6 +451,89 @@ pub(crate) async fn tool_note_backlinks(args: &Value, ctx: &ToolExecContext) -> 
     }))?)
 }
 
+/// `note_rename` / `note_move` ({kb, from, to, expected_file_hash?}) — move or
+/// rename a note and rewrite inbound `[[ ]]` links in other notes (#9).
+pub(crate) async fn tool_note_rename(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+    let kb = str_arg(args, "kb").ok_or_else(|| anyhow!("Missing 'kb' parameter"))?;
+    require_write(ctx, kb)?;
+    let from = str_arg(args, "from")
+        .or_else(|| str_arg(args, "path"))
+        .ok_or_else(|| anyhow!("Missing 'from' parameter"))?;
+    let to = str_arg(args, "to")
+        .or_else(|| str_arg(args, "new_path"))
+        .ok_or_else(|| anyhow!("Missing 'to' parameter"))?;
+    let from_rel = norm_note_path(from);
+    let outcome = knowledge::rename_note(kb, &from_rel, to, str_arg(args, "expected_file_hash"))?;
+    Ok(format!(
+        "Renamed '{}' → '{}' in knowledge base '{}' ({} inbound link(s) rewritten across {} note(s)).",
+        from_rel, outcome.new_rel, kb, outcome.links_rewritten, outcome.files_changed
+    ))
+}
+
+/// `note_set_frontmatter({kb, path, props, expected_file_hash?})` — merge YAML
+/// frontmatter props (null value removes a key).
+pub(crate) async fn tool_note_set_frontmatter(
+    args: &Value,
+    ctx: &ToolExecContext,
+) -> Result<String> {
+    let kb = str_arg(args, "kb").ok_or_else(|| anyhow!("Missing 'kb' parameter"))?;
+    require_write(ctx, kb)?;
+    let path = str_arg(args, "path").ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
+    let props = args
+        .get("props")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| anyhow!("Missing 'props' object parameter"))?;
+    let rel = norm_note_path(path);
+    let scope = writable_scope(kb)?;
+    let bytes = read_note_raw(&scope, &rel)?; // errors if the note is missing
+    if let Some(expected) = str_arg(args, "expected_file_hash") {
+        let current = knowledge::blake3_hex(&bytes);
+        if current != expected {
+            bail!(
+                "stale write: note '{}' changed on disk (expected_file_hash mismatch, current {}). Re-read and retry.",
+                rel,
+                current
+            );
+        }
+    }
+    let content = String::from_utf8_lossy(&bytes).to_string();
+    let updated = knowledge::parser::merge_frontmatter(&content, props);
+    let hash = write_and_index(&scope, kb, &rel, &updated, false)?;
+    Ok(format!(
+        "Updated frontmatter of note '{rel}' (file_hash: {hash})"
+    ))
+}
+
+/// `note_broken_links({kb})` — dangling `[[ ]]` links to create or fix.
+pub(crate) async fn tool_note_broken_links(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+    let kb = str_arg(args, "kb").ok_or_else(|| anyhow!("Missing 'kb' parameter"))?;
+    require_read(ctx, kb)?;
+    let db = index::get_index_db().ok_or_else(|| anyhow!("knowledge index not initialized"))?;
+    let broken = db.list_broken_links(kb)?;
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "kbId": kb,
+        "count": broken.len(),
+        "brokenLinks": broken,
+    }))?)
+}
+
+/// `note_orphans({kb})` — notes with no resolved inbound or outbound link.
+pub(crate) async fn tool_note_orphans(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+    let kb = str_arg(args, "kb").ok_or_else(|| anyhow!("Missing 'kb' parameter"))?;
+    require_read(ctx, kb)?;
+    let db = index::get_index_db().ok_or_else(|| anyhow!("knowledge index not initialized"))?;
+    let orphans = db.list_orphan_notes(kb)?;
+    let rows: Vec<_> = orphans
+        .iter()
+        .map(|n| serde_json::json!({ "path": n.rel_path, "title": n.title }))
+        .collect();
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "kbId": kb,
+        "count": rows.len(),
+        "orphans": rows,
+    }))?)
+}
+
 // ── Tools: search / tags ────────────────────────────────────────
 
 /// `note_search({query, kb?, limit?})`

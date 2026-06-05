@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "Chưa có không gian kiến thức — tạo một cái trong Kiến thức.",
+      "noteCount": "{{count}} ghi chú",
+      "read": "Đọc",
+      "write": "Đọc+ghi"
+    },
     "title": "Không gian kiến thức",
     "searchPlaceholder": "Tìm ghi chú…",
     "newKb": "Không gian mới",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "Tên không gian",
     "kbRootPlaceholder": "Đường dẫn kho ngoài (tùy chọn, chỉ đọc)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "Đã cập nhật {{count}} tham chiếu liên kết trong các ghi chú khác.",
     "retrievalSettings": "Cài đặt truy xuất",
     "reindexing": "Đang lập chỉ mục lại…",
     "reindexDone": "Đã xây dựng lại chỉ mục",
@@ -4735,17 +4742,20 @@
       "emptyHint": "Lập chỉ mục lại một không gian hoặc đổi mô hình nhúng, tiến trình sẽ hiện ở đây.",
       "model": "Mô hình: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "Bảo trì",
+      "title": "Bảo trì",
+      "healthy": "Mọi thứ đều được kết nối.",
+      "healthyHint": "Không có liên kết hỏng hoặc ghi chú mồ côi trong không gian này.",
+      "brokenLinks": "Liên kết hỏng",
+      "orphans": "Ghi chú mồ côi",
+      "inNote": "trong"
+    },
     "embeddingOff": "Tìm kiếm vector đang tắt",
     "embeddingModelTip": "Mô hình nhúng: {{name}} — mở cài đặt",
     "embeddingOffTip": "Tìm kiếm vector đang tắt — mở cài đặt",
     "kbRootPick": "Chọn…",
     "kbRootHint": "Để trống để tạo không gian nội bộ. Kho ngoài chỉ đọc ở Giai đoạn 1.",
-    "kbRootInvalid": "Không thể chọn thư mục đó",
-    "picker": {
-      "read": "Đọc",
-      "write": "Đọc+ghi",
-      "empty": "Chưa có không gian kiến thức — tạo một cái trong Kiến thức.",
-      "noteCount": "{{count}} ghi chú"
-    }
+    "kbRootInvalid": "Không thể chọn thư mục đó"
   }
 }

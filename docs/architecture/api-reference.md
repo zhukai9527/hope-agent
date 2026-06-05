@@ -247,7 +247,7 @@ Tauri ↔ COMMAND_MAP 差集为 7 条合法非 REST 命令（4 条 Desktop-only 
 | `kb_note_read_cmd` | `GET /api/knowledge/{kbId}/note?path=` | ✅ (含出链/反链/标签) |
 | `kb_note_save_cmd` | `PUT /api/knowledge/{kbId}/note` | ✅ (写闸门 + stale-write guard) |
 | `kb_note_delete_cmd` | `DELETE /api/knowledge/{kbId}/note?path=` | ✅ (写闸门) |
-| `kb_note_rename_cmd` | `POST /api/knowledge/{kbId}/note/rename` | ✅ (写闸门 + 重解析全 KB 链接) |
+| `kb_note_rename_cmd` | `POST /api/knowledge/{kbId}/note/rename` | ✅ (写闸门 + **改写入站 `[[ ]]` 链接** #9，返回 `RenameOutcome`) |
 | `kb_list_dirs_cmd` | `GET /api/knowledge/{kbId}/dirs` | ✅ (含空目录，读盘) |
 | `kb_list_tags_cmd` | `GET /api/knowledge/{kbId}/tags` | ✅ (owner 平面，编辑器 `#tag` 补全词表) |
 | `knowledge_embedding_get_cmd` | `GET /api/knowledge/embedding` | ✅ (D7 独立 selector 状态) |
@@ -259,9 +259,11 @@ Tauri ↔ COMMAND_MAP 差集为 7 条合法非 REST 命令（4 条 Desktop-only 
 | `reindex_note_cmd` | `POST /api/knowledge/{kbId}/note/reindex` | ✅ (单篇重建，同步) |
 | `reindex_dir_cmd` | `POST /api/knowledge/{kbId}/dir/reindex` | ✅ (文件夹子树重建，同步) |
 | `kb_mkdir_cmd` | `POST /api/knowledge/{kbId}/dir` | ✅ (写闸门) |
-| `kb_rename_dir_cmd` | `POST /api/knowledge/{kbId}/dir/rename` | ✅ (写闸门 + reindex 重解析) |
+| `kb_rename_dir_cmd` | `POST /api/knowledge/{kbId}/dir/rename` | ✅ (写闸门 + reindex + **改写入站路径式链接** #9，返回 `RenameOutcome`) |
 | `kb_delete_dir_cmd` | `DELETE /api/knowledge/{kbId}/dir?path=` | ✅ (写闸门，rm -rf + prune) |
 | `kb_backlinks_cmd` | `GET /api/knowledge/{kbId}/backlinks?path=` | ✅ |
+| `kb_broken_links_cmd` | `GET /api/knowledge/{kbId}/broken-links` | ✅ (维护面板：悬空 `[[ ]]` 清单) |
+| `kb_orphans_cmd` | `GET /api/knowledge/{kbId}/orphans` | ✅ (维护面板：无链接孤岛笔记) |
 | `kb_search_cmd` | `GET /api/knowledge/search?query=&kbId=&limit=` | ✅ (FTS+向量混合) |
 | `kb_file_read_cmd` | `GET /api/knowledge/{kbId}/files/read?path=` | ✅ (纯 owner 平面 + scope contains) |
 | `kb_file_extract_cmd` | `GET /api/knowledge/{kbId}/files/extract?path=` | ✅ |

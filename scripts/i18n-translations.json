@@ -987,7 +987,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "検索設定",
       "reindexing": "再インデックス中…",
-      "reindexDone": "インデックスを再構築しました"
+      "reindexDone": "インデックスを再構築しました",
+      "linksRewritten": "他のノート内の {{count}} 件のリンク参照を更新しました。",
+      "maintenance": {
+        "tooltip": "メンテナンス",
+        "title": "メンテナンス",
+        "healthy": "リンクは正常につながっています。",
+        "healthyHint": "この空間に壊れたリンクや孤立ノートはありません。",
+        "brokenLinks": "壊れたリンク",
+        "orphans": "孤立ノート",
+        "inNote": "場所:"
+      }
     },
     "common": {
       "create": "作成",
@@ -1982,7 +1992,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "검색 설정",
       "reindexing": "재색인 중…",
-      "reindexDone": "색인을 재구축했습니다"
+      "reindexDone": "색인을 재구축했습니다",
+      "linksRewritten": "다른 노트의 링크 참조 {{count}}개를 업데이트했습니다.",
+      "maintenance": {
+        "tooltip": "유지 관리",
+        "title": "유지 관리",
+        "healthy": "모두 잘 연결되어 있습니다.",
+        "healthyHint": "이 공간에는 끊어진 링크나 고립된 노트가 없습니다.",
+        "brokenLinks": "끊어진 링크",
+        "orphans": "고립된 노트",
+        "inNote": "위치:"
+      }
     },
     "common": {
       "create": "만들기",
@@ -2958,7 +2978,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "檢索設定",
       "reindexing": "重新索引中…",
-      "reindexDone": "索引已重建"
+      "reindexDone": "索引已重建",
+      "linksRewritten": "已更新其他筆記中的 {{count}} 處連結引用。",
+      "maintenance": {
+        "tooltip": "維護",
+        "title": "維護",
+        "healthy": "連結狀況良好。",
+        "healthyHint": "此空間沒有失效連結或孤立筆記。",
+        "brokenLinks": "失效連結",
+        "orphans": "孤立筆記",
+        "inNote": "位於"
+      }
     },
     "common": {
       "create": "建立",
@@ -3953,7 +3983,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Erişim ayarları",
       "reindexing": "Yeniden dizinleniyor…",
-      "reindexDone": "Dizin yeniden oluşturuldu"
+      "reindexDone": "Dizin yeniden oluşturuldu",
+      "linksRewritten": "Diğer notlardaki {{count}} bağlantı referansı güncellendi.",
+      "maintenance": {
+        "tooltip": "Bakım",
+        "title": "Bakım",
+        "healthy": "Her şey bağlı görünüyor.",
+        "healthyHint": "Bu alanda kırık bağlantı veya yetim not yok.",
+        "brokenLinks": "Kırık bağlantılar",
+        "orphans": "Yetim notlar",
+        "inNote": "konum:"
+      }
     },
     "common": {
       "create": "Oluştur",
@@ -4948,7 +4988,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Cài đặt truy xuất",
       "reindexing": "Đang lập chỉ mục lại…",
-      "reindexDone": "Đã xây dựng lại chỉ mục"
+      "reindexDone": "Đã xây dựng lại chỉ mục",
+      "linksRewritten": "Đã cập nhật {{count}} tham chiếu liên kết trong các ghi chú khác.",
+      "maintenance": {
+        "tooltip": "Bảo trì",
+        "title": "Bảo trì",
+        "healthy": "Mọi thứ đều được kết nối.",
+        "healthyHint": "Không có liên kết hỏng hoặc ghi chú mồ côi trong không gian này.",
+        "brokenLinks": "Liên kết hỏng",
+        "orphans": "Ghi chú mồ côi",
+        "inNote": "trong"
+      }
     },
     "common": {
       "create": "Tạo",
@@ -5943,7 +5993,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Configurações de recuperação",
       "reindexing": "Reindexando…",
-      "reindexDone": "Índice reconstruído"
+      "reindexDone": "Índice reconstruído",
+      "linksRewritten": "Foram atualizadas {{count}} referências de link em outras notas.",
+      "maintenance": {
+        "tooltip": "Manutenção",
+        "title": "Manutenção",
+        "healthy": "Tudo parece conectado.",
+        "healthyHint": "Nenhum link quebrado ou nota órfã neste espaço.",
+        "brokenLinks": "Links quebrados",
+        "orphans": "Notas órfãs",
+        "inNote": "em"
+      }
     },
     "common": {
       "create": "Criar",
@@ -6938,7 +6998,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Настройки поиска",
       "reindexing": "Переиндексация…",
-      "reindexDone": "Индекс перестроен"
+      "reindexDone": "Индекс перестроен",
+      "linksRewritten": "Обновлено ссылок в других заметках: {{count}}.",
+      "maintenance": {
+        "tooltip": "Обслуживание",
+        "title": "Обслуживание",
+        "healthy": "Все связи на месте.",
+        "healthyHint": "В этом пространстве нет битых ссылок и заметок-сирот.",
+        "brokenLinks": "Битые ссылки",
+        "orphans": "Заметки-сироты",
+        "inNote": "в"
+      }
     },
     "common": {
       "create": "Создать",
@@ -7933,7 +8003,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "إعدادات الاسترجاع",
       "reindexing": "جارٍ إعادة الفهرسة…",
-      "reindexDone": "تمت إعادة بناء الفهرس"
+      "reindexDone": "تمت إعادة بناء الفهرس",
+      "linksRewritten": "تم تحديث {{count}} مرجع رابط في ملاحظات أخرى.",
+      "maintenance": {
+        "tooltip": "الصيانة",
+        "title": "الصيانة",
+        "healthy": "كل شيء يبدو متصلاً.",
+        "healthyHint": "لا توجد روابط معطلة أو ملاحظات يتيمة في هذه المساحة.",
+        "brokenLinks": "روابط معطلة",
+        "orphans": "ملاحظات يتيمة",
+        "inNote": "في"
+      }
     },
     "common": {
       "create": "إنشاء",
@@ -8928,7 +9008,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Configuración de recuperación",
       "reindexing": "Reindexando…",
-      "reindexDone": "Índice reconstruido"
+      "reindexDone": "Índice reconstruido",
+      "linksRewritten": "Se actualizaron {{count}} referencias de enlace en otras notas.",
+      "maintenance": {
+        "tooltip": "Mantenimiento",
+        "title": "Mantenimiento",
+        "healthy": "Todo parece conectado.",
+        "healthyHint": "No hay enlaces rotos ni notas huérfanas en este espacio.",
+        "brokenLinks": "Enlaces rotos",
+        "orphans": "Notas huérfanas",
+        "inNote": "en"
+      }
     },
     "common": {
       "create": "Crear",
@@ -9923,7 +10013,17 @@
       "notePathPlaceholder": "folder/note-name",
       "retrievalSettings": "Tetapan perolehan",
       "reindexing": "Mengindeks semula…",
-      "reindexDone": "Indeks dibina semula"
+      "reindexDone": "Indeks dibina semula",
+      "linksRewritten": "Mengemas kini {{count}} rujukan pautan dalam nota lain.",
+      "maintenance": {
+        "tooltip": "Penyelenggaraan",
+        "title": "Penyelenggaraan",
+        "healthy": "Semuanya kelihatan terhubung.",
+        "healthyHint": "Tiada pautan rosak atau nota yatim dalam ruang ini.",
+        "brokenLinks": "Pautan rosak",
+        "orphans": "Nota yatim",
+        "inNote": "dalam"
+      }
     },
     "common": {
       "create": "Cipta",

@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "Aún no hay espacios de conocimiento; crea uno en Conocimiento.",
+      "noteCount": "{{count}} notas",
+      "read": "Lectura",
+      "write": "Lectura y escritura"
+    },
     "title": "Espacio de conocimiento",
     "searchPlaceholder": "Buscar notas…",
     "newKb": "Nuevo espacio",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "Nombre del espacio",
     "kbRootPlaceholder": "Ruta del almacén externo (opcional, solo lectura)",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "Se actualizaron {{count}} referencias de enlace en otras notas.",
     "retrievalSettings": "Configuración de recuperación",
     "reindexing": "Reindexando…",
     "reindexDone": "Índice reconstruido",
@@ -4735,17 +4742,20 @@
       "emptyHint": "Reindexa un espacio o cambia el modelo de incrustación y el progreso aparecerá aquí.",
       "model": "Modelo: {{name}}"
     },
+    "maintenance": {
+      "tooltip": "Mantenimiento",
+      "title": "Mantenimiento",
+      "healthy": "Todo parece conectado.",
+      "healthyHint": "No hay enlaces rotos ni notas huérfanas en este espacio.",
+      "brokenLinks": "Enlaces rotos",
+      "orphans": "Notas huérfanas",
+      "inNote": "en"
+    },
     "embeddingOff": "Búsqueda vectorial desactivada",
     "embeddingModelTip": "Modelo de incrustación: {{name}} — abrir ajustes",
     "embeddingOffTip": "La búsqueda vectorial está desactivada — abrir ajustes",
     "kbRootPick": "Elegir…",
     "kbRootHint": "Déjalo vacío para un espacio interno. Las bóvedas externas son de solo lectura en la Fase 1.",
-    "kbRootInvalid": "No se pudo seleccionar esa carpeta",
-    "picker": {
-      "read": "Lectura",
-      "write": "Lectura y escritura",
-      "empty": "Aún no hay espacios de conocimiento; crea uno en Conocimiento.",
-      "noteCount": "{{count}} notas"
-    }
+    "kbRootInvalid": "No se pudo seleccionar esa carpeta"
   }
 }

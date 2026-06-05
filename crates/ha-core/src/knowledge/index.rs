@@ -86,6 +86,15 @@ pub fn reindex_note(kb_id: &str, root: &Path, rel_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// (Re)index a single note file **without** re-resolving KB links. The caller
+/// must invoke `IndexDb::reresolve_kb_links` once after a batch of these. Used by
+/// the rename link-rewriter, which touches many source notes and only needs one
+/// resolve pass at the end (avoids O(files × links) re-resolves).
+pub fn reindex_note_no_resolve(kb_id: &str, root: &Path, rel_path: &str) -> Result<()> {
+    let db = get_index_db().ok_or_else(|| anyhow::anyhow!("knowledge index not initialized"))?;
+    reindex_one(&db, kb_id, root, rel_path)
+}
+
 /// Remove a single note from the index and re-resolve KB links.
 pub fn remove_note(kb_id: &str, rel_path: &str) -> Result<()> {
     let db = get_index_db().ok_or_else(|| anyhow::anyhow!("knowledge index not initialized"))?;

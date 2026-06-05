@@ -4,9 +4,10 @@ use super::super::{
     TOOL_AGENTS_LIST, TOOL_APPLY_PATCH, TOOL_BROWSER, TOOL_DELETE_MEMORY, TOOL_EDIT, TOOL_EXEC,
     TOOL_FIND, TOOL_GET_SETTINGS, TOOL_GET_WEATHER, TOOL_GREP, TOOL_IMAGE, TOOL_ISSUE_REPORT,
     TOOL_LIST_SETTINGS_BACKUPS, TOOL_LS, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON, TOOL_MEMORY_GET,
-    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BY_TAG, TOOL_NOTE_CREATE, TOOL_NOTE_DELETE,
-    TOOL_NOTE_LINK, TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_SEARCH, TOOL_NOTE_TAGS,
-    TOOL_NOTE_UPDATE, TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY,
+    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BROKEN_LINKS, TOOL_NOTE_BY_TAG,
+    TOOL_NOTE_CREATE, TOOL_NOTE_DELETE, TOOL_NOTE_LINK, TOOL_NOTE_MOVE, TOOL_NOTE_ORPHANS,
+    TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_RENAME, TOOL_NOTE_SEARCH, TOOL_NOTE_SET_FRONTMATTER,
+    TOOL_NOTE_TAGS, TOOL_NOTE_UPDATE, TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY,
     TOOL_RESTORE_SETTINGS_BACKUP, TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT,
     TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEND, TOOL_SESSION_STATUS, TOOL_SKILL,
     TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS, TOOL_WEB_FETCH, TOOL_WRITE,
@@ -1934,6 +1935,75 @@ fn note_tools() -> Vec<ToolDefinition> {
                 "properties": {
                     "kb": { "type": "string" }
                 },
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_RENAME,
+            "Rename or move a note within a knowledge base. Inbound `[[ ]]` links in other notes are rewritten automatically so they keep resolving. `to` is the new path relative to the KB root (a new folder is created if needed). Optional `expected_file_hash` stale-write guard on the source note.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string", "description": "Knowledge base id (write access required)." },
+                    "from": { "type": "string", "description": "Current note path (folder/note)." },
+                    "to": { "type": "string", "description": "New note path (folder/note); `.md` appended if missing." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "from", "to"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_MOVE,
+            "Move a note to a different folder within a knowledge base (alias of note_rename — inbound `[[ ]]` links are rewritten automatically). `to` is the destination path relative to the KB root.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "from": { "type": "string", "description": "Current note path." },
+                    "to": { "type": "string", "description": "Destination note path." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "from", "to"],
+                "additionalProperties": false
+            }),
+        ),
+        write_tool(
+            TOOL_NOTE_SET_FRONTMATTER,
+            "Merge YAML frontmatter properties into a note (existing keys are preserved; a property set to null is removed). Optional `expected_file_hash` stale-write guard.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" },
+                    "path": { "type": "string" },
+                    "props": { "type": "object", "description": "Frontmatter key/values to set (null value removes a key)." },
+                    "expected_file_hash": { "type": "string" }
+                },
+                "required": ["kb", "path", "props"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_BROKEN_LINKS,
+            "List all broken (dangling) `[[ ]]` links in a knowledge base, with the source note + exact occurrence + unresolved target (a candidate note to create). `kb` is required.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" }
+                },
+                "required": ["kb"],
+                "additionalProperties": false
+            }),
+        ),
+        read_tool(
+            TOOL_NOTE_ORPHANS,
+            "List orphan notes (no resolved inbound or outbound link) in a knowledge base — candidates to connect into the network. `kb` is required.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "kb": { "type": "string" }
+                },
+                "required": ["kb"],
                 "additionalProperties": false
             }),
         ),

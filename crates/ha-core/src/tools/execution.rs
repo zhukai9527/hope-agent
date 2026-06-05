@@ -31,9 +31,10 @@ use super::{
     TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WRITE,
 };
 use super::{
-    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BY_TAG, TOOL_NOTE_CREATE, TOOL_NOTE_DELETE,
-    TOOL_NOTE_LINK, TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_SEARCH, TOOL_NOTE_TAGS,
-    TOOL_NOTE_UPDATE,
+    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BROKEN_LINKS, TOOL_NOTE_BY_TAG,
+    TOOL_NOTE_CREATE, TOOL_NOTE_DELETE, TOOL_NOTE_LINK, TOOL_NOTE_MOVE, TOOL_NOTE_ORPHANS,
+    TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_RENAME, TOOL_NOTE_SEARCH, TOOL_NOTE_SET_FRONTMATTER,
+    TOOL_NOTE_TAGS, TOOL_NOTE_UPDATE,
 };
 use crate::agent_config::AsyncToolPolicy;
 use crate::async_jobs::{self, JobOrigin};
@@ -1303,6 +1304,10 @@ pub async fn execute_tool_with_context(
             TOOL_NOTE_BACKLINKS => note::tool_note_backlinks(args, dispatch_ctx).await,
             TOOL_NOTE_BY_TAG => note::tool_note_by_tag(args, dispatch_ctx).await,
             TOOL_NOTE_TAGS => note::tool_note_tags(args, dispatch_ctx).await,
+            TOOL_NOTE_RENAME | TOOL_NOTE_MOVE => note::tool_note_rename(args, dispatch_ctx).await,
+            TOOL_NOTE_SET_FRONTMATTER => note::tool_note_set_frontmatter(args, dispatch_ctx).await,
+            TOOL_NOTE_BROKEN_LINKS => note::tool_note_broken_links(args, dispatch_ctx).await,
+            TOOL_NOTE_ORPHANS => note::tool_note_orphans(args, dispatch_ctx).await,
             TOOL_AGENTS_LIST => agents::tool_agents_list(args).await,
             TOOL_SESSIONS_LIST => sessions::tool_sessions_list(args).await,
             TOOL_SESSION_STATUS => sessions::tool_session_status(args).await,

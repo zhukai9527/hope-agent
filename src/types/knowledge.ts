@@ -80,6 +80,29 @@ export interface Backlink {
   srcHeadingPath?: string | null
 }
 
+/** A broken (dangling) link — feeds the maintenance panel (Phase 2). */
+export interface BrokenLink {
+  srcNoteId: number
+  srcRelPath: string
+  srcTitle: string
+  /** Unresolved target inside `[[ ]]` (a candidate note to create). */
+  targetRef: string
+  rawText: string
+  srcStartLine: number
+  srcStartCol: number
+  srcHeadingPath?: string | null
+}
+
+/**
+ * Result of a note/folder rename or move that also rewrites inbound `[[ ]]`
+ * links (#9). Wire shape of `kb_note_rename_cmd` / `kb_rename_dir_cmd`.
+ */
+export interface RenameOutcome {
+  newRel: string
+  filesChanged: number
+  linksRewritten: number
+}
+
 export interface NoteReadResult {
   kbId: string
   noteId: number

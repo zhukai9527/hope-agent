@@ -306,6 +306,14 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_backlinks),
         )
         .route(
+            "/knowledge/{kb_id}/broken-links",
+            get(routes::knowledge::kb_broken_links),
+        )
+        .route(
+            "/knowledge/{kb_id}/orphans",
+            get(routes::knowledge::kb_orphans),
+        )
+        .route(
             "/knowledge/{kb_id}/files/read",
             get(routes::knowledge::kb_file_read),
         )

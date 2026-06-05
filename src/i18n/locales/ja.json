@@ -4698,6 +4698,12 @@
     }
   },
   "knowledge": {
+    "picker": {
+      "empty": "ナレッジ空間がまだありません。「ナレッジ空間」で作成してください。",
+      "noteCount": "{{count}} 件のノート",
+      "read": "読み取り",
+      "write": "読み書き"
+    },
     "title": "ナレッジスペース",
     "searchPlaceholder": "ノートを検索…",
     "newKb": "新規スペース",
@@ -4721,6 +4727,7 @@
     "kbNamePlaceholder": "スペース名",
     "kbRootPlaceholder": "外部ボールトのパス（任意、読み取り専用）",
     "notePathPlaceholder": "folder/note-name",
+    "linksRewritten": "他のノート内の {{count}} 件のリンク参照を更新しました。",
     "retrievalSettings": "検索設定",
     "reindexing": "再インデックス中…",
     "reindexDone": "インデックスを再構築しました",
@@ -4735,17 +4742,20 @@
       "emptyHint": "空間を再インデックス、または埋め込みモデルを切り替えると、ここに進捗が表示されます。",
       "model": "モデル：{{name}}"
     },
+    "maintenance": {
+      "tooltip": "メンテナンス",
+      "title": "メンテナンス",
+      "healthy": "リンクは正常につながっています。",
+      "healthyHint": "この空間に壊れたリンクや孤立ノートはありません。",
+      "brokenLinks": "壊れたリンク",
+      "orphans": "孤立ノート",
+      "inNote": "場所:"
+    },
     "embeddingOff": "ベクトル検索オフ",
     "embeddingModelTip": "埋め込みモデル：{{name}} · 設定を開く",
     "embeddingOffTip": "ベクトル検索はオフです · 設定を開く",
     "kbRootPick": "選択…",
     "kbRootHint": "空欄なら内部空間を作成します。外部Vaultは第1段階では読み取り専用です。",
-    "kbRootInvalid": "そのフォルダーを選択できませんでした",
-    "picker": {
-      "read": "読み取り",
-      "write": "読み書き",
-      "empty": "ナレッジ空間がまだありません。「ナレッジ空間」で作成してください。",
-      "noteCount": "{{count}} 件のノート"
-    }
+    "kbRootInvalid": "そのフォルダーを選択できませんでした"
   }
 }
