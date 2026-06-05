@@ -82,6 +82,7 @@ const MAX_DOM_MESSAGES = 200
 const UNLOAD_BATCH = 30
 const COMPACT_USER_ANCHOR_LEAD_PX = 32
 const COMPACT_USER_ANCHOR_EXIT_MS = 200
+const ASK_USER_FOLLOW_FRAMES = 16
 
 function shouldPassExecutionStateToBubble(
   isLast: boolean,
@@ -137,6 +138,8 @@ export default function MessageList({
   const [compactUserAnchorMounted, setCompactUserAnchorMounted] = useState(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const askUserFollowRafRef = useRef<number | null>(null)
+  const lastAskUserFollowKeyRef = useRef<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -258,6 +261,7 @@ export default function MessageList({
     }
     return out
   }, [messages, displayedStart])
+  const pendingQuestionRequestId = pendingQuestionGroup?.requestId ?? null
 
   const isTimelineMode = displayMode === "timeline"
   const compactUserAnchor = useMemo(() => {
@@ -390,6 +394,60 @@ export default function MessageList({
     if (!atBottomRef.current || userScrollLockRef.current) return
     el.scrollTop = el.scrollHeight
   }, [messages, sessionKey])
+
+  // ask_user_question renders in the footer, not as a new message row. When
+  // the card appears, `messages` may be unchanged, so the regular follow-bottom
+  // effect above does not run. Force the pending interaction into view and
+  // keep pinning through the collapse animation frames.
+  useLayoutEffect(() => {
+    if (!pendingQuestionRequestId) {
+      lastAskUserFollowKeyRef.current = null
+      if (askUserFollowRafRef.current !== null) {
+        cancelAnimationFrame(askUserFollowRafRef.current)
+        askUserFollowRafRef.current = null
+      }
+      return
+    }
+
+    const followKey = `${sessionKey}:${pendingQuestionRequestId}`
+    if (lastAskUserFollowKeyRef.current === followKey) return
+    lastAskUserFollowKeyRef.current = followKey
+
+    const pinToBottom = () => {
+      const el = containerRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    }
+
+    if (askUserFollowRafRef.current !== null) {
+      cancelAnimationFrame(askUserFollowRafRef.current)
+      askUserFollowRafRef.current = null
+    }
+
+    userScrollLockRef.current = false
+    atBottomRef.current = true
+    setAtBottom(true)
+    pinToBottom()
+
+    let framesLeft = ASK_USER_FOLLOW_FRAMES
+    const followFrame = () => {
+      pinToBottom()
+      framesLeft -= 1
+      if (framesLeft > 0) {
+        askUserFollowRafRef.current = requestAnimationFrame(followFrame)
+      } else {
+        askUserFollowRafRef.current = null
+      }
+    }
+    askUserFollowRafRef.current = requestAnimationFrame(followFrame)
+
+    return () => {
+      if (askUserFollowRafRef.current !== null) {
+        cancelAnimationFrame(askUserFollowRafRef.current)
+        askUserFollowRafRef.current = null
+      }
+    }
+  }, [pendingQuestionRequestId, sessionKey])
 
   // Sync state to ref on session swap (state lags ref by one effect tick,
   // only affects jump-to-latest button paint).
