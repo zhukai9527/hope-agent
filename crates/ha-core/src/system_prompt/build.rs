@@ -718,6 +718,7 @@ mod memory_section_tests {
             None,
             false,
             Some("/srv/projects/demo"),
+            None,
             SessionMode::Default,
         );
         assert!(
@@ -745,6 +746,7 @@ mod memory_section_tests {
             None,
             false,
             None,
+            None,
             SessionMode::Default,
         );
         let out_blank = build(
@@ -758,6 +760,7 @@ mod memory_section_tests {
             None,
             false,
             Some("   "),
+            None,
             SessionMode::Default,
         );
         assert!(
@@ -807,6 +810,7 @@ mod memory_section_tests {
             None,
             false,
             None,
+            None,
             SessionMode::Default,
         );
         assert!(
@@ -830,6 +834,7 @@ mod memory_section_tests {
             None,
             None,
             false,
+            None,
             None,
             SessionMode::Default,
         );
@@ -855,6 +860,7 @@ mod memory_section_tests {
             None,
             false,
             None,
+            None,
             SessionMode::Default,
         );
         definition.config.avatar = None;
@@ -868,6 +874,7 @@ mod memory_section_tests {
             None,
             None,
             false,
+            None,
             None,
             SessionMode::Default,
         );
@@ -894,6 +901,7 @@ mod memory_section_tests {
             None,
             false,
             None,
+            None,
             SessionMode::Default,
         );
         assert!(
@@ -918,6 +926,7 @@ mod memory_section_tests {
             None,
             None,
             false,
+            None,
             None,
             SessionMode::Default,
         );
@@ -945,6 +954,7 @@ mod memory_section_tests {
             None,
             false,
             None,
+            None,
             SessionMode::Default,
         );
         assert!(
@@ -969,6 +979,7 @@ mod memory_section_tests {
             None,
             None,
             true,
+            None,
             None,
             SessionMode::Default,
         );
