@@ -4760,6 +4760,7 @@
     "readOnly": "只读（外部库）",
     "mode": {
       "source": "源码",
+      "live": "实时",
       "split": "分屏",
       "preview": "预览"
     },
@@ -4779,6 +4780,7 @@
     "outline": "大纲",
     "outlineEmpty": "无标题",
     "aiRewrite": "AI 改写",
+    "referenceInChat": "引用到聊天",
     "aiRewriteScope": "正在改写：{{scope}}",
     "aiRewriteSelection": "选中内容",
     "aiRewriteWholeNote": "整篇笔记",

@@ -4749,6 +4749,7 @@
     "readOnly": "読み取り専用（外部ボールト）",
     "mode": {
       "source": "ソース",
+      "live": "ライブ",
       "split": "分割",
       "preview": "プレビュー"
     },
@@ -4764,6 +4765,7 @@
     "outline": "アウトライン",
     "outlineEmpty": "見出しがありません",
     "aiRewrite": "AI リライト",
+    "referenceInChat": "チャットで参照",
     "aiRewriteScope": "リライト対象：{{scope}}",
     "aiRewriteSelection": "選択範囲",
     "aiRewriteWholeNote": "ノート全体",

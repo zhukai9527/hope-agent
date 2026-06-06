@@ -132,7 +132,7 @@ Hope Agent 已有三层知识容器，知识库（Knowledge Base, KB）是平行
 | D10 | KB 访问作用域 | **默认 deny + 显式 attach**：普通 session 默认无 KB 访问，用户 attach 后才可 `note_search/read`；project 可 attach、项目内 session 继承；session attach 可叠加 project attach，但**当前生效 KB 必须 UI 可见列出**；**incognito 强制零访问/零写/零被动召回**；**IM Phase 1 一律禁用 KB 访问**（即便有 project/session attach），Phase 2 才开 account/chat 级显式 opt-in，群聊单独确认 | KB 不能像 memory 那样默认全局可见，否则工作 vault / 私人 vault / IM 会话互相泄漏。唯一入口 `effective_kb_access(KnowledgeAccessContext { session_id, source, origin_source, is_incognito, channel_info? })`（`is_incognito` 第一步 short-circuit 归零，#4）——**必须带 `source` + `origin_source`（调用链根，#2）**`∈ Gui\|HttpUi\|AgentTool\|IM\|Cron\|Subagent`：① 同一 session 可被 GUI 与 IM 共用/接管，仅凭 session_id 判不出本次是否 IM turn；② IM turn spawn 的子 Agent 不能借 `source=Subagent` 重新拿回权限——**cap 取整条调用链最严值**。`note_search(kb?)` 省略 `kb` 时只搜可访问集合，绝不搜全局。详见 [KB 访问作用域](#kb-访问作用域与预览鉴权) |
 | D11 | 外部 vault Phase 1 可写性 | **外部 root Phase 1 彻底只读**——AI 不写、GUI 也不写，写入口统一拒绝并 UI 显示只读；内部 `notes/` 完整读写。GUI 写外部 + `resolve_writable(actor=user\|agent)` 拆分 + mtime/hash 冲突检测整体推 Phase 2 | 原草案"GUI 可写外部 Phase 1"与"冲突检测 Phase 2"自相矛盾，正好踩 lost-update。**Phase 1 价值是「点亮老 vault」不是「托管老 vault」**，果断只读，避免提前付清冲突检测/原子写/半写/三方 rename 噪声全套 |
 | D12 | 检索粒度 | **Phase 1 即上 chunk 级**：`note` 只存文件级元数据；新增 `note_chunk(note_id, chunk_index, heading_path, body, start_offset, end_offset, start_line, start_col, end_line, end_col, content_hash, embedding_signature)`（坐标系见 D14）；FTS5 external-content 与 vec 都建在 chunk 上；检索返回 chunk hits 再聚合回 note（带命中片段 + heading 定位） | 整篇 note 一个 embedding 会在日报/会议纪要/长文剪藏上失效（超 embedding 上限 + 命中整篇却定位不到段落）。先做 note 级、后迁 chunk 级要改 schema/检索/UI hit 展示/工具返回结构，更疼。`content_hash` 支持按 chunk 增量 re-embedding 省成本 |
-| D13 | Markdown 编辑器选型 | **Phase 1 = CodeMirror 6（强 source editor）+ 分屏/同屏实时预览（Source / Preview / Split 三模式）**；预览复用现有 streamdown 渲染栈。**不**第一步上 Tiptap/Milkdown（WYSIWYG）。现状代码**无任何编辑器库**（只有 streamdown 渲染 + 裸 textarea），故 CM6 是**新增前端依赖**。Phase 2 在 CM6 上增强（inline preview / wikilink hover card / heading outline / 同步滚动 / AI rewrite diff）；Phase 3 再评估 Milkdown/Tiptap 作为可选「视觉编辑模式」，**不替代 CM6 底座** | 第一步直接上 Tiptap/Milkdown WYSIWYG | 知识空间核心是**真实 `.md` + wikilink + 字符 offset + AI patch + diff + Obsidian/Logseq 兼容**，要求**源文档稳定可控**。CM6 是可扩展 source editor，原生服务 `[[`/`#tag` 补全、broken-link lint、heading outline、AI patch 定位，decorations 把 wikilink 渲成可点 chip 但**底层仍纯文本**（守"`.md` 唯一真相"、对齐 D12 offset、D11 外部只读 lint）。Tiptap/Milkdown 是 Markdown⇄ProseMirror JSON 转换层（Markdown ext 仍 beta），对 wikilink/frontmatter/精确 offset/局部 patch 多一层序列化风险 |
+| D13 | Markdown 编辑器选型 | **Phase 1 = CodeMirror 6（强 source editor）+ 分屏/同屏实时预览（Source / Preview / Split 三模式）**；预览复用现有 streamdown 渲染栈。**不**第一步上 Tiptap/Milkdown（WYSIWYG）。现状代码**无任何编辑器库**（只有 streamdown 渲染 + 裸 textarea），故 CM6 是**新增前端依赖**。Phase 2 在 CM6 上增强（inline preview / wikilink hover card / heading outline / 同步滚动 / AI rewrite diff）；**Phase 3 评估 resolved（Batch I）：不引入 Milkdown/Tiptap，改以 CM6 live-preview 模式（`live`：syntaxTree 隐藏语法符号 + 光标行还原）逼近 WYSIWYG——与 Obsidian 自身（同为 CM6）一致、零序列化风险；WYSIWYG 引擎永不替代 CM6 底座** | 第一步直接上 Tiptap/Milkdown WYSIWYG | 知识空间核心是**真实 `.md` + wikilink + 字符 offset + AI patch + diff + Obsidian/Logseq 兼容**，要求**源文档稳定可控**。CM6 是可扩展 source editor，原生服务 `[[`/`#tag` 补全、broken-link lint、heading outline、AI patch 定位，decorations 把 wikilink 渲成可点 chip 但**底层仍纯文本**（守"`.md` 唯一真相"、对齐 D12 offset、D11 外部只读 lint）。Tiptap/Milkdown 是 Markdown⇄ProseMirror JSON 转换层（Markdown ext 仍 beta），对 wikilink/frontmatter/精确 offset/局部 patch 多一层序列化风险 |
 | D14 | offset 坐标系契约 | **持久 offset = Unicode 码点偏移（索引内部）；跨端 UI 定位主字段 = `line`+`col`（码点列）**。硬规范：`line` **1-based**，`col` **0-based 码点列**（tab 记 1 码点、不展开），按 `\n` 分行、`\r\n` 视作单个行终止符（`\r` 不计入 col）、**不改写原文件**。CM6（内部 UTF-16）跳转/检索命中定位走 line/col，前端做 UTF-16↔码点转换。**`note_patch` 不用坐标寻址**——走 `old/new` 文本匹配（仿 `edit` 工具，对模型更鲁棒，坐标会漂移） | 直接用单一 offset 跨端传 / note_patch 用坐标 | 三套坐标（Rust UTF-8 字节 / 码点 / CM6 UTF-16）+ CRLF + tab 全是错位源，必须钉死 base/换行/tab；LLM 产不准坐标且坐标随上文漂移，patch 用文本匹配更稳 |
 
 ### 待定决策
@@ -675,19 +675,21 @@ push 前必须满足（来自 [AGENTS.md](../../AGENTS.md)）：
 - ✅ `![[ ]]` 嵌入 / transclusion；`[[` 自动补全。〔Batch B（补全 Phase 1）〕
 - ✅ Layer 1 进阶工具：`note_rename / move`（**多文件 `[[ ]]` 链接完整性改写**，#9）、`note_similar / related / suggest_links / graph / orphans / broken_links`、`note_distill / moc / session_to_note`。〔Batch A + C〕
 - ✅ Layer 2 自主维护：调度（primary-gated idle/cron + 串行锁，镜像 dreaming）+ draft 审阅队列（`sessions.db` 真相源）+ 8 类任务（自动建链 / 孤岛救援 / 补全属性 / 去重合并 / 知识缺口 / 自动标签 / MOC 维护 / 记忆→笔记）+ owner 平面落地 + 设置三件套 + 维护面板审阅队列。〔Batch E〕
-- **外部 root 放开写（D11）**：`resolve_writable(actor=user|agent)` 拆分 + 写冲突检测（mtime/hash 比对 / `.conflict` 旁车）+ GUI 编辑外部 + 忽略规则配置 UI + 大库索引进度打磨。〔Batch F，待〕
-- **IM KB 访问 opt-in（D10）**：account / chat 级显式授权，群聊单独确认。〔Batch F，待〕
-- **CM6 编辑器增强（D13）**：✅ wikilink hover card / heading outline / 源码-预览同步滚动 / 源码内联图片 + KaTeX 公式预览（光标移入还原可编辑）/ AI rewrite diff。〔Batch D；「选中引用到聊天」仍待〕
+- ✅ **外部 root 放开写（D11）**：`allow_external_writes` per-KB opt-in（owner GUI）解锁外部写，冲突中止靠既有 stale-write guard；后台自主维护永不写外部。〔Batch F〕
+- ✅ **IM KB 访问 opt-in（D10）**：account 级 `kbAccessOptIn` + 群聊 per-chat `/kb on` 确认，全链 fail-closed。〔Batch F〕
+- ✅ **CM6 编辑器增强（D13）**：wikilink hover card / heading outline / 源码-预览同步滚动 / 源码内联图片 + KaTeX 公式预览（光标移入还原可编辑）/ AI rewrite diff〔Batch D〕；「选中引用到聊天」（选区→`[[note#heading]]` + 自动 attach read + incognito 守护）〔Batch I〕。
 
 ### Phase 3（深度网络 + 融合）
 
-- 块级引用（读 Obsidian `^block-id` + Logseq `((uuid))`）。
-- 原生大纲可选层（Logseq block 树 + `((块引用))`，D8）。
-- Layer 2 进阶：去重合并、孤岛救援、知识缺口检测、自动打标签。
-- 读取桥通道 ③：被动「相关笔记标题」提示（awareness 风格 cache block，opt-in）。
-- 可选编排工具「一次拿记忆 + 笔记」（store-aware 合并，**不动 `recall_memory`**，D7）；记忆系统反向借鉴知识库检索。
-- 评估 Milkdown/Tiptap 作为可选「视觉编辑模式」（D13，**不替代 CM6 底座**）。
-- Canvas 知识白板。
+> 执行批次 I → H → G → J（节奏同 Phase 2，每批暂停审再提交）。
+
+- 块级引用（**读 + 写** Obsidian `^block-id` + Logseq `((uuid))`，assign block-id 受 stale-write / D11 外部只读 / WS7 三门控）。〔Batch G，待〕
+- 原生大纲可选层（缩进 bullet → 可折叠**只读 outline 渲染**视图；D8 红线：不替代 CM6 底座 / 不破坏性转写 .md）。〔Batch G，待〕
+- ~~Layer 2 进阶：去重合并、孤岛救援、知识缺口检测、自动打标签。~~ ✅ 已在 Batch E 的 8 类自主维护任务中落地。
+- 读取桥通道 ③：被动「相关笔记标题」提示（awareness 风格 cache block，opt-in）。〔Batch H，待〕
+- 可选编排工具「一次拿记忆 + 笔记」（store-aware 合并，**不动 `recall_memory`**，D7）；记忆系统反向借鉴知识库检索。〔Batch H，待〕
+- ✅ **视觉编辑模式评估（D13）resolved**：**不引入 Milkdown/Tiptap WYSIWYG 引擎**。结论理由——Markdown⇄ProseMirror 往返序列化会规范化空白/换行/frontmatter/wikilink，破坏「.md 唯一真相 + D14 码点 offset + `note_patch` old/new 文本命中 + stale-write raw BLAKE3 guard」四契约，且把 power-user 的自由 markdown 改脏（效果更差）。改以 **CM6 live-preview 模式**交付（NoteEditorMode `live`：syntaxTree 驱动隐藏 标题/粗体/斜体/删除线/行内码/列表 语法符号，光标所在行还原 raw；图片/数学复用既有 inline widget），与 Obsidian 自身（同为 CM6）的 live preview 同构、零序列化风险。Milkdown/Tiptap 永不替代 CM6 底座。〔Batch I〕
+- Canvas 知识白板（**增强图谱视图**：节点拖拽固定 + 布局持久化落 `sessions.db`；不新建 `.canvas` 互通白板）。〔Batch J，待〕
 
 ---
 

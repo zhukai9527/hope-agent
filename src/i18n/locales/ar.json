@@ -4749,6 +4749,7 @@
     "readOnly": "للقراءة فقط (خزنة خارجية)",
     "mode": {
       "source": "المصدر",
+      "live": "مباشر",
       "split": "مقسَّم",
       "preview": "معاينة"
     },
@@ -4764,6 +4765,7 @@
     "outline": "المخطط",
     "outlineEmpty": "لا توجد عناوين",
     "aiRewrite": "إعادة الكتابة بالذكاء الاصطناعي",
+    "referenceInChat": "الإشارة في الدردشة",
     "aiRewriteScope": "جارٍ إعادة الكتابة: {{scope}}",
     "aiRewriteSelection": "التحديد",
     "aiRewriteWholeNote": "الملاحظة كاملة",

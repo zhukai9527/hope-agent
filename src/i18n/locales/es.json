@@ -4749,6 +4749,7 @@
     "readOnly": "Solo lectura (almacén externo)",
     "mode": {
       "source": "Origen",
+      "live": "En vivo",
       "split": "Dividido",
       "preview": "Vista previa"
     },
@@ -4764,6 +4765,7 @@
     "outline": "Esquema",
     "outlineEmpty": "Sin encabezados",
     "aiRewrite": "Reescribir con IA",
+    "referenceInChat": "Referenciar en el chat",
     "aiRewriteScope": "Reescribiendo: {{scope}}",
     "aiRewriteSelection": "selección",
     "aiRewriteWholeNote": "nota completa",

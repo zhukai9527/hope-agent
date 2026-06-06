@@ -4749,6 +4749,7 @@
     "readOnly": "唯讀（外部庫）",
     "mode": {
       "source": "原始碼",
+      "live": "即時",
       "split": "分割",
       "preview": "預覽"
     },
@@ -4764,6 +4765,7 @@
     "outline": "大綱",
     "outlineEmpty": "無標題",
     "aiRewrite": "AI 改寫",
+    "referenceInChat": "引用到聊天",
     "aiRewriteScope": "正在改寫：{{scope}}",
     "aiRewriteSelection": "選取內容",
     "aiRewriteWholeNote": "整篇筆記",

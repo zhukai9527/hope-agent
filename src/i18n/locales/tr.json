@@ -4749,6 +4749,7 @@
     "readOnly": "Salt okunur (harici kasa)",
     "mode": {
       "source": "Kaynak",
+      "live": "Canlı",
       "split": "Bölünmüş",
       "preview": "Önizleme"
     },
@@ -4764,6 +4765,7 @@
     "outline": "Anahat",
     "outlineEmpty": "Başlık yok",
     "aiRewrite": "AI ile yeniden yaz",
+    "referenceInChat": "Sohbette referans ver",
     "aiRewriteScope": "Yeniden yazılıyor: {{scope}}",
     "aiRewriteSelection": "seçim",
     "aiRewriteWholeNote": "tüm not",

@@ -160,6 +160,13 @@ function collectMatches(text: string): Match[] {
   return items
 }
 
+/** The `[from, to)` spans this field replaces with image/math widgets. The live-
+ *  preview field (livePreviewExtensions.ts) skips these so the two never emit
+ *  overlapping replace decorations. */
+export function previewMatchRanges(text: string): Array<[number, number]> {
+  return collectMatches(text).map((m) => [m.from, m.to])
+}
+
 // Markdown code contexts — images / math inside these are literal source, not to be
 // rendered (matches what the real preview shows). Container node names from
 // @codemirror/lang-markdown's Lezer grammar.

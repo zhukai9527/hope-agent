@@ -32,7 +32,7 @@ import { parseOpenSettingsSection } from "@/components/settings/openSettingsEven
 import OnboardingWizard from "@/components/onboarding"
 import { CURRENT_ONBOARDING_VERSION } from "@/components/onboarding/version"
 import IconSidebar from "@/components/common/IconSidebar"
-import ChatScreen from "@/components/chat/ChatScreen"
+import ChatScreen, { type ChatInsert } from "@/components/chat/ChatScreen"
 import StarrySky from "@/components/common/StarrySky"
 import DangerousModeBanner from "@/components/common/DangerousModeBanner"
 import MissingModelDialog from "@/components/local-model/MissingModelDialog"
@@ -75,8 +75,9 @@ export default function App() {
   const [dashboardInitialReportId, setDashboardInitialReportId] = useState<string | null>(null)
   const [userAvatar, setUserAvatar] = useState<string | null>(null)
   const [pendingSessionId, setPendingSessionId] = useState<string | undefined>(undefined)
-  // PlansView pushes `@plan:<short_id>:v<n>` tokens here; ChatInput appends and clears.
-  const [pendingChatInsert, setPendingChatInsert] = useState<string | undefined>(undefined)
+  // PlansView pushes `@plan:<short_id>:v<n>` tokens here; KnowledgeView pushes
+  // `[[note]]` refs (with a KB to auto-attach). ChatScreen appends + clears.
+  const [pendingChatInsert, setPendingChatInsert] = useState<ChatInsert | undefined>(undefined)
   const [totalUnreadCount, setTotalUnreadCount] = useState(0)
   const [sessionsRefreshTrigger, setSessionsRefreshTrigger] = useState(0)
   const { pendingUpdate: globalPendingUpdate } = useDesktopUpdateStore()
@@ -578,7 +579,7 @@ export default function App() {
                       setView("chat")
                     }}
                     onInsertMention={(token) => {
-                      setPendingChatInsert(token)
+                      setPendingChatInsert({ token })
                       setView("chat")
                     }}
                   />
@@ -595,6 +596,10 @@ export default function App() {
                   <KnowledgeView
                     onBack={() => setView("chat")}
                     onOpenSettings={() => handleOpenSettings("knowledge")}
+                    onInsertMention={(insert) => {
+                      setPendingChatInsert(insert)
+                      setView("chat")
+                    }}
                   />
                 </Suspense>
               )}

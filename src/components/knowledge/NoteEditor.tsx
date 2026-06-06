@@ -21,6 +21,7 @@ import { fetchNoteRef } from "./noteRefFetch"
 import NoteTransclusionView from "./NoteTransclusionView"
 import { cleanEmbedRef, noteExcerpt } from "./transclusionParse"
 
+import { noteLiveDecorations, noteLiveTheme } from "./cm/livePreviewExtensions"
 import { notePreviewTheme, notePreviewWidgets } from "./cm/previewExtensions"
 import {
   brokenLinkLinter,
@@ -109,6 +110,9 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
   const kbIdRef = useRef<string | null | undefined>(kbId)
   const bustRef = useRef(embedCacheKey)
   const readOnlyComp = useRef(new Compartment())
+  // Toggles the live-preview decorations (syntax-marker hiding) without rebuilding
+  // the editor when switching between source / live / split.
+  const liveComp = useRef(new Compartment())
   // True only while we push an external `value` into the editor programmatically
   // (opening / switching a note). The updateListener checks it so a programmatic
   // doc swap is NOT reported as a user edit — otherwise just opening a note marks
@@ -120,7 +124,7 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
   kbIdRef.current = kbId
   bustRef.current = embedCacheKey
 
-  const showSource = mode === "source" || mode === "split"
+  const showSource = mode === "source" || mode === "split" || mode === "live"
   const showPreview = mode === "preview" || mode === "split"
 
   // Seed the transclusion cycle guard with the note itself so `![[self]]` is
@@ -161,6 +165,8 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
         ),
         notePreviewTheme,
         notePreviewWidgets(),
+        noteLiveTheme,
+        liveComp.current.of(mode === "live" ? [noteLiveDecorations()] : []),
         keymap.of([
           ...closeBracketsKeymap,
           ...defaultKeymap,
@@ -234,6 +240,17 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
       ]),
     })
   }, [readOnly])
+
+  // Toggle live-preview decorations on mode change without rebuilding the editor.
+  // (The build effect only re-runs on a source-visibility flip; source↔live↔split
+  // all keep the source pane mounted, so reconfigure the compartment instead.)
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: liveComp.current.reconfigure(mode === "live" ? [noteLiveDecorations()] : []),
+    })
+  }, [mode])
 
   // Sync scroll between the source and preview panes in split mode (WS9): map by
   // scroll fraction, with a one-frame lock so the programmatic scroll on one pane

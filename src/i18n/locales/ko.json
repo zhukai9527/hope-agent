@@ -4749,6 +4749,7 @@
     "readOnly": "읽기 전용(외부 보관소)",
     "mode": {
       "source": "소스",
+      "live": "라이브",
       "split": "분할",
       "preview": "미리보기"
     },
@@ -4764,6 +4765,7 @@
     "outline": "개요",
     "outlineEmpty": "제목 없음",
     "aiRewrite": "AI 다시 쓰기",
+    "referenceInChat": "채팅에서 참조",
     "aiRewriteScope": "다시 쓰는 중: {{scope}}",
     "aiRewriteSelection": "선택 영역",
     "aiRewriteWholeNote": "전체 노트",

@@ -4760,6 +4760,7 @@
     "readOnly": "Read-only (external vault)",
     "mode": {
       "source": "Source",
+      "live": "Live",
       "split": "Split",
       "preview": "Preview"
     },
@@ -4779,6 +4780,7 @@
     "outline": "Outline",
     "outlineEmpty": "No headings",
     "aiRewrite": "AI rewrite",
+    "referenceInChat": "Reference in chat",
     "aiRewriteScope": "Rewriting: {{scope}}",
     "aiRewriteSelection": "selection",
     "aiRewriteWholeNote": "whole note",

@@ -4749,6 +4749,7 @@
     "readOnly": "Только для чтения (внешнее хранилище)",
     "mode": {
       "source": "Исходник",
+      "live": "Живой",
       "split": "Разделённый",
       "preview": "Предпросмотр"
     },
@@ -4764,6 +4765,7 @@
     "outline": "Структура",
     "outlineEmpty": "Нет заголовков",
     "aiRewrite": "ИИ-переписывание",
+    "referenceInChat": "Сослаться в чате",
     "aiRewriteScope": "Переписывается: {{scope}}",
     "aiRewriteSelection": "выделение",
     "aiRewriteWholeNote": "вся заметка",

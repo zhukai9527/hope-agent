@@ -4749,6 +4749,7 @@
     "readOnly": "Baca sahaja (bilik kebal luaran)",
     "mode": {
       "source": "Sumber",
+      "live": "Langsung",
       "split": "Pisah",
       "preview": "Pratonton"
     },
@@ -4764,6 +4765,7 @@
     "outline": "Rangka",
     "outlineEmpty": "Tiada tajuk",
     "aiRewrite": "Tulis semula dengan AI",
+    "referenceInChat": "Rujuk dalam sembang",
     "aiRewriteScope": "Menulis semula: {{scope}}",
     "aiRewriteSelection": "pilihan",
     "aiRewriteWholeNote": "seluruh nota",

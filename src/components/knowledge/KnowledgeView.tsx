@@ -15,6 +15,7 @@ import {
   Loader2,
   Lock,
   FolderInput,
+  MessageSquareQuote,
   Pencil,
   Plus,
   RefreshCw,
@@ -72,16 +73,32 @@ import KnowledgeJobsButton from "./KnowledgeJobsButton"
 import KnowledgeMaintenanceButton from "./KnowledgeMaintenanceButton"
 import NoteEditor, { type NoteEditorHandle } from "./NoteEditor"
 import { buildKnownTargets, type WikilinkData } from "./cm/wikilinkExtensions"
+import { parseHeadings } from "./outline"
+import { formatNoteInsertion, relPathToken } from "@/components/chat/note-mention/noteTokens"
+
+/** Reference payload pushed to the chat composer (Phase 3 "reference in chat"):
+ *  the `[[note]]` token plus the KB to auto-attach (read) so the injection at
+ *  send time isn't silently dropped by `effective_kb_access`. */
+export interface KnowledgeMentionInsert {
+  token: string
+  attachKbId?: string
+}
 
 interface KnowledgeViewProps {
   onBack: () => void
   /** Jump to Settings → Knowledge (embedding / retrieval config). */
   onOpenSettings?: () => void
+  /** Push a `[[note]]` reference into the chat composer (and switch to chat). */
+  onInsertMention?: (insert: KnowledgeMentionInsert) => void
 }
 
 type SaveStatus = "idle" | "saved" | "failed"
 
-export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewProps) {
+export default function KnowledgeView({
+  onBack,
+  onOpenSettings,
+  onInsertMention,
+}: KnowledgeViewProps) {
   const { t } = useTranslation()
   const tx = getTransport()
   // Desktop can reveal real files in the OS file manager; HTTP/Web cannot.
@@ -1670,6 +1687,43 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                     </Button>
                   </IconTip>
                 )}
+                {onInsertMention && openPath && openKbId && (
+                  <IconTip label={t("knowledge.referenceInChat", "Reference in chat")}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() => {
+                        // Build `[[relPath]]` (path form — unambiguous through the
+                        // resolver). With a selection, append the nearest heading
+                        // above it as a human-readable anchor (`[[relPath#Heading]]`);
+                        // the injection still pulls the whole note today.
+                        let inner = relPathToken(openPath)
+                        const sel = editorRef.current?.getSelection()
+                        if (sel && sel.from !== sel.to) {
+                          const selLine = (editorValue.slice(0, sel.from).match(/\n/g)?.length ?? 0) + 1
+                          let nearest: string | undefined
+                          for (const h of parseHeadings(editorValue)) {
+                            if (h.line <= selLine) nearest = h.text
+                            else break
+                          }
+                          // Strip chars that break the `[[ ]]` grammar (the inner
+                          // stops at the first `]`/newline; `#`/`|` re-split it), so
+                          // a heading like `## Section [done]` can't leave a stray
+                          // `]` or a bogus anchor in the composer.
+                          const anchor = nearest?.replace(/[[\]|#\n\r]/g, "").trim()
+                          if (anchor) inner = `${inner}#${anchor}`
+                        }
+                        onInsertMention({
+                          token: formatNoteInsertion(inner),
+                          attachKbId: openKbId,
+                        })
+                      }}
+                    >
+                      <MessageSquareQuote className="h-3.5 w-3.5" />
+                    </Button>
+                  </IconTip>
+                )}
                 <ModeSwitch mode={mode} onChange={setMode} />
                 {!readOnly && (
                   <Button
@@ -2384,7 +2438,7 @@ function ModeSwitch({
   const { t } = useTranslation()
   return (
     <div className="flex overflow-hidden rounded-md border border-border-soft/60">
-      {(["source", "split", "preview"] as NoteEditorMode[]).map((m) => (
+      {(["source", "live", "split", "preview"] as NoteEditorMode[]).map((m) => (
         <button
           key={m}
           onClick={() => onChange(m)}

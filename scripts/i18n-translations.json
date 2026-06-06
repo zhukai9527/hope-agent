@@ -1007,7 +1007,8 @@
       "mode": {
         "source": "ソース",
         "split": "分割",
-        "preview": "プレビュー"
+        "preview": "プレビュー",
+        "live": "ライブ"
       },
       "emptyEditor": "表示または編集するノートを選択してください。",
       "searchResults": "検索結果",
@@ -1078,7 +1079,8 @@
       "aiRewriteApply": "適用",
       "aiRewriteFailed": "AI リライトに失敗しました",
       "allowExternalWrites": "この外部保管庫の編集を許可",
-      "allowExternalWritesHint": "外部保管庫は既定で読み取り専用です。有効にすると、エディタと AI ツールが連携フォルダーへ書き込めます。バックグラウンドの自動メンテナンスは外部保管庫に書き込みません。"
+      "allowExternalWritesHint": "外部保管庫は既定で読み取り専用です。有効にすると、エディタと AI ツールが連携フォルダーへ書き込めます。バックグラウンドの自動メンテナンスは外部保管庫に書き込みません。",
+      "referenceInChat": "チャットで参照"
     },
     "common": {
       "create": "作成",
@@ -2094,7 +2096,8 @@
       "mode": {
         "source": "소스",
         "split": "분할",
-        "preview": "미리보기"
+        "preview": "미리보기",
+        "live": "라이브"
       },
       "emptyEditor": "보거나 편집할 노트를 선택하세요.",
       "searchResults": "검색 결과",
@@ -2165,7 +2168,8 @@
       "aiRewriteApply": "적용",
       "aiRewriteFailed": "AI 다시 쓰기 실패",
       "allowExternalWrites": "이 외부 보관함 편집 허용",
-      "allowExternalWritesHint": "외부 보관함은 기본적으로 읽기 전용입니다. 활성화하면 편집기와 AI 도구가 연결된 폴더에 쓸 수 있습니다. 백그라운드 자동 유지관리는 외부 보관함에 쓰지 않습니다."
+      "allowExternalWritesHint": "외부 보관함은 기본적으로 읽기 전용입니다. 활성화하면 편집기와 AI 도구가 연결된 폴더에 쓸 수 있습니다. 백그라운드 자동 유지관리는 외부 보관함에 쓰지 않습니다.",
+      "referenceInChat": "채팅에서 참조"
     },
     "common": {
       "create": "만들기",
@@ -3162,7 +3166,8 @@
       "mode": {
         "source": "原始碼",
         "split": "分割",
-        "preview": "預覽"
+        "preview": "預覽",
+        "live": "即時"
       },
       "emptyEditor": "選取筆記以檢視或編輯。",
       "searchResults": "搜尋結果",
@@ -3233,7 +3238,8 @@
       "aiRewriteApply": "套用",
       "aiRewriteFailed": "AI 改寫失敗",
       "allowExternalWrites": "允許編輯此外部庫",
-      "allowExternalWritesHint": "外部庫預設為唯讀。開啟後可讓編輯器與 AI 工具寫入綁定資料夾。背景自動維護一律不寫入外部庫。"
+      "allowExternalWritesHint": "外部庫預設為唯讀。開啟後可讓編輯器與 AI 工具寫入綁定資料夾。背景自動維護一律不寫入外部庫。",
+      "referenceInChat": "引用到聊天"
     },
     "common": {
       "create": "建立",
@@ -4249,7 +4255,8 @@
       "mode": {
         "source": "Kaynak",
         "split": "Bölünmüş",
-        "preview": "Önizleme"
+        "preview": "Önizleme",
+        "live": "Canlı"
       },
       "emptyEditor": "Görüntülemek veya düzenlemek için bir not seçin.",
       "searchResults": "Arama sonuçları",
@@ -4320,7 +4327,8 @@
       "aiRewriteApply": "Uygula",
       "aiRewriteFailed": "AI ile yeniden yazma başarısız",
       "allowExternalWrites": "Bu kasada düzenlemeye izin ver",
-      "allowExternalWritesHint": "Dış kasalar varsayılan olarak salt okunurdur. Etkinleştirdiğinizde düzenleyici ve yapay zeka araçları bağlı klasöre yazabilir. Arka plan bakımı dış kasalara asla yazmaz."
+      "allowExternalWritesHint": "Dış kasalar varsayılan olarak salt okunurdur. Etkinleştirdiğinizde düzenleyici ve yapay zeka araçları bağlı klasöre yazabilir. Arka plan bakımı dış kasalara asla yazmaz.",
+      "referenceInChat": "Sohbette referans ver"
     },
     "common": {
       "create": "Oluştur",
@@ -5336,7 +5344,8 @@
       "mode": {
         "source": "Nguồn",
         "split": "Chia đôi",
-        "preview": "Xem trước"
+        "preview": "Xem trước",
+        "live": "Trực tiếp"
       },
       "emptyEditor": "Chọn một ghi chú để xem hoặc chỉnh sửa.",
       "searchResults": "Kết quả tìm kiếm",
@@ -5407,7 +5416,8 @@
       "aiRewriteApply": "Áp dụng",
       "aiRewriteFailed": "Viết lại bằng AI thất bại",
       "allowExternalWrites": "Cho phép chỉnh sửa kho này",
-      "allowExternalWritesHint": "Kho ngoài mặc định chỉ đọc. Bật để cho phép trình soạn thảo và công cụ AI ghi vào thư mục đã liên kết. Bảo trì nền không bao giờ ghi vào kho ngoài."
+      "allowExternalWritesHint": "Kho ngoài mặc định chỉ đọc. Bật để cho phép trình soạn thảo và công cụ AI ghi vào thư mục đã liên kết. Bảo trì nền không bao giờ ghi vào kho ngoài.",
+      "referenceInChat": "Tham chiếu trong trò chuyện"
     },
     "common": {
       "create": "Tạo",
@@ -6423,7 +6433,8 @@
       "mode": {
         "source": "Origem",
         "split": "Dividido",
-        "preview": "Visualização"
+        "preview": "Visualização",
+        "live": "Ao vivo"
       },
       "emptyEditor": "Selecione uma nota para ver ou editar.",
       "searchResults": "Resultados da pesquisa",
@@ -6494,7 +6505,8 @@
       "aiRewriteApply": "Aplicar",
       "aiRewriteFailed": "Falha ao reescrever com IA",
       "allowExternalWrites": "Permitir edição deste cofre",
-      "allowExternalWritesHint": "Cofres externos são somente leitura por padrão. Ative para permitir que o editor e as ferramentas de IA gravem na pasta vinculada. A manutenção em segundo plano nunca grava em cofres externos."
+      "allowExternalWritesHint": "Cofres externos são somente leitura por padrão. Ative para permitir que o editor e as ferramentas de IA gravem na pasta vinculada. A manutenção em segundo plano nunca grava em cofres externos.",
+      "referenceInChat": "Referenciar no chat"
     },
     "common": {
       "create": "Criar",
@@ -7510,7 +7522,8 @@
       "mode": {
         "source": "Исходник",
         "split": "Разделённый",
-        "preview": "Предпросмотр"
+        "preview": "Предпросмотр",
+        "live": "Живой"
       },
       "emptyEditor": "Выберите заметку для просмотра или редактирования.",
       "searchResults": "Результаты поиска",
@@ -7581,7 +7594,8 @@
       "aiRewriteApply": "Применить",
       "aiRewriteFailed": "Не удалось переписать с помощью ИИ",
       "allowExternalWrites": "Разрешить редактирование этого хранилища",
-      "allowExternalWritesHint": "Внешние хранилища по умолчанию доступны только для чтения. Включите, чтобы редактор и ИИ-инструменты могли записывать в привязанную папку. Фоновое обслуживание никогда не пишет во внешние хранилища."
+      "allowExternalWritesHint": "Внешние хранилища по умолчанию доступны только для чтения. Включите, чтобы редактор и ИИ-инструменты могли записывать в привязанную папку. Фоновое обслуживание никогда не пишет во внешние хранилища.",
+      "referenceInChat": "Сослаться в чате"
     },
     "common": {
       "create": "Создать",
@@ -8597,7 +8611,8 @@
       "mode": {
         "source": "المصدر",
         "split": "مقسَّم",
-        "preview": "معاينة"
+        "preview": "معاينة",
+        "live": "مباشر"
       },
       "emptyEditor": "اختر ملاحظة لعرضها أو تحريرها.",
       "searchResults": "نتائج البحث",
@@ -8668,7 +8683,8 @@
       "aiRewriteApply": "تطبيق",
       "aiRewriteFailed": "فشلت إعادة الكتابة بالذكاء الاصطناعي",
       "allowExternalWrites": "السماح بتحرير هذه الخزنة",
-      "allowExternalWritesHint": "الخزائن الخارجية للقراءة فقط افتراضيًا. فعّل الخيار للسماح للمحرر وأدوات الذكاء الاصطناعي بالكتابة في المجلد المرتبط. لا تكتب الصيانة التلقائية في الخلفية إلى الخزائن الخارجية أبدًا."
+      "allowExternalWritesHint": "الخزائن الخارجية للقراءة فقط افتراضيًا. فعّل الخيار للسماح للمحرر وأدوات الذكاء الاصطناعي بالكتابة في المجلد المرتبط. لا تكتب الصيانة التلقائية في الخلفية إلى الخزائن الخارجية أبدًا.",
+      "referenceInChat": "الإشارة في الدردشة"
     },
     "common": {
       "create": "إنشاء",
@@ -9684,7 +9700,8 @@
       "mode": {
         "source": "Origen",
         "split": "Dividido",
-        "preview": "Vista previa"
+        "preview": "Vista previa",
+        "live": "En vivo"
       },
       "emptyEditor": "Selecciona una nota para ver o editar.",
       "searchResults": "Resultados de búsqueda",
@@ -9755,7 +9772,8 @@
       "aiRewriteApply": "Aplicar",
       "aiRewriteFailed": "Error al reescribir con IA",
       "allowExternalWrites": "Permitir editar esta bóveda",
-      "allowExternalWritesHint": "Las bóvedas externas son de solo lectura de forma predeterminada. Actívalo para que el editor y las herramientas de IA puedan escribir en la carpeta vinculada. El mantenimiento en segundo plano nunca escribe en bóvedas externas."
+      "allowExternalWritesHint": "Las bóvedas externas son de solo lectura de forma predeterminada. Actívalo para que el editor y las herramientas de IA puedan escribir en la carpeta vinculada. El mantenimiento en segundo plano nunca escribe en bóvedas externas.",
+      "referenceInChat": "Referenciar en el chat"
     },
     "common": {
       "create": "Crear",
@@ -10771,7 +10789,8 @@
       "mode": {
         "source": "Sumber",
         "split": "Pisah",
-        "preview": "Pratonton"
+        "preview": "Pratonton",
+        "live": "Langsung"
       },
       "emptyEditor": "Pilih nota untuk dilihat atau disunting.",
       "searchResults": "Hasil carian",
@@ -10842,7 +10861,8 @@
       "aiRewriteApply": "Guna",
       "aiRewriteFailed": "Gagal menulis semula dengan AI",
       "allowExternalWrites": "Benarkan menyunting bilik kebal ini",
-      "allowExternalWritesHint": "Bilik kebal luaran adalah baca sahaja secara lalai. Hidupkan untuk membenarkan penyunting dan alat AI menulis ke folder terikat. Penyelenggaraan latar belakang tidak pernah menulis ke bilik kebal luaran."
+      "allowExternalWritesHint": "Bilik kebal luaran adalah baca sahaja secara lalai. Hidupkan untuk membenarkan penyunting dan alat AI menulis ke folder terikat. Penyelenggaraan latar belakang tidak pernah menulis ke bilik kebal luaran.",
+      "referenceInChat": "Rujuk dalam sembang"
     },
     "common": {
       "create": "Cipta",

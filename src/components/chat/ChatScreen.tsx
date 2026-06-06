@@ -93,6 +93,14 @@ import { generateClientId } from "./chatScrollKeys"
 import type { Project, ProjectMeta } from "@/types/project"
 import type { KbDraftAttachment } from "@/types/knowledge"
 
+/** A token to append to the chat composer on next render. `attachKbId` (set by the
+ *  KnowledgeView "reference in chat" action) is auto-attached read-only so the
+ *  `[[note]]` injection isn't dropped by `effective_kb_access` at send time. */
+export interface ChatInsert {
+  token: string
+  attachKbId?: string
+}
+
 interface ChatScreenProps {
   onOpenAgentSettings?: (agentId: string) => void
   onCodexReauth?: () => void
@@ -101,8 +109,9 @@ interface ChatScreenProps {
   onUnreadCountChange?: (count: number) => void
   onOpenDashboardTab?: (tab: string, initialReportId?: string | null) => void
   sessionsRefreshTrigger?: number
-  /** Free-form text to append to the chat input on next render (e.g. `@plan:abcd:v0`). */
-  pendingChatInsert?: string
+  /** Token to append to the chat input on next render (e.g. `@plan:abcd:v0` or a
+   *  `[[note]]` ref). */
+  pendingChatInsert?: ChatInsert
   /** Called once the insert has been consumed so App can clear the pending slot. */
   onChatInsertConsumed?: () => void
 }
@@ -1017,14 +1026,45 @@ export default function ChatScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.currentSessionId, session.sessions, stream.setPermissionMode])
 
-  // Consume a `@plan:xxx` (or any free-form text) injection from the global
-  // Plans view: append once with a leading space, then notify App so the slot
-  // clears. Runs after `stream` is initialized so `setInput` is available.
+  // Consume a token injection from a global view: `@plan:xxx` from Plans, or a
+  // `[[note]]` ref from Knowledge. Append once with a leading space, then notify
+  // App so the slot clears. A KB ref also auto-attaches its KB (read-only) so the
+  // injection isn't dropped by `effective_kb_access` at send time. Incognito
+  // sessions get zero KB access (D10) — skip the attach, never the insert.
   useEffect(() => {
     if (!pendingChatInsert) return
-    const sep = stream.input && !stream.input.endsWith(" ") ? " " : ""
-    stream.setInput(`${stream.input}${sep}${pendingChatInsert} `)
-    onChatInsertConsumed?.()
+    const { token, attachKbId } = pendingChatInsert
+    const run = async () => {
+      if (attachKbId && !incognitoEnabled) {
+        try {
+          if (session.currentSessionId) {
+            await getTransport().call("attach_session_kb_cmd", {
+              sessionId: session.currentSessionId,
+              kbId: attachKbId,
+              access: "read",
+            })
+          } else {
+            // New chat: stage the attach; it's baked into the `chat` payload on
+            // first send (symmetric with draftWorkingDir / KnowledgePicker).
+            setDraftKbAttachments((prev) =>
+              prev.some((a) => a.kbId === attachKbId)
+                ? prev
+                : [...prev, { kbId: attachKbId, access: "read" }],
+            )
+          }
+        } catch (e) {
+          // Non-fatal: the token is still inserted; the user can attach manually.
+          logger.warn("ui", "ChatScreen::referenceInChat", "auto-attach KB failed", e)
+        }
+      }
+      // Functional updater (not the captured `stream.input`): the `attach` await
+      // above is a transport round-trip during which the user may keep typing —
+      // reading a stale snapshot here would drop those keystrokes. The updater
+      // also composes correctly if two refs are inserted back-to-back.
+      stream.setInput((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${token} `)
+      onChatInsertConsumed?.()
+    }
+    void run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChatInsert])
 

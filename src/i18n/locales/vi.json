@@ -4749,6 +4749,7 @@
     "readOnly": "Chỉ đọc (kho ngoài)",
     "mode": {
       "source": "Nguồn",
+      "live": "Trực tiếp",
       "split": "Chia đôi",
       "preview": "Xem trước"
     },
@@ -4764,6 +4765,7 @@
     "outline": "Dàn ý",
     "outlineEmpty": "Không có tiêu đề",
     "aiRewrite": "AI viết lại",
+    "referenceInChat": "Tham chiếu trong trò chuyện",
     "aiRewriteScope": "Đang viết lại: {{scope}}",
     "aiRewriteSelection": "vùng chọn",
     "aiRewriteWholeNote": "toàn bộ ghi chú",
