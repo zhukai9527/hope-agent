@@ -571,7 +571,8 @@
     "test": "연결 테스트",
     "testing": "테스트 중...",
     "create": "만들기",
-    "clear": "지우기"
+    "clear": "지우기",
+    "on": "켜짐"
   },
   "context": {
     "ago": "전",
@@ -4274,6 +4275,34 @@
       "overlap": "겹침(글자)",
       "rebuildWarning": "저장하면 모든 지식 공간의 색인을 다시 만듭니다.",
       "saved": "저장됨 — 모든 공간 재구축 중"
+    },
+    "knowledgeMaintenance": {
+      "title": "자율 유지보수",
+      "intro": "지식 공간을 주기적으로 스캔해 노트 정리 제안(링크·태그·중복 병합·MOC…)을 검토 대기열에 넣습니다. 승인하기 전까지 노트는 변경되지 않습니다.",
+      "enabled": "백그라운드 유지보수 사용",
+      "enabledDesc": "아래 일정으로 스캔합니다. 끄면 수동 스캔만 가능합니다.",
+      "idle": "유휴 시 실행",
+      "idleDesc": "앱이 지정한 분만큼 유휴 상태가 되면 스캔합니다.",
+      "cron": "예약 실행",
+      "cronDesc": "6필드 cron(초 분 시 일 월 요일).",
+      "autoApprove": "제안 자동 적용",
+      "autoApproveDesc": "검토를 건너뛰고 변경 사항을 노트에 자동으로 씁니다. 주의해서 사용하세요.",
+      "maxProposals": "스캔당 최대 제안 수",
+      "tasks": "작업",
+      "runNow": "지금 스캔",
+      "cycleSkipped": "건너뜀: {{note}}",
+      "cycleDone": "제안 {{n}}건 생성",
+      "runFailed": "유지보수를 실행하지 못했습니다",
+      "task": {
+        "autoLink": "자동 링크",
+        "orphanRescue": "고아 노트 구조",
+        "frontmatterFill": "속성 채우기",
+        "dedupMerge": "중복 병합",
+        "knowledgeGap": "지식 공백",
+        "autoTag": "자동 태그",
+        "mocUpkeep": "MOC 관리",
+        "memoryToNote": "메모리→노트"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "이 공간에는 끊어진 링크나 고립된 노트가 없습니다.",
       "brokenLinks": "끊어진 링크",
       "orphans": "고립된 노트",
-      "inNote": "위치:"
+      "inNote": "위치:",
+      "proposals": "제안",
+      "runNow": "스캔",
+      "runNowTip": "지금 스캔하여 제안 생성",
+      "rejectAll": "모두 거부",
+      "approve": "적용",
+      "reject": "무시",
+      "cycleSkipped": "유지보수 건너뜀: {{note}}",
+      "cycleDone": "제안 {{n}}건 생성",
+      "runFailed": "유지보수를 실행하지 못했습니다",
+      "applyFailed": "제안을 적용하지 못했습니다",
+      "rejectFailed": "제안을 무시하지 못했습니다",
+      "kind": {
+        "auto_link": "링크",
+        "orphan_rescue": "구조",
+        "frontmatter_fill": "속성",
+        "dedup_merge": "병합",
+        "knowledge_gap": "공백",
+        "auto_tag": "태그",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "메모리"
+      }
     },
     "graph": {
       "toggle": "그래프 보기",

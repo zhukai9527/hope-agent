@@ -572,7 +572,8 @@
     "test": "测试连接",
     "testing": "测试中...",
     "create": "创建",
-    "clear": "清除"
+    "clear": "清除",
+    "on": "开"
   },
   "context": {
     "ago": "前",
@@ -4275,6 +4276,34 @@
       "overlap": "重叠（字符）",
       "rebuildWarning": "保存会重建所有知识空间的索引。",
       "saved": "已保存，正在重建所有空间"
+    },
+    "knowledgeMaintenance": {
+      "title": "自主维护",
+      "intro": "定期扫描知识空间，把笔记维护建议（建链、打标签、去重、MOC……）放入待审队列。在你确认前不会改动任何笔记。",
+      "enabled": "启用后台维护",
+      "enabledDesc": "按下方计划自动扫描。关闭后仅支持手动扫描。",
+      "idle": "空闲时运行",
+      "idleDesc": "应用空闲达到设定分钟数后扫描。",
+      "cron": "定时运行",
+      "cronDesc": "6 段 cron（秒 分 时 日 月 周）。",
+      "autoApprove": "自动应用建议",
+      "autoApproveDesc": "跳过审阅，自动把改动写入你的笔记。请谨慎使用。",
+      "maxProposals": "每次扫描最多建议数",
+      "tasks": "任务",
+      "runNow": "立即扫描",
+      "cycleSkipped": "已跳过：{{note}}",
+      "cycleDone": "生成了 {{n}} 条建议",
+      "runFailed": "维护运行失败",
+      "task": {
+        "autoLink": "自动建链",
+        "orphanRescue": "孤岛救援",
+        "frontmatterFill": "补全属性",
+        "dedupMerge": "去重合并",
+        "knowledgeGap": "知识缺口",
+        "autoTag": "自动标签",
+        "mocUpkeep": "MOC 维护",
+        "memoryToNote": "记忆转笔记"
+      }
     }
   },
   "shortcuts": {
@@ -4802,7 +4831,28 @@
       "healthyHint": "此空间没有失效链接或孤立笔记。",
       "brokenLinks": "失效链接",
       "orphans": "孤立笔记",
-      "inNote": "位于"
+      "inNote": "位于",
+      "proposals": "维护建议",
+      "runNow": "扫描",
+      "runNowTip": "立即扫描生成维护建议",
+      "rejectAll": "全部忽略",
+      "approve": "应用",
+      "reject": "忽略",
+      "cycleSkipped": "维护已跳过：{{note}}",
+      "cycleDone": "生成了 {{n}} 条建议",
+      "runFailed": "维护运行失败",
+      "applyFailed": "应用建议失败",
+      "rejectFailed": "忽略建议失败",
+      "kind": {
+        "auto_link": "建链",
+        "orphan_rescue": "救援",
+        "frontmatter_fill": "属性",
+        "dedup_merge": "合并",
+        "knowledge_gap": "缺口",
+        "auto_tag": "标签",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "记忆"
+      }
     },
     "graph": {
       "toggle": "图谱视图",

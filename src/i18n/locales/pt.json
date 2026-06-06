@@ -571,7 +571,8 @@
     "test": "Testar conexão",
     "testing": "Testando...",
     "create": "Criar",
-    "clear": "Limpar"
+    "clear": "Limpar",
+    "on": "Ligado"
   },
   "context": {
     "ago": "atrás",
@@ -4274,6 +4275,34 @@
       "overlap": "Sobreposição (caracteres)",
       "rebuildWarning": "Salvar reconstrói o índice de todos os espaços de conhecimento.",
       "saved": "Salvo — reconstruindo todos os espaços"
+    },
+    "knowledgeMaintenance": {
+      "title": "Manutenção autônoma",
+      "intro": "Verifica periodicamente os espaços de conhecimento e enfileira sugestões de manutenção de notas (vincular, etiquetar, mesclar duplicatas, MOCs…) para sua revisão. Nada é escrito até você aprovar.",
+      "enabled": "Ativar manutenção em segundo plano",
+      "enabledDesc": "Executa varreduras na agenda abaixo. Desligado, só a varredura manual funciona.",
+      "idle": "Executar quando ocioso",
+      "idleDesc": "Verifica depois que o app fica ocioso pelos minutos indicados.",
+      "cron": "Executar por agenda",
+      "cronDesc": "cron de 6 campos (seg min hora dia mês diadasemana).",
+      "autoApprove": "Aplicar sugestões automaticamente",
+      "autoApproveDesc": "Pula a revisão e grava as mudanças nas suas notas automaticamente. Use com cuidado.",
+      "maxProposals": "Máx. de sugestões por varredura",
+      "tasks": "Tarefas",
+      "runNow": "Verificar agora",
+      "cycleSkipped": "Ignorado: {{note}}",
+      "cycleDone": "{{n}} sugestão(ões) geradas",
+      "runFailed": "Não foi possível executar a manutenção",
+      "task": {
+        "autoLink": "Auto-vínculo",
+        "orphanRescue": "Resgate de órfãs",
+        "frontmatterFill": "Preencher frontmatter",
+        "dedupMerge": "Mesclar duplicatas",
+        "knowledgeGap": "Lacunas de conhecimento",
+        "autoTag": "Auto-etiqueta",
+        "mocUpkeep": "Manutenção de MOC",
+        "memoryToNote": "Memória → nota"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "Nenhum link quebrado ou nota órfã neste espaço.",
       "brokenLinks": "Links quebrados",
       "orphans": "Notas órfãs",
-      "inNote": "em"
+      "inNote": "em",
+      "proposals": "Sugestões",
+      "runNow": "Verificar",
+      "runNowTip": "Verificar agora por sugestões de manutenção",
+      "rejectAll": "Rejeitar tudo",
+      "approve": "Aplicar",
+      "reject": "Dispensar",
+      "cycleSkipped": "Manutenção ignorada: {{note}}",
+      "cycleDone": "{{n}} sugestão(ões) geradas",
+      "runFailed": "Não foi possível executar a manutenção",
+      "applyFailed": "Não foi possível aplicar a sugestão",
+      "rejectFailed": "Não foi possível dispensar a sugestão",
+      "kind": {
+        "auto_link": "Vincular",
+        "orphan_rescue": "Resgate",
+        "frontmatter_fill": "Frontmatter",
+        "dedup_merge": "Mesclar",
+        "knowledge_gap": "Lacuna",
+        "auto_tag": "Etiqueta",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Memória"
+      }
     },
     "graph": {
       "toggle": "Vista de grafo",

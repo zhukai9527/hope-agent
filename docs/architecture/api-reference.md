@@ -266,6 +266,15 @@ Tauri ↔ COMMAND_MAP 差集为 7 条合法非 REST 命令（4 条 Desktop-only 
 | `kb_orphans_cmd` | `GET /api/knowledge/{kbId}/orphans` | ✅ (维护面板：无链接孤岛笔记) |
 | `kb_graph_cmd` | `GET /api/knowledge/{kbId}/graph` | ✅ (WS1 图谱视图：nodes+edges，含 degree，节点上限 2000 截断标 `truncated`) |
 | `kb_ai_rewrite_cmd` | `POST /api/knowledge/ai/rewrite` | ✅ (WS9 AI 改写：body `{text, instruction}` → side_query 返回改写后 Markdown；不落盘，GUI 走 diff 确认后经 `note_save`) |
+| `kb_maintenance_run_cmd` | `POST /api/knowledge/maintenance/run` | ✅ (WS6 手动跑一轮维护：扫全部内部 KB 生成 draft 提案；返回 `MaintenanceReport`) |
+| `kb_maintenance_status_cmd` | `GET /api/knowledge/maintenance/status` | ✅ (running 标志 + 上轮 report) |
+| `kb_maintenance_list_cmd` | `GET /api/knowledge/{kbId}/maintenance/proposals?status=` | ✅ (某 KB 的提案，可按 draft/applied/rejected/failed 过滤) |
+| `kb_maintenance_pending_count_cmd` | `GET /api/knowledge/{kbId}/maintenance/pending-count` | ✅ (待审提案数，维护面板徽章) |
+| `kb_maintenance_approve_cmd` | `POST /api/knowledge/maintenance/proposals/{id}/approve` | ✅ (批准并经 owner 平面落地，返回更新后的提案) |
+| `kb_maintenance_reject_cmd` | `POST /api/knowledge/maintenance/proposals/{id}/reject` | ✅ (忽略单条提案) |
+| `kb_maintenance_reject_all_cmd` | `POST /api/knowledge/{kbId}/maintenance/reject-all` | ✅ (清空某 KB 待审队列，返回清除数) |
+| `kb_maintenance_config_get_cmd` | `GET /api/knowledge/maintenance/config` | ✅ (维护配置，GUI 面板；也可经 `get_settings(knowledge_maintenance)` 读) |
+| `kb_maintenance_config_set_cmd` | `POST /api/knowledge/maintenance/config` | ✅ (写维护配置，clamp 后返回；emit `config:changed` 唤醒 cron loop) |
 | `kb_note_read_ref_cmd` | `GET /api/knowledge/{kbId}/note/resolve?reference=` | ✅ (WS2 transclusion：按 `[[ ]]` ref 经 resolver 取目标 `NoteReadResult`，broken 返回 `null`) |
 | `kb_search_cmd` | `GET /api/knowledge/search?query=&kbId=&limit=` | ✅ (FTS+向量混合) |
 | `kb_file_read_cmd` | `GET /api/knowledge/{kbId}/files/read?path=` | ✅ (纯 owner 平面 + scope contains) |

@@ -586,6 +586,82 @@ pub async fn kb_ai_rewrite(Json(body): Json<KbAiRewriteBody>) -> Result<Json<Str
     ))
 }
 
+// ── Layer-2 autonomous maintenance (WS6) ────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbMaintListQuery {
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// `POST /api/knowledge/maintenance/run` — run one maintenance cycle.
+pub async fn kb_maintenance_run(
+) -> Result<Json<knowledge::maintenance::MaintenanceReport>, AppError> {
+    Ok(Json(
+        knowledge::maintenance::manual_run(knowledge::maintenance::MaintenanceTrigger::Manual)
+            .await,
+    ))
+}
+
+/// `GET /api/knowledge/maintenance/status`
+pub async fn kb_maintenance_status(
+) -> Result<Json<knowledge::maintenance::MaintenanceStatus>, AppError> {
+    Ok(Json(knowledge::maintenance::status()))
+}
+
+/// `GET /api/knowledge/{kb_id}/maintenance/proposals?status=`
+pub async fn kb_maintenance_list(
+    Path(kb_id): Path<String>,
+    Query(q): Query<KbMaintListQuery>,
+) -> Result<Json<Vec<knowledge::maintenance::MaintenanceProposal>>, AppError> {
+    let st = q
+        .status
+        .as_deref()
+        .and_then(knowledge::maintenance::ProposalStatus::from_str);
+    Ok(Json(knowledge::maintenance::list_proposals(&kb_id, st)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/maintenance/pending-count`
+pub async fn kb_maintenance_pending_count(
+    Path(kb_id): Path<String>,
+) -> Result<Json<usize>, AppError> {
+    Ok(Json(knowledge::maintenance::pending_count(&kb_id)?))
+}
+
+/// `POST /api/knowledge/maintenance/proposals/{id}/approve`
+pub async fn kb_maintenance_approve(
+    Path(id): Path<i64>,
+) -> Result<Json<knowledge::maintenance::MaintenanceProposal>, AppError> {
+    Ok(Json(knowledge::maintenance::approve_proposal(id).await?))
+}
+
+/// `POST /api/knowledge/maintenance/proposals/{id}/reject`
+pub async fn kb_maintenance_reject(Path(id): Path<i64>) -> Result<Json<bool>, AppError> {
+    knowledge::maintenance::reject_proposal(id)?;
+    Ok(Json(true))
+}
+
+/// `POST /api/knowledge/{kb_id}/maintenance/reject-all`
+pub async fn kb_maintenance_reject_all(Path(kb_id): Path<String>) -> Result<Json<usize>, AppError> {
+    Ok(Json(knowledge::maintenance::reject_all(&kb_id)?))
+}
+
+/// `GET /api/knowledge/maintenance/config`
+pub async fn kb_maintenance_config_get(
+) -> Result<Json<knowledge::maintenance::MaintenanceConfig>, AppError> {
+    Ok(Json(service::get_maintenance_config()))
+}
+
+/// `POST /api/knowledge/maintenance/config` — body is `{ config: MaintenanceConfig }`
+/// (the `ConfigBody` wrapper every `save_*_config` route uses; the Tauri command +
+/// HTTP transport both ship the config under a `config` key).
+pub async fn kb_maintenance_config_set(
+    Json(body): Json<crate::routes::config::ConfigBody<knowledge::maintenance::MaintenanceConfig>>,
+) -> Result<Json<knowledge::maintenance::MaintenanceConfig>, AppError> {
+    Ok(Json(service::set_maintenance_config(body.config, "http")?))
+}
+
 /// `GET /api/knowledge/{kb_id}/note/resolve?reference=` — resolve a `[[ ]]` ref
 /// to a note read result (for `![[ ]]` transclusion). Body is `null` (not a 404)
 /// when the ref is broken, so the client treats it identically to the Tauri path.

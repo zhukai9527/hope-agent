@@ -298,6 +298,39 @@ fn build_router_with_cors(
             post(routes::knowledge::kb_ai_rewrite),
         )
         .route(
+            "/knowledge/maintenance/run",
+            post(routes::knowledge::kb_maintenance_run),
+        )
+        .route(
+            "/knowledge/maintenance/status",
+            get(routes::knowledge::kb_maintenance_status),
+        )
+        .route(
+            "/knowledge/maintenance/proposals/{id}/approve",
+            post(routes::knowledge::kb_maintenance_approve),
+        )
+        .route(
+            "/knowledge/maintenance/proposals/{id}/reject",
+            post(routes::knowledge::kb_maintenance_reject),
+        )
+        .route(
+            "/knowledge/{kb_id}/maintenance/proposals",
+            get(routes::knowledge::kb_maintenance_list),
+        )
+        .route(
+            "/knowledge/{kb_id}/maintenance/pending-count",
+            get(routes::knowledge::kb_maintenance_pending_count),
+        )
+        .route(
+            "/knowledge/{kb_id}/maintenance/reject-all",
+            post(routes::knowledge::kb_maintenance_reject_all),
+        )
+        .route(
+            "/knowledge/maintenance/config",
+            get(routes::knowledge::kb_maintenance_config_get)
+                .post(routes::knowledge::kb_maintenance_config_set),
+        )
+        .route(
             "/knowledge/{kb_id}/dir",
             post(routes::knowledge::kb_mkdir).delete(routes::knowledge::kb_delete_dir),
         )

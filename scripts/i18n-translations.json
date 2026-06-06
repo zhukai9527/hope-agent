@@ -511,6 +511,34 @@
           "progress": "{{done}} / {{total}} 件のナレッジ",
           "phase": "ノートを再埋め込み中"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "自律メンテナンス",
+        "intro": "知識スペースを定期的にスキャンし、ノート整備の提案（リンク・タグ付け・重複統合・MOC…）を確認待ちキューに入れます。承認するまでノートは変更されません。",
+        "enabled": "バックグラウンドメンテナンスを有効化",
+        "enabledDesc": "下のスケジュールでスキャンします。オフの場合は手動スキャンのみ。",
+        "idle": "アイドル時に実行",
+        "idleDesc": "指定した分だけアイドルが続いたらスキャンします。",
+        "cron": "スケジュール実行",
+        "cronDesc": "6 フィールド cron（秒 分 時 日 月 曜日）。",
+        "autoApprove": "提案を自動適用",
+        "autoApproveDesc": "確認を省き、変更をノートに自動で書き込みます。慎重に使用してください。",
+        "maxProposals": "スキャンごとの最大提案数",
+        "tasks": "タスク",
+        "runNow": "今すぐスキャン",
+        "cycleSkipped": "スキップ：{{note}}",
+        "cycleDone": "{{n}} 件の提案を生成",
+        "runFailed": "メンテナンスを実行できませんでした",
+        "task": {
+          "autoLink": "自動リンク",
+          "orphanRescue": "孤立ノート救出",
+          "frontmatterFill": "属性補完",
+          "dedupMerge": "重複統合",
+          "knowledgeGap": "知識ギャップ",
+          "autoTag": "自動タグ",
+          "mocUpkeep": "MOC 整備",
+          "memoryToNote": "メモリ→ノート"
+        }
       }
     },
     "subagent": {
@@ -996,7 +1024,28 @@
         "healthyHint": "この空間に壊れたリンクや孤立ノートはありません。",
         "brokenLinks": "壊れたリンク",
         "orphans": "孤立ノート",
-        "inNote": "場所:"
+        "inNote": "場所:",
+        "proposals": "提案",
+        "runNow": "スキャン",
+        "runNowTip": "今すぐスキャンして提案を生成",
+        "rejectAll": "すべて却下",
+        "approve": "適用",
+        "reject": "却下",
+        "cycleSkipped": "メンテナンスをスキップ：{{note}}",
+        "cycleDone": "{{n}} 件の提案を生成",
+        "runFailed": "メンテナンスを実行できませんでした",
+        "applyFailed": "提案を適用できませんでした",
+        "rejectFailed": "提案を却下できませんでした",
+        "kind": {
+          "auto_link": "リンク",
+          "orphan_rescue": "救出",
+          "frontmatter_fill": "属性",
+          "dedup_merge": "統合",
+          "knowledge_gap": "ギャップ",
+          "auto_tag": "タグ",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "メモリ"
+        }
       },
       "graph": {
         "toggle": "グラフ表示",
@@ -1026,7 +1075,8 @@
     },
     "common": {
       "create": "作成",
-      "clear": "クリア"
+      "clear": "クリア",
+      "on": "オン"
     }
   },
   "ko": {
@@ -1541,6 +1591,34 @@
           "progress": "{{done}} / {{total}}개 지식 공간",
           "phase": "노트 재임베딩 중"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "자율 유지보수",
+        "intro": "지식 공간을 주기적으로 스캔해 노트 정리 제안(링크·태그·중복 병합·MOC…)을 검토 대기열에 넣습니다. 승인하기 전까지 노트는 변경되지 않습니다.",
+        "enabled": "백그라운드 유지보수 사용",
+        "enabledDesc": "아래 일정으로 스캔합니다. 끄면 수동 스캔만 가능합니다.",
+        "idle": "유휴 시 실행",
+        "idleDesc": "앱이 지정한 분만큼 유휴 상태가 되면 스캔합니다.",
+        "cron": "예약 실행",
+        "cronDesc": "6필드 cron(초 분 시 일 월 요일).",
+        "autoApprove": "제안 자동 적용",
+        "autoApproveDesc": "검토를 건너뛰고 변경 사항을 노트에 자동으로 씁니다. 주의해서 사용하세요.",
+        "maxProposals": "스캔당 최대 제안 수",
+        "tasks": "작업",
+        "runNow": "지금 스캔",
+        "cycleSkipped": "건너뜀: {{note}}",
+        "cycleDone": "제안 {{n}}건 생성",
+        "runFailed": "유지보수를 실행하지 못했습니다",
+        "task": {
+          "autoLink": "자동 링크",
+          "orphanRescue": "고아 노트 구조",
+          "frontmatterFill": "속성 채우기",
+          "dedupMerge": "중복 병합",
+          "knowledgeGap": "지식 공백",
+          "autoTag": "자동 태그",
+          "mocUpkeep": "MOC 관리",
+          "memoryToNote": "메모리→노트"
+        }
       }
     },
     "subagent": {
@@ -2026,7 +2104,28 @@
         "healthyHint": "이 공간에는 끊어진 링크나 고립된 노트가 없습니다.",
         "brokenLinks": "끊어진 링크",
         "orphans": "고립된 노트",
-        "inNote": "위치:"
+        "inNote": "위치:",
+        "proposals": "제안",
+        "runNow": "스캔",
+        "runNowTip": "지금 스캔하여 제안 생성",
+        "rejectAll": "모두 거부",
+        "approve": "적용",
+        "reject": "무시",
+        "cycleSkipped": "유지보수 건너뜀: {{note}}",
+        "cycleDone": "제안 {{n}}건 생성",
+        "runFailed": "유지보수를 실행하지 못했습니다",
+        "applyFailed": "제안을 적용하지 못했습니다",
+        "rejectFailed": "제안을 무시하지 못했습니다",
+        "kind": {
+          "auto_link": "링크",
+          "orphan_rescue": "구조",
+          "frontmatter_fill": "속성",
+          "dedup_merge": "병합",
+          "knowledge_gap": "공백",
+          "auto_tag": "태그",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "메모리"
+        }
       },
       "graph": {
         "toggle": "그래프 보기",
@@ -2056,7 +2155,8 @@
     },
     "common": {
       "create": "만들기",
-      "clear": "지우기"
+      "clear": "지우기",
+      "on": "켜짐"
     }
   },
   "zh-TW": {
@@ -2571,6 +2671,34 @@
           "progress": "{{done}} / {{total}} 個知識空間",
           "phase": "正在重新向量化筆記"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "自主維護",
+        "intro": "定期掃描知識空間，把筆記維護建議（建立連結、標籤、去重、MOC…）放入待審佇列。在你確認前不會變更任何筆記。",
+        "enabled": "啟用背景維護",
+        "enabledDesc": "依下方排程自動掃描。關閉後僅支援手動掃描。",
+        "idle": "閒置時執行",
+        "idleDesc": "應用程式閒置達設定分鐘數後掃描。",
+        "cron": "排程執行",
+        "cronDesc": "6 欄位 cron（秒 分 時 日 月 週）。",
+        "autoApprove": "自動套用建議",
+        "autoApproveDesc": "略過審閱，自動將變更寫入你的筆記。請謹慎使用。",
+        "maxProposals": "每次掃描最多建議數",
+        "tasks": "任務",
+        "runNow": "立即掃描",
+        "cycleSkipped": "已略過：{{note}}",
+        "cycleDone": "已產生 {{n}} 條建議",
+        "runFailed": "維護執行失敗",
+        "task": {
+          "autoLink": "自動建立連結",
+          "orphanRescue": "孤島救援",
+          "frontmatterFill": "補全屬性",
+          "dedupMerge": "去重合併",
+          "knowledgeGap": "知識缺口",
+          "autoTag": "自動標籤",
+          "mocUpkeep": "MOC 維護",
+          "memoryToNote": "記憶轉筆記"
+        }
       }
     },
     "subagent": {
@@ -3037,7 +3165,28 @@
         "healthyHint": "此空間沒有失效連結或孤立筆記。",
         "brokenLinks": "失效連結",
         "orphans": "孤立筆記",
-        "inNote": "位於"
+        "inNote": "位於",
+        "proposals": "維護建議",
+        "runNow": "掃描",
+        "runNowTip": "立即掃描以產生維護建議",
+        "rejectAll": "全部忽略",
+        "approve": "套用",
+        "reject": "忽略",
+        "cycleSkipped": "維護已略過：{{note}}",
+        "cycleDone": "已產生 {{n}} 條建議",
+        "runFailed": "維護執行失敗",
+        "applyFailed": "套用建議失敗",
+        "rejectFailed": "忽略建議失敗",
+        "kind": {
+          "auto_link": "建立連結",
+          "orphan_rescue": "救援",
+          "frontmatter_fill": "屬性",
+          "dedup_merge": "合併",
+          "knowledge_gap": "缺口",
+          "auto_tag": "標籤",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "記憶"
+        }
       },
       "graph": {
         "toggle": "圖譜檢視",
@@ -3067,7 +3216,8 @@
     },
     "common": {
       "create": "建立",
-      "clear": "清除"
+      "clear": "清除",
+      "on": "開"
     }
   },
   "tr": {
@@ -3582,6 +3732,34 @@
           "progress": "{{done}} / {{total}} bilgi tabanı",
           "phase": "Notlar yeniden gömülüyor"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Otonom bakım",
+        "intro": "Bilgi alanlarını düzenli tarayıp not bakım önerilerini (bağlama, etiketleme, yineleme birleştirme, MOC…) incelemeniz için sıraya alır. Siz onaylamadan hiçbir not değiştirilmez.",
+        "enabled": "Arka plan bakımını etkinleştir",
+        "enabledDesc": "Aşağıdaki zamanlamayla tarar. Kapalıyken yalnızca elle tarama çalışır.",
+        "idle": "Boştayken çalıştır",
+        "idleDesc": "Uygulama belirtilen dakika boyunca boşta kaldığında tarar.",
+        "cron": "Zamanlamayla çalıştır",
+        "cronDesc": "6 alanlı cron (sn dk saat gün ay haftagünü).",
+        "autoApprove": "Önerileri otomatik uygula",
+        "autoApproveDesc": "İncelemeyi atlayıp değişiklikleri notlarınıza otomatik yazar. Dikkatli kullanın.",
+        "maxProposals": "Tarama başına en fazla öneri",
+        "tasks": "Görevler",
+        "runNow": "Şimdi tara",
+        "cycleSkipped": "Atlandı: {{note}}",
+        "cycleDone": "{{n}} öneri oluşturuldu",
+        "runFailed": "Bakım çalıştırılamadı",
+        "task": {
+          "autoLink": "Otomatik bağlama",
+          "orphanRescue": "Yetim kurtarma",
+          "frontmatterFill": "Üstbilgi doldurma",
+          "dedupMerge": "Yineleme birleştirme",
+          "knowledgeGap": "Bilgi boşlukları",
+          "autoTag": "Otomatik etiket",
+          "mocUpkeep": "MOC bakımı",
+          "memoryToNote": "Bellek → not"
+        }
       }
     },
     "subagent": {
@@ -4067,7 +4245,28 @@
         "healthyHint": "Bu alanda kırık bağlantı veya yetim not yok.",
         "brokenLinks": "Kırık bağlantılar",
         "orphans": "Yetim notlar",
-        "inNote": "konum:"
+        "inNote": "konum:",
+        "proposals": "Öneriler",
+        "runNow": "Tara",
+        "runNowTip": "Bakım önerileri için şimdi tara",
+        "rejectAll": "Tümünü reddet",
+        "approve": "Uygula",
+        "reject": "Yoksay",
+        "cycleSkipped": "Bakım atlandı: {{note}}",
+        "cycleDone": "{{n}} öneri oluşturuldu",
+        "runFailed": "Bakım çalıştırılamadı",
+        "applyFailed": "Öneri uygulanamadı",
+        "rejectFailed": "Öneri yoksayılamadı",
+        "kind": {
+          "auto_link": "Bağla",
+          "orphan_rescue": "Kurtar",
+          "frontmatter_fill": "Üstbilgi",
+          "dedup_merge": "Birleştir",
+          "knowledge_gap": "Boşluk",
+          "auto_tag": "Etiket",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Bellek"
+        }
       },
       "graph": {
         "toggle": "Grafik görünümü",
@@ -4097,7 +4296,8 @@
     },
     "common": {
       "create": "Oluştur",
-      "clear": "Temizle"
+      "clear": "Temizle",
+      "on": "Açık"
     }
   },
   "vi": {
@@ -4612,6 +4812,34 @@
           "progress": "{{done}} / {{total}} kho kiến thức",
           "phase": "Đang embedding lại ghi chú"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Bảo trì tự động",
+        "intro": "Định kỳ quét các không gian tri thức và xếp các gợi ý bảo trì ghi chú (liên kết, gắn thẻ, gộp trùng, MOC…) vào hàng chờ duyệt. Không ghi gì cho đến khi bạn chấp nhận.",
+        "enabled": "Bật bảo trì nền",
+        "enabledDesc": "Quét theo lịch bên dưới. Khi tắt chỉ quét thủ công.",
+        "idle": "Chạy khi rảnh",
+        "idleDesc": "Quét sau khi ứng dụng rảnh đủ số phút đã đặt.",
+        "cron": "Chạy theo lịch",
+        "cronDesc": "cron 6 trường (giây phút giờ ngày tháng thứ).",
+        "autoApprove": "Tự động áp dụng gợi ý",
+        "autoApproveDesc": "Bỏ qua duyệt và tự ghi thay đổi vào ghi chú của bạn. Dùng thận trọng.",
+        "maxProposals": "Số gợi ý tối đa mỗi lần quét",
+        "tasks": "Tác vụ",
+        "runNow": "Quét ngay",
+        "cycleSkipped": "Đã bỏ qua: {{note}}",
+        "cycleDone": "Đã tạo {{n}} gợi ý",
+        "runFailed": "Không chạy được bảo trì",
+        "task": {
+          "autoLink": "Tự liên kết",
+          "orphanRescue": "Cứu ghi chú mồ côi",
+          "frontmatterFill": "Điền frontmatter",
+          "dedupMerge": "Gộp trùng",
+          "knowledgeGap": "Lỗ hổng tri thức",
+          "autoTag": "Tự gắn thẻ",
+          "mocUpkeep": "Bảo trì MOC",
+          "memoryToNote": "Bộ nhớ → ghi chú"
+        }
       }
     },
     "subagent": {
@@ -5097,7 +5325,28 @@
         "healthyHint": "Không có liên kết hỏng hoặc ghi chú mồ côi trong không gian này.",
         "brokenLinks": "Liên kết hỏng",
         "orphans": "Ghi chú mồ côi",
-        "inNote": "trong"
+        "inNote": "trong",
+        "proposals": "Gợi ý",
+        "runNow": "Quét",
+        "runNowTip": "Quét ngay để tạo gợi ý bảo trì",
+        "rejectAll": "Bỏ tất cả",
+        "approve": "Áp dụng",
+        "reject": "Bỏ qua",
+        "cycleSkipped": "Đã bỏ qua bảo trì: {{note}}",
+        "cycleDone": "Đã tạo {{n}} gợi ý",
+        "runFailed": "Không chạy được bảo trì",
+        "applyFailed": "Không áp dụng được gợi ý",
+        "rejectFailed": "Không bỏ được gợi ý",
+        "kind": {
+          "auto_link": "Liên kết",
+          "orphan_rescue": "Cứu",
+          "frontmatter_fill": "Frontmatter",
+          "dedup_merge": "Gộp",
+          "knowledge_gap": "Thiếu",
+          "auto_tag": "Thẻ",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Bộ nhớ"
+        }
       },
       "graph": {
         "toggle": "Xem dạng đồ thị",
@@ -5127,7 +5376,8 @@
     },
     "common": {
       "create": "Tạo",
-      "clear": "Xóa"
+      "clear": "Xóa",
+      "on": "Bật"
     }
   },
   "pt": {
@@ -5642,6 +5892,34 @@
           "progress": "{{done}} / {{total}} bases de conhecimento",
           "phase": "Reincorporando notas"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Manutenção autônoma",
+        "intro": "Verifica periodicamente os espaços de conhecimento e enfileira sugestões de manutenção de notas (vincular, etiquetar, mesclar duplicatas, MOCs…) para sua revisão. Nada é escrito até você aprovar.",
+        "enabled": "Ativar manutenção em segundo plano",
+        "enabledDesc": "Executa varreduras na agenda abaixo. Desligado, só a varredura manual funciona.",
+        "idle": "Executar quando ocioso",
+        "idleDesc": "Verifica depois que o app fica ocioso pelos minutos indicados.",
+        "cron": "Executar por agenda",
+        "cronDesc": "cron de 6 campos (seg min hora dia mês diadasemana).",
+        "autoApprove": "Aplicar sugestões automaticamente",
+        "autoApproveDesc": "Pula a revisão e grava as mudanças nas suas notas automaticamente. Use com cuidado.",
+        "maxProposals": "Máx. de sugestões por varredura",
+        "tasks": "Tarefas",
+        "runNow": "Verificar agora",
+        "cycleSkipped": "Ignorado: {{note}}",
+        "cycleDone": "{{n}} sugestão(ões) geradas",
+        "runFailed": "Não foi possível executar a manutenção",
+        "task": {
+          "autoLink": "Auto-vínculo",
+          "orphanRescue": "Resgate de órfãs",
+          "frontmatterFill": "Preencher frontmatter",
+          "dedupMerge": "Mesclar duplicatas",
+          "knowledgeGap": "Lacunas de conhecimento",
+          "autoTag": "Auto-etiqueta",
+          "mocUpkeep": "Manutenção de MOC",
+          "memoryToNote": "Memória → nota"
+        }
       }
     },
     "subagent": {
@@ -6127,7 +6405,28 @@
         "healthyHint": "Nenhum link quebrado ou nota órfã neste espaço.",
         "brokenLinks": "Links quebrados",
         "orphans": "Notas órfãs",
-        "inNote": "em"
+        "inNote": "em",
+        "proposals": "Sugestões",
+        "runNow": "Verificar",
+        "runNowTip": "Verificar agora por sugestões de manutenção",
+        "rejectAll": "Rejeitar tudo",
+        "approve": "Aplicar",
+        "reject": "Dispensar",
+        "cycleSkipped": "Manutenção ignorada: {{note}}",
+        "cycleDone": "{{n}} sugestão(ões) geradas",
+        "runFailed": "Não foi possível executar a manutenção",
+        "applyFailed": "Não foi possível aplicar a sugestão",
+        "rejectFailed": "Não foi possível dispensar a sugestão",
+        "kind": {
+          "auto_link": "Vincular",
+          "orphan_rescue": "Resgate",
+          "frontmatter_fill": "Frontmatter",
+          "dedup_merge": "Mesclar",
+          "knowledge_gap": "Lacuna",
+          "auto_tag": "Etiqueta",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Memória"
+        }
       },
       "graph": {
         "toggle": "Vista de grafo",
@@ -6157,7 +6456,8 @@
     },
     "common": {
       "create": "Criar",
-      "clear": "Limpar"
+      "clear": "Limpar",
+      "on": "Ligado"
     }
   },
   "ru": {
@@ -6672,6 +6972,34 @@
           "progress": "{{done}} / {{total}} баз знаний",
           "phase": "Переэмбеддинг заметок"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Автономное обслуживание",
+        "intro": "Периодически сканирует пространства знаний и добавляет предложения по обслуживанию заметок (связывание, теги, объединение дублей, MOC…) в очередь на проверку. Ничего не записывается, пока вы не одобрите.",
+        "enabled": "Включить фоновое обслуживание",
+        "enabledDesc": "Сканирует по расписанию ниже. При выключении доступно только ручное сканирование.",
+        "idle": "Запускать при простое",
+        "idleDesc": "Сканировать после простоя приложения указанное число минут.",
+        "cron": "Запускать по расписанию",
+        "cronDesc": "cron из 6 полей (сек мин час день месяц деньнедели).",
+        "autoApprove": "Применять предложения автоматически",
+        "autoApproveDesc": "Пропускает проверку и записывает изменения в заметки автоматически. Используйте осторожно.",
+        "maxProposals": "Максимум предложений за скан",
+        "tasks": "Задачи",
+        "runNow": "Сканировать сейчас",
+        "cycleSkipped": "Пропущено: {{note}}",
+        "cycleDone": "Создано предложений: {{n}}",
+        "runFailed": "Не удалось выполнить обслуживание",
+        "task": {
+          "autoLink": "Авто-связывание",
+          "orphanRescue": "Спасение сирот",
+          "frontmatterFill": "Заполнение метаданных",
+          "dedupMerge": "Объединение дублей",
+          "knowledgeGap": "Пробелы в знаниях",
+          "autoTag": "Авто-теги",
+          "mocUpkeep": "Обслуживание MOC",
+          "memoryToNote": "Память → заметка"
+        }
       }
     },
     "subagent": {
@@ -7157,7 +7485,28 @@
         "healthyHint": "В этом пространстве нет битых ссылок и заметок-сирот.",
         "brokenLinks": "Битые ссылки",
         "orphans": "Заметки-сироты",
-        "inNote": "в"
+        "inNote": "в",
+        "proposals": "Предложения",
+        "runNow": "Сканировать",
+        "runNowTip": "Сканировать сейчас для предложений по обслуживанию",
+        "rejectAll": "Отклонить все",
+        "approve": "Применить",
+        "reject": "Отклонить",
+        "cycleSkipped": "Обслуживание пропущено: {{note}}",
+        "cycleDone": "Создано предложений: {{n}}",
+        "runFailed": "Не удалось выполнить обслуживание",
+        "applyFailed": "Не удалось применить предложение",
+        "rejectFailed": "Не удалось отклонить предложение",
+        "kind": {
+          "auto_link": "Ссылка",
+          "orphan_rescue": "Спасение",
+          "frontmatter_fill": "Метаданные",
+          "dedup_merge": "Объединить",
+          "knowledge_gap": "Пробел",
+          "auto_tag": "Тег",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Память"
+        }
       },
       "graph": {
         "toggle": "Граф связей",
@@ -7187,7 +7536,8 @@
     },
     "common": {
       "create": "Создать",
-      "clear": "Очистить"
+      "clear": "Очистить",
+      "on": "Вкл"
     }
   },
   "ar": {
@@ -7702,6 +8052,34 @@
           "progress": "{{done}} / {{total}} قاعدة معرفية",
           "phase": "إعادة تضمين الملاحظات"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "الصيانة الذاتية",
+        "intro": "تفحص مساحات المعرفة دوريًا وتضع اقتراحات صيانة الملاحظات (الربط، الوسم، دمج المكرر، MOC…) في قائمة المراجعة. لا يُكتب شيء حتى توافق على الاقتراح.",
+        "enabled": "تفعيل الصيانة في الخلفية",
+        "enabledDesc": "يفحص وفق الجدول أدناه. عند الإيقاف يعمل الفحص اليدوي فقط.",
+        "idle": "التشغيل عند الخمول",
+        "idleDesc": "يفحص بعد بقاء التطبيق خاملاً للدقائق المحددة.",
+        "cron": "التشغيل وفق جدول",
+        "cronDesc": "cron من 6 حقول (ثانية دقيقة ساعة يوم شهر يوم-الأسبوع).",
+        "autoApprove": "تطبيق الاقتراحات تلقائيًا",
+        "autoApproveDesc": "يتخطّى المراجعة ويكتب التغييرات في ملاحظاتك تلقائيًا. استخدمه بحذر.",
+        "maxProposals": "أقصى عدد اقتراحات لكل فحص",
+        "tasks": "المهام",
+        "runNow": "افحص الآن",
+        "cycleSkipped": "تم التخطّي: {{note}}",
+        "cycleDone": "تم إنشاء {{n}} اقتراح",
+        "runFailed": "تعذّر تشغيل الصيانة",
+        "task": {
+          "autoLink": "ربط تلقائي",
+          "orphanRescue": "إنقاذ اليتيمة",
+          "frontmatterFill": "تعبئة البيانات الأولية",
+          "dedupMerge": "دمج المكرر",
+          "knowledgeGap": "فجوات المعرفة",
+          "autoTag": "وسم تلقائي",
+          "mocUpkeep": "صيانة MOC",
+          "memoryToNote": "ذاكرة → ملاحظة"
+        }
       }
     },
     "subagent": {
@@ -8187,7 +8565,28 @@
         "healthyHint": "لا توجد روابط معطلة أو ملاحظات يتيمة في هذه المساحة.",
         "brokenLinks": "روابط معطلة",
         "orphans": "ملاحظات يتيمة",
-        "inNote": "في"
+        "inNote": "في",
+        "proposals": "اقتراحات",
+        "runNow": "فحص",
+        "runNowTip": "افحص الآن بحثًا عن اقتراحات الصيانة",
+        "rejectAll": "رفض الكل",
+        "approve": "تطبيق",
+        "reject": "تجاهل",
+        "cycleSkipped": "تم تخطّي الصيانة: {{note}}",
+        "cycleDone": "تم إنشاء {{n}} اقتراح",
+        "runFailed": "تعذّر تشغيل الصيانة",
+        "applyFailed": "تعذّر تطبيق الاقتراح",
+        "rejectFailed": "تعذّر تجاهل الاقتراح",
+        "kind": {
+          "auto_link": "ربط",
+          "orphan_rescue": "إنقاذ",
+          "frontmatter_fill": "بيانات أولية",
+          "dedup_merge": "دمج",
+          "knowledge_gap": "فجوة",
+          "auto_tag": "وسم",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "ذاكرة"
+        }
       },
       "graph": {
         "toggle": "عرض الرسم البياني",
@@ -8217,7 +8616,8 @@
     },
     "common": {
       "create": "إنشاء",
-      "clear": "مسح"
+      "clear": "مسح",
+      "on": "تشغيل"
     }
   },
   "es": {
@@ -8732,6 +9132,34 @@
           "progress": "{{done}} / {{total}} bases de conocimiento",
           "phase": "Reincrustando notas"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Mantenimiento autónomo",
+        "intro": "Escanea periódicamente los espacios de conocimiento y pone en cola sugerencias de mantenimiento de notas (enlazar, etiquetar, fusionar duplicados, MOC…) para tu revisión. No se escribe nada hasta que apruebes.",
+        "enabled": "Activar mantenimiento en segundo plano",
+        "enabledDesc": "Ejecuta escaneos según la programación de abajo. Apagado, solo funciona el escaneo manual.",
+        "idle": "Ejecutar al estar inactivo",
+        "idleDesc": "Escanea tras estar la app inactiva los minutos indicados.",
+        "cron": "Ejecutar según programación",
+        "cronDesc": "cron de 6 campos (seg min hora día mes díasemana).",
+        "autoApprove": "Aplicar sugerencias automáticamente",
+        "autoApproveDesc": "Omite la revisión y escribe los cambios en tus notas automáticamente. Úsalo con cuidado.",
+        "maxProposals": "Máx. sugerencias por escaneo",
+        "tasks": "Tareas",
+        "runNow": "Escanear ahora",
+        "cycleSkipped": "Omitido: {{note}}",
+        "cycleDone": "{{n}} sugerencia(s) generadas",
+        "runFailed": "No se pudo ejecutar el mantenimiento",
+        "task": {
+          "autoLink": "Enlace automático",
+          "orphanRescue": "Rescate de huérfanas",
+          "frontmatterFill": "Rellenar frontmatter",
+          "dedupMerge": "Fusionar duplicados",
+          "knowledgeGap": "Lagunas de conocimiento",
+          "autoTag": "Etiquetado automático",
+          "mocUpkeep": "Mantenimiento de MOC",
+          "memoryToNote": "Memoria → nota"
+        }
       }
     },
     "subagent": {
@@ -9217,7 +9645,28 @@
         "healthyHint": "No hay enlaces rotos ni notas huérfanas en este espacio.",
         "brokenLinks": "Enlaces rotos",
         "orphans": "Notas huérfanas",
-        "inNote": "en"
+        "inNote": "en",
+        "proposals": "Sugerencias",
+        "runNow": "Escanear",
+        "runNowTip": "Escanear ahora en busca de sugerencias de mantenimiento",
+        "rejectAll": "Rechazar todo",
+        "approve": "Aplicar",
+        "reject": "Descartar",
+        "cycleSkipped": "Mantenimiento omitido: {{note}}",
+        "cycleDone": "{{n}} sugerencia(s) generadas",
+        "runFailed": "No se pudo ejecutar el mantenimiento",
+        "applyFailed": "No se pudo aplicar la sugerencia",
+        "rejectFailed": "No se pudo descartar la sugerencia",
+        "kind": {
+          "auto_link": "Enlazar",
+          "orphan_rescue": "Rescate",
+          "frontmatter_fill": "Frontmatter",
+          "dedup_merge": "Fusionar",
+          "knowledge_gap": "Vacío",
+          "auto_tag": "Etiqueta",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Memoria"
+        }
       },
       "graph": {
         "toggle": "Vista de grafo",
@@ -9247,7 +9696,8 @@
     },
     "common": {
       "create": "Crear",
-      "clear": "Borrar"
+      "clear": "Borrar",
+      "on": "Activado"
     }
   },
   "ms": {
@@ -9762,6 +10212,34 @@
           "progress": "{{done}} / {{total}} pangkalan pengetahuan",
           "phase": "Meng-embed semula nota"
         }
+      },
+      "knowledgeMaintenance": {
+        "title": "Penyelenggaraan autonomi",
+        "intro": "Mengimbas ruang pengetahuan secara berkala dan menyusun cadangan penyelenggaraan nota (memaut, menanda, menggabung pendua, MOC…) untuk semakan anda. Tiada apa ditulis sehingga anda meluluskan.",
+        "enabled": "Dayakan penyelenggaraan latar",
+        "enabledDesc": "Mengimbas mengikut jadual di bawah. Apabila dimatikan, hanya imbasan manual berfungsi.",
+        "idle": "Jalankan ketika melahu",
+        "idleDesc": "Mengimbas selepas apl melahu untuk minit yang ditetapkan.",
+        "cron": "Jalankan mengikut jadual",
+        "cronDesc": "cron 6 medan (saat minit jam hari bulan harimingguan).",
+        "autoApprove": "Guna cadangan secara automatik",
+        "autoApproveDesc": "Melangkau semakan dan menulis perubahan ke nota anda secara automatik. Guna dengan berhati-hati.",
+        "maxProposals": "Cadangan maksimum setiap imbasan",
+        "tasks": "Tugas",
+        "runNow": "Imbas sekarang",
+        "cycleSkipped": "Dilangkau: {{note}}",
+        "cycleDone": "{{n}} cadangan dijana",
+        "runFailed": "Tidak dapat menjalankan penyelenggaraan",
+        "task": {
+          "autoLink": "Auto-paut",
+          "orphanRescue": "Selamat nota yatim",
+          "frontmatterFill": "Isi frontmatter",
+          "dedupMerge": "Gabung pendua",
+          "knowledgeGap": "Jurang pengetahuan",
+          "autoTag": "Auto-tag",
+          "mocUpkeep": "Penyelenggaraan MOC",
+          "memoryToNote": "Memori → nota"
+        }
       }
     },
     "subagent": {
@@ -10247,7 +10725,28 @@
         "healthyHint": "Tiada pautan rosak atau nota yatim dalam ruang ini.",
         "brokenLinks": "Pautan rosak",
         "orphans": "Nota yatim",
-        "inNote": "dalam"
+        "inNote": "dalam",
+        "proposals": "Cadangan",
+        "runNow": "Imbas",
+        "runNowTip": "Imbas sekarang untuk cadangan penyelenggaraan",
+        "rejectAll": "Tolak semua",
+        "approve": "Guna",
+        "reject": "Ketepikan",
+        "cycleSkipped": "Penyelenggaraan dilangkau: {{note}}",
+        "cycleDone": "{{n}} cadangan dijana",
+        "runFailed": "Tidak dapat menjalankan penyelenggaraan",
+        "applyFailed": "Tidak dapat menggunakan cadangan",
+        "rejectFailed": "Tidak dapat mengetepikan cadangan",
+        "kind": {
+          "auto_link": "Paut",
+          "orphan_rescue": "Selamat",
+          "frontmatter_fill": "Frontmatter",
+          "dedup_merge": "Gabung",
+          "knowledge_gap": "Jurang",
+          "auto_tag": "Tag",
+          "moc_upkeep": "MOC",
+          "memory_to_note": "Memori"
+        }
       },
       "graph": {
         "toggle": "Paparan graf",
@@ -10277,7 +10776,8 @@
     },
     "common": {
       "create": "Cipta",
-      "clear": "Kosongkan"
+      "clear": "Kosongkan",
+      "on": "Hidup"
     }
   },
   "zh": {

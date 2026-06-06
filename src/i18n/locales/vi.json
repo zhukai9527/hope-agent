@@ -571,7 +571,8 @@
     "test": "Kiểm tra kết nối",
     "testing": "Đang kiểm tra...",
     "create": "Tạo",
-    "clear": "Xóa"
+    "clear": "Xóa",
+    "on": "Bật"
   },
   "context": {
     "ago": "trước",
@@ -4274,6 +4275,34 @@
       "overlap": "Chồng lấn (ký tự)",
       "rebuildWarning": "Lưu sẽ dựng lại chỉ mục cho mọi không gian kiến thức.",
       "saved": "Đã lưu — đang dựng lại mọi không gian"
+    },
+    "knowledgeMaintenance": {
+      "title": "Bảo trì tự động",
+      "intro": "Định kỳ quét các không gian tri thức và xếp các gợi ý bảo trì ghi chú (liên kết, gắn thẻ, gộp trùng, MOC…) vào hàng chờ duyệt. Không ghi gì cho đến khi bạn chấp nhận.",
+      "enabled": "Bật bảo trì nền",
+      "enabledDesc": "Quét theo lịch bên dưới. Khi tắt chỉ quét thủ công.",
+      "idle": "Chạy khi rảnh",
+      "idleDesc": "Quét sau khi ứng dụng rảnh đủ số phút đã đặt.",
+      "cron": "Chạy theo lịch",
+      "cronDesc": "cron 6 trường (giây phút giờ ngày tháng thứ).",
+      "autoApprove": "Tự động áp dụng gợi ý",
+      "autoApproveDesc": "Bỏ qua duyệt và tự ghi thay đổi vào ghi chú của bạn. Dùng thận trọng.",
+      "maxProposals": "Số gợi ý tối đa mỗi lần quét",
+      "tasks": "Tác vụ",
+      "runNow": "Quét ngay",
+      "cycleSkipped": "Đã bỏ qua: {{note}}",
+      "cycleDone": "Đã tạo {{n}} gợi ý",
+      "runFailed": "Không chạy được bảo trì",
+      "task": {
+        "autoLink": "Tự liên kết",
+        "orphanRescue": "Cứu ghi chú mồ côi",
+        "frontmatterFill": "Điền frontmatter",
+        "dedupMerge": "Gộp trùng",
+        "knowledgeGap": "Lỗ hổng tri thức",
+        "autoTag": "Tự gắn thẻ",
+        "mocUpkeep": "Bảo trì MOC",
+        "memoryToNote": "Bộ nhớ → ghi chú"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "Không có liên kết hỏng hoặc ghi chú mồ côi trong không gian này.",
       "brokenLinks": "Liên kết hỏng",
       "orphans": "Ghi chú mồ côi",
-      "inNote": "trong"
+      "inNote": "trong",
+      "proposals": "Gợi ý",
+      "runNow": "Quét",
+      "runNowTip": "Quét ngay để tạo gợi ý bảo trì",
+      "rejectAll": "Bỏ tất cả",
+      "approve": "Áp dụng",
+      "reject": "Bỏ qua",
+      "cycleSkipped": "Đã bỏ qua bảo trì: {{note}}",
+      "cycleDone": "Đã tạo {{n}} gợi ý",
+      "runFailed": "Không chạy được bảo trì",
+      "applyFailed": "Không áp dụng được gợi ý",
+      "rejectFailed": "Không bỏ được gợi ý",
+      "kind": {
+        "auto_link": "Liên kết",
+        "orphan_rescue": "Cứu",
+        "frontmatter_fill": "Frontmatter",
+        "dedup_merge": "Gộp",
+        "knowledge_gap": "Thiếu",
+        "auto_tag": "Thẻ",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Bộ nhớ"
+      }
     },
     "graph": {
       "toggle": "Xem dạng đồ thị",

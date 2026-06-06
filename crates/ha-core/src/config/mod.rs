@@ -526,6 +526,10 @@ pub struct AppConfig {
     /// (dedicated owner commands, not `update_settings`) like `knowledge_embedding`.
     #[serde(default)]
     pub knowledge_chunk: crate::knowledge::ChunkConfig,
+    /// Knowledge Layer-2 autonomous maintenance (WS6): scheduling + per-task
+    /// toggles + auto-approve for the proposal review queue. Disabled by default.
+    #[serde(default)]
+    pub knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig,
     /// Deprecated legacy embedding config. Kept as a deserialization sink only;
     /// user-facing embedding config lives in `embedding_models` +
     /// `memory_embedding`.
@@ -824,6 +828,7 @@ impl Default for AppConfig {
             memory_embedding: crate::memory::EmbeddingSelection::default(),
             knowledge_embedding: crate::memory::EmbeddingSelection::default(),
             knowledge_chunk: crate::knowledge::ChunkConfig::default(),
+            knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig::default(),
             embedding: crate::memory::EmbeddingConfig::default(),
             memory_extract: crate::memory::MemoryExtractConfig::default(),
             memory_selection: crate::memory::MemorySelectionConfig::default(),

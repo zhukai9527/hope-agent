@@ -571,7 +571,8 @@
     "test": "Uji sambungan",
     "testing": "Menguji...",
     "create": "Cipta",
-    "clear": "Kosongkan"
+    "clear": "Kosongkan",
+    "on": "Hidup"
   },
   "context": {
     "ago": "yang lalu",
@@ -4274,6 +4275,34 @@
       "overlap": "Pertindihan (aksara)",
       "rebuildWarning": "Menyimpan akan membina semula indeks bagi setiap ruang pengetahuan.",
       "saved": "Disimpan — membina semula semua ruang"
+    },
+    "knowledgeMaintenance": {
+      "title": "Penyelenggaraan autonomi",
+      "intro": "Mengimbas ruang pengetahuan secara berkala dan menyusun cadangan penyelenggaraan nota (memaut, menanda, menggabung pendua, MOC…) untuk semakan anda. Tiada apa ditulis sehingga anda meluluskan.",
+      "enabled": "Dayakan penyelenggaraan latar",
+      "enabledDesc": "Mengimbas mengikut jadual di bawah. Apabila dimatikan, hanya imbasan manual berfungsi.",
+      "idle": "Jalankan ketika melahu",
+      "idleDesc": "Mengimbas selepas apl melahu untuk minit yang ditetapkan.",
+      "cron": "Jalankan mengikut jadual",
+      "cronDesc": "cron 6 medan (saat minit jam hari bulan harimingguan).",
+      "autoApprove": "Guna cadangan secara automatik",
+      "autoApproveDesc": "Melangkau semakan dan menulis perubahan ke nota anda secara automatik. Guna dengan berhati-hati.",
+      "maxProposals": "Cadangan maksimum setiap imbasan",
+      "tasks": "Tugas",
+      "runNow": "Imbas sekarang",
+      "cycleSkipped": "Dilangkau: {{note}}",
+      "cycleDone": "{{n}} cadangan dijana",
+      "runFailed": "Tidak dapat menjalankan penyelenggaraan",
+      "task": {
+        "autoLink": "Auto-paut",
+        "orphanRescue": "Selamat nota yatim",
+        "frontmatterFill": "Isi frontmatter",
+        "dedupMerge": "Gabung pendua",
+        "knowledgeGap": "Jurang pengetahuan",
+        "autoTag": "Auto-tag",
+        "mocUpkeep": "Penyelenggaraan MOC",
+        "memoryToNote": "Memori → nota"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "Tiada pautan rosak atau nota yatim dalam ruang ini.",
       "brokenLinks": "Pautan rosak",
       "orphans": "Nota yatim",
-      "inNote": "dalam"
+      "inNote": "dalam",
+      "proposals": "Cadangan",
+      "runNow": "Imbas",
+      "runNowTip": "Imbas sekarang untuk cadangan penyelenggaraan",
+      "rejectAll": "Tolak semua",
+      "approve": "Guna",
+      "reject": "Ketepikan",
+      "cycleSkipped": "Penyelenggaraan dilangkau: {{note}}",
+      "cycleDone": "{{n}} cadangan dijana",
+      "runFailed": "Tidak dapat menjalankan penyelenggaraan",
+      "applyFailed": "Tidak dapat menggunakan cadangan",
+      "rejectFailed": "Tidak dapat mengetepikan cadangan",
+      "kind": {
+        "auto_link": "Paut",
+        "orphan_rescue": "Selamat",
+        "frontmatter_fill": "Frontmatter",
+        "dedup_merge": "Gabung",
+        "knowledge_gap": "Jurang",
+        "auto_tag": "Tag",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Memori"
+      }
     },
     "graph": {
       "toggle": "Paparan graf",

@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Stethoscope, Unlink2, CircleOff, FileText } from "lucide-react"
+import {
+  Stethoscope,
+  Unlink2,
+  CircleOff,
+  FileText,
+  Sparkles,
+  Check,
+  X,
+  Loader2,
+} from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { IconTip } from "@/components/ui/tooltip"
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
-import type { BrokenLink, Note } from "@/types/knowledge"
+import type { BrokenLink, MaintenanceProposal, MaintenanceReport, Note } from "@/types/knowledge"
 
 interface Props {
   /** The active knowledge space; the panel is empty/disabled when null. */
@@ -32,6 +42,9 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
   const [open, setOpen] = useState(false)
   const [broken, setBroken] = useState<BrokenLink[]>([])
   const [orphans, setOrphans] = useState<Note[]>([])
+  const [proposals, setProposals] = useState<MaintenanceProposal[]>([])
+  const [running, setRunning] = useState(false)
+  const [busyId, setBusyId] = useState<number | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // Async load — setState lands only after the `await`, so the effect that calls
@@ -42,19 +55,85 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
     try {
       const b = await getTransport().call<BrokenLink[]>("kb_broken_links_cmd", { kbId })
       const o = await getTransport().call<Note[]>("kb_orphans_cmd", { kbId })
+      const p = await getTransport().call<MaintenanceProposal[]>("kb_maintenance_list_cmd", {
+        kbId,
+        status: "draft",
+      })
       setBroken(b)
       setOrphans(o)
+      setProposals(p)
     } catch (e) {
       logger.warn("knowledge", "KnowledgeMaintenanceButton::refresh", "load failed", e)
     }
   }, [kbId])
 
+  // Run one maintenance cycle now (generates proposals across all spaces).
+  const runNow = useCallback(async () => {
+    if (running) return
+    setRunning(true)
+    try {
+      const report = await getTransport().call<MaintenanceReport>("kb_maintenance_run_cmd", {})
+      if (report.note) {
+        toast.message(t("knowledge.maintenance.cycleSkipped", "Maintenance skipped: {{note}}", {
+          note: report.note,
+        }))
+      } else {
+        toast.success(
+          t("knowledge.maintenance.cycleDone", "Generated {{n}} proposal(s)", {
+            n: report.generated,
+          }),
+        )
+      }
+      await refresh()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeMaintenanceButton::runNow", "run failed", e)
+      toast.error(t("knowledge.maintenance.runFailed", "Couldn't run maintenance"))
+    } finally {
+      setRunning(false)
+    }
+  }, [running, refresh, t])
+
+  const decide = useCallback(
+    async (id: number, approve: boolean) => {
+      if (busyId != null) return
+      setBusyId(id)
+      try {
+        await getTransport().call(
+          approve ? "kb_maintenance_approve_cmd" : "kb_maintenance_reject_cmd",
+          { id },
+        )
+        await refresh()
+      } catch (e) {
+        logger.warn("knowledge", "KnowledgeMaintenanceButton::decide", "decision failed", e)
+        toast.error(
+          approve
+            ? t("knowledge.maintenance.applyFailed", "Couldn't apply proposal")
+            : t("knowledge.maintenance.rejectFailed", "Couldn't reject proposal"),
+        )
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [busyId, refresh, t],
+  )
+
+  const rejectAll = useCallback(async () => {
+    if (!kbId || busyId != null) return
+    setBusyId(-1)
+    try {
+      await getTransport().call("kb_maintenance_reject_all_cmd", { kbId })
+      await refresh()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeMaintenanceButton::rejectAll", "failed", e)
+    } finally {
+      setBusyId(null)
+    }
+  }, [kbId, busyId, refresh])
+
   // Keep the badge fresh as the space mutates (links resolve/break on edits).
+  // `refresh` only setStates after an `await` (a microtask, not a synchronous
+  // cascade), so the set-state-in-effect lint doesn't fire here.
   useEffect(() => {
-    // `refresh` only setStates after an `await` (a microtask, not a synchronous
-    // cascade) — same deferred-load shape as KnowledgeJobsButton; the linter
-    // false-positives here because the loader closes over the reactive `kbId`.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh()
     const un = getTransport().listen("knowledge:changed", refresh)
     return un
@@ -77,7 +156,8 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
     }
   }, [open])
 
-  const issueCount = broken.length + orphans.length
+  const issueCount = broken.length + orphans.length + proposals.length
+  const hasBadge = kbId != null && (broken.length > 0 || proposals.length > 0)
 
   const jump = useCallback(
     (path: string, line?: number) => {
@@ -101,7 +181,7 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
           }}
         >
           <Stethoscope className="h-4 w-4" />
-          {kbId && broken.length > 0 && (
+          {hasBadge && (
             <span className="absolute right-1 top-1 flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
@@ -116,6 +196,37 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
             <span className="text-xs font-medium">
               {t("knowledge.maintenance.title", "Maintenance")}
             </span>
+            <div className="flex items-center gap-1">
+              {proposals.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[11px] text-muted-foreground"
+                  disabled={busyId != null}
+                  onClick={rejectAll}
+                >
+                  {t("knowledge.maintenance.rejectAll", "Reject all")}
+                </Button>
+              )}
+              <IconTip
+                label={t("knowledge.maintenance.runNowTip", "Scan now for maintenance suggestions")}
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={running}
+                  onClick={runNow}
+                >
+                  {running ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1 h-3 w-3" />
+                  )}
+                  {t("knowledge.maintenance.runNow", "Scan")}
+                </Button>
+              </IconTip>
+            </div>
           </div>
           <div className="max-h-[360px] overflow-y-auto p-2">
             {issueCount === 0 ? (
@@ -133,6 +244,62 @@ export default function KnowledgeMaintenanceButton({ kbId, onOpenNote }: Props) 
               </div>
             ) : (
               <div className="space-y-3">
+                {proposals.length > 0 && (
+                  <Section
+                    icon={<Sparkles className="h-3.5 w-3.5 text-primary" />}
+                    label={t("knowledge.maintenance.proposals", "Suggestions")}
+                    count={proposals.length}
+                  >
+                    {proposals.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-start gap-1.5 rounded-md px-2 py-1.5 hover:bg-accent"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1">
+                            <span className="rounded bg-primary/10 px-1 text-[10px] font-medium text-primary">
+                              {t(`knowledge.maintenance.kind.${p.kind}`, p.kind)}
+                            </span>
+                            <span className="truncate text-xs">{p.title}</span>
+                          </div>
+                          {p.detail && (
+                            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                              {p.detail}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <IconTip label={t("knowledge.maintenance.approve", "Apply")}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-emerald-600"
+                              disabled={busyId != null}
+                              onClick={() => decide(p.id, true)}
+                            >
+                              {busyId === p.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </IconTip>
+                          <IconTip label={t("knowledge.maintenance.reject", "Dismiss")}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground"
+                              disabled={busyId != null}
+                              onClick={() => decide(p.id, false)}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </IconTip>
+                        </div>
+                      </div>
+                    ))}
+                  </Section>
+                )}
                 {broken.length > 0 && (
                   <Section
                     icon={<Unlink2 className="h-3.5 w-3.5 text-amber-500" />}

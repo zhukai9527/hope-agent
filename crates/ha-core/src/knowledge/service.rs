@@ -500,6 +500,30 @@ pub fn set_chunk_config(
     Ok(cfg)
 }
 
+// ── Maintenance config (WS6, owner plane GUI) ───────────────────
+
+/// Current (clamped) maintenance config for the GUI panel.
+pub fn get_maintenance_config() -> super::maintenance::MaintenanceConfig {
+    crate::config::cached_config()
+        .knowledge_maintenance
+        .clamped()
+}
+
+/// Persist maintenance config (clamped). Emits `config:changed`, which wakes the
+/// cron loop to re-evaluate its schedule. Returns the clamped value saved.
+pub fn set_maintenance_config(
+    cfg: super::maintenance::MaintenanceConfig,
+    source: &str,
+) -> Result<super::maintenance::MaintenanceConfig> {
+    let clamped = cfg.clamped();
+    let to_save = clamped.clone();
+    crate::config::mutate_config(("knowledge_maintenance", source), move |store| {
+        store.knowledge_maintenance = to_save.clone();
+        Ok(())
+    })?;
+    Ok(clamped)
+}
+
 /// Strip a ```markdown … ``` wrapper the model may add around its reply. Only unwraps
 /// when it's confidently a *markdown wrapper* of the whole reply: opening fence whose
 /// info string is empty / `markdown` / `md`, + a closing ``` at the very end. A reply

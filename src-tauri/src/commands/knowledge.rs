@@ -379,6 +379,80 @@ pub async fn kb_ai_rewrite_cmd(text: String, instruction: String) -> Result<Stri
         .map_err(Into::into)
 }
 
+// ── Layer-2 autonomous maintenance (WS6) ────────────────────────
+
+/// Manually run one maintenance cycle (generate proposals across all KBs).
+#[tauri::command]
+pub async fn kb_maintenance_run_cmd() -> Result<knowledge::maintenance::MaintenanceReport, CmdError>
+{
+    Ok(
+        knowledge::maintenance::manual_run(knowledge::maintenance::MaintenanceTrigger::Manual)
+            .await,
+    )
+}
+
+/// Running flag + last cycle report.
+#[tauri::command]
+pub async fn kb_maintenance_status_cmd(
+) -> Result<knowledge::maintenance::MaintenanceStatus, CmdError> {
+    Ok(knowledge::maintenance::status())
+}
+
+/// List proposals for a KB (optionally filtered by status: draft/applied/rejected/failed).
+#[tauri::command]
+pub async fn kb_maintenance_list_cmd(
+    kb_id: String,
+    status: Option<String>,
+) -> Result<Vec<knowledge::maintenance::MaintenanceProposal>, CmdError> {
+    let st = status
+        .as_deref()
+        .and_then(knowledge::maintenance::ProposalStatus::from_str);
+    knowledge::maintenance::list_proposals(&kb_id, st).map_err(Into::into)
+}
+
+/// Pending (draft) proposal count for a KB (review-queue badge).
+#[tauri::command]
+pub async fn kb_maintenance_pending_count_cmd(kb_id: String) -> Result<usize, CmdError> {
+    knowledge::maintenance::pending_count(&kb_id).map_err(Into::into)
+}
+
+/// Approve a proposal — applies it through the owner plane.
+#[tauri::command]
+pub async fn kb_maintenance_approve_cmd(
+    id: i64,
+) -> Result<knowledge::maintenance::MaintenanceProposal, CmdError> {
+    knowledge::maintenance::approve_proposal(id)
+        .await
+        .map_err(Into::into)
+}
+
+/// Reject a single proposal.
+#[tauri::command]
+pub async fn kb_maintenance_reject_cmd(id: i64) -> Result<(), CmdError> {
+    knowledge::maintenance::reject_proposal(id).map_err(Into::into)
+}
+
+/// Reject every pending proposal for a KB. Returns how many were cleared.
+#[tauri::command]
+pub async fn kb_maintenance_reject_all_cmd(kb_id: String) -> Result<usize, CmdError> {
+    knowledge::maintenance::reject_all(&kb_id).map_err(Into::into)
+}
+
+/// Read the maintenance config (GUI panel).
+#[tauri::command]
+pub async fn kb_maintenance_config_get_cmd(
+) -> Result<knowledge::maintenance::MaintenanceConfig, CmdError> {
+    Ok(service::get_maintenance_config())
+}
+
+/// Persist the maintenance config (GUI panel). Returns the clamped value saved.
+#[tauri::command]
+pub async fn kb_maintenance_config_set_cmd(
+    config: knowledge::maintenance::MaintenanceConfig,
+) -> Result<knowledge::maintenance::MaintenanceConfig, CmdError> {
+    service::set_maintenance_config(config, "gui").map_err(Into::into)
+}
+
 /// Resolve a `[[ ]]` reference to a note and return its full read result (for
 /// `![[ ]]` transclusion preview). `Ok(None)` = broken embed.
 #[tauri::command]

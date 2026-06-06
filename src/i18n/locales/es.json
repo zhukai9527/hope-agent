@@ -571,7 +571,8 @@
     "test": "Probar conexión",
     "testing": "Probando...",
     "create": "Crear",
-    "clear": "Borrar"
+    "clear": "Borrar",
+    "on": "Activado"
   },
   "context": {
     "ago": "atrás",
@@ -4274,6 +4275,34 @@
       "overlap": "Solapamiento (caracteres)",
       "rebuildWarning": "Guardar reconstruye el índice de todos los espacios de conocimiento.",
       "saved": "Guardado — reconstruyendo todos los espacios"
+    },
+    "knowledgeMaintenance": {
+      "title": "Mantenimiento autónomo",
+      "intro": "Escanea periódicamente los espacios de conocimiento y pone en cola sugerencias de mantenimiento de notas (enlazar, etiquetar, fusionar duplicados, MOC…) para tu revisión. No se escribe nada hasta que apruebes.",
+      "enabled": "Activar mantenimiento en segundo plano",
+      "enabledDesc": "Ejecuta escaneos según la programación de abajo. Apagado, solo funciona el escaneo manual.",
+      "idle": "Ejecutar al estar inactivo",
+      "idleDesc": "Escanea tras estar la app inactiva los minutos indicados.",
+      "cron": "Ejecutar según programación",
+      "cronDesc": "cron de 6 campos (seg min hora día mes díasemana).",
+      "autoApprove": "Aplicar sugerencias automáticamente",
+      "autoApproveDesc": "Omite la revisión y escribe los cambios en tus notas automáticamente. Úsalo con cuidado.",
+      "maxProposals": "Máx. sugerencias por escaneo",
+      "tasks": "Tareas",
+      "runNow": "Escanear ahora",
+      "cycleSkipped": "Omitido: {{note}}",
+      "cycleDone": "{{n}} sugerencia(s) generadas",
+      "runFailed": "No se pudo ejecutar el mantenimiento",
+      "task": {
+        "autoLink": "Enlace automático",
+        "orphanRescue": "Rescate de huérfanas",
+        "frontmatterFill": "Rellenar frontmatter",
+        "dedupMerge": "Fusionar duplicados",
+        "knowledgeGap": "Lagunas de conocimiento",
+        "autoTag": "Etiquetado automático",
+        "mocUpkeep": "Mantenimiento de MOC",
+        "memoryToNote": "Memoria → nota"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "No hay enlaces rotos ni notas huérfanas en este espacio.",
       "brokenLinks": "Enlaces rotos",
       "orphans": "Notas huérfanas",
-      "inNote": "en"
+      "inNote": "en",
+      "proposals": "Sugerencias",
+      "runNow": "Escanear",
+      "runNowTip": "Escanear ahora en busca de sugerencias de mantenimiento",
+      "rejectAll": "Rechazar todo",
+      "approve": "Aplicar",
+      "reject": "Descartar",
+      "cycleSkipped": "Mantenimiento omitido: {{note}}",
+      "cycleDone": "{{n}} sugerencia(s) generadas",
+      "runFailed": "No se pudo ejecutar el mantenimiento",
+      "applyFailed": "No se pudo aplicar la sugerencia",
+      "rejectFailed": "No se pudo descartar la sugerencia",
+      "kind": {
+        "auto_link": "Enlazar",
+        "orphan_rescue": "Rescate",
+        "frontmatter_fill": "Frontmatter",
+        "dedup_merge": "Fusionar",
+        "knowledge_gap": "Vacío",
+        "auto_tag": "Etiqueta",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Memoria"
+      }
     },
     "graph": {
       "toggle": "Vista de grafo",

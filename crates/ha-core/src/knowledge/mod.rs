@@ -17,6 +17,7 @@ pub mod embedding;
 pub mod graph;
 pub mod index;
 pub mod inject;
+pub mod maintenance;
 pub mod parser;
 pub mod reembed;
 pub mod registry;

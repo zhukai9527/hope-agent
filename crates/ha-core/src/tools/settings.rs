@@ -89,7 +89,10 @@ fn risk_level(category: &str) -> &'static str {
 
         // ── HIGH ───────────────────────────────────────────────
         "proxy" | "embedding" | "shortcuts" | "skills" | "server" | "acp_control" | "skill_env"
-        | "security" | "security.ssrf" | "smart_mode" | "mcp_global" | "filesystem" => "high",
+        | "security" | "security.ssrf" | "smart_mode" | "mcp_global" | "filesystem"
+        // Autonomous maintenance can write to the user's notes (auto_approve =
+        // approval policy) — treat as HIGH so the skill confirms before changes.
+        | "knowledge_maintenance" => "high",
 
         // Read-only categories — no risk since they can't be mutated here.
         // `channels` and `mcp_servers` are categorized "low" for read because
@@ -170,6 +173,9 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "dreaming" => Some(
             "Dreaming runs offline LLM consolidation cycles. Disabling stops idle / cron triggers entirely; promotion thresholds gate which candidates get pinned into long-term memory."
+        ),
+        "knowledge_maintenance" => Some(
+            "Layer-2 autonomous maintenance scans knowledge bases and queues note-maintenance proposals (auto-link, dedup merge, tagging, MOC, memory→note, …) for review. Changes take effect on the next cycle. ⚠️ `enabled` lets background cycles run; `autoApprove` makes approved-free writes to the user's notes happen automatically (skipping the review queue) — confirm with the user before enabling either."
         ),
         "stt_providers" => Some(
             "Read-only via this tool. STT provider configs carry API keys (apiKey / authProfiles[*].apiKey) plus provider-specific secrets in `extra` (Volcengine app_id / access_key, iFlytek app_id, Azure region key, etc.). The response from get_settings redacts every secret-bearing field — writes must go through Settings → Speech-to-Text so credentials stay out of conversation logs."
@@ -487,6 +493,7 @@ fn read_category(category: &str) -> Result<Value> {
         "filesystem" => Ok(serde_json::to_value(&cfg.filesystem)?),
         "multimodal" => Ok(serde_json::to_value(&cfg.multimodal)?),
         "dreaming" => Ok(serde_json::to_value(&cfg.dreaming)?),
+        "knowledge_maintenance" => Ok(serde_json::to_value(&cfg.knowledge_maintenance)?),
         "mcp_global" => Ok(serde_json::to_value(&cfg.mcp_global)?),
         "mcp_servers" => Ok(redact_mcp_servers_value(serde_json::to_value(
             &cfg.mcp_servers,
@@ -644,7 +651,7 @@ fn get_all_overview() -> Result<String> {
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
             "acp_control", "skill_env", "security", "security.ssrf",
-            "smart_mode", "mcp_global"
+            "smart_mode", "mcp_global", "knowledge_maintenance"
         ],
         "read_only": [
             "active_model", "fallback_models", "channels", "mcp_servers",
@@ -986,6 +993,12 @@ async fn update_app_config(category: &str, values: &Value) -> Result<String> {
         "filesystem" => merge_field(&mut store.filesystem, values)?,
         "multimodal" => merge_field(&mut store.multimodal, values)?,
         "dreaming" => merge_field(&mut store.dreaming, values)?,
+        "knowledge_maintenance" => {
+            merge_field(&mut store.knowledge_maintenance, values)?;
+            // Clamp so a skill write can't persist out-of-range values (the GUI path
+            // clamps in `service::set_maintenance_config`).
+            store.knowledge_maintenance = store.knowledge_maintenance.clamped();
+        }
         "mcp_global" => merge_field(&mut store.mcp_global, values)?,
         "local_llm_auto_maintenance" => {
             // Only the `enabled` toggle is writable through the skill —
@@ -1255,6 +1268,7 @@ mod tests {
             "security.ssrf",
             "smart_mode",
             "mcp_global",
+            "knowledge_maintenance",
         ] {
             assert_eq!(risk_level(cat), "high", "{cat} should be high risk");
         }
@@ -1524,6 +1538,7 @@ mod tests {
             "channels",
             "multimodal",
             "dreaming",
+            "knowledge_maintenance",
         ] {
             assert!(
                 side_effect_note(cat).is_some(),

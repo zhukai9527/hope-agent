@@ -175,3 +175,72 @@ export interface ChunkConfig {
   maxChars: number
   overlapChars: number
 }
+
+// ── Layer-2 autonomous maintenance (WS6) ─────────────────────────
+
+export type ProposalKind =
+  | "auto_link"
+  | "orphan_rescue"
+  | "frontmatter_fill"
+  | "dedup_merge"
+  | "knowledge_gap"
+  | "auto_tag"
+  | "moc_upkeep"
+  | "memory_to_note"
+
+export type ProposalStatus = "draft" | "applied" | "rejected" | "failed"
+
+/** A queued maintenance proposal awaiting owner review. */
+export interface MaintenanceProposal {
+  id: number
+  kbId: string
+  kind: ProposalKind
+  status: ProposalStatus
+  title: string
+  detail: string
+  /** Tagged file action (`{ op: "append_link" | ... }`) — opaque to the UI. */
+  action: Record<string, unknown>
+  fingerprint: string
+  createdAt: number
+  decidedAt?: number
+  error?: string
+}
+
+export interface MaintenanceReport {
+  generated: number
+  byKind: Record<string, number>
+  skippedExisting: number
+  autoApplied: number
+  note?: string
+  durationMs: number
+}
+
+export interface MaintenanceStatus {
+  running: boolean
+  lastReport?: MaintenanceReport
+}
+
+export interface MaintenanceTasks {
+  autoLink: boolean
+  orphanRescue: boolean
+  frontmatterFill: boolean
+  dedupMerge: boolean
+  knowledgeGap: boolean
+  autoTag: boolean
+  mocUpkeep: boolean
+  memoryToNote: boolean
+}
+
+/** Wire shape of the `knowledge_maintenance` settings category. */
+export interface MaintenanceConfig {
+  enabled: boolean
+  idleTrigger: { enabled: boolean; idleMinutes: number }
+  cronTrigger: { enabled: boolean; cronExpr: string }
+  manualEnabled: boolean
+  tasks: MaintenanceTasks
+  autoApprove: boolean
+  maxProposalsPerCycle: number
+  dedupSimilarity: number
+  llmTimeoutSecs: number
+  llmMaxTokens: number
+}

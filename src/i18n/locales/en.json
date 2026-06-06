@@ -572,7 +572,8 @@
     "test": "Test Connection",
     "testing": "Testing...",
     "create": "Create",
-    "clear": "Clear"
+    "clear": "Clear",
+    "on": "On"
   },
   "context": {
     "ago": "ago",
@@ -4275,6 +4276,34 @@
       "overlap": "Overlap (chars)",
       "rebuildWarning": "Saving rebuilds the index for every knowledge space.",
       "saved": "Saved — rebuilding every space"
+    },
+    "knowledgeMaintenance": {
+      "title": "Autonomous maintenance",
+      "intro": "Periodically scan knowledge spaces and queue note-maintenance suggestions (linking, tagging, dedup, MOCs, …) for your review. Nothing is written until you approve a suggestion.",
+      "enabled": "Enable background maintenance",
+      "enabledDesc": "Run scans on the schedule below. With this off, only manual scans work.",
+      "idle": "Run when idle",
+      "idleDesc": "Scan after the app has been idle for the given minutes.",
+      "cron": "Run on a schedule",
+      "cronDesc": "6-field cron (sec min hour day month weekday).",
+      "autoApprove": "Auto-apply suggestions",
+      "autoApproveDesc": "Skip review and write changes to your notes automatically. Use with care.",
+      "maxProposals": "Max suggestions per scan",
+      "tasks": "Tasks",
+      "runNow": "Scan now",
+      "cycleSkipped": "Skipped: {{note}}",
+      "cycleDone": "Generated {{n}} suggestion(s)",
+      "runFailed": "Couldn't run maintenance",
+      "task": {
+        "autoLink": "Auto-link",
+        "orphanRescue": "Orphan rescue",
+        "frontmatterFill": "Frontmatter fill",
+        "dedupMerge": "Dedup merge",
+        "knowledgeGap": "Knowledge gaps",
+        "autoTag": "Auto-tag",
+        "mocUpkeep": "MOC upkeep",
+        "memoryToNote": "Memory → note"
+      }
     }
   },
   "shortcuts": {
@@ -4802,7 +4831,28 @@
       "healthyHint": "No broken links or orphan notes in this space.",
       "brokenLinks": "Broken links",
       "orphans": "Orphan notes",
-      "inNote": "in"
+      "inNote": "in",
+      "proposals": "Suggestions",
+      "runNow": "Scan",
+      "runNowTip": "Scan now for maintenance suggestions",
+      "rejectAll": "Reject all",
+      "approve": "Apply",
+      "reject": "Dismiss",
+      "cycleSkipped": "Maintenance skipped: {{note}}",
+      "cycleDone": "Generated {{n}} suggestion(s)",
+      "runFailed": "Couldn't run maintenance",
+      "applyFailed": "Couldn't apply suggestion",
+      "rejectFailed": "Couldn't dismiss suggestion",
+      "kind": {
+        "auto_link": "Link",
+        "orphan_rescue": "Rescue",
+        "frontmatter_fill": "Frontmatter",
+        "dedup_merge": "Merge",
+        "knowledge_gap": "Gap",
+        "auto_tag": "Tag",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Memory"
+      }
     },
     "graph": {
       "toggle": "Graph view",

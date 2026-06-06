@@ -171,6 +171,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 - **读取桥①**：用户消息 `[[note]]` 经 `knowledge::inject` 确定性注入，套 `<untrusted_external_data>` 信封 + 来源 + 截断，受 `effective_kb_access` 约束，**永不提升为 system 指令**
 - **外部 vault 实时同步（D6）**：`notify` watcher（per-KB 线程 + debounce）+ bind/启动 reconcile（mtime 增量 + prune）。内部 `notes/` 写时同步索引
 - **新增 KB 工具 / 端点**：工具走 `tools/note.rs` + `core_tools.rs` 注册 + `execution.rs` dispatch；Tauri/HTTP owner 平面薄壳调 `knowledge::service`；逻辑全在 ha-core（红线）
+- **自主维护（Layer 2，WS6）**：`knowledge/maintenance/` 镜像 dreaming（primary-gated cron loop + idle ticker 复用 dreaming 活动时钟 + `MAINTENANCE_RUNNING` 串行锁），后台扫内部 KB 产**提案**进 `sessions.db` 的 `kb_maintenance_proposals` 表（真相源 D9，唯一 `(kb_id,fingerprint,status)` 去重，随 KB 级联删）。**默认全关**（`AppConfig.knowledge_maintenance`）。提案落地走 `maintenance::apply`（owner 平面 `service::note_*`，用户已批准故**绕 D10**，但写前重读磁盘 hash 守 stale-write + 外部只读 root 跳过）；**`auto_approve` 是审批策略**，ha-settings 里 `knowledge_maintenance` 归 **HIGH 风险**（技能须二次确认，不进 `BLOCKED_UPDATE_CATEGORIES`——可写）。8 类任务确定性的跑 `spawn_blocking`、LLM 的走 `build_analysis_agent`+side_query
 
 ### 工具 & 审批
 

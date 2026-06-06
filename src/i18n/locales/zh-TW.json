@@ -571,7 +571,8 @@
     "test": "測試連接",
     "testing": "測試中...",
     "create": "建立",
-    "clear": "清除"
+    "clear": "清除",
+    "on": "開"
   },
   "context": {
     "ago": "前",
@@ -4274,6 +4275,34 @@
       "overlap": "重疊（字元）",
       "rebuildWarning": "儲存會重建所有知識空間的索引。",
       "saved": "已儲存，正在重建所有空間"
+    },
+    "knowledgeMaintenance": {
+      "title": "自主維護",
+      "intro": "定期掃描知識空間，把筆記維護建議（建立連結、標籤、去重、MOC…）放入待審佇列。在你確認前不會變更任何筆記。",
+      "enabled": "啟用背景維護",
+      "enabledDesc": "依下方排程自動掃描。關閉後僅支援手動掃描。",
+      "idle": "閒置時執行",
+      "idleDesc": "應用程式閒置達設定分鐘數後掃描。",
+      "cron": "排程執行",
+      "cronDesc": "6 欄位 cron（秒 分 時 日 月 週）。",
+      "autoApprove": "自動套用建議",
+      "autoApproveDesc": "略過審閱，自動將變更寫入你的筆記。請謹慎使用。",
+      "maxProposals": "每次掃描最多建議數",
+      "tasks": "任務",
+      "runNow": "立即掃描",
+      "cycleSkipped": "已略過：{{note}}",
+      "cycleDone": "已產生 {{n}} 條建議",
+      "runFailed": "維護執行失敗",
+      "task": {
+        "autoLink": "自動建立連結",
+        "orphanRescue": "孤島救援",
+        "frontmatterFill": "補全屬性",
+        "dedupMerge": "去重合併",
+        "knowledgeGap": "知識缺口",
+        "autoTag": "自動標籤",
+        "mocUpkeep": "MOC 維護",
+        "memoryToNote": "記憶轉筆記"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "此空間沒有失效連結或孤立筆記。",
       "brokenLinks": "失效連結",
       "orphans": "孤立筆記",
-      "inNote": "位於"
+      "inNote": "位於",
+      "proposals": "維護建議",
+      "runNow": "掃描",
+      "runNowTip": "立即掃描以產生維護建議",
+      "rejectAll": "全部忽略",
+      "approve": "套用",
+      "reject": "忽略",
+      "cycleSkipped": "維護已略過：{{note}}",
+      "cycleDone": "已產生 {{n}} 條建議",
+      "runFailed": "維護執行失敗",
+      "applyFailed": "套用建議失敗",
+      "rejectFailed": "忽略建議失敗",
+      "kind": {
+        "auto_link": "建立連結",
+        "orphan_rescue": "救援",
+        "frontmatter_fill": "屬性",
+        "dedup_merge": "合併",
+        "knowledge_gap": "缺口",
+        "auto_tag": "標籤",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "記憶"
+      }
     },
     "graph": {
       "toggle": "圖譜檢視",

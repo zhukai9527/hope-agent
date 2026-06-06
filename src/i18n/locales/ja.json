@@ -571,7 +571,8 @@
     "test": "接続テスト",
     "testing": "テスト中...",
     "create": "作成",
-    "clear": "クリア"
+    "clear": "クリア",
+    "on": "オン"
   },
   "context": {
     "ago": "前",
@@ -4274,6 +4275,34 @@
       "overlap": "オーバーラップ（文字）",
       "rebuildWarning": "保存するとすべての知識空間のインデックスを再構築します。",
       "saved": "保存しました — 全空間を再構築中"
+    },
+    "knowledgeMaintenance": {
+      "title": "自律メンテナンス",
+      "intro": "知識スペースを定期的にスキャンし、ノート整備の提案（リンク・タグ付け・重複統合・MOC…）を確認待ちキューに入れます。承認するまでノートは変更されません。",
+      "enabled": "バックグラウンドメンテナンスを有効化",
+      "enabledDesc": "下のスケジュールでスキャンします。オフの場合は手動スキャンのみ。",
+      "idle": "アイドル時に実行",
+      "idleDesc": "指定した分だけアイドルが続いたらスキャンします。",
+      "cron": "スケジュール実行",
+      "cronDesc": "6 フィールド cron（秒 分 時 日 月 曜日）。",
+      "autoApprove": "提案を自動適用",
+      "autoApproveDesc": "確認を省き、変更をノートに自動で書き込みます。慎重に使用してください。",
+      "maxProposals": "スキャンごとの最大提案数",
+      "tasks": "タスク",
+      "runNow": "今すぐスキャン",
+      "cycleSkipped": "スキップ：{{note}}",
+      "cycleDone": "{{n}} 件の提案を生成",
+      "runFailed": "メンテナンスを実行できませんでした",
+      "task": {
+        "autoLink": "自動リンク",
+        "orphanRescue": "孤立ノート救出",
+        "frontmatterFill": "属性補完",
+        "dedupMerge": "重複統合",
+        "knowledgeGap": "知識ギャップ",
+        "autoTag": "自動タグ",
+        "mocUpkeep": "MOC 整備",
+        "memoryToNote": "メモリ→ノート"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "この空間に壊れたリンクや孤立ノートはありません。",
       "brokenLinks": "壊れたリンク",
       "orphans": "孤立ノート",
-      "inNote": "場所:"
+      "inNote": "場所:",
+      "proposals": "提案",
+      "runNow": "スキャン",
+      "runNowTip": "今すぐスキャンして提案を生成",
+      "rejectAll": "すべて却下",
+      "approve": "適用",
+      "reject": "却下",
+      "cycleSkipped": "メンテナンスをスキップ：{{note}}",
+      "cycleDone": "{{n}} 件の提案を生成",
+      "runFailed": "メンテナンスを実行できませんでした",
+      "applyFailed": "提案を適用できませんでした",
+      "rejectFailed": "提案を却下できませんでした",
+      "kind": {
+        "auto_link": "リンク",
+        "orphan_rescue": "救出",
+        "frontmatter_fill": "属性",
+        "dedup_merge": "統合",
+        "knowledge_gap": "ギャップ",
+        "auto_tag": "タグ",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "メモリ"
+      }
     },
     "graph": {
       "toggle": "グラフ表示",

@@ -571,7 +571,8 @@
     "test": "Bağlantıyı test et",
     "testing": "Test ediliyor...",
     "create": "Oluştur",
-    "clear": "Temizle"
+    "clear": "Temizle",
+    "on": "Açık"
   },
   "context": {
     "ago": "önce",
@@ -4274,6 +4275,34 @@
       "overlap": "Örtüşme (karakter)",
       "rebuildWarning": "Kaydetmek tüm bilgi alanlarının dizinini yeniden oluşturur.",
       "saved": "Kaydedildi — tüm alanlar yeniden oluşturuluyor"
+    },
+    "knowledgeMaintenance": {
+      "title": "Otonom bakım",
+      "intro": "Bilgi alanlarını düzenli tarayıp not bakım önerilerini (bağlama, etiketleme, yineleme birleştirme, MOC…) incelemeniz için sıraya alır. Siz onaylamadan hiçbir not değiştirilmez.",
+      "enabled": "Arka plan bakımını etkinleştir",
+      "enabledDesc": "Aşağıdaki zamanlamayla tarar. Kapalıyken yalnızca elle tarama çalışır.",
+      "idle": "Boştayken çalıştır",
+      "idleDesc": "Uygulama belirtilen dakika boyunca boşta kaldığında tarar.",
+      "cron": "Zamanlamayla çalıştır",
+      "cronDesc": "6 alanlı cron (sn dk saat gün ay haftagünü).",
+      "autoApprove": "Önerileri otomatik uygula",
+      "autoApproveDesc": "İncelemeyi atlayıp değişiklikleri notlarınıza otomatik yazar. Dikkatli kullanın.",
+      "maxProposals": "Tarama başına en fazla öneri",
+      "tasks": "Görevler",
+      "runNow": "Şimdi tara",
+      "cycleSkipped": "Atlandı: {{note}}",
+      "cycleDone": "{{n}} öneri oluşturuldu",
+      "runFailed": "Bakım çalıştırılamadı",
+      "task": {
+        "autoLink": "Otomatik bağlama",
+        "orphanRescue": "Yetim kurtarma",
+        "frontmatterFill": "Üstbilgi doldurma",
+        "dedupMerge": "Yineleme birleştirme",
+        "knowledgeGap": "Bilgi boşlukları",
+        "autoTag": "Otomatik etiket",
+        "mocUpkeep": "MOC bakımı",
+        "memoryToNote": "Bellek → not"
+      }
     }
   },
   "shortcuts": {
@@ -4760,7 +4789,28 @@
       "healthyHint": "Bu alanda kırık bağlantı veya yetim not yok.",
       "brokenLinks": "Kırık bağlantılar",
       "orphans": "Yetim notlar",
-      "inNote": "konum:"
+      "inNote": "konum:",
+      "proposals": "Öneriler",
+      "runNow": "Tara",
+      "runNowTip": "Bakım önerileri için şimdi tara",
+      "rejectAll": "Tümünü reddet",
+      "approve": "Uygula",
+      "reject": "Yoksay",
+      "cycleSkipped": "Bakım atlandı: {{note}}",
+      "cycleDone": "{{n}} öneri oluşturuldu",
+      "runFailed": "Bakım çalıştırılamadı",
+      "applyFailed": "Öneri uygulanamadı",
+      "rejectFailed": "Öneri yoksayılamadı",
+      "kind": {
+        "auto_link": "Bağla",
+        "orphan_rescue": "Kurtar",
+        "frontmatter_fill": "Üstbilgi",
+        "dedup_merge": "Birleştir",
+        "knowledge_gap": "Boşluk",
+        "auto_tag": "Etiket",
+        "moc_upkeep": "MOC",
+        "memory_to_note": "Bellek"
+      }
     },
     "graph": {
       "toggle": "Grafik görünümü",

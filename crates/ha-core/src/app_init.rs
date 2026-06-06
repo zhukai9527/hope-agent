@@ -900,6 +900,24 @@ pub async fn start_background_tasks() {
                         );
                     });
                 }
+                // Knowledge maintenance idle trigger (WS6) — same idle clock.
+                let mcfg = crate::config::cached_config().knowledge_maintenance.clone();
+                if crate::knowledge::maintenance::check_idle_trigger(&mcfg) {
+                    tokio::spawn(async {
+                        let report = crate::knowledge::maintenance::manual_run(
+                            crate::knowledge::maintenance::MaintenanceTrigger::Idle,
+                        )
+                        .await;
+                        app_info!(
+                            "knowledge",
+                            "maintenance::idle_trigger",
+                            "idle-trigger cycle: generated={}, autoApplied={}, note={:?}",
+                            report.generated,
+                            report.auto_applied,
+                            report.note,
+                        );
+                    });
+                }
             }
         });
 
@@ -907,6 +925,10 @@ pub async fn start_background_tasks() {
         // fires `manual_run(Cron)` on the configured schedule. Re-evaluates
         // on every `config:changed { category: "dreaming" }`.
         crate::memory::dreaming::spawn_dreaming_cron_loop();
+
+        // Knowledge maintenance cron-trigger loop (WS6). Reads
+        // `knowledge_maintenance.cron_trigger`; off unless the user enables it.
+        crate::knowledge::maintenance::spawn_maintenance_cron_loop();
 
         // Optional skill draft consolidation loop. Re-reads the
         // auto-review config after every interval or config change.

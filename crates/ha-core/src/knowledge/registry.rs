@@ -69,7 +69,31 @@ impl KnowledgeRegistry {
                 PRIMARY KEY (project_id, kb_id)
             );
             CREATE INDEX IF NOT EXISTS idx_project_kb_kb
-                ON project_knowledge_bases(kb_id);",
+                ON project_knowledge_bases(kb_id);
+
+            -- Layer-2 autonomous-maintenance proposal queue (WS6). Truth source in
+            -- sessions.db so it survives index rebuilds; cascades on KB delete.
+            CREATE TABLE IF NOT EXISTS kb_maintenance_proposals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                kb_id       TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                kind        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'draft',
+                title       TEXT NOT NULL,
+                detail      TEXT NOT NULL DEFAULT '',
+                action_json TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                decided_at  INTEGER,
+                error       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_maint_kb_status
+                ON kb_maintenance_proposals(kb_id, status, created_at DESC);
+            -- Dedup across ALL statuses: an applied OR dismissed suggestion is not
+            -- re-queued (a rejected one stays rejected, respecting the user's call;
+            -- an applied one is already done). Pruning old decided rows eventually
+            -- frees a fingerprint if the situation recurs much later.
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_kb_maint_fingerprint
+                ON kb_maintenance_proposals(kb_id, fingerprint);",
         )?;
 
         Ok(())
@@ -388,9 +412,202 @@ impl KnowledgeRegistry {
         }
         Ok(out)
     }
+
+    // ── Maintenance proposal queue (WS6) ────────────────────────
+
+    /// Insert a freshly generated proposal as a `draft`. Returns the new row id, or
+    /// `None` if a same-fingerprint row already exists in a *sticky* status (draft /
+    /// applied / rejected) — the unique `(kb_id, fingerprint)` index dedups it.
+    /// A `failed` row is first deleted so a transient apply failure can be retried
+    /// next cycle (Failed is not a permanent dismissal).
+    pub fn insert_proposal(
+        &self,
+        kb_id: &str,
+        p: &super::maintenance::NewProposal,
+    ) -> Result<Option<i64>> {
+        let action_json = serde_json::to_string(&p.action)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        // Free a previously-failed fingerprint so it can be re-proposed/retried.
+        conn.execute(
+            "DELETE FROM kb_maintenance_proposals
+             WHERE kb_id = ?1 AND fingerprint = ?2 AND status = 'failed'",
+            params![kb_id, p.fingerprint],
+        )?;
+        let affected = conn.execute(
+            "INSERT OR IGNORE INTO kb_maintenance_proposals
+                (kb_id, kind, status, title, detail, action_json, fingerprint, created_at)
+             VALUES (?1, ?2, 'draft', ?3, ?4, ?5, ?6, ?7)",
+            params![
+                kb_id,
+                p.kind.as_str(),
+                p.title,
+                p.detail,
+                action_json,
+                p.fingerprint,
+                now
+            ],
+        )?;
+        Ok(if affected == 0 {
+            None
+        } else {
+            Some(conn.last_insert_rowid())
+        })
+    }
+
+    /// List proposals for a KB (newest first), optionally filtered by status.
+    pub fn list_proposals(
+        &self,
+        kb_id: &str,
+        status: Option<super::maintenance::ProposalStatus>,
+    ) -> Result<Vec<super::maintenance::MaintenanceProposal>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut out = Vec::new();
+        if let Some(st) = status {
+            let mut stmt = conn.prepare(
+                "SELECT id, kb_id, kind, status, title, detail, action_json, fingerprint,
+                        created_at, decided_at, error
+                 FROM kb_maintenance_proposals WHERE kb_id = ?1 AND status = ?2
+                 ORDER BY created_at DESC, id DESC",
+            )?;
+            let rows = stmt.query_map(params![kb_id, st.as_str()], row_to_proposal)?;
+            for r in rows {
+                if let Some(p) = r? {
+                    out.push(p);
+                }
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, kb_id, kind, status, title, detail, action_json, fingerprint,
+                        created_at, decided_at, error
+                 FROM kb_maintenance_proposals WHERE kb_id = ?1
+                 ORDER BY created_at DESC, id DESC",
+            )?;
+            let rows = stmt.query_map(params![kb_id], row_to_proposal)?;
+            for r in rows {
+                if let Some(p) = r? {
+                    out.push(p);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Fetch one proposal by id.
+    pub fn get_proposal(&self, id: i64) -> Result<Option<super::maintenance::MaintenanceProposal>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let row = conn
+            .query_row(
+                "SELECT id, kb_id, kind, status, title, detail, action_json, fingerprint,
+                        created_at, decided_at, error
+                 FROM kb_maintenance_proposals WHERE id = ?1",
+                params![id],
+                row_to_proposal,
+            )
+            .optional()?;
+        Ok(row.flatten())
+    }
+
+    /// Transition a proposal's status, stamping `decided_at` and optional `error`.
+    pub fn set_proposal_status(
+        &self,
+        id: i64,
+        status: super::maintenance::ProposalStatus,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE kb_maintenance_proposals SET status = ?2, decided_at = ?3, error = ?4
+             WHERE id = ?1",
+            params![id, status.as_str(), now, error],
+        )?;
+        Ok(())
+    }
+
+    /// Count pending (draft) proposals for a KB — drives the review-queue badge.
+    pub fn count_pending_proposals(&self, kb_id: &str) -> Result<usize> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM kb_maintenance_proposals WHERE kb_id = ?1 AND status = 'draft'",
+            params![kb_id],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as usize)
+    }
+
+    /// Delete *decided* (applied / rejected / failed) proposals older than
+    /// `cutoff_ms`. Pending drafts are **never** pruned — they stay in the review
+    /// queue until the owner acts on them. Returns rows removed.
+    pub fn prune_proposals(&self, cutoff_ms: i64) -> Result<usize> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let n = conn.execute(
+            "DELETE FROM kb_maintenance_proposals
+             WHERE status != 'draft' AND decided_at IS NOT NULL AND decided_at < ?1",
+            params![cutoff_ms],
+        )?;
+        Ok(n)
+    }
 }
 
 // ── Row helpers ─────────────────────────────────────────────────
+
+fn row_to_proposal(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<Option<super::maintenance::MaintenanceProposal>> {
+    use super::maintenance::{MaintenanceProposal, ProposalKind, ProposalStatus};
+    let kind_s: String = row.get(2)?;
+    let status_s: String = row.get(3)?;
+    let action_s: String = row.get(6)?;
+    // Skip rows with an unknown kind/status or unparseable action (forward-compat
+    // / corruption) rather than failing the whole query.
+    let (Some(kind), Some(status)) = (
+        ProposalKind::from_str(&kind_s),
+        ProposalStatus::from_str(&status_s),
+    ) else {
+        return Ok(None);
+    };
+    let Ok(action) = serde_json::from_str(&action_s) else {
+        return Ok(None);
+    };
+    Ok(Some(MaintenanceProposal {
+        id: row.get(0)?,
+        kb_id: row.get(1)?,
+        kind,
+        status,
+        title: row.get(4)?,
+        detail: row.get(5)?,
+        action,
+        fingerprint: row.get(7)?,
+        created_at: row.get(8)?,
+        decided_at: row.get(9)?,
+        error: row.get(10)?,
+    }))
+}
 
 fn row_to_kb(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeBase> {
     Ok(KnowledgeBase {
