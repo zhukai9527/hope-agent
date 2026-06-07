@@ -4,9 +4,9 @@
  * chat panel (both `split`). Owns selection + draft state and wires the shared
  * {@link useProjectFs} data layer to the tree and preview.
  *
- * When the working dir is a git repo, a header bar shows the current branch and
- * a worktree switcher: picking a worktree re-roots the browser at that path via
- * the read-only `"path"` scope (no writes), with a "back" affordance.
+ * When the working dir is a git repo, a header bar shows the current branch
+ * inside the worktree selector: picking a worktree re-roots the browser at that
+ * path via the read-only `"path"` scope (no writes), with a "back" affordance.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react"
@@ -31,7 +31,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select"
 import { getTransport } from "@/lib/transport-provider"
 import type { GitInfo, WorkspaceEntry } from "@/lib/transport"
@@ -267,12 +266,69 @@ export function FileBrowserView({
     [effectiveEditable, expansion.collapseAll, onRefresh, t],
   )
 
+  const currentWorktreePath = (isWorktreeView ? activeWorktree : mainRootPath) ?? rootPath ?? ""
+  const currentWorktree =
+    gitInfo?.worktrees.find((wt) => wt.path === currentWorktreePath) ??
+    gitInfo?.worktrees.find((wt) => wt.isCurrent) ??
+    null
+  const currentBranch = currentWorktree?.branch ?? gitInfo?.branch ?? null
+  const currentBranchLabel = currentBranch ?? t("fileBrowser.gitDetached", "detached")
+  const currentWorktreeName = currentWorktree
+    ? basename(currentWorktree.path)
+    : basename(rootPath ?? "")
+  const selectedWorktreePath = currentWorktree?.path ?? currentWorktreePath
+
+  const gitLabel = (
+    <>
+      <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+          {currentBranchLabel}
+        </span>
+        {currentWorktreeName ? (
+          <span className="max-w-[45%] shrink truncate text-muted-foreground">
+            {currentWorktreeName}
+          </span>
+        ) : null}
+      </div>
+    </>
+  )
+
+  const gitTitle =
+    currentWorktreeName && currentWorktreeName !== currentBranchLabel
+      ? `${currentBranchLabel} · ${currentWorktreeName}`
+      : currentBranchLabel
+
   const gitBar = gitInfo ? (
     <div className="flex items-center gap-1.5 border-b bg-muted/20 px-2 py-1 text-xs">
-      <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="truncate font-medium text-foreground/80">
-        {gitInfo.branch ?? t("fileBrowser.gitDetached", "detached")}
-      </span>
+      {gitInfo.worktrees.length > 1 ? (
+        <Select value={selectedWorktreePath} onValueChange={jumpToWorktree}>
+          <SelectTrigger
+            className="h-7 min-w-0 flex-1 gap-1.5 rounded-md bg-background/70 px-2 py-0 text-xs shadow-sm"
+            title={gitTitle}
+          >
+            {gitLabel}
+          </SelectTrigger>
+          <SelectContent>
+            {gitInfo.worktrees.map((wt) => {
+              const branchLabel = wt.branch ?? t("fileBrowser.gitDetached", "detached")
+              return (
+                <SelectItem key={wt.path} value={wt.path} className="text-xs">
+                  <span className="font-medium">{branchLabel}</span>
+                  <span className="ml-1.5 text-muted-foreground">{basename(wt.path)}</span>
+                </SelectItem>
+              )
+            })}
+          </SelectContent>
+        </Select>
+      ) : (
+        <div
+          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input bg-background/70 px-2 text-xs text-foreground shadow-sm"
+          title={gitTitle}
+        >
+          {gitLabel}
+        </div>
+      )}
       {isWorktreeView ? (
         <IconTip label={t("fileBrowser.backToRoot", "Back to working directory")}>
           <button
@@ -283,26 +339,6 @@ export function FileBrowserView({
             <RotateCcw className="h-3 w-3" />
           </button>
         </IconTip>
-      ) : null}
-      {gitInfo.worktrees.length > 1 ? (
-        <Select
-          value={(isWorktreeView ? activeWorktree : mainRootPath) ?? ""}
-          onValueChange={jumpToWorktree}
-        >
-          <SelectTrigger className="ml-auto h-6 w-auto gap-1 border-0 bg-transparent px-1.5 py-0 text-xs">
-            <SelectValue placeholder={t("fileBrowser.worktrees", "Worktrees")} />
-          </SelectTrigger>
-          <SelectContent>
-            {gitInfo.worktrees.map((wt) => (
-              <SelectItem key={wt.path} value={wt.path} className="text-xs">
-                <span className="font-medium">{basename(wt.path)}</span>
-                <span className="ml-1.5 text-muted-foreground">
-                  {wt.branch ?? t("fileBrowser.gitDetached", "detached")}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       ) : null}
     </div>
   ) : null
