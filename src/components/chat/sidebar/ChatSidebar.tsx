@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { IconTip } from "@/components/ui/tooltip"
+import { FloatingMenu } from "@/components/ui/floating-menu"
 import { cn } from "@/lib/utils"
 import { Bot, MessageSquarePlus, PanelLeft } from "lucide-react"
 import { getTransport } from "@/lib/transport-provider"
@@ -379,37 +380,41 @@ export default function ChatSidebar({
                     </button>
                   </IconTip>
                   {/* Agent selector popup */}
-                  {showNewChatMenu && (
-                    <div className="absolute right-0 top-full mt-1 bg-surface-floating/95 backdrop-blur-xl border border-border-soft rounded-floating shadow-floating z-50 min-w-[180px] p-1.5 animate-in fade-in-0 zoom-in-95 duration-150">
-                      {agents.map((agent) => (
-                        <button
-                          key={agent.id}
-                          className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[13px] rounded-md text-foreground/80 hover:bg-surface-subtle hover:text-foreground transition-colors"
-                          onClick={() => {
-                            onNewChat(agent.id)
-                            setShowNewChatMenu(false)
-                          }}
-                        >
-                          {sidebarDisplayMode === "detailed" && (
-                            <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center text-primary shrink-0 text-[10px] overflow-hidden">
-                              {agent.avatar ? (
-                                <img
-                                  src={getTransport().resolveAssetUrl(agent.avatar) ?? agent.avatar}
-                                  className="w-full h-full object-cover"
-                                  alt=""
-                                />
-                              ) : agent.emoji ? (
-                                <span>{agent.emoji}</span>
-                              ) : (
-                                <Bot className="h-3 w-3" />
-                              )}
-                            </div>
-                          )}
-                          <span className="truncate">{agent.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <FloatingMenu
+                    open={showNewChatMenu}
+                    positionClassName="right-0 top-full mt-1"
+                    originClassName="origin-top-right"
+                    className="ha-menu-from-top min-w-[180px] p-1.5"
+                    onEscapeKeyDown={() => setShowNewChatMenu(false)}
+                  >
+                    {agents.map((agent) => (
+                      <button
+                        key={agent.id}
+                        className="flex items-center gap-2 w-full px-2.5 py-1.5 text-[13px] rounded-md text-foreground/80 hover:bg-surface-subtle hover:text-foreground transition-colors"
+                        onClick={() => {
+                          onNewChat(agent.id)
+                          setShowNewChatMenu(false)
+                        }}
+                      >
+                        {sidebarDisplayMode === "detailed" && (
+                          <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center text-primary shrink-0 text-[10px] overflow-hidden">
+                            {agent.avatar ? (
+                              <img
+                                src={getTransport().resolveAssetUrl(agent.avatar) ?? agent.avatar}
+                                className="w-full h-full object-cover"
+                                alt=""
+                              />
+                            ) : agent.emoji ? (
+                              <span>{agent.emoji}</span>
+                            ) : (
+                              <Bot className="h-3 w-3" />
+                            )}
+                          </div>
+                        )}
+                        <span className="truncate">{agent.name}</span>
+                      </button>
+                    ))}
+                  </FloatingMenu>
                 </div>
               </div>
             </div>

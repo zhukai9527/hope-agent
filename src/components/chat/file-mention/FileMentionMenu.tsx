@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { File, Folder, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { FloatingMenu } from "@/components/ui/floating-menu"
 import type { MentionEntry, MentionMode } from "./types"
 
 interface FileMentionMenuProps {
@@ -39,18 +40,15 @@ export default function FileMentionMenu({
     selectedRef.current?.scrollIntoView({ block: "nearest" })
   }, [selectedIndex])
 
-  if (!isOpen) return null
-
   // Compute breadcrumb relative to workingDir for list mode; search mode shows
   // the working dir basename.
   const breadcrumb = computeBreadcrumb(workingDir, dirPath, mode)
 
   return (
-    <div
-      className="absolute bottom-full left-0 right-0 mb-2 mx-3 z-50 max-h-[320px] overflow-y-auto overscroll-contain
-                 bg-popover/95 backdrop-blur-xl border border-border/60 rounded-xl
-                 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-1.5
-                 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+    <FloatingMenu
+      open={isOpen}
+      positionClassName="bottom-full left-0 right-0 mb-2 mx-3"
+      className="max-h-[320px] overflow-y-auto overscroll-contain p-1.5"
       role="listbox"
     >
       <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
@@ -67,9 +65,7 @@ export default function FileMentionMenu({
         )}
       </div>
 
-      {error && (
-        <div className="px-2.5 py-2 text-[12px] text-destructive">{error}</div>
-      )}
+      {error && <div className="px-2.5 py-2 text-[12px] text-destructive">{error}</div>}
 
       {!loading && !error && entries.length === 0 && (
         <div className="px-2.5 py-2 text-[12px] text-muted-foreground/70">
@@ -112,7 +108,7 @@ export default function FileMentionMenu({
           </button>
         )
       })}
-    </div>
+    </FloatingMenu>
   )
 }
 
