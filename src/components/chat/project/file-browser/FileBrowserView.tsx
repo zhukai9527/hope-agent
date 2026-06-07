@@ -9,7 +9,7 @@
  * path via the read-only `"path"` scope (no writes), with a "back" affordance.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useTranslation } from "react-i18next"
 import {
   ChevronLeft,
@@ -18,13 +18,17 @@ import {
   FolderPlus,
   FolderOpen,
   GitBranch,
+  Loader2,
   RefreshCw,
   RotateCcw,
+  Search,
+  X,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { basename } from "@/lib/path"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { IconTip } from "@/components/ui/tooltip"
 import {
   Select,
@@ -33,7 +37,7 @@ import {
   SelectTrigger,
 } from "@/components/ui/select"
 import { getTransport } from "@/lib/transport-provider"
-import type { GitInfo, WorkspaceEntry } from "@/lib/transport"
+import type { FileMatch, GitInfo, WorkspaceEntry } from "@/lib/transport"
 import { useProjectFs } from "../hooks/useProjectFs"
 import { useTreeExpansion } from "../hooks/useTreeExpansion"
 import { useFileBrowserSplit } from "../hooks/useFileBrowserSplit"
@@ -41,6 +45,7 @@ import { FileBrowserTree, type DraftNode } from "./FileBrowserTree"
 import { FilePreviewPane, type QuotePayload } from "./FilePreviewPane"
 import { projectFsPreviewSource } from "@/components/chat/files/previewSource"
 import { useDragWidth } from "./useDragWidth"
+import { FileTypeIcon } from "@/components/icons/FileTypeIcon"
 
 // The read-only worktree-jump scope encodes its id as a triple
 // `base_scope ∣ base_scope_id ∣ target_abs` (U+001F separator) that the backend
@@ -50,6 +55,22 @@ import { useDragWidth } from "./useDragWidth"
 const PATH_SCOPE_SEP = String.fromCharCode(0x1f)
 const encodePathScope = (baseScope: string, baseScopeId: string, target: string) =>
   `${baseScope}${PATH_SCOPE_SEP}${baseScopeId}${PATH_SCOPE_SEP}${target}`
+
+function parentRelPath(relPath: string): string {
+  const i = relPath.lastIndexOf("/")
+  return i >= 0 ? relPath.slice(0, i) : ""
+}
+
+function entryFromSearchMatch(match: FileMatch): WorkspaceEntry {
+  return {
+    name: match.name,
+    relPath: match.relPath,
+    isDir: match.isDir,
+    isSymlink: false,
+    size: null,
+    modifiedMs: null,
+  }
+}
 
 export interface FileBrowserViewProps {
   scope: "session" | "project"
@@ -99,6 +120,13 @@ export function FileBrowserView({
   } | null>(null)
   const [draft, setDraft] = useState<DraftNode | null>(null)
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchMatches, setSearchMatches] = useState<FileMatch[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [searchTruncated, setSearchTruncated] = useState(false)
+  const [searchSelectedIndex, setSearchSelectedIndex] = useState(0)
+  const searchSeqRef = useRef(0)
 
   // Reset overrides when the host scope target changes (setState-during-render).
   const hostKey = `${scope}:${scopeId ?? ""}`
@@ -110,6 +138,12 @@ export function FileBrowserView({
     setSelected(null)
     setRevealLines(null)
     setGitInfo(null)
+    setSearchQuery("")
+    setSearchMatches([])
+    setSearchError(null)
+    setSearchTruncated(false)
+    setSearchLoading(false)
+    setSearchSelectedIndex(0)
   }
 
   const isWorktreeView = activeWorktree !== null
@@ -122,7 +156,7 @@ export function FileBrowserView({
   // Memoized so FilePreviewPane's load effect only re-runs when the selected
   // file (or fs) actually changes, not on every unrelated render.
   const previewSource = useMemo(
-    () => (selected ? projectFsPreviewSource(fs, selected) : null),
+    () => (selected && !selected.isDir ? projectFsPreviewSource(fs, selected) : null),
     [fs, selected],
   )
   const expansion = useTreeExpansion(activeScope, activeScopeId)
@@ -219,6 +253,122 @@ export function FileBrowserView({
     setRevealLines(null) // manual pick: drop any carried-over reveal highlight
   }, [])
   const onRefresh = useCallback(() => void fs.refreshDir(""), [fs])
+
+  const trimmedSearchQuery = searchQuery.trim()
+  const searchActive = trimmedSearchQuery.length > 0
+
+  useEffect(() => {
+    if (!searchActive || !fs.available) {
+      searchSeqRef.current += 1
+      return
+    }
+
+    const seq = ++searchSeqRef.current
+
+    const timer = setTimeout(() => {
+      setSearchLoading(true)
+      void fs
+        .searchFiles(trimmedSearchQuery, 80)
+        .then((res) => {
+          if (seq !== searchSeqRef.current) return
+          setSearchMatches(res.matches)
+          setSearchTruncated(res.truncated)
+          setSearchSelectedIndex(0)
+        })
+        .catch((err) => {
+          if (seq !== searchSeqRef.current) return
+          setSearchMatches([])
+          setSearchTruncated(false)
+          setSearchError(err instanceof Error ? err.message : String(err))
+        })
+        .finally(() => {
+          if (seq === searchSeqRef.current) setSearchLoading(false)
+        })
+    }, 180)
+
+    return () => clearTimeout(timer)
+  }, [fs, searchActive, trimmedSearchQuery])
+
+  const onSearchQueryChange = useCallback(
+    (value: string) => {
+      searchSeqRef.current += 1
+      setSearchQuery(value)
+      setSearchMatches([])
+      setSearchError(null)
+      setSearchTruncated(false)
+      setSearchSelectedIndex(0)
+      setSearchLoading(value.trim().length > 0 && fs.available)
+    },
+    [fs.available],
+  )
+
+  const revealSearchPath = useCallback(
+    (relPath: string, isDir: boolean) => {
+      const target = isDir ? relPath : parentRelPath(relPath)
+      if (!target) return
+      let dir = ""
+      for (const part of target.split("/").filter(Boolean)) {
+        dir = dir ? `${dir}/${part}` : part
+        expansion.setOpen(dir, true)
+        if (!fs.getDir(dir)) void fs.loadDir(dir)
+      }
+    },
+    [expansion, fs],
+  )
+
+  const selectSearchMatch = useCallback(
+    (match: FileMatch) => {
+      const entry = entryFromSearchMatch(match)
+      setSelected(entry)
+      setRevealLines(null)
+      revealSearchPath(match.relPath, match.isDir)
+      if (match.isDir) {
+        setSearchQuery("")
+        setSearchMatches([])
+        setSearchError(null)
+        setSearchTruncated(false)
+        setSearchSelectedIndex(0)
+      }
+    },
+    [revealSearchPath],
+  )
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("")
+    setSearchMatches([])
+    setSearchError(null)
+    setSearchTruncated(false)
+    setSearchSelectedIndex(0)
+  }, [])
+
+  const onSearchKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (!searchActive) return
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setSearchSelectedIndex((idx) =>
+          searchMatches.length === 0 ? 0 : Math.min(idx + 1, searchMatches.length - 1),
+        )
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setSearchSelectedIndex((idx) => Math.max(idx - 1, 0))
+      } else if (e.key === "Enter") {
+        e.preventDefault()
+        const match = searchMatches[searchSelectedIndex] ?? searchMatches[0]
+        if (match) selectSearchMatch(match)
+      } else if (e.key === "Escape") {
+        e.preventDefault()
+        clearSearch()
+      }
+    },
+    [
+      clearSearch,
+      searchActive,
+      searchMatches,
+      searchSelectedIndex,
+      selectSearchMatch,
+    ],
+  )
 
   const toolbar = useMemo(
     () => (
@@ -343,6 +493,33 @@ export function FileBrowserView({
     </div>
   ) : null
 
+  const searchBar = (
+    <div className="border-b bg-background/80 px-2 py-1.5">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={searchQuery}
+          onChange={(e) => onSearchQueryChange(e.target.value)}
+          onKeyDown={onSearchKeyDown}
+          placeholder={t("fileBrowser.searchPlaceholder", "Search files")}
+          aria-label={t("fileBrowser.searchPlaceholder", "Search files")}
+          className="h-7 rounded-md pl-7 pr-7 text-xs shadow-none"
+        />
+        {searchQuery ? (
+          <IconTip label={t("common.clear", "Clear")}>
+            <button
+              type="button"
+              className="absolute right-1 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              onClick={clearSearch}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </IconTip>
+        ) : null}
+      </div>
+    </div>
+  )
+
   if (!scopeId || !rootPath) {
     return (
       <div className={cn("flex h-full items-center justify-center px-6 text-center", className)}>
@@ -357,16 +534,29 @@ export function FileBrowserView({
     <div className="flex min-h-0 flex-1 flex-col">
       {gitBar}
       {toolbar}
+      {searchBar}
       <div className="min-h-0 flex-1 overflow-auto">
-        <FileBrowserTree
-          fs={fs}
-          expansion={expansion}
-          selectedPath={selected?.relPath ?? null}
-          onSelectFile={onSelectFile}
-          editable={effectiveEditable}
-          draft={draft}
-          onDraftChange={setDraft}
-        />
+        {searchActive ? (
+          <FileBrowserSearchResults
+            matches={searchMatches}
+            loading={searchLoading}
+            error={searchError}
+            truncated={searchTruncated}
+            selectedIndex={searchSelectedIndex}
+            onSelect={selectSearchMatch}
+            onHover={setSearchSelectedIndex}
+          />
+        ) : (
+          <FileBrowserTree
+            fs={fs}
+            expansion={expansion}
+            selectedPath={selected?.relPath ?? null}
+            onSelectFile={onSelectFile}
+            editable={effectiveEditable}
+            draft={draft}
+            onDraftChange={setDraft}
+          />
+        )}
       </div>
     </div>
   )
@@ -374,7 +564,7 @@ export function FileBrowserView({
   if (layout === "stacked") {
     // Narrow surface: tree full-width; selecting a file swaps to a full-width
     // preview with a back affordance.
-    if (selected) {
+    if (selected && !selected.isDir) {
       return (
         <div className={cn("flex h-full flex-col", className)}>
           <div className="flex items-center gap-1 border-b px-2 py-1">
@@ -419,6 +609,91 @@ export function FileBrowserView({
         onClose={selected ? () => setSelected(null) : undefined}
         className="min-h-0 min-w-0 flex-1"
       />
+    </div>
+  )
+}
+
+function FileBrowserSearchResults({
+  matches,
+  loading,
+  error,
+  truncated,
+  selectedIndex,
+  onSelect,
+  onHover,
+}: {
+  matches: FileMatch[]
+  loading: boolean
+  error: string | null
+  truncated: boolean
+  selectedIndex: number
+  onSelect: (match: FileMatch) => void
+  onHover: (index: number) => void
+}) {
+  const { t } = useTranslation()
+  const selectedRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" })
+  }, [selectedIndex])
+
+  return (
+    <div className="min-h-full py-1">
+      <div className="flex items-center gap-2 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+        <span className="truncate">{t("fileBrowser.searchResults", "Search results")}</span>
+        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        {truncated ? (
+          <span className="ml-auto normal-case tracking-normal text-amber-500/80">
+            {t("fileBrowser.searchTruncated", "Results truncated")}
+          </span>
+        ) : null}
+      </div>
+
+      {error ? <div className="px-3 py-2 text-xs text-destructive">{error}</div> : null}
+
+      {!loading && !error && matches.length === 0 ? (
+        <div className="px-3 py-2 text-xs text-muted-foreground">
+          {t("fileBrowser.searchEmpty", "No matching files")}
+        </div>
+      ) : null}
+
+      {matches.map((match, index) => {
+        const selected = index === selectedIndex
+        const parent = parentRelPath(match.relPath)
+        return (
+          <button
+            key={match.path}
+            ref={selected ? selectedRef : undefined}
+            type="button"
+            className={cn(
+              "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm outline-none transition-colors",
+              selected
+                ? "bg-accent text-accent-foreground"
+                : "text-foreground/85 hover:bg-accent/50",
+            )}
+            onClick={() => {
+              onHover(index)
+              onSelect(match)
+            }}
+            onMouseEnter={() => onHover(index)}
+          >
+            {match.isDir ? (
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <FileTypeIcon name={match.name} className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="min-w-0 flex-1 truncate font-medium">
+              {match.name}
+              {match.isDir ? "/" : ""}
+            </span>
+            {parent ? (
+              <span className="max-w-[52%] shrink truncate text-[11px] text-muted-foreground">
+                {parent}
+              </span>
+            ) : null}
+          </button>
+        )
+      })}
     </div>
   )
 }
