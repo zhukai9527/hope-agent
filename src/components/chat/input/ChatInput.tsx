@@ -43,9 +43,8 @@ import MentionMirrorOverlay from "../file-mention/MentionMirrorOverlay"
 import UrlPreviewCard from "../UrlPreviewCard"
 import type { CommandResult } from "../slash-commands/types"
 import {
-  AttachFileButton,
+  AttachFilesButton,
   AttachFilesMenuItem,
-  AttachImageButton,
   AttachmentPreview,
 } from "./AttachmentBar"
 import ModelPicker from "./ModelPicker"
@@ -571,8 +570,7 @@ export default function ChatInput({
           onChange={onWorkingDirChange}
         />
       )}
-      <AttachImageButton onAttachFiles={onAttachFiles} />
-      <AttachFileButton onAttachFiles={onAttachFiles} />
+      <AttachFilesButton onAttachFiles={onAttachFiles} />
       <IconTip label={t("slashCommands.buttonTip")}>
         <Button
           variant="ghost"
