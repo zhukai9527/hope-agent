@@ -244,7 +244,7 @@ export default function ChatInput({
     sessionId: currentSessionId ?? null,
     agentId: currentAgentId,
   }
-  const slash = useSlashCommands(input, onInputChange, slashActions)
+  const slash = useSlashCommands(input, onInputChange, slashActions, inputHandleRef)
   const voice = useVoiceInput()
   const normalToolbarOpen = voice.state !== "recording" && voice.state !== "transcribing"
   // Read the latest `input` when transcription resolves — the user can keep
