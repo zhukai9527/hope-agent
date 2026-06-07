@@ -1275,6 +1275,100 @@ pub(crate) async fn tool_note_search(args: &Value, ctx: &ToolExecContext) -> Res
     }))?)
 }
 
+/// `knowledge_recall({query, limit?, kb?, type?})`
+///
+/// **Store-aware unified recall (D7).** Searches the **memory** store and the
+/// **knowledge** notes in one call and returns them as two *separately ranked*
+/// sections — never merged or score-normalized (memories are one-line facts,
+/// notes are whole documents; mixing pollutes both stores). This is a thin
+/// orchestrator: it READS both backends and **does not touch `recall_memory` /
+/// the memory store**. The KB side goes through `effective_kb_access` (empty when
+/// nothing is attached / incognito / IM not opted-in); the memory side is skipped
+/// entirely in an incognito session (close-on-exit red line).
+pub(crate) async fn tool_knowledge_recall(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+    let query = str_arg(args, "query")
+        .ok_or_else(|| anyhow!("Missing 'query' parameter"))?
+        .to_string();
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.clamp(1, 50) as usize)
+        .unwrap_or(10);
+
+    // ── Knowledge notes (effective_kb_access gated, same as note_search) ──
+    let kbs = match str_arg(args, "kb") {
+        Some(kb) => {
+            require_read(ctx, kb)?;
+            vec![kb.to_string()]
+        }
+        None => accessible_kbs(ctx),
+    };
+    let note_hits = if kbs.is_empty() {
+        Vec::new()
+    } else {
+        // Run on a blocking thread: search_notes does SQLite FTS5 + (when vector
+        // search is on) an embedding call for the query — same treatment as the
+        // memory side below, so neither stalls the async runtime.
+        let kbs_c = kbs.clone();
+        let q = query.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<knowledge::NoteSearchHit>> {
+            let db =
+                index::get_index_db().ok_or_else(|| anyhow!("knowledge index not initialized"))?;
+            search::search_notes(&db, &kbs_c, &q, limit)
+        })
+        .await??
+    };
+
+    // ── Memory store (skipped in incognito — close-on-exit) ──
+    let memory_hits: Vec<Value> = if crate::session::is_session_incognito(ctx.session_id.as_deref())
+    {
+        Vec::new()
+    } else {
+        let type_filter =
+            str_arg(args, "type").map(|t| vec![crate::memory::MemoryType::from_str(t)]);
+        let agent_id = ctx.agent_id.clone();
+        let q = query.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Value>> {
+            let Some(backend) = crate::get_memory_backend() else {
+                return Ok(Vec::new());
+            };
+            let mq = crate::memory::MemorySearchQuery {
+                query: q,
+                types: type_filter,
+                scope: None,
+                agent_id,
+                limit: Some(limit),
+            };
+            Ok(backend
+                .search(&mq)?
+                .iter()
+                .map(|m| {
+                    let scope = match &m.scope {
+                        crate::memory::MemoryScope::Global => "global".to_string(),
+                        crate::memory::MemoryScope::Agent { id } => format!("agent:{id}"),
+                        crate::memory::MemoryScope::Project { id } => format!("project:{id}"),
+                    };
+                    serde_json::json!({
+                        "id": m.id,
+                        "type": m.memory_type.as_str(),
+                        "scope": scope,
+                        "pinned": m.pinned,
+                        "tags": m.tags,
+                        "content": m.content,
+                    })
+                })
+                .collect())
+        })
+        .await??
+    };
+
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "query": query,
+        "memories": { "count": memory_hits.len(), "hits": memory_hits },
+        "notes": { "count": note_hits.len(), "hits": note_hits },
+    }))?)
+}
+
 /// `note_by_tag({kb?, tag})`
 pub(crate) async fn tool_note_by_tag(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     let tag = str_arg(args, "tag").ok_or_else(|| anyhow!("Missing 'tag' parameter"))?;

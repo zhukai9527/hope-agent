@@ -14,6 +14,7 @@ pub mod migration;
 mod plan_context;
 pub mod preflight;
 mod providers;
+mod related_notes;
 pub mod resolver;
 mod side_query;
 mod streaming_adapter;
@@ -150,6 +151,8 @@ impl AssistantAgent {
             awareness_suffix: std::sync::Mutex::new(None),
             active_memory_state: std::sync::Arc::new(active_memory::ActiveMemoryState::new()),
             active_memory_suffix: std::sync::Mutex::new(None),
+            related_notes_state: std::sync::Arc::new(related_notes::RelatedNotesState::new()),
+            related_notes_suffix: std::sync::Mutex::new(None),
             provider_config: None,
         }
     }
@@ -203,6 +206,8 @@ impl AssistantAgent {
             awareness_suffix: std::sync::Mutex::new(None),
             active_memory_state: std::sync::Arc::new(active_memory::ActiveMemoryState::new()),
             active_memory_suffix: std::sync::Mutex::new(None),
+            related_notes_state: std::sync::Arc::new(related_notes::RelatedNotesState::new()),
+            related_notes_suffix: std::sync::Mutex::new(None),
             provider_config: None,
         }
     }
@@ -381,6 +386,8 @@ impl AssistantAgent {
             awareness_suffix: std::sync::Mutex::new(None),
             active_memory_state: std::sync::Arc::new(active_memory::ActiveMemoryState::new()),
             active_memory_suffix: std::sync::Mutex::new(None),
+            related_notes_state: std::sync::Arc::new(related_notes::RelatedNotesState::new()),
+            related_notes_suffix: std::sync::Mutex::new(None),
             provider_config: None,
         }
     }
@@ -703,6 +710,128 @@ impl AssistantAgent {
             .active_memory_suffix
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = suffix_arc;
+    }
+
+    /// Return the currently-held passive related-notes suffix (if any), for the
+    /// provider layer to inject as another independent block (read bridge ③).
+    pub(crate) fn current_related_notes_suffix(&self) -> Option<std::sync::Arc<String>> {
+        self.related_notes_suffix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Refresh the passive related-notes suffix for this user turn (read bridge ③,
+    /// Phase 3 / D7). Retrieval-only (no LLM): searches the **accessible** KBs by
+    /// the user's message and surfaces the top note titles. Degrades silently to
+    /// no-injection on: incognito, feature disabled, no accessible KB, no hits.
+    /// Never injects anything the agent couldn't reach via `effective_kb_access`.
+    pub(crate) async fn refresh_related_notes_suffix(&self, user_text: &str) {
+        use std::time::Duration;
+
+        // Incognito → never surface notes (close-on-exit, D10). Clear any stale
+        // suffix from a previous turn.
+        if self.session_is_incognito() {
+            *self
+                .related_notes_suffix
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            return;
+        }
+
+        let cfg = crate::config::cached_config()
+            .knowledge_passive_recall
+            .clamped();
+        if !cfg.enabled {
+            *self
+                .related_notes_suffix
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
+            return;
+        }
+
+        let Some(sid) = self.session_id.clone() else {
+            return;
+        };
+        let trimmed = user_text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        // Cache: reuse the rendered block for identical phrasing within the TTL.
+        let hash = active_memory::hash_user_text(trimmed);
+        let ttl = Duration::from_secs(cfg.cache_ttl_secs);
+        if let Some(cached) = self.related_notes_state.get_cached(hash, ttl) {
+            *self
+                .related_notes_suffix
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = cached.map(std::sync::Arc::new);
+            return;
+        }
+
+        // Resolve access + search on a blocking thread (registry + index SQLite).
+        // The KB set comes from `effective_kb_access` over the agent's threaded
+        // source/origin/channel identity — exactly what the note_* tools see, so
+        // passive recall can never reach a KB the agent isn't attached to (and an
+        // IM lineage stays gated by the WS8 opt-in).
+        let mut source = self
+            .chat_source
+            .unwrap_or(crate::knowledge::KbAccessSource::Gui);
+        let mut origin = self.origin_chat_source.unwrap_or(source);
+        let mut channel_info = self.channel_kb_context.clone();
+        // Defense-in-depth (WS8), mirroring `tools/note.rs::access_map`: if the
+        // source wasn't threaded (None) but the session is IM-bound, treat this as
+        // an IM turn so passive recall can't surface notes the IM origin hasn't
+        // opted into. A real chat turn always has `chat_source` set by
+        // `configure_agent`; this only guards an unthreaded edge — fail closed.
+        if self.chat_source.is_none() {
+            if let Some(ci) =
+                crate::session::lookup_session_meta(Some(&sid)).and_then(|m| m.channel_info)
+            {
+                source = crate::knowledge::KbAccessSource::Im;
+                origin = crate::knowledge::KbAccessSource::Im;
+                channel_info = Some(crate::knowledge::ChannelKbContext {
+                    channel_id: ci.channel_id,
+                    account_id: ci.account_id,
+                    chat_id: ci.chat_id,
+                    is_group: !ci.chat_type.eq_ignore_ascii_case("dm"),
+                });
+            }
+        }
+        let sid_c = sid.clone();
+        let query = trimmed.to_string();
+        let top_n = cfg.top_n;
+        let hits = tokio::task::spawn_blocking(move || -> Vec<crate::knowledge::NoteSearchHit> {
+            let project_id = crate::get_session_db()
+                .and_then(|db| db.get_session(&sid_c).ok().flatten())
+                .and_then(|s| s.project_id);
+            let actx = crate::knowledge::KnowledgeAccessContext::resolve(
+                Some(sid_c),
+                project_id,
+                source,
+                origin,
+                channel_info,
+            );
+            let access = crate::knowledge::effective_kb_access(&actx);
+            if access.is_empty() {
+                return Vec::new();
+            }
+            let mut kbs: Vec<String> = access.into_keys().collect();
+            kbs.sort();
+            let Some(db) = crate::knowledge::index::get_index_db() else {
+                return Vec::new();
+            };
+            crate::knowledge::search::search_notes(&db, &kbs, &query, top_n).unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+
+        let block = related_notes::render_suffix(&hits, cfg.show_snippet, cfg.max_chars);
+        self.related_notes_state.put_cached(hash, block.clone());
+        *self
+            .related_notes_suffix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = block.map(std::sync::Arc::new);
     }
 
     /// Return the currently-held awareness suffix (if any), for use by

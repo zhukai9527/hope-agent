@@ -115,6 +115,7 @@ pub const TOOL_NOTE_RELATED: &str = "note_related";
 pub const TOOL_NOTE_SUGGEST_LINKS: &str = "note_suggest_links";
 pub const TOOL_NOTE_DISTILL: &str = "note_distill";
 pub const TOOL_NOTE_MOC: &str = "note_moc";
+pub const TOOL_KNOWLEDGE_RECALL: &str = "knowledge_recall";
 pub const TOOL_SESSION_TO_NOTE: &str = "session_to_note";
 pub const TOOL_SESSIONS_LIST: &str = "sessions_list";
 pub const TOOL_SESSION_STATUS: &str = "session_status";

@@ -3,8 +3,8 @@ use serde_json::json;
 use super::super::{
     TOOL_AGENTS_LIST, TOOL_APPLY_PATCH, TOOL_BROWSER, TOOL_DELETE_MEMORY, TOOL_EDIT, TOOL_EXEC,
     TOOL_FIND, TOOL_GET_SETTINGS, TOOL_GET_WEATHER, TOOL_GREP, TOOL_IMAGE, TOOL_ISSUE_REPORT,
-    TOOL_LIST_SETTINGS_BACKUPS, TOOL_LS, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON, TOOL_MEMORY_GET,
-    TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BROKEN_LINKS, TOOL_NOTE_BY_TAG,
+    TOOL_KNOWLEDGE_RECALL, TOOL_LIST_SETTINGS_BACKUPS, TOOL_LS, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON,
+    TOOL_MEMORY_GET, TOOL_NOTE_APPEND, TOOL_NOTE_BACKLINKS, TOOL_NOTE_BROKEN_LINKS, TOOL_NOTE_BY_TAG,
     TOOL_NOTE_CREATE, TOOL_NOTE_DELETE, TOOL_NOTE_DISTILL, TOOL_NOTE_GRAPH, TOOL_NOTE_LINK,
     TOOL_NOTE_MOC, TOOL_NOTE_MOVE, TOOL_NOTE_ORPHANS, TOOL_NOTE_PATCH, TOOL_NOTE_READ,
     TOOL_NOTE_RELATED, TOOL_NOTE_RENAME, TOOL_NOTE_SEARCH, TOOL_NOTE_SET_FRONTMATTER,
@@ -1483,6 +1483,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             "memory_extract", "memory_selection", "memory_budget", "embedding",
                             "embedding_cache", "dedup", "hybrid_search",
                             "temporal_decay", "mmr", "multimodal", "dreaming", "knowledge_maintenance",
+                            "knowledge_passive_recall",
                             "recap", "awareness", "shortcuts",
                             "active_model", "fallback_models", "skills",
                             "server", "acp_control", "skill_env",
@@ -1525,6 +1526,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                             "memory_extract", "memory_selection", "memory_budget", "embedding",
                             "embedding_cache", "dedup", "hybrid_search",
                             "temporal_decay", "mmr", "multimodal", "dreaming", "knowledge_maintenance",
+                            "knowledge_passive_recall",
                             "recap", "awareness", "shortcuts", "skills",
                             "server", "acp_control", "skill_env",
                             "tool_result_disk_threshold",
@@ -1751,6 +1753,8 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
 /// tier so they are always loaded; not internal so they pass through the
 /// permission engine + plan-mode gating. `kb` is scoped by `effective_kb_access`
 /// at execution time; writes are confined to `WorkspaceScope::for_knowledge`.
+/// Exception: `knowledge_recall` (the memory+notes aggregator) is `Standard`
+/// (default-deferred, discoverable via `tool_search`), not Core/always-loaded.
 fn note_tools() -> Vec<ToolDefinition> {
     let interaction = || ToolTier::Core {
         subclass: CoreSubclass::Interaction,
@@ -1879,6 +1883,33 @@ fn note_tools() -> Vec<ToolDefinition> {
                 "additionalProperties": false
             }),
         ),
+        // Unified store-aware recall (D7): memory + knowledge notes in one call,
+        // returned as two separately-ranked sections (never merged). Deferred —
+        // recall_memory / note_search already cover the single-store cases eagerly;
+        // the model discovers this via tool_search when it wants both at once.
+        ToolDefinition {
+            name: TOOL_KNOWLEDGE_RECALL.into(),
+            description: "Search BOTH the memory store (one-line facts) and the knowledge notes (documents) in one call. Returns two separately-ranked sections (`memories` and `notes`) — they are NOT merged or score-normalized. Use when a question may be answered by either remembered facts or saved notes. `kb` optional (defaults to the accessible KB set); `type` filters memory type. Reads both stores only — does not write.".into(),
+            tier: ToolTier::Standard {
+                default_for_main: true,
+                default_for_others: true,
+                default_deferred: true,
+            },
+            internal: false,
+            concurrent_safe: true,
+            async_capable: false,
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query." },
+                    "kb": { "type": "string", "description": "Optional knowledge base id to restrict the notes side." },
+                    "type": { "type": "string", "description": "Optional memory type filter (e.g. 'user', 'project')." },
+                    "limit": { "type": "integer", "description": "Max hits per section (default 10, max 50)." }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        },
         write_tool(
             TOOL_NOTE_LINK,
             "Insert a wikilink from one note to another. Phase 1: from.kb must equal to.kb. The link is appended under a section (default 'Related'). Optional `expected_file_hash` stale-write guard on the source note.",

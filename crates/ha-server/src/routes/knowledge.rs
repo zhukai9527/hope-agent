@@ -662,6 +662,19 @@ pub async fn kb_maintenance_config_set(
     Ok(Json(service::set_maintenance_config(body.config, "http")?))
 }
 
+/// `GET /api/knowledge/passive-recall/config` (read bridge ③)
+pub async fn kb_passive_recall_config_get(
+) -> Result<Json<knowledge::PassiveRecallConfig>, AppError> {
+    Ok(Json(service::get_passive_recall_config()))
+}
+
+/// `POST /api/knowledge/passive-recall/config` — body `{ config: PassiveRecallConfig }`.
+pub async fn kb_passive_recall_config_set(
+    Json(body): Json<crate::routes::config::ConfigBody<knowledge::PassiveRecallConfig>>,
+) -> Result<Json<knowledge::PassiveRecallConfig>, AppError> {
+    Ok(Json(service::set_passive_recall_config(body.config, "http")?))
+}
+
 /// `GET /api/knowledge/{kb_id}/note/resolve?reference=` — resolve a `[[ ]]` ref
 /// to a note read result (for `![[ ]]` transclusion). Body is `null` (not a 404)
 /// when the ref is broken, so the client treats it identically to the Tauri path.

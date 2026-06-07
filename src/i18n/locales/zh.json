@@ -4279,6 +4279,16 @@
       "rebuildWarning": "保存会重建所有知识空间的索引。",
       "saved": "已保存，正在重建所有空间"
     },
+    "knowledgePassiveRecall": {
+      "title": "被动相关笔记",
+      "description": "每轮对话自动列出与你消息相关的可访问笔记标题作为提示。",
+      "topN": "最多笔记数",
+      "maxChars": "最大字符数",
+      "cacheTtlSecs": "缓存（秒）",
+      "showSnippet": "显示摘要",
+      "showSnippetDesc": "在每个标题下附一行摘录（更耗 token）。",
+      "saved": "已保存"
+    },
     "knowledgeMaintenance": {
       "title": "自主维护",
       "intro": "定期扫描知识空间，把笔记维护建议（建链、打标签、去重、MOC……）放入待审队列。在你确认前不会改动任何笔记。",

@@ -331,6 +331,11 @@ fn build_router_with_cors(
                 .post(routes::knowledge::kb_maintenance_config_set),
         )
         .route(
+            "/knowledge/passive-recall/config",
+            get(routes::knowledge::kb_passive_recall_config_get)
+                .post(routes::knowledge::kb_passive_recall_config_set),
+        )
+        .route(
             "/knowledge/{kb_id}/dir",
             post(routes::knowledge::kb_mkdir).delete(routes::knowledge::kb_delete_dir),
         )

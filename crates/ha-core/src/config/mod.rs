@@ -530,6 +530,13 @@ pub struct AppConfig {
     /// toggles + auto-approve for the proposal review queue. Disabled by default.
     #[serde(default)]
     pub knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig,
+    /// Read bridge ③ — passive related-notes prompt (Phase 3, D7): each user turn
+    /// surface the top accessible-KB note titles as an independent untrusted cache
+    /// block. Opt-in, disabled by default (access is already per-session gated, so
+    /// a single global toggle suffices). MEDIUM risk (context/cost), writable via
+    /// `update_settings`.
+    #[serde(default)]
+    pub knowledge_passive_recall: crate::knowledge::PassiveRecallConfig,
     /// Deprecated legacy embedding config. Kept as a deserialization sink only;
     /// user-facing embedding config lives in `embedding_models` +
     /// `memory_embedding`.
@@ -829,6 +836,7 @@ impl Default for AppConfig {
             knowledge_embedding: crate::memory::EmbeddingSelection::default(),
             knowledge_chunk: crate::knowledge::ChunkConfig::default(),
             knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig::default(),
+            knowledge_passive_recall: crate::knowledge::PassiveRecallConfig::default(),
             embedding: crate::memory::EmbeddingConfig::default(),
             memory_extract: crate::memory::MemoryExtractConfig::default(),
             memory_selection: crate::memory::MemorySelectionConfig::default(),

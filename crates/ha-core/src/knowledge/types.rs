@@ -406,3 +406,65 @@ pub struct NoteReadResult {
     pub backlinks: Vec<Backlink>,
     pub tags: Vec<String>,
 }
+
+/// Read bridge ③ — passive related-notes prompt (Phase 3, D7). Persisted in
+/// `AppConfig.knowledge_passive_recall`. When enabled, each user turn searches
+/// the accessible KBs by the user's message and injects the top note **titles**
+/// as an independent, untrusted cache block (mirrors Active Memory's slot but
+/// retrieval-only — no LLM call). Opt-in; disabled by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassiveRecallConfig {
+    /// Master switch. Off by default — turns surface related notes only after the
+    /// user opts in (Settings → Knowledge).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Max related notes to list per turn.
+    #[serde(default = "default_passive_top_n")]
+    pub top_n: usize,
+    /// Hard cap on the rendered block size (code points), defensively truncated.
+    #[serde(default = "default_passive_max_chars")]
+    pub max_chars: usize,
+    /// Reuse the same retrieval for repeated identical messages within this window.
+    #[serde(default = "default_passive_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    /// Include a one-line snippet under each title (more tokens; default titles-only).
+    #[serde(default)]
+    pub show_snippet: bool,
+}
+
+fn default_passive_top_n() -> usize {
+    5
+}
+fn default_passive_max_chars() -> usize {
+    800
+}
+fn default_passive_cache_ttl_secs() -> u64 {
+    120
+}
+
+impl Default for PassiveRecallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            top_n: default_passive_top_n(),
+            max_chars: default_passive_max_chars(),
+            cache_ttl_secs: default_passive_cache_ttl_secs(),
+            show_snippet: false,
+        }
+    }
+}
+
+impl PassiveRecallConfig {
+    /// Clamp to sane bounds so a hand-edited config can't blow up the prompt:
+    /// `top_n` in `[1, 20]`, `max_chars` in `[100, 4000]`, `cache_ttl_secs` ≥ 1.
+    pub fn clamped(&self) -> PassiveRecallConfig {
+        PassiveRecallConfig {
+            enabled: self.enabled,
+            top_n: self.top_n.clamp(1, 20),
+            max_chars: self.max_chars.clamp(100, 4000),
+            cache_ttl_secs: self.cache_ttl_secs.max(1),
+            show_snippet: self.show_snippet,
+        }
+    }
+}

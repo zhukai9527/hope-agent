@@ -539,6 +539,16 @@
           "mocUpkeep": "MOC 整備",
           "memoryToNote": "メモリ→ノート"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "受動的な関連ノート",
+        "description": "各ターンで、メッセージに関連するアクセス可能なノートのタイトルをヒントとして表示します。",
+        "topN": "最大ノート数",
+        "maxChars": "最大文字数",
+        "cacheTtlSecs": "キャッシュ（秒）",
+        "showSnippet": "抜粋を表示",
+        "showSnippetDesc": "各タイトルの下に1行の抜粋を表示（トークン増）。",
+        "saved": "保存しました"
       }
     },
     "subagent": {
@@ -1080,12 +1090,56 @@
       "aiRewriteFailed": "AI リライトに失敗しました",
       "allowExternalWrites": "この外部保管庫の編集を許可",
       "allowExternalWritesHint": "外部保管庫は既定で読み取り専用です。有効にすると、エディタと AI ツールが連携フォルダーへ書き込めます。バックグラウンドの自動メンテナンスは外部保管庫に書き込みません。",
-      "referenceInChat": "チャットで参照"
+      "referenceInChat": "チャットで参照",
+      "picker": {
+        "title": "ナレッジスペース",
+        "heading": "このチャットのナレッジスペース",
+        "incognitoDisabled": "シークレットセッションではナレッジスペースを添付できません",
+        "needSession": "ナレッジスペースを添付するには、まず最初のメッセージを送信してください",
+        "viaProject": "親プロジェクトから",
+        "hint": "添付したスペースを使うと、アシスタントがノートを検索して引用できます。[[note]] でインライン参照することもできます。"
+      },
+      "mention": {
+        "heading": "ナレッジノート",
+        "empty": "ノートはありません — まずナレッジスペースを添付してください。"
+      },
+      "createMissingNote": "このノートを作成",
+      "titlePlaceholder": "無題",
+      "nameNote": "このノートに名前を付ける",
+      "clickToRename": "クリックして名前を変更",
+      "deleteNoteTitle": "ノートを削除",
+      "deleteNoteBody": "「{{name}}」を削除しますか？Markdown ファイルはディスクから削除されます。この操作は元に戻せません。",
+      "newFolder": "新しいフォルダー",
+      "newSubfolder": "新しいサブフォルダー",
+      "folderNamePlaceholder": "フォルダー名",
+      "renameFolder": "フォルダー名を変更",
+      "deleteFolder": "フォルダーを削除",
+      "deleteFolderTitle": "フォルダーを削除",
+      "deleteFolderBody": "フォルダー「{{name}}」と {{count}} 件のノートを削除しますか？Markdown ファイルはディスクから削除されます。この操作は元に戻せません。",
+      "editSpace": "スペースを編集",
+      "emojiPlaceholder": "絵文字（任意）",
+      "archive": "アーカイブ",
+      "unarchive": "アーカイブ解除",
+      "archived": "アーカイブ済み",
+      "showArchived": "アーカイブ済みを表示",
+      "deleteSpace": "スペースを削除",
+      "deleteSpaceTitle": "スペースを削除",
+      "deleteSpaceBody": "スペース「{{name}}」とすべてのノートを削除しますか？内部スペースではノートがディスクから削除され、外部 vault はそのまま残ります。この操作は元に戻せません。",
+      "unsavedTitle": "未保存の変更",
+      "unsavedBody": "未保存の変更があります。移動する前に保存しますか？",
+      "discardChanges": "破棄",
+      "renameMoveFailed": "「{{name}}」の名前変更/移動に失敗しました — 同じ名前のノートが既に存在する可能性があります。",
+      "noteRemovedExternally": "このノートはアプリ外で削除または移動されました。",
+      "moveTo": "移動先…",
+      "moveToTitle": "「{{name}}」の移動先…",
+      "rootFolder": "ルート",
+      "remoteWritesDisabled": "リモートファイル書き込みはオフです。サーバーホストの 設定 → サーバー → リモートファイル書き込みを許可 でオンにしてください。"
     },
     "common": {
       "create": "作成",
       "clear": "クリア",
-      "on": "オン"
+      "on": "オン",
+      "rename": "名前を変更"
     }
   },
   "ko": {
@@ -1628,6 +1682,16 @@
           "mocUpkeep": "MOC 관리",
           "memoryToNote": "메모리→노트"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "수동 관련 노트",
+        "description": "매 턴마다 메시지와 관련된 접근 가능한 노트 제목을 힌트로 표시합니다.",
+        "topN": "최대 노트 수",
+        "maxChars": "최대 글자 수",
+        "cacheTtlSecs": "캐시(초)",
+        "showSnippet": "스니펫 표시",
+        "showSnippetDesc": "각 제목 아래에 한 줄 발췌 포함(토큰 증가).",
+        "saved": "저장됨"
       }
     },
     "subagent": {
@@ -2169,12 +2233,56 @@
       "aiRewriteFailed": "AI 다시 쓰기 실패",
       "allowExternalWrites": "이 외부 보관함 편집 허용",
       "allowExternalWritesHint": "외부 보관함은 기본적으로 읽기 전용입니다. 활성화하면 편집기와 AI 도구가 연결된 폴더에 쓸 수 있습니다. 백그라운드 자동 유지관리는 외부 보관함에 쓰지 않습니다.",
-      "referenceInChat": "채팅에서 참조"
+      "referenceInChat": "채팅에서 참조",
+      "picker": {
+        "title": "지식 공간",
+        "heading": "이 채팅의 지식 공간",
+        "incognitoDisabled": "시크릿 세션에서는 지식 공간을 첨부할 수 없습니다",
+        "needSession": "지식 공간을 첨부하려면 먼저 첫 메시지를 보내세요",
+        "viaProject": "상위 프로젝트에서",
+        "hint": "첨부된 공간을 사용하면 어시스턴트가 노트를 검색하고 인용할 수 있습니다. [[note]]로 인라인 참조할 수도 있습니다."
+      },
+      "mention": {
+        "heading": "지식 노트",
+        "empty": "노트가 없습니다 — 먼저 지식 공간을 첨부하세요."
+      },
+      "createMissingNote": "이 노트 만들기",
+      "titlePlaceholder": "제목 없음",
+      "nameNote": "이 노트 이름 지정",
+      "clickToRename": "클릭하여 이름 변경",
+      "deleteNoteTitle": "노트 삭제",
+      "deleteNoteBody": "\"{{name}}\"을(를) 삭제할까요? Markdown 파일이 디스크에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "newFolder": "새 폴더",
+      "newSubfolder": "새 하위 폴더",
+      "folderNamePlaceholder": "폴더 이름",
+      "renameFolder": "폴더 이름 변경",
+      "deleteFolder": "폴더 삭제",
+      "deleteFolderTitle": "폴더 삭제",
+      "deleteFolderBody": "폴더 \"{{name}}\" 및 노트 {{count}}개를 삭제할까요? Markdown 파일이 디스크에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "editSpace": "공간 편집",
+      "emojiPlaceholder": "이모지(선택 사항)",
+      "archive": "보관",
+      "unarchive": "보관 해제",
+      "archived": "보관됨",
+      "showArchived": "보관 항목 표시",
+      "deleteSpace": "공간 삭제",
+      "deleteSpaceTitle": "공간 삭제",
+      "deleteSpaceBody": "공간 \"{{name}}\" 및 모든 노트를 삭제할까요? 내부 공간의 노트는 디스크에서 제거되고 외부 vault는 그대로 유지됩니다. 이 작업은 되돌릴 수 없습니다.",
+      "unsavedTitle": "저장되지 않은 변경사항",
+      "unsavedBody": "저장되지 않은 변경사항이 있습니다. 떠나기 전에 저장할까요?",
+      "discardChanges": "버리기",
+      "renameMoveFailed": "\"{{name}}\"의 이름 변경/이동에 실패했습니다 — 같은 이름의 노트가 이미 있을 수 있습니다.",
+      "noteRemovedExternally": "이 노트는 앱 밖에서 제거되었거나 이동되었습니다.",
+      "moveTo": "이동 위치…",
+      "moveToTitle": "\"{{name}}\" 이동 위치…",
+      "rootFolder": "루트",
+      "remoteWritesDisabled": "원격 파일 쓰기가 꺼져 있습니다. 서버 호스트의 설정 → 서버 → 원격 파일 쓰기 허용에서 켜세요."
     },
     "common": {
       "create": "만들기",
       "clear": "지우기",
-      "on": "켜짐"
+      "on": "켜짐",
+      "rename": "이름 변경"
     }
   },
   "zh-TW": {
@@ -2717,6 +2825,16 @@
           "mocUpkeep": "MOC 維護",
           "memoryToNote": "記憶轉筆記"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "被動相關筆記",
+        "description": "每輪對話自動列出與你訊息相關的可存取筆記標題作為提示。",
+        "topN": "最多筆記數",
+        "maxChars": "最大字元數",
+        "cacheTtlSecs": "快取（秒）",
+        "showSnippet": "顯示摘要",
+        "showSnippetDesc": "在每個標題下附一行摘錄（更耗 token）。",
+        "saved": "已儲存"
       }
     },
     "subagent": {
@@ -3239,12 +3357,56 @@
       "aiRewriteFailed": "AI 改寫失敗",
       "allowExternalWrites": "允許編輯此外部庫",
       "allowExternalWritesHint": "外部庫預設為唯讀。開啟後可讓編輯器與 AI 工具寫入綁定資料夾。背景自動維護一律不寫入外部庫。",
-      "referenceInChat": "引用到聊天"
+      "referenceInChat": "引用到聊天",
+      "picker": {
+        "title": "知識空間",
+        "heading": "此聊天的知識空間",
+        "incognitoDisabled": "無痕工作階段無法附加知識空間",
+        "needSession": "先傳送第一則訊息，才能附加知識空間",
+        "viaProject": "來自父專案",
+        "hint": "附加的空間可讓助理搜尋並引用其中的筆記；你也可以用 [[note]] 在訊息中直接引用。"
+      },
+      "mention": {
+        "heading": "知識筆記",
+        "empty": "沒有筆記——請先附加知識空間。"
+      },
+      "createMissingNote": "建立此筆記",
+      "titlePlaceholder": "未命名",
+      "nameNote": "為此筆記命名",
+      "clickToRename": "點按以重新命名",
+      "deleteNoteTitle": "刪除筆記",
+      "deleteNoteBody": "要刪除「{{name}}」嗎？Markdown 檔案會從磁碟移除。此操作無法復原。",
+      "newFolder": "新增資料夾",
+      "newSubfolder": "新增子資料夾",
+      "folderNamePlaceholder": "資料夾名稱",
+      "renameFolder": "重新命名資料夾",
+      "deleteFolder": "刪除資料夾",
+      "deleteFolderTitle": "刪除資料夾",
+      "deleteFolderBody": "要刪除資料夾「{{name}}」及其 {{count}} 則筆記嗎？Markdown 檔案會從磁碟移除。此操作無法復原。",
+      "editSpace": "編輯空間",
+      "emojiPlaceholder": "Emoji（選填）",
+      "archive": "封存",
+      "unarchive": "取消封存",
+      "archived": "已封存",
+      "showArchived": "顯示已封存",
+      "deleteSpace": "刪除空間",
+      "deleteSpaceTitle": "刪除空間",
+      "deleteSpaceBody": "要刪除空間「{{name}}」及其所有筆記嗎？內部空間的筆記會從磁碟移除；外部 vault 會保留不動。此操作無法復原。",
+      "unsavedTitle": "未儲存的變更",
+      "unsavedBody": "你有未儲存的變更。離開前要儲存嗎？",
+      "discardChanges": "捨棄",
+      "renameMoveFailed": "無法重新命名/移動「{{name}}」——可能已有同名筆記。",
+      "noteRemovedExternally": "此筆記已在應用程式外被移除或移動。",
+      "moveTo": "移動到…",
+      "moveToTitle": "將「{{name}}」移動到…",
+      "rootFolder": "根目錄",
+      "remoteWritesDisabled": "遠端檔案寫入已關閉。請在伺服器主機的「設定 → 伺服器 → 允許遠端檔案寫入」中開啟。"
     },
     "common": {
       "create": "建立",
       "clear": "清除",
-      "on": "開"
+      "on": "開",
+      "rename": "重新命名"
     }
   },
   "tr": {
@@ -3787,6 +3949,16 @@
           "mocUpkeep": "MOC bakımı",
           "memoryToNote": "Bellek → not"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Pasif ilgili notlar",
+        "description": "Her turda, mesajınızla ilgili erişilebilir not başlıklarını ipucu olarak gösterir.",
+        "topN": "En fazla not",
+        "maxChars": "En fazla karakter",
+        "cacheTtlSecs": "Önbellek (sn)",
+        "showSnippet": "Parçacık göster",
+        "showSnippetDesc": "Her başlığın altına tek satırlık alıntı ekle (daha fazla token).",
+        "saved": "Kaydedildi"
       }
     },
     "subagent": {
@@ -4328,12 +4500,56 @@
       "aiRewriteFailed": "AI ile yeniden yazma başarısız",
       "allowExternalWrites": "Bu kasada düzenlemeye izin ver",
       "allowExternalWritesHint": "Dış kasalar varsayılan olarak salt okunurdur. Etkinleştirdiğinizde düzenleyici ve yapay zeka araçları bağlı klasöre yazabilir. Arka plan bakımı dış kasalara asla yazmaz.",
-      "referenceInChat": "Sohbette referans ver"
+      "referenceInChat": "Sohbette referans ver",
+      "picker": {
+        "title": "Bilgi alanları",
+        "heading": "Bu sohbetin bilgi alanları",
+        "incognitoDisabled": "Gizli oturumlar bilgi alanı ekleyemez",
+        "needSession": "Bilgi alanı eklemek için önce ilk mesajınızı gönderin",
+        "viaProject": "Üst projeden",
+        "hint": "Eklenen alanlar asistanın notları aramasını ve alıntılamasını sağlar; [[note]] ile satır içinde de başvurabilirsiniz."
+      },
+      "mention": {
+        "heading": "Bilgi notları",
+        "empty": "Not yok — önce bir bilgi alanı ekleyin."
+      },
+      "createMissingNote": "Bu notu oluştur",
+      "titlePlaceholder": "Başlıksız",
+      "nameNote": "Bu nota ad ver",
+      "clickToRename": "Yeniden adlandırmak için tıkla",
+      "deleteNoteTitle": "Notu sil",
+      "deleteNoteBody": "\"{{name}}\" silinsin mi? Markdown dosyası diskten kaldırılacak. Bu işlem geri alınamaz.",
+      "newFolder": "Yeni klasör",
+      "newSubfolder": "Yeni alt klasör",
+      "folderNamePlaceholder": "Klasör adı",
+      "renameFolder": "Klasörü yeniden adlandır",
+      "deleteFolder": "Klasörü sil",
+      "deleteFolderTitle": "Klasörü sil",
+      "deleteFolderBody": "\"{{name}}\" klasörü ve içindeki {{count}} not silinsin mi? Markdown dosyaları diskten kaldırılacak. Bu işlem geri alınamaz.",
+      "editSpace": "Alanı düzenle",
+      "emojiPlaceholder": "Emoji (isteğe bağlı)",
+      "archive": "Arşivle",
+      "unarchive": "Arşivden çıkar",
+      "archived": "Arşivlendi",
+      "showArchived": "Arşivlenenleri göster",
+      "deleteSpace": "Alanı sil",
+      "deleteSpaceTitle": "Alanı sil",
+      "deleteSpaceBody": "\"{{name}}\" alanı ve tüm notları silinsin mi? Dahili alanlarda notlar diskten kaldırılır; harici vaultlar olduğu gibi kalır. Bu işlem geri alınamaz.",
+      "unsavedTitle": "Kaydedilmemiş değişiklikler",
+      "unsavedBody": "Kaydedilmemiş değişiklikleriniz var. Ayrılmadan önce kaydedilsin mi?",
+      "discardChanges": "Vazgeç",
+      "renameMoveFailed": "\"{{name}}\" yeniden adlandırılamadı/taşınamadı — aynı adda bir not zaten olabilir.",
+      "noteRemovedExternally": "Bu not uygulama dışında kaldırıldı veya taşındı.",
+      "moveTo": "Şuraya taşı…",
+      "moveToTitle": "\"{{name}}\" şuraya taşınsın…",
+      "rootFolder": "Kök",
+      "remoteWritesDisabled": "Uzak dosya yazma kapalı. Sunucu ana makinesinde Ayarlar → Sunucu → Uzak dosya yazmaya izin ver seçeneğini açın."
     },
     "common": {
       "create": "Oluştur",
       "clear": "Temizle",
-      "on": "Açık"
+      "on": "Açık",
+      "rename": "Yeniden adlandır"
     }
   },
   "vi": {
@@ -4876,6 +5092,16 @@
           "mocUpkeep": "Bảo trì MOC",
           "memoryToNote": "Bộ nhớ → ghi chú"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Ghi chú liên quan thụ động",
+        "description": "Mỗi lượt, hiển thị tiêu đề các ghi chú có thể truy cập liên quan đến tin nhắn của bạn như một gợi ý.",
+        "topN": "Số ghi chú tối đa",
+        "maxChars": "Số ký tự tối đa",
+        "cacheTtlSecs": "Bộ nhớ đệm (giây)",
+        "showSnippet": "Hiển thị đoạn trích",
+        "showSnippetDesc": "Thêm một dòng trích dẫn dưới mỗi tiêu đề (tốn nhiều token hơn).",
+        "saved": "Đã lưu"
       }
     },
     "subagent": {
@@ -5417,12 +5643,56 @@
       "aiRewriteFailed": "Viết lại bằng AI thất bại",
       "allowExternalWrites": "Cho phép chỉnh sửa kho này",
       "allowExternalWritesHint": "Kho ngoài mặc định chỉ đọc. Bật để cho phép trình soạn thảo và công cụ AI ghi vào thư mục đã liên kết. Bảo trì nền không bao giờ ghi vào kho ngoài.",
-      "referenceInChat": "Tham chiếu trong trò chuyện"
+      "referenceInChat": "Tham chiếu trong trò chuyện",
+      "picker": {
+        "title": "Không gian tri thức",
+        "heading": "Không gian tri thức cho cuộc trò chuyện này",
+        "incognitoDisabled": "Phiên ẩn danh không thể đính kèm không gian tri thức",
+        "needSession": "Gửi tin nhắn đầu tiên để đính kèm không gian tri thức",
+        "viaProject": "Từ dự án cha",
+        "hint": "Không gian đã đính kèm cho phép trợ lý tìm kiếm và trích dẫn ghi chú; bạn cũng có thể tham chiếu trực tiếp bằng [[note]]."
+      },
+      "mention": {
+        "heading": "Ghi chú tri thức",
+        "empty": "Chưa có ghi chú — hãy đính kèm một không gian tri thức trước."
+      },
+      "createMissingNote": "Tạo ghi chú này",
+      "titlePlaceholder": "Chưa đặt tên",
+      "nameNote": "Đặt tên cho ghi chú này",
+      "clickToRename": "Nhấp để đổi tên",
+      "deleteNoteTitle": "Xóa ghi chú",
+      "deleteNoteBody": "Xóa \"{{name}}\"? Tệp Markdown sẽ bị xóa khỏi đĩa. Không thể hoàn tác.",
+      "newFolder": "Thư mục mới",
+      "newSubfolder": "Thư mục con mới",
+      "folderNamePlaceholder": "Tên thư mục",
+      "renameFolder": "Đổi tên thư mục",
+      "deleteFolder": "Xóa thư mục",
+      "deleteFolderTitle": "Xóa thư mục",
+      "deleteFolderBody": "Xóa thư mục \"{{name}}\" và {{count}} ghi chú trong đó? Các tệp Markdown sẽ bị xóa khỏi đĩa. Không thể hoàn tác.",
+      "editSpace": "Chỉnh sửa không gian",
+      "emojiPlaceholder": "Emoji (không bắt buộc)",
+      "archive": "Lưu trữ",
+      "unarchive": "Bỏ lưu trữ",
+      "archived": "Đã lưu trữ",
+      "showArchived": "Hiển thị đã lưu trữ",
+      "deleteSpace": "Xóa không gian",
+      "deleteSpaceTitle": "Xóa không gian",
+      "deleteSpaceBody": "Xóa không gian \"{{name}}\" và tất cả ghi chú của nó? Với không gian nội bộ, ghi chú sẽ bị xóa khỏi đĩa; vault bên ngoài được giữ nguyên. Không thể hoàn tác.",
+      "unsavedTitle": "Thay đổi chưa lưu",
+      "unsavedBody": "Bạn có thay đổi chưa lưu. Lưu trước khi rời đi?",
+      "discardChanges": "Bỏ qua",
+      "renameMoveFailed": "Không thể đổi tên/di chuyển \"{{name}}\" — có thể đã có ghi chú cùng tên.",
+      "noteRemovedExternally": "Ghi chú này đã bị xóa hoặc di chuyển bên ngoài ứng dụng.",
+      "moveTo": "Di chuyển đến…",
+      "moveToTitle": "Di chuyển \"{{name}}\" đến…",
+      "rootFolder": "Gốc",
+      "remoteWritesDisabled": "Ghi tệp từ xa đang tắt. Bật trong Cài đặt → Máy chủ → Cho phép ghi tệp từ xa (trên máy chủ)."
     },
     "common": {
       "create": "Tạo",
       "clear": "Xóa",
-      "on": "Bật"
+      "on": "Bật",
+      "rename": "Đổi tên"
     }
   },
   "pt": {
@@ -5965,6 +6235,16 @@
           "mocUpkeep": "Manutenção de MOC",
           "memoryToNote": "Memória → nota"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Notas relacionadas passivas",
+        "description": "A cada turno, mostra títulos de notas acessíveis relacionadas à sua mensagem como dica.",
+        "topN": "Máx. de notas",
+        "maxChars": "Máx. de caracteres",
+        "cacheTtlSecs": "Cache (s)",
+        "showSnippet": "Mostrar trecho",
+        "showSnippetDesc": "Inclui um trecho de uma linha sob cada título (mais tokens).",
+        "saved": "Salvo"
       }
     },
     "subagent": {
@@ -6506,12 +6786,56 @@
       "aiRewriteFailed": "Falha ao reescrever com IA",
       "allowExternalWrites": "Permitir edição deste cofre",
       "allowExternalWritesHint": "Cofres externos são somente leitura por padrão. Ative para permitir que o editor e as ferramentas de IA gravem na pasta vinculada. A manutenção em segundo plano nunca grava em cofres externos.",
-      "referenceInChat": "Referenciar no chat"
+      "referenceInChat": "Referenciar no chat",
+      "picker": {
+        "title": "Espaços de conhecimento",
+        "heading": "Espaços de conhecimento deste chat",
+        "incognitoDisabled": "Sessões anônimas não podem anexar espaços de conhecimento",
+        "needSession": "Envie sua primeira mensagem para anexar um espaço de conhecimento",
+        "viaProject": "Do projeto pai",
+        "hint": "Espaços anexados permitem que o assistente pesquise e cite suas notas; você também pode referenciá-las em linha com [[note]]."
+      },
+      "mention": {
+        "heading": "Notas de conhecimento",
+        "empty": "Nenhuma nota — anexe um espaço de conhecimento primeiro."
+      },
+      "createMissingNote": "Criar esta nota",
+      "titlePlaceholder": "Sem título",
+      "nameNote": "Nomear esta nota",
+      "clickToRename": "Clique para renomear",
+      "deleteNoteTitle": "Excluir nota",
+      "deleteNoteBody": "Excluir \"{{name}}\"? O arquivo Markdown será removido do disco. Isso não pode ser desfeito.",
+      "newFolder": "Nova pasta",
+      "newSubfolder": "Nova subpasta",
+      "folderNamePlaceholder": "Nome da pasta",
+      "renameFolder": "Renomear pasta",
+      "deleteFolder": "Excluir pasta",
+      "deleteFolderTitle": "Excluir pasta",
+      "deleteFolderBody": "Excluir a pasta \"{{name}}\" e suas {{count}} nota(s)? Os arquivos Markdown serão removidos do disco. Isso não pode ser desfeito.",
+      "editSpace": "Editar espaço",
+      "emojiPlaceholder": "Emoji (opcional)",
+      "archive": "Arquivar",
+      "unarchive": "Desarquivar",
+      "archived": "Arquivado",
+      "showArchived": "Mostrar arquivados",
+      "deleteSpace": "Excluir espaço",
+      "deleteSpaceTitle": "Excluir espaço",
+      "deleteSpaceBody": "Excluir o espaço \"{{name}}\" e todas as suas notas? Em espaços internos, as notas são removidas do disco; vaults externos permanecem intactos. Isso não pode ser desfeito.",
+      "unsavedTitle": "Alterações não salvas",
+      "unsavedBody": "Você tem alterações não salvas. Salvar antes de sair?",
+      "discardChanges": "Descartar",
+      "renameMoveFailed": "Não foi possível renomear/mover \"{{name}}\" — talvez já exista uma nota com esse nome.",
+      "noteRemovedExternally": "Esta nota foi removida ou movida fora do app.",
+      "moveTo": "Mover para…",
+      "moveToTitle": "Mover \"{{name}}\" para…",
+      "rootFolder": "Raiz",
+      "remoteWritesDisabled": "A gravação remota de arquivos está desativada. Ative em Configurações → Servidor → Permitir gravações remotas de arquivos (no host do servidor)."
     },
     "common": {
       "create": "Criar",
       "clear": "Limpar",
-      "on": "Ligado"
+      "on": "Ligado",
+      "rename": "Renomear"
     }
   },
   "ru": {
@@ -7054,6 +7378,16 @@
           "mocUpkeep": "Обслуживание MOC",
           "memoryToNote": "Память → заметка"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Пассивные связанные заметки",
+        "description": "Каждый ход показывает заголовки доступных заметок, связанных с вашим сообщением, как подсказку.",
+        "topN": "Макс. заметок",
+        "maxChars": "Макс. символов",
+        "cacheTtlSecs": "Кэш (с)",
+        "showSnippet": "Показать фрагмент",
+        "showSnippetDesc": "Добавлять однострочную выдержку под каждым заголовком (больше токенов).",
+        "saved": "Сохранено"
       }
     },
     "subagent": {
@@ -7595,12 +7929,56 @@
       "aiRewriteFailed": "Не удалось переписать с помощью ИИ",
       "allowExternalWrites": "Разрешить редактирование этого хранилища",
       "allowExternalWritesHint": "Внешние хранилища по умолчанию доступны только для чтения. Включите, чтобы редактор и ИИ-инструменты могли записывать в привязанную папку. Фоновое обслуживание никогда не пишет во внешние хранилища.",
-      "referenceInChat": "Сослаться в чате"
+      "referenceInChat": "Сослаться в чате",
+      "picker": {
+        "title": "Пространства знаний",
+        "heading": "Пространства знаний для этого чата",
+        "incognitoDisabled": "В приватных сеансах нельзя прикреплять пространства знаний",
+        "needSession": "Отправьте первое сообщение, чтобы прикрепить пространство знаний",
+        "viaProject": "Из родительского проекта",
+        "hint": "Прикрепленные пространства позволяют ассистенту искать и цитировать заметки; также можно ссылаться на них прямо через [[note]]."
+      },
+      "mention": {
+        "heading": "Заметки знаний",
+        "empty": "Заметок нет — сначала прикрепите пространство знаний."
+      },
+      "createMissingNote": "Создать эту заметку",
+      "titlePlaceholder": "Без названия",
+      "nameNote": "Назовите эту заметку",
+      "clickToRename": "Нажмите, чтобы переименовать",
+      "deleteNoteTitle": "Удалить заметку",
+      "deleteNoteBody": "Удалить \"{{name}}\"? Markdown-файл будет удален с диска. Это действие нельзя отменить.",
+      "newFolder": "Новая папка",
+      "newSubfolder": "Новая подпапка",
+      "folderNamePlaceholder": "Имя папки",
+      "renameFolder": "Переименовать папку",
+      "deleteFolder": "Удалить папку",
+      "deleteFolderTitle": "Удалить папку",
+      "deleteFolderBody": "Удалить папку \"{{name}}\" и {{count}} заметок в ней? Markdown-файлы будут удалены с диска. Это действие нельзя отменить.",
+      "editSpace": "Редактировать пространство",
+      "emojiPlaceholder": "Эмодзи (необязательно)",
+      "archive": "Архивировать",
+      "unarchive": "Разархивировать",
+      "archived": "В архиве",
+      "showArchived": "Показать архивные",
+      "deleteSpace": "Удалить пространство",
+      "deleteSpaceTitle": "Удалить пространство",
+      "deleteSpaceBody": "Удалить пространство \"{{name}}\" и все его заметки? Для внутренних пространств заметки будут удалены с диска; внешние vault останутся нетронутыми. Это действие нельзя отменить.",
+      "unsavedTitle": "Несохраненные изменения",
+      "unsavedBody": "Есть несохраненные изменения. Сохранить перед выходом?",
+      "discardChanges": "Отменить",
+      "renameMoveFailed": "Не удалось переименовать/переместить \"{{name}}\" — возможно, заметка с таким именем уже существует.",
+      "noteRemovedExternally": "Эта заметка была удалена или перемещена вне приложения.",
+      "moveTo": "Переместить в…",
+      "moveToTitle": "Переместить \"{{name}}\" в…",
+      "rootFolder": "Корень",
+      "remoteWritesDisabled": "Удаленная запись файлов отключена. Включите ее в Настройки → Сервер → Разрешить удаленную запись файлов (на серверном хосте)."
     },
     "common": {
       "create": "Создать",
       "clear": "Очистить",
-      "on": "Вкл"
+      "on": "Вкл",
+      "rename": "Переименовать"
     }
   },
   "ar": {
@@ -8143,6 +8521,16 @@
           "mocUpkeep": "صيانة MOC",
           "memoryToNote": "ذاكرة → ملاحظة"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "الملاحظات ذات الصلة السلبية",
+        "description": "في كل دور، تعرض عناوين الملاحظات المتاحة المتعلقة برسالتك كتلميح.",
+        "topN": "أقصى عدد للملاحظات",
+        "maxChars": "أقصى عدد للأحرف",
+        "cacheTtlSecs": "التخزين المؤقت (ثانية)",
+        "showSnippet": "إظهار مقتطف",
+        "showSnippetDesc": "تضمين مقتطف من سطر واحد أسفل كل عنوان (المزيد من الرموز).",
+        "saved": "تم الحفظ"
       }
     },
     "subagent": {
@@ -8684,12 +9072,56 @@
       "aiRewriteFailed": "فشلت إعادة الكتابة بالذكاء الاصطناعي",
       "allowExternalWrites": "السماح بتحرير هذه الخزنة",
       "allowExternalWritesHint": "الخزائن الخارجية للقراءة فقط افتراضيًا. فعّل الخيار للسماح للمحرر وأدوات الذكاء الاصطناعي بالكتابة في المجلد المرتبط. لا تكتب الصيانة التلقائية في الخلفية إلى الخزائن الخارجية أبدًا.",
-      "referenceInChat": "الإشارة في الدردشة"
+      "referenceInChat": "الإشارة في الدردشة",
+      "picker": {
+        "title": "مساحات المعرفة",
+        "heading": "مساحات المعرفة لهذه المحادثة",
+        "incognitoDisabled": "لا يمكن للجلسات الخفية إرفاق مساحات معرفة",
+        "needSession": "أرسل رسالتك الأولى لإرفاق مساحة معرفة",
+        "viaProject": "من المشروع الأب",
+        "hint": "تتيح المساحات المرفقة للمساعد البحث في الملاحظات والاستشهاد بها؛ ويمكنك أيضًا الإشارة إليها داخل النص باستخدام [[note]]."
+      },
+      "mention": {
+        "heading": "ملاحظات المعرفة",
+        "empty": "لا توجد ملاحظات — أرفق مساحة معرفة أولًا."
+      },
+      "createMissingNote": "إنشاء هذه الملاحظة",
+      "titlePlaceholder": "بدون عنوان",
+      "nameNote": "سمّ هذه الملاحظة",
+      "clickToRename": "انقر لإعادة التسمية",
+      "deleteNoteTitle": "حذف الملاحظة",
+      "deleteNoteBody": "هل تريد حذف \"{{name}}\"؟ ستتم إزالة ملف Markdown من القرص. لا يمكن التراجع عن ذلك.",
+      "newFolder": "مجلد جديد",
+      "newSubfolder": "مجلد فرعي جديد",
+      "folderNamePlaceholder": "اسم المجلد",
+      "renameFolder": "إعادة تسمية المجلد",
+      "deleteFolder": "حذف المجلد",
+      "deleteFolderTitle": "حذف المجلد",
+      "deleteFolderBody": "هل تريد حذف المجلد \"{{name}}\" و {{count}} ملاحظة بداخله؟ ستتم إزالة ملفات Markdown من القرص. لا يمكن التراجع عن ذلك.",
+      "editSpace": "تحرير المساحة",
+      "emojiPlaceholder": "رمز تعبيري (اختياري)",
+      "archive": "أرشفة",
+      "unarchive": "إلغاء الأرشفة",
+      "archived": "مؤرشف",
+      "showArchived": "إظهار المؤرشف",
+      "deleteSpace": "حذف المساحة",
+      "deleteSpaceTitle": "حذف المساحة",
+      "deleteSpaceBody": "هل تريد حذف المساحة \"{{name}}\" وكل ملاحظاتها؟ في المساحات الداخلية ستُزال الملاحظات من القرص؛ أما الخزائن الخارجية فستبقى كما هي. لا يمكن التراجع عن ذلك.",
+      "unsavedTitle": "تغييرات غير محفوظة",
+      "unsavedBody": "لديك تغييرات غير محفوظة. هل تريد الحفظ قبل المغادرة؟",
+      "discardChanges": "تجاهل",
+      "renameMoveFailed": "تعذرت إعادة تسمية/نقل \"{{name}}\" — ربما توجد ملاحظة بهذا الاسم بالفعل.",
+      "noteRemovedExternally": "تمت إزالة هذه الملاحظة أو نقلها خارج التطبيق.",
+      "moveTo": "نقل إلى…",
+      "moveToTitle": "نقل \"{{name}}\" إلى…",
+      "rootFolder": "الجذر",
+      "remoteWritesDisabled": "كتابة الملفات عن بُعد متوقفة. فعّلها من الإعدادات → الخادم → السماح بكتابة الملفات عن بُعد (على مضيف الخادم)."
     },
     "common": {
       "create": "إنشاء",
       "clear": "مسح",
-      "on": "تشغيل"
+      "on": "تشغيل",
+      "rename": "إعادة تسمية"
     }
   },
   "es": {
@@ -9232,6 +9664,16 @@
           "mocUpkeep": "Mantenimiento de MOC",
           "memoryToNote": "Memoria → nota"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Notas relacionadas pasivas",
+        "description": "En cada turno, muestra como sugerencia los títulos de notas accesibles relacionadas con tu mensaje.",
+        "topN": "Máx. de notas",
+        "maxChars": "Máx. de caracteres",
+        "cacheTtlSecs": "Caché (s)",
+        "showSnippet": "Mostrar fragmento",
+        "showSnippetDesc": "Incluir un extracto de una línea bajo cada título (más tokens).",
+        "saved": "Guardado"
       }
     },
     "subagent": {
@@ -9773,12 +10215,56 @@
       "aiRewriteFailed": "Error al reescribir con IA",
       "allowExternalWrites": "Permitir editar esta bóveda",
       "allowExternalWritesHint": "Las bóvedas externas son de solo lectura de forma predeterminada. Actívalo para que el editor y las herramientas de IA puedan escribir en la carpeta vinculada. El mantenimiento en segundo plano nunca escribe en bóvedas externas.",
-      "referenceInChat": "Referenciar en el chat"
+      "referenceInChat": "Referenciar en el chat",
+      "picker": {
+        "title": "Espacios de conocimiento",
+        "heading": "Espacios de conocimiento para este chat",
+        "incognitoDisabled": "Las sesiones de incógnito no pueden adjuntar espacios de conocimiento",
+        "needSession": "Envía tu primer mensaje para adjuntar un espacio de conocimiento",
+        "viaProject": "Del proyecto padre",
+        "hint": "Los espacios adjuntos permiten que el asistente busque y cite sus notas; también puedes referenciarlas en línea con [[note]]."
+      },
+      "mention": {
+        "heading": "Notas de conocimiento",
+        "empty": "No hay notas — adjunta primero un espacio de conocimiento."
+      },
+      "createMissingNote": "Crear esta nota",
+      "titlePlaceholder": "Sin título",
+      "nameNote": "Nombra esta nota",
+      "clickToRename": "Haz clic para renombrar",
+      "deleteNoteTitle": "Eliminar nota",
+      "deleteNoteBody": "¿Eliminar \"{{name}}\"? El archivo Markdown se eliminará del disco. Esto no se puede deshacer.",
+      "newFolder": "Nueva carpeta",
+      "newSubfolder": "Nueva subcarpeta",
+      "folderNamePlaceholder": "Nombre de la carpeta",
+      "renameFolder": "Renombrar carpeta",
+      "deleteFolder": "Eliminar carpeta",
+      "deleteFolderTitle": "Eliminar carpeta",
+      "deleteFolderBody": "¿Eliminar la carpeta \"{{name}}\" y sus {{count}} nota(s)? Los archivos Markdown se eliminarán del disco. Esto no se puede deshacer.",
+      "editSpace": "Editar espacio",
+      "emojiPlaceholder": "Emoji (opcional)",
+      "archive": "Archivar",
+      "unarchive": "Desarchivar",
+      "archived": "Archivado",
+      "showArchived": "Mostrar archivados",
+      "deleteSpace": "Eliminar espacio",
+      "deleteSpaceTitle": "Eliminar espacio",
+      "deleteSpaceBody": "¿Eliminar el espacio \"{{name}}\" y todas sus notas? En los espacios internos las notas se eliminan del disco; los vaults externos quedan intactos. Esto no se puede deshacer.",
+      "unsavedTitle": "Cambios sin guardar",
+      "unsavedBody": "Tienes cambios sin guardar. ¿Guardar antes de salir?",
+      "discardChanges": "Descartar",
+      "renameMoveFailed": "No se pudo renombrar/mover \"{{name}}\" — puede que ya exista una nota con ese nombre.",
+      "noteRemovedExternally": "Esta nota se eliminó o movió fuera de la app.",
+      "moveTo": "Mover a…",
+      "moveToTitle": "Mover \"{{name}}\" a…",
+      "rootFolder": "Raíz",
+      "remoteWritesDisabled": "La escritura remota de archivos está desactivada. Actívala en Configuración → Servidor → Permitir escritura remota de archivos (en el host del servidor)."
     },
     "common": {
       "create": "Crear",
       "clear": "Borrar",
-      "on": "Activado"
+      "on": "Activado",
+      "rename": "Renombrar"
     }
   },
   "ms": {
@@ -10321,6 +10807,16 @@
           "mocUpkeep": "Penyelenggaraan MOC",
           "memoryToNote": "Memori → nota"
         }
+      },
+      "knowledgePassiveRecall": {
+        "title": "Nota berkaitan pasif",
+        "description": "Setiap giliran, paparkan tajuk nota boleh diakses yang berkaitan dengan mesej anda sebagai petunjuk.",
+        "topN": "Nota maksimum",
+        "maxChars": "Aksara maksimum",
+        "cacheTtlSecs": "Cache (s)",
+        "showSnippet": "Tunjuk petikan",
+        "showSnippetDesc": "Sertakan petikan satu baris di bawah setiap tajuk (lebih banyak token).",
+        "saved": "Disimpan"
       }
     },
     "subagent": {
@@ -10862,12 +11358,56 @@
       "aiRewriteFailed": "Gagal menulis semula dengan AI",
       "allowExternalWrites": "Benarkan menyunting bilik kebal ini",
       "allowExternalWritesHint": "Bilik kebal luaran adalah baca sahaja secara lalai. Hidupkan untuk membenarkan penyunting dan alat AI menulis ke folder terikat. Penyelenggaraan latar belakang tidak pernah menulis ke bilik kebal luaran.",
-      "referenceInChat": "Rujuk dalam sembang"
+      "referenceInChat": "Rujuk dalam sembang",
+      "picker": {
+        "title": "Ruang pengetahuan",
+        "heading": "Ruang pengetahuan untuk chat ini",
+        "incognitoDisabled": "Sesi inkognito tidak boleh melampirkan ruang pengetahuan",
+        "needSession": "Hantar mesej pertama anda untuk melampirkan ruang pengetahuan",
+        "viaProject": "Daripada projek induk",
+        "hint": "Ruang yang dilampirkan membolehkan pembantu mencari dan memetik nota; anda juga boleh merujuknya sebaris dengan [[note]]."
+      },
+      "mention": {
+        "heading": "Nota pengetahuan",
+        "empty": "Tiada nota — lampirkan ruang pengetahuan dahulu."
+      },
+      "createMissingNote": "Cipta nota ini",
+      "titlePlaceholder": "Tanpa tajuk",
+      "nameNote": "Namakan nota ini",
+      "clickToRename": "Klik untuk menamakan semula",
+      "deleteNoteTitle": "Padam nota",
+      "deleteNoteBody": "Padam \"{{name}}\"? Fail Markdown akan dibuang daripada cakera. Tindakan ini tidak boleh dibuat asal.",
+      "newFolder": "Folder baharu",
+      "newSubfolder": "Subfolder baharu",
+      "folderNamePlaceholder": "Nama folder",
+      "renameFolder": "Namakan semula folder",
+      "deleteFolder": "Padam folder",
+      "deleteFolderTitle": "Padam folder",
+      "deleteFolderBody": "Padam folder \"{{name}}\" dan {{count}} nota di dalamnya? Fail Markdown akan dibuang daripada cakera. Tindakan ini tidak boleh dibuat asal.",
+      "editSpace": "Edit ruang",
+      "emojiPlaceholder": "Emoji (pilihan)",
+      "archive": "Arkib",
+      "unarchive": "Nyaharkib",
+      "archived": "Diarkibkan",
+      "showArchived": "Tunjuk yang diarkibkan",
+      "deleteSpace": "Padam ruang",
+      "deleteSpaceTitle": "Padam ruang",
+      "deleteSpaceBody": "Padam ruang \"{{name}}\" dan semua notanya? Untuk ruang dalaman, nota dibuang daripada cakera; vault luaran dibiarkan utuh. Tindakan ini tidak boleh dibuat asal.",
+      "unsavedTitle": "Perubahan belum disimpan",
+      "unsavedBody": "Anda mempunyai perubahan belum disimpan. Simpan sebelum keluar?",
+      "discardChanges": "Buang",
+      "renameMoveFailed": "Tidak dapat menamakan semula/memindahkan \"{{name}}\" — nota dengan nama itu mungkin sudah wujud.",
+      "noteRemovedExternally": "Nota ini telah dibuang atau dipindahkan di luar aplikasi.",
+      "moveTo": "Pindah ke…",
+      "moveToTitle": "Pindahkan \"{{name}}\" ke…",
+      "rootFolder": "Akar",
+      "remoteWritesDisabled": "Penulisan fail jauh dimatikan. Hidupkan dalam Tetapan → Pelayan → Benarkan penulisan fail jauh (pada hos pelayan)."
     },
     "common": {
       "create": "Cipta",
       "clear": "Kosongkan",
-      "on": "Hidup"
+      "on": "Hidup",
+      "rename": "Namakan semula"
     }
   },
   "zh": {

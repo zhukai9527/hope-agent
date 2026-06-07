@@ -524,6 +524,30 @@ pub fn set_maintenance_config(
     Ok(clamped)
 }
 
+// ── Passive recall config (read bridge ③, owner plane GUI) ──────
+
+/// Current (clamped) passive related-notes config for the GUI panel.
+pub fn get_passive_recall_config() -> super::PassiveRecallConfig {
+    crate::config::cached_config()
+        .knowledge_passive_recall
+        .clamped()
+}
+
+/// Persist passive recall config (clamped). Returns the clamped value saved.
+/// No reindex side effect — it only changes per-turn prompt injection.
+pub fn set_passive_recall_config(
+    cfg: super::PassiveRecallConfig,
+    source: &str,
+) -> Result<super::PassiveRecallConfig> {
+    let clamped = cfg.clamped();
+    let to_save = clamped.clone();
+    crate::config::mutate_config(("knowledge_passive_recall", source), move |store| {
+        store.knowledge_passive_recall = to_save.clone();
+        Ok(())
+    })?;
+    Ok(clamped)
+}
+
 /// Strip a ```markdown … ``` wrapper the model may add around its reply. Only unwraps
 /// when it's confidently a *markdown wrapper* of the whole reply: opening fence whose
 /// info string is empty / `markdown` / `md`, + a closing ``` at the very end. A reply

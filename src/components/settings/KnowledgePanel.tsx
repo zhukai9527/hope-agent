@@ -23,7 +23,7 @@ import { Switch } from "@/components/ui/switch"
 import { getTransport } from "@/lib/transport-provider"
 import { cn } from "@/lib/utils"
 import { logger } from "@/lib/logger"
-import type { ChunkConfig } from "@/types/knowledge"
+import type { ChunkConfig, PassiveRecallConfig } from "@/types/knowledge"
 import {
   isLocalModelJobActive,
   isLocalModelJobTerminal,
@@ -202,6 +202,8 @@ export default function KnowledgePanel() {
 
       <ChunkAdvancedSection />
 
+      <PassiveRecallSection />
+
       <KnowledgeMaintenanceSection />
 
       <EmbeddingActivationDialog
@@ -332,6 +334,201 @@ function KnowledgeReembedCard({
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Read bridge ③ — passive related-notes prompt (Phase 3, D7). When enabled, each
+ * user turn surfaces the top accessible-KB note titles as an untrusted reference
+ * block. Opt-in (off by default); access is already per-session gated so one
+ * global toggle suffices. The enable switch saves immediately; the tuning knobs
+ * use the three-state Save button.
+ */
+function PassiveRecallSection() {
+  const { t } = useTranslation()
+  const [loaded, setLoaded] = useState<PassiveRecallConfig | null>(null)
+  const [draft, setDraft] = useState<PassiveRecallConfig | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed">("idle")
+
+  useEffect(() => {
+    let cancelled = false
+    getTransport()
+      .call<PassiveRecallConfig>("kb_passive_recall_config_get_cmd")
+      .then((c) => {
+        if (cancelled) return
+        setLoaded(c)
+        setDraft(c)
+      })
+      .catch((e) =>
+        logger.error("settings", "PassiveRecallSection::load", "Failed to load config", e),
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const persist = useCallback(
+    async (next: PassiveRecallConfig, viaButton: boolean) => {
+      if (viaButton) setSaving(true)
+      try {
+        const saved = await getTransport().call<PassiveRecallConfig>(
+          "kb_passive_recall_config_set_cmd",
+          { config: next },
+        )
+        setLoaded(saved)
+        if (viaButton) {
+          // Save button: the draft IS what we persisted, so sync fully.
+          setDraft(saved)
+          setSaving(false)
+          setSaveStatus("saved")
+          setTimeout(() => setSaveStatus("idle"), 2000)
+          toast.success(t("settings.knowledgePassiveRecall.saved", "Saved"))
+        } else {
+          // Enable toggle: persisted the last-saved knobs + new `enabled`, so keep
+          // the user's in-progress knob edits — only reconcile `enabled`.
+          setDraft((d) => (d ? { ...d, enabled: saved.enabled } : saved))
+        }
+      } catch (e) {
+        logger.error("settings", "PassiveRecallSection::save", "Failed to save config", e)
+        if (viaButton) {
+          setSaving(false)
+          setSaveStatus("failed")
+          setTimeout(() => setSaveStatus("idle"), 2000)
+        } else {
+          // Revert the optimistic enable flip.
+          setDraft((d) => (d ? { ...d, enabled: !next.enabled } : d))
+        }
+        toast.error(String(e))
+      }
+    },
+    [t],
+  )
+
+  if (!draft || !loaded) return null
+
+  const enabled = draft.enabled
+  const dirty =
+    loaded.topN !== draft.topN ||
+    loaded.maxChars !== draft.maxChars ||
+    loaded.cacheTtlSecs !== draft.cacheTtlSecs ||
+    loaded.showSnippet !== draft.showSnippet
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">
+            {t("settings.knowledgePassiveRecall.title", "Passive related notes")}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {t(
+              "settings.knowledgePassiveRecall.description",
+              "Each turn, surface titles of accessible notes related to your message as a hint.",
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => {
+            // Optimistically flip in the draft; persist the LAST-SAVED knobs + new
+            // `enabled` so toggling the master switch never silently commits the
+            // user's unsaved knob edits (those stay pending behind the Save button).
+            setDraft({ ...draft, enabled: v })
+            void persist({ ...loaded, enabled: v }, false)
+          }}
+        />
+      </div>
+
+      <AnimatedCollapse open={enabled}>
+        <div className="space-y-3 border-t border-border px-4 py-3">
+          <div className="grid grid-cols-3 gap-3">
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgePassiveRecall.topN", "Max notes")}
+              </span>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={String(draft.topN)}
+                onChange={(e) =>
+                  setDraft({ ...draft, topN: Number.parseInt(e.target.value, 10) || draft.topN })
+                }
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgePassiveRecall.maxChars", "Max chars")}
+              </span>
+              <Input
+                type="number"
+                min={100}
+                max={4000}
+                value={String(draft.maxChars)}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    maxChars: Number.parseInt(e.target.value, 10) || draft.maxChars,
+                  })
+                }
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgePassiveRecall.cacheTtlSecs", "Cache (s)")}
+              </span>
+              <Input
+                type="number"
+                min={1}
+                value={String(draft.cacheTtlSecs)}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    cacheTtlSecs: Number.parseInt(e.target.value, 10) || draft.cacheTtlSecs,
+                  })
+                }
+                className="h-8 text-xs"
+              />
+            </label>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="min-w-0 pr-3">
+              <div className="text-xs font-medium">
+                {t("settings.knowledgePassiveRecall.showSnippet", "Show snippet")}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                {t(
+                  "settings.knowledgePassiveRecall.showSnippetDesc",
+                  "Include a one-line excerpt under each title (more tokens).",
+                )}
+              </div>
+            </div>
+            <Switch
+              checked={draft.showSnippet}
+              onCheckedChange={(v) => setDraft({ ...draft, showSnippet: v })}
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabled={!dirty || saving}
+              onClick={() => void persist(draft, true)}
+              className={cn(saveStatus === "failed" && "bg-destructive hover:bg-destructive/90")}
+            >
+              {saving ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : saveStatus === "saved" ? (
+                <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-300" />
+              ) : null}
+              {t("common.save", "Save")}
+            </Button>
+          </div>
+        </div>
+      </AnimatedCollapse>
     </div>
   )
 }

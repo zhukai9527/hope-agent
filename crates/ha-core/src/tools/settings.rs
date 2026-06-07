@@ -85,7 +85,8 @@ fn risk_level(category: &str) -> &'static str {
         | "recall_summary"
         | "tool_call_narration"
         | "teams"
-        | "im_auto_transcribe" => "medium",
+        | "im_auto_transcribe"
+        | "knowledge_passive_recall" => "medium",
 
         // ── HIGH ───────────────────────────────────────────────
         "proxy" | "embedding" | "shortcuts" | "skills" | "server" | "acp_control" | "skill_env"
@@ -494,6 +495,9 @@ fn read_category(category: &str) -> Result<Value> {
         "multimodal" => Ok(serde_json::to_value(&cfg.multimodal)?),
         "dreaming" => Ok(serde_json::to_value(&cfg.dreaming)?),
         "knowledge_maintenance" => Ok(serde_json::to_value(&cfg.knowledge_maintenance)?),
+        "knowledge_passive_recall" => {
+            Ok(serde_json::to_value(&cfg.knowledge_passive_recall)?)
+        }
         "mcp_global" => Ok(serde_json::to_value(&cfg.mcp_global)?),
         "mcp_servers" => Ok(redact_mcp_servers_value(serde_json::to_value(
             &cfg.mcp_servers,
@@ -646,7 +650,7 @@ fn get_all_overview() -> Result<String> {
             "deferred_tools", "async_tools", "approval",
             "tool_result_disk_threshold", "ask_user_question_timeout", "plan",
             "issue_reporting", "skills_auto_review", "recall_summary", "tool_call_narration",
-            "teams", "im_auto_transcribe"
+            "teams", "im_auto_transcribe", "knowledge_passive_recall"
         ],
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
@@ -998,6 +1002,11 @@ async fn update_app_config(category: &str, values: &Value) -> Result<String> {
             // Clamp so a skill write can't persist out-of-range values (the GUI path
             // clamps in `service::set_maintenance_config`).
             store.knowledge_maintenance = store.knowledge_maintenance.clamped();
+        }
+        "knowledge_passive_recall" => {
+            merge_field(&mut store.knowledge_passive_recall, values)?;
+            // Clamp (mirrors `service::set_passive_recall_config`).
+            store.knowledge_passive_recall = store.knowledge_passive_recall.clamped();
         }
         "mcp_global" => merge_field(&mut store.mcp_global, values)?,
         "local_llm_auto_maintenance" => {

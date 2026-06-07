@@ -182,6 +182,19 @@ export interface ChunkConfig {
   overlapChars: number
 }
 
+/**
+ * Read bridge ③ — passive related-notes config (`AppConfig.knowledge_passive_recall`).
+ * Wire shape of `kb_passive_recall_config_get_cmd` / `_set_cmd`. Values are
+ * clamped server-side (topN 1–20; maxChars 100–4000; cacheTtlSecs ≥ 1).
+ */
+export interface PassiveRecallConfig {
+  enabled: boolean
+  topN: number
+  maxChars: number
+  cacheTtlSecs: number
+  showSnippet: boolean
+}
+
 // ── Layer-2 autonomous maintenance (WS6) ─────────────────────────
 
 export type ProposalKind =

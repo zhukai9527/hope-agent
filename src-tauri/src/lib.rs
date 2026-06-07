@@ -592,6 +592,8 @@ pub fn run() {
             commands::knowledge::kb_maintenance_reject_all_cmd,
             commands::knowledge::kb_maintenance_config_get_cmd,
             commands::knowledge::kb_maintenance_config_set_cmd,
+            commands::knowledge::kb_passive_recall_config_get_cmd,
+            commands::knowledge::kb_passive_recall_config_set_cmd,
             commands::knowledge::kb_note_read_ref_cmd,
             commands::knowledge::kb_search_cmd,
             commands::knowledge::kb_file_read_cmd,

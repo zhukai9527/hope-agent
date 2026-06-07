@@ -453,6 +453,20 @@ pub async fn kb_maintenance_config_set_cmd(
     service::set_maintenance_config(config, "gui").map_err(Into::into)
 }
 
+/// Read the passive related-notes config (GUI panel, read bridge ③).
+#[tauri::command]
+pub async fn kb_passive_recall_config_get_cmd() -> Result<knowledge::PassiveRecallConfig, CmdError> {
+    Ok(service::get_passive_recall_config())
+}
+
+/// Persist the passive related-notes config (GUI panel). Returns the clamped value.
+#[tauri::command]
+pub async fn kb_passive_recall_config_set_cmd(
+    config: knowledge::PassiveRecallConfig,
+) -> Result<knowledge::PassiveRecallConfig, CmdError> {
+    service::set_passive_recall_config(config, "gui").map_err(Into::into)
+}
+
 /// Resolve a `[[ ]]` reference to a note and return its full read result (for
 /// `![[ ]]` transclusion preview). `Ok(None)` = broken embed.
 #[tauri::command]

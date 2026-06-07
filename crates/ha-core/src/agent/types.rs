@@ -290,6 +290,13 @@ pub struct AssistantAgent {
     /// `None` means: nothing to inject this turn (empty shortlist, LLM said
     /// NONE, timeout, or feature disabled).
     pub(crate) active_memory_suffix: std::sync::Mutex<Option<std::sync::Arc<String>>>,
+    /// Read bridge ③ per-agent runtime state (passive related-notes cache).
+    pub(crate) related_notes_state: std::sync::Arc<super::related_notes::RelatedNotesState>,
+    /// Latest passive related-notes suffix (note titles from the accessible KBs),
+    /// injected as another independent block. Rebuilt every user turn by
+    /// `refresh_related_notes_suffix`. `None` = nothing to inject (disabled,
+    /// incognito, no accessible KB, or no hits).
+    pub(crate) related_notes_suffix: std::sync::Mutex<Option<std::sync::Arc<String>>>,
     /// Optional `ProviderConfig` reference, injected via
     /// [`AssistantAgent::with_failover_context`]. When present **and**
     /// `session_id` is set, side_query / DedicatedModelProvider routes

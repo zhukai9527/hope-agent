@@ -4279,6 +4279,16 @@
       "rebuildWarning": "Saving rebuilds the index for every knowledge space.",
       "saved": "Saved — rebuilding every space"
     },
+    "knowledgePassiveRecall": {
+      "title": "Passive related notes",
+      "description": "Each turn, surface titles of accessible notes related to your message as a hint.",
+      "topN": "Max notes",
+      "maxChars": "Max chars",
+      "cacheTtlSecs": "Cache (s)",
+      "showSnippet": "Show snippet",
+      "showSnippetDesc": "Include a one-line excerpt under each title (more tokens).",
+      "saved": "Saved"
+    },
     "knowledgeMaintenance": {
       "title": "Autonomous maintenance",
       "intro": "Periodically scan knowledge spaces and queue note-maintenance suggestions (linking, tagging, dedup, MOCs, …) for your review. Nothing is written until you approve a suggestion.",
