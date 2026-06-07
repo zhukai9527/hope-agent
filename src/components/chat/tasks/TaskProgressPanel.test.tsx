@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, test, vi } from "vitest"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { Task } from "@/types/chat"
 import { createTaskProgressSnapshot } from "./taskProgress"
 import TaskProgressPanel from "./TaskProgressPanel"
@@ -91,7 +91,7 @@ describe("TaskProgressPanel", () => {
     expect(screen.queryByText("#42")).toBeNull()
   })
 
-  test("auto-collapses when workspace opens", () => {
+  test("auto-collapses when workspace opens", async () => {
     const snapshot = createTaskProgressSnapshot([
       task({ id: 1, content: "Write code" }),
       task({ id: 2, content: "Run tests" }),
@@ -109,6 +109,23 @@ describe("TaskProgressPanel", () => {
       <TaskProgressPanel snapshot={snapshot} onOpenWorkspace={vi.fn()} workspaceOpen />,
     )
 
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    await waitFor(() => expect(screen.queryByText("Run tests")).toBeNull())
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute("aria-expanded")).toBe("true")
+    expect(screen.getByText("Run tests")).toBeTruthy()
+  })
+
+  test("starts collapsed when mounted with the workspace already open", () => {
+    const snapshot = createTaskProgressSnapshot([
+      task({ id: 1, content: "Write code" }),
+      task({ id: 2, content: "Run tests" }),
+    ])
+
+    render(<TaskProgressPanel snapshot={snapshot} onOpenWorkspace={vi.fn()} workspaceOpen />)
+
+    const toggle = screen.getByRole("button", { name: /Tasks/ })
     expect(toggle.getAttribute("aria-expanded")).toBe("false")
     expect(screen.queryByText("Run tests")).toBeNull()
 

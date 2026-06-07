@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **聊天输入框与菜单交互打磨**：输入框附件入口合并为「添加照片和文件」，模型、思考强度与温度设置收入口到同一浮层；窄宽度下工具栏布局与高度更稳定，语音/发送按钮不再被挤压遮挡；快捷指令、模型、权限、Awareness 等菜单改用统一的柔和弹出/收起动效，并同步优化左右侧边栏与右侧工作台面板的展开收起体验。
 - **Skill requirements 分级注入语义**：`requires.os` 不匹配这类硬不兼容 skill 不再进入模型 catalog / 斜杠菜单；缺少可安装/可配置依赖（`bins` / `anyBins` / `env` / `config`）的 skill 仍可见，但在 `skill({name})` 或 `/skill-name` 激活前返回缺失项与安装/配置诊断，不再直接加载 SKILL.md。Settings 技能面板同步展示 `Incompatible` / `Needs setup` 状态、缺失 binaries / env / config 与当前 OS 信息。
 - **Skill 激活上下文包含包目录元数据**：inline 与 fork 激活返回的 skill 内容前会注入 skill name 与 skill directory，方便内置脚本、references、assets 通过 skill 目录稳定定位，无需模型猜测路径。
 
 ### Fixed
 
+- **工作台任务进度联动修复**：右侧 Workspace 已展开时，输入框内嵌任务进度面板首次出现也会保持收起，避免两处任务明细同时展开；同时补齐折叠动画打开阶段的定时器清理，避免组件卸载后继续触发状态更新。
 - **Office OOXML 包结构稳定性**：修复 DOCX helper 在最终 `w:sectPr` 之后追加内容的问题，避免 Word/LibreOffice 打开时修复或忽略新增段落；水印 helper 不再覆盖既有 `word/header1.xml`，会分配新的 header part 和 relationship id；PPTX slide 重排不再重建并丢弃 slide master/theme/view properties 等非 slide relationships，避免源 deck 样式丢失。
 
 ## [0.6.1] - 2026-06-06

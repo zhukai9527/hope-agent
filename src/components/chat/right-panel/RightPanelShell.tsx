@@ -53,10 +53,12 @@ export function RightPanelShell({
     lastContentKeyRef.current = resolvedContentKey
     if (transitionTimerRef.current !== null) window.clearTimeout(transitionTimerRef.current)
     if (transitionFrameRef.current !== null) window.cancelAnimationFrame(transitionFrameRef.current)
-    setTransitionVeilVisible(true)
     transitionFrameRef.current = window.requestAnimationFrame(() => {
-      setTransitionVeilVisible(false)
-      transitionFrameRef.current = null
+      setTransitionVeilVisible(true)
+      transitionFrameRef.current = window.requestAnimationFrame(() => {
+        setTransitionVeilVisible(false)
+        transitionFrameRef.current = null
+      })
     })
     transitionTimerRef.current = window.setTimeout(() => {
       setTransitionVeilVisible(false)

@@ -40,7 +40,7 @@ export default function TaskProgressPanel({
   workspaceOpen = false,
 }: TaskProgressPanelProps) {
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(defaultExpanded)
+  const [expanded, setExpanded] = useState(() => defaultExpanded && !workspaceOpen)
   const previousWorkspaceOpenRef = useRef(workspaceOpen)
   // Per-row in-flight set so a slow RPC on task A doesn't disable the
   // controls on tasks B/C/D — matters most on HTTP transport latency.

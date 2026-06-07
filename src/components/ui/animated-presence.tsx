@@ -72,8 +72,8 @@ export function AnimatedCollapse({
     previousOpenRef.current = open
 
     if (open) {
-      setPresent(true)
       frameRef.current = window.requestAnimationFrame(() => {
+        setPresent(true)
         const measured = contentRef.current?.scrollHeight ?? 0
         setHeight(measured)
         frameRef.current = window.requestAnimationFrame(() => {
@@ -90,12 +90,14 @@ export function AnimatedCollapse({
           window.cancelAnimationFrame(frameRef.current)
           frameRef.current = null
         }
+        if (timerRef.current !== null) {
+          window.clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
       }
     }
 
     if (!wasOpen) {
-      setVisible(false)
-      setHeight(0)
       return () => {
         if (frameRef.current !== null) {
           window.cancelAnimationFrame(frameRef.current)
@@ -104,12 +106,14 @@ export function AnimatedCollapse({
       }
     }
 
-    setHeight(contentRef.current?.scrollHeight ?? 0)
-    setVisible(true)
     frameRef.current = window.requestAnimationFrame(() => {
-      setVisible(false)
-      setHeight(0)
-      frameRef.current = null
+      setHeight(contentRef.current?.scrollHeight ?? 0)
+      setVisible(true)
+      frameRef.current = window.requestAnimationFrame(() => {
+        setVisible(false)
+        setHeight(0)
+        frameRef.current = null
+      })
     })
     if (!unmountOnExit) {
       return () => {
@@ -265,11 +269,6 @@ export function AnimatedPresenceBox({
 
     if (open) {
       const wasPresent = presentRef.current
-      if (!wasPresent) {
-        presentRef.current = true
-        setPresent(true)
-        setVisible(false)
-      }
 
       const show = () => {
         setVisible(true)
@@ -277,6 +276,11 @@ export function AnimatedPresenceBox({
       }
 
       frameRef.current = window.requestAnimationFrame(() => {
+        if (!wasPresent) {
+          presentRef.current = true
+          setPresent(true)
+          setVisible(false)
+        }
         if (wasPresent) {
           show()
           return
@@ -294,7 +298,10 @@ export function AnimatedPresenceBox({
     }
 
     if (!presentRef.current && unmountOnExit) return
-    setVisible(false)
+    frameRef.current = window.requestAnimationFrame(() => {
+      setVisible(false)
+      frameRef.current = null
+    })
 
     if (!unmountOnExit) {
       return () => {
