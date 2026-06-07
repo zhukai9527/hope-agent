@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **新增/编辑模型自动清理输入空格**：保存或测试 Provider 时自动去除 base URL、模型 ID、API Key、名称等字段前后的空格与换行，避免复制粘贴带入的空白导致连接失败。
+- **模型连通性测试校验实际回复**：测试模型时不再「只要返回 200 就算通过」，而要求确有回复内容；对因测试输出上限被截断的 reasoning 模型（如 GPT-5 系列）仍正确判为连接正常，不再误报失败。
+
 ## [0.7.0] - 2026-06-07
 
 ### Added
