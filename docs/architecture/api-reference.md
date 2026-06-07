@@ -363,8 +363,8 @@ Tauri ↔ COMMAND_MAP 差集为 7 条合法非 REST 命令（4 条 Desktop-only 
 | `dreaming_list_runs` | `GET /api/dreaming/runs` | ✅ |
 | `dreaming_get_run` | `GET /api/dreaming/runs/{id}` | ✅ |
 | `dreaming_evidence_quote` | `GET /api/dreaming/evidence/quote` | ✅ owner 平面；incognito 来源归零（后端门控） |
-| `claim_list` | `GET /api/claims` | ✅ 结构化 claim 只读（scope/status/claimType 过滤） |
-| `claim_get` | `GET /api/claims/{id}` | ✅ claim + evidence + links |
+| `claim_list` | `GET /api/claims` | ✅ 结构化 claim 只读（`scopeType`+`scopeId`/status/claimType 过滤；无效 scopeType → 400，不 fail-open；status 按 **effective** 计算并返回——`active` 且已过 `valid_until` 视为 `expired`，`status=active`/`expired` 过滤同步对齐） |
+| `claim_get` | `GET /api/claims/{id}` | ✅ claim + evidence + links（`status` 同为 effective 值） |
 | `scan_openclaw_agents` | `GET /api/agents/openclaw/scan` | ✅ legacy（agents-only） |
 | `import_openclaw_agents` | `POST /api/agents/openclaw/import` | ✅ legacy（agents-only） |
 | `scan_openclaw_full` | `GET /api/agents/openclaw/scan-full` | ✅ providers + agents + memories |

@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "기억 관리",
-      "settings": "기억 설정"
+      "settings": "기억 설정",
+      "claims": "Claims"
     },
     "memoryTags": "태그",
     "memoryTagsPlaceholder": "쉼표로 구분된 태그 (선택)",
@@ -4293,6 +4294,28 @@
       "addHandler": "핸들러 추가",
       "advanced": "고급",
       "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요."
+    },
+    "memoryExtractClaims": "클레임 추출 (베타)",
+    "memoryExtractClaimsDesc": "메모리와 함께 근거 기반 구조화 클레임도 추출 (이중 기록).",
+    "claims": {
+      "title": "구조화 메모리 Claims",
+      "desc": "범위·신뢰도·출처 근거를 갖춘 구조화 장기 기억.",
+      "list": "클레임 목록",
+      "empty": "아직 클레임이 없습니다.",
+      "selectClaim": "클레임을 선택하면 근거가 표시됩니다.",
+      "confidence": "신뢰도",
+      "salience": "중요도",
+      "evidence": "근거",
+      "noEvidence": "근거 없음.",
+      "links": "연결된 메모리",
+      "statusAll": "모든 상태",
+      "status": {
+        "active": "활성",
+        "superseded": "대체됨",
+        "expired": "만료됨",
+        "archived": "보관됨",
+        "needs_review": "검토 필요"
+      }
     }
   },
   "shortcuts": {

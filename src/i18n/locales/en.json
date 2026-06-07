@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "Memory Management",
-      "settings": "Memory Settings"
+      "settings": "Memory Settings",
+      "claims": "Claims"
     },
     "memoryTags": "Tags",
     "memoryTagsPlaceholder": "Comma-separated tags (optional)",
@@ -4293,6 +4294,28 @@
       "addHandler": "Add handler",
       "advanced": "Advanced",
       "slowHandlerWarning": "This handler runs an LLM / sub-agent inline and will delay every time this blocking event fires. Prefer command / http here, or move it to an observation event (e.g. PostToolUse)."
+    },
+    "memoryExtractClaims": "Extract claims (beta)",
+    "memoryExtractClaimsDesc": "Also extract structured, evidence-backed claims alongside memories (dual-write).",
+    "claims": {
+      "title": "Claims",
+      "desc": "Structured long-term memory with scope, confidence and evidence.",
+      "list": "Claims",
+      "empty": "No claims yet.",
+      "selectClaim": "Select a claim to see its evidence.",
+      "confidence": "Confidence",
+      "salience": "Salience",
+      "evidence": "Evidence",
+      "noEvidence": "No evidence.",
+      "links": "Linked memories",
+      "statusAll": "All statuses",
+      "status": {
+        "active": "Active",
+        "superseded": "Superseded",
+        "expired": "Expired",
+        "archived": "Archived",
+        "needs_review": "Needs review"
+      }
     }
   },
   "shortcuts": {

@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "梦境（Dreaming）",
       "manage": "记忆管理",
-      "settings": "记忆设置"
+      "settings": "记忆设置",
+      "claims": "Claims"
     },
     "memoryTags": "标签",
     "memoryTagsPlaceholder": "逗号分隔的标签（可选）",
@@ -4293,6 +4294,28 @@
       "addHandler": "添加处理器",
       "advanced": "高级",
       "slowHandlerWarning": "此处理器会内联运行 LLM / 子 Agent，每次该阻断事件触发都会拖慢。建议这里改用 command / http，或挪到观察型事件（如 PostToolUse）。"
+    },
+    "memoryExtractClaims": "提取 claim（beta）",
+    "memoryExtractClaimsDesc": "在记忆之外，额外提取带证据的结构化 claim（双写）。",
+    "claims": {
+      "title": "结构化记忆 Claims",
+      "desc": "带作用域、置信度与来源证据的结构化长期记忆。",
+      "list": "Claim 列表",
+      "empty": "暂无 claim。",
+      "selectClaim": "选择一条 claim 查看其证据。",
+      "confidence": "置信度",
+      "salience": "重要度",
+      "evidence": "证据",
+      "noEvidence": "暂无证据。",
+      "links": "关联记忆",
+      "statusAll": "全部状态",
+      "status": {
+        "active": "活跃",
+        "superseded": "已替代",
+        "expired": "已过期",
+        "archived": "已归档",
+        "needs_review": "待审核"
+      }
     }
   },
   "shortcuts": {

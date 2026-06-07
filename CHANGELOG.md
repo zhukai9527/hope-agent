@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **结构化记忆（Claims）双写 + Claims 视图（beta）**：开启「记忆设置 → 提取 claim（beta）」后，自动记忆提取会在旧版记忆之外，额外提取带证据的结构化 claim 并双写关联——claim 带作用域、类型、置信度（由证据强度推导）、salience、时效；同 prompt 抽取轮完成，旧记忆作为兼容影子并由 claim 状态联动可见性（已替代 / 过期的 claim 不再经其影子记忆回灌 prompt，用户手动 pin 的除外）。Dashboard「记忆 → Claims」只读视图可查看 claim、证据与关联记忆。 (#283)
 - **结构化记忆（Claims）数据底座**：新增 claim / evidence / 关联三张表（与 memories 同库），为下一代 Dreaming 的结构化长期记忆打底——每条 claim 带作用域、类型、置信度、salience、时效策略、来源证据，并可关联旧版 memory。本期落地 schema + 只读 `claim_list` / `claim_get` 接口（Tauri + HTTP），claim 抽取 / 双写 / 整理在后续版本接入。 (#282)
 - **记忆梦境（Dreaming）来源可追溯**：离线固化晋升的每条记忆现在附带来源线索（记忆 ID + 来源会话），在 Dashboard → 记忆梦境的决策记录里以来源标签展示；无痕会话来源 fail-closed，永不进入证据。Dream Diary 的机器可读注释同步带上证据锚点。后端备有授权 + 脱敏的来源摘录读取端点，待后续精确消息锚定接入后在界面按需展开。 (#281)
 - **记忆梦境（Dreaming）持久化运行历史**：离线记忆固化的每次运行（手动 / 空闲 / 定时）现在落库留痕，重启后仍可在 Dashboard → 记忆梦境查看运行历史与每轮的晋升决策记录；多进程同时触发时通过 SQLite 租约确保只跑一次，崩溃残留的运行 / 租约 / 待处理来源会在下次启动自动恢复清理。新增 `dreaming_list_runs` / `dreaming_get_run` 接口（Tauri + HTTP）。 (#280)

@@ -101,3 +101,52 @@ pub struct ClaimDetail {
     pub evidence: Vec<EvidenceRecord>,
     pub links: Vec<ClaimLink>,
 }
+
+/// LLM-extracted claim candidate (design §4.3), parsed from the `claims`
+/// array of the combined extraction response. Validated + canonicalized by
+/// the write path; `confidence` is NOT taken from the model — it is derived
+/// from `evidence_class` baseline.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimCandidate {
+    pub claim_type: String,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub content: String,
+    #[serde(default)]
+    pub scope: Option<ClaimScopeHint>,
+    /// One of the 6 closed `evidence_class` labels; invalid / missing falls
+    /// back to `assistant_inferred` at write time.
+    #[serde(default)]
+    pub evidence_class: Option<String>,
+    #[serde(default)]
+    pub salience: Option<f32>,
+    #[serde(default)]
+    pub temporal: Option<ClaimTemporal>,
+    /// Source anchors the model cited, e.g. `"message:..."` / `"memory:42"`.
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Scope hint from the model: `{type: "global"|"agent"|"project", id?}`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimScopeHint {
+    #[serde(rename = "type")]
+    pub scope_type: String,
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+/// Temporal validity hints from the model.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimTemporal {
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+}

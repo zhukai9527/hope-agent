@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "ドリーミング",
       "manage": "記憶管理",
-      "settings": "記憶設定"
+      "settings": "記憶設定",
+      "claims": "Claims"
     },
     "memoryTags": "タグ",
     "memoryTagsPlaceholder": "カンマ区切りのタグ（任意）",
@@ -4293,6 +4294,28 @@
       "addHandler": "ハンドラーを追加",
       "advanced": "詳細",
       "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。"
+    },
+    "memoryExtractClaims": "クレーム抽出（ベータ）",
+    "memoryExtractClaimsDesc": "記憶に加えて、証拠付きの構造化クレームも抽出（二重書き込み）。",
+    "claims": {
+      "title": "構造化メモリ Claims",
+      "desc": "スコープ・信頼度・出典を備えた構造化長期記憶。",
+      "list": "クレーム一覧",
+      "empty": "クレームはまだありません。",
+      "selectClaim": "クレームを選択して出典を表示。",
+      "confidence": "信頼度",
+      "salience": "重要度",
+      "evidence": "出典",
+      "noEvidence": "出典なし。",
+      "links": "関連メモリ",
+      "statusAll": "すべての状態",
+      "status": {
+        "active": "有効",
+        "superseded": "置換済み",
+        "expired": "期限切れ",
+        "archived": "アーカイブ済み",
+        "needs_review": "要確認"
+      }
     }
   },
   "shortcuts": {

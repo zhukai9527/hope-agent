@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "夢境（Dreaming）",
       "manage": "記憶管理",
-      "settings": "記憶設定"
+      "settings": "記憶設定",
+      "claims": "Claims"
     },
     "memoryTags": "標簽",
     "memoryTagsPlaceholder": "逗號分隔的標簽（可選）",
@@ -4293,6 +4294,28 @@
       "addHandler": "新增處理器",
       "advanced": "進階",
       "slowHandlerWarning": "此處理器會內聯執行 LLM / 子 Agent，每次該阻斷事件觸發都會拖慢。建議這裡改用 command / http，或移至觀察型事件（如 PostToolUse）。"
+    },
+    "memoryExtractClaims": "擷取 claim（beta）",
+    "memoryExtractClaimsDesc": "在記憶之外，額外擷取帶證據的結構化 claim（雙寫）。",
+    "claims": {
+      "title": "結構化記憶 Claims",
+      "desc": "帶範圍、信賴度與來源證據的結構化長期記憶。",
+      "list": "Claim 清單",
+      "empty": "尚無 claim。",
+      "selectClaim": "選擇一條 claim 檢視其證據。",
+      "confidence": "信賴度",
+      "salience": "重要度",
+      "evidence": "證據",
+      "noEvidence": "尚無證據。",
+      "links": "關聯記憶",
+      "statusAll": "全部狀態",
+      "status": {
+        "active": "活躍",
+        "superseded": "已取代",
+        "expired": "已過期",
+        "archived": "已封存",
+        "needs_review": "待審核"
+      }
     }
   },
   "shortcuts": {

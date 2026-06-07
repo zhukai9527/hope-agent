@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "Hafıza yönetimi",
-      "settings": "Hafıza ayarları"
+      "settings": "Hafıza ayarları",
+      "claims": "Claims"
     },
     "memoryTags": "Etiketler",
     "memoryTagsPlaceholder": "Virgülle ayrılmış etiketler (isteğe bağlı)",
@@ -4293,6 +4294,28 @@
       "addHandler": "İşleyici ekle",
       "advanced": "Gelişmiş",
       "slowHandlerWarning": "Bu işleyici LLM / alt ajanı satır içi çalıştırır ve bu engelleyici olay her tetiklendiğinde gecikmeye yol açar. Burada command / http tercih edin veya bir gözlem olayına (örn. PostToolUse) taşıyın."
+    },
+    "memoryExtractClaims": "İddiaları çıkar (beta)",
+    "memoryExtractClaimsDesc": "Belleklerin yanı sıra kanıta dayalı yapılandırılmış iddiaları da çıkarır (çift yazma).",
+    "claims": {
+      "title": "İddialar (Claims)",
+      "desc": "Kapsam, güven ve kanıt içeren yapılandırılmış uzun süreli bellek.",
+      "list": "İddialar",
+      "empty": "Henüz iddia yok.",
+      "selectClaim": "Kanıtını görmek için bir iddia seçin.",
+      "confidence": "Güven",
+      "salience": "Önem",
+      "evidence": "Kanıt",
+      "noEvidence": "Kanıt yok.",
+      "links": "Bağlı bellekler",
+      "statusAll": "Tüm durumlar",
+      "status": {
+        "active": "Etkin",
+        "superseded": "Geçersiz kılındı",
+        "expired": "Süresi doldu",
+        "archived": "Arşivlendi",
+        "needs_review": "İnceleme gerekli"
+      }
     }
   },
   "shortcuts": {

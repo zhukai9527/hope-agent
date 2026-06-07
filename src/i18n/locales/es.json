@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "Gestión de memoria",
-      "settings": "Configuración de memoria"
+      "settings": "Configuración de memoria",
+      "claims": "Claims"
     },
     "memoryTags": "Etiquetas",
     "memoryTagsPlaceholder": "Etiquetas separadas por comas (opcional)",
@@ -4293,6 +4294,28 @@
       "addHandler": "Añadir handler",
       "advanced": "Avanzado",
       "slowHandlerWarning": "Este handler ejecuta un LLM / subagente en línea y ralentizará cada vez que se dispare este evento de bloqueo. Prefiere command / http aquí, o muévelo a un evento de observación (p. ej., PostToolUse)."
+    },
+    "memoryExtractClaims": "Extraer claims (beta)",
+    "memoryExtractClaimsDesc": "Extrae también claims estructurados con evidencia junto a las memorias (escritura dual).",
+    "claims": {
+      "title": "Claims",
+      "desc": "Memoria estructurada a largo plazo con ámbito, confianza y evidencia.",
+      "list": "Claims",
+      "empty": "Aún no hay claims.",
+      "selectClaim": "Selecciona un claim para ver su evidencia.",
+      "confidence": "Confianza",
+      "salience": "Relevancia",
+      "evidence": "Evidencia",
+      "noEvidence": "Sin evidencia.",
+      "links": "Memorias vinculadas",
+      "statusAll": "Todos los estados",
+      "status": {
+        "active": "Activo",
+        "superseded": "Reemplazado",
+        "expired": "Caducado",
+        "archived": "Archivado",
+        "needs_review": "Requiere revisión"
+      }
     }
   },
   "shortcuts": {

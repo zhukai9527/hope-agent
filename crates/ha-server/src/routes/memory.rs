@@ -43,13 +43,14 @@ pub struct ImportPromptQuery {
     pub locale: Option<String>,
 }
 
-/// `GET /api/claims` query. `scope` is JSON-encoded (or `agentId` shorthand),
-/// matching the memory-list convention.
+/// `GET /api/claims` query. Scope is primitive `scopeType` + `scopeId` (not a
+/// JSON object) so the filter can never silently degrade over the query
+/// transport; an invalid `scopeType` is a 400 (not a fail-open to "all").
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListClaimsQuery {
-    pub scope: Option<String>,
-    pub agent_id: Option<String>,
+    pub scope_type: Option<String>,
+    pub scope_id: Option<String>,
     pub status: Option<String>,
     pub claim_type: Option<String>,
     pub limit: Option<usize>,
@@ -153,8 +154,12 @@ pub async fn list_memories(
 pub async fn list_claims(
     Query(q): Query<ListClaimsQuery>,
 ) -> Result<Json<Vec<ha_core::memory::claims::ClaimRecord>>, AppError> {
+    // Strict scope parse: invalid scopeType → 400 (no silent fail-open to all).
+    let scope =
+        ha_core::memory::claims::parse_claim_scope(q.scope_type.as_deref(), q.scope_id.as_deref())
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
     let claims = ha_core::memory::claims::list_claims(ha_core::memory::claims::ClaimListFilter {
-        scope: parse_scope(&q.scope, &q.agent_id),
+        scope,
         status: q.status,
         claim_type: q.claim_type,
         limit: q.limit,

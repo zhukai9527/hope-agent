@@ -37,17 +37,20 @@ pub async fn memory_get(id: i64) -> Result<Option<memory::MemoryEntry>, CmdError
     backend.get(id).map_err(Into::into)
 }
 
-/// List structured claims (next-gen Dreaming, read-only). Optional scope /
-/// status / claim_type filters; newest-updated first. Maps to
-/// `GET /api/claims`.
+/// List structured claims (next-gen Dreaming, read-only). Optional scope
+/// (`scope_type` + `scope_id` primitives — never a structured object, so the
+/// HTTP query transport can't silently degrade the filter) / status /
+/// claim_type; newest-updated first. Maps to `GET /api/claims`.
 #[tauri::command]
 pub async fn claim_list(
-    scope: Option<memory::MemoryScope>,
+    scope_type: Option<String>,
+    scope_id: Option<String>,
     status: Option<String>,
     claim_type: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<memory::claims::ClaimRecord>, CmdError> {
+    let scope = memory::claims::parse_claim_scope(scope_type.as_deref(), scope_id.as_deref())?;
     memory::claims::list_claims(memory::claims::ClaimListFilter {
         scope,
         status,

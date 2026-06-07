@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "Pengurusan ingatan",
-      "settings": "Tetapan ingatan"
+      "settings": "Tetapan ingatan",
+      "claims": "Claims"
     },
     "memoryTags": "Tag",
     "memoryTagsPlaceholder": "Tag dipisahkan oleh koma (pilihan)",
@@ -4293,6 +4294,28 @@
       "addHandler": "Tambah pengendali",
       "advanced": "Lanjutan",
       "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse)."
+    },
+    "memoryExtractClaims": "Ekstrak claim (beta)",
+    "memoryExtractClaimsDesc": "Turut mengekstrak claim berstruktur berasaskan bukti bersama ingatan (tulis dua).",
+    "claims": {
+      "title": "Claims",
+      "desc": "Ingatan jangka panjang berstruktur dengan skop, keyakinan dan bukti.",
+      "list": "Senarai claim",
+      "empty": "Tiada claim lagi.",
+      "selectClaim": "Pilih satu claim untuk melihat buktinya.",
+      "confidence": "Keyakinan",
+      "salience": "Kepentingan",
+      "evidence": "Bukti",
+      "noEvidence": "Tiada bukti.",
+      "links": "Ingatan berkait",
+      "statusAll": "Semua status",
+      "status": {
+        "active": "Aktif",
+        "superseded": "Diganti",
+        "expired": "Tamat tempoh",
+        "archived": "Diarkibkan",
+        "needs_review": "Perlu semakan"
+      }
     }
   },
   "shortcuts": {

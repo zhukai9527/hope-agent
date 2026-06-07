@@ -13,6 +13,17 @@
 
 mod store;
 mod types;
+mod write;
 
-pub use store::{get_claim, init_claim_store, list_claims, ClaimListFilter};
-pub use types::{ClaimDetail, ClaimLink, ClaimRecord, EvidenceRecord};
+pub use store::{
+    get_claim, init_claim_store, link_claim_memory, list_claims, parse_claim_scope,
+    write_claim_candidate, ClaimListFilter, ClaimWriteOutcome,
+};
+pub use types::{
+    ClaimCandidate, ClaimDetail, ClaimLink, ClaimRecord, ClaimScopeHint, ClaimTemporal,
+    EvidenceRecord,
+};
+pub use write::{
+    confidence_baseline, effective_status, is_injectable_status, normalize_evidence_class,
+    normalize_object, EVIDENCE_CLASSES,
+};

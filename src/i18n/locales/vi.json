@@ -3343,7 +3343,8 @@
     "memoryTabs": {
       "dreaming": "Dreaming",
       "manage": "Quản lý bộ nhớ",
-      "settings": "Cài đặt bộ nhớ"
+      "settings": "Cài đặt bộ nhớ",
+      "claims": "Claims"
     },
     "memoryTags": "Thẻ",
     "memoryTagsPlaceholder": "Nhãn phân cách bằng dấu phẩy (tùy chọn)",
@@ -4293,6 +4294,28 @@
       "addHandler": "Thêm trình xử lý",
       "advanced": "Nâng cao",
       "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse)."
+    },
+    "memoryExtractClaims": "Trích xuất claim (beta)",
+    "memoryExtractClaimsDesc": "Trích xuất thêm các claim có cấu trúc kèm bằng chứng song song với bộ nhớ (ghi kép).",
+    "claims": {
+      "title": "Claims",
+      "desc": "Bộ nhớ dài hạn có cấu trúc với phạm vi, độ tin cậy và bằng chứng.",
+      "list": "Danh sách claim",
+      "empty": "Chưa có claim.",
+      "selectClaim": "Chọn một claim để xem bằng chứng.",
+      "confidence": "Độ tin cậy",
+      "salience": "Mức quan trọng",
+      "evidence": "Bằng chứng",
+      "noEvidence": "Không có bằng chứng.",
+      "links": "Bộ nhớ liên kết",
+      "statusAll": "Mọi trạng thái",
+      "status": {
+        "active": "Hoạt động",
+        "superseded": "Đã thay thế",
+        "expired": "Đã hết hạn",
+        "archived": "Đã lưu trữ",
+        "needs_review": "Cần xem xét"
+      }
     }
   },
   "shortcuts": {
