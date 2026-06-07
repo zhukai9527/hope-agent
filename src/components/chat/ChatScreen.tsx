@@ -1831,6 +1831,8 @@ export default function ChatScreen({
       ? CHAT_MAIN_COMPACT_MIN_INTERACTIVE_WIDTH
       : CHAT_MAIN_MIN_INTERACTIVE_WIDTH
   const chatMainMinWidth = `min(100%, ${rightPanelReservedMainWidth}px)`
+  const workspacePanelVisibleInRightPanel =
+    showWorkspacePanel && renderedExclusiveRightPanel === "workspace" && !rightPanelCollapsed
 
   const emptySessionInputHero =
     session.messages.length === 0 &&
@@ -2193,6 +2195,7 @@ export default function ChatScreen({
                     onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
                     taskProgressSnapshot={taskProgressSnapshot}
                     onOpenWorkspace={openWorkspacePanel}
+                    workspacePanelVisible={workspacePanelVisibleInRightPanel}
                     executionState={
                       session.currentSessionId
                         ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)

@@ -91,6 +91,32 @@ describe("TaskProgressPanel", () => {
     expect(screen.queryByText("#42")).toBeNull()
   })
 
+  test("auto-collapses when workspace opens", () => {
+    const snapshot = createTaskProgressSnapshot([
+      task({ id: 1, content: "Write code" }),
+      task({ id: 2, content: "Run tests" }),
+    ])
+
+    const { rerender } = render(
+      <TaskProgressPanel snapshot={snapshot} onOpenWorkspace={vi.fn()} workspaceOpen={false} />,
+    )
+
+    const toggle = screen.getByRole("button", { name: /Tasks/ })
+    expect(toggle.getAttribute("aria-expanded")).toBe("true")
+    expect(screen.getByText("Run tests")).toBeTruthy()
+
+    rerender(
+      <TaskProgressPanel snapshot={snapshot} onOpenWorkspace={vi.fn()} workspaceOpen />,
+    )
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(screen.queryByText("Run tests")).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute("aria-expanded")).toBe("true")
+    expect(screen.getByText("Run tests")).toBeTruthy()
+  })
+
   test("does not spin an in-progress task when execution is no longer running", () => {
     const snapshot = createTaskProgressSnapshot([
       task({

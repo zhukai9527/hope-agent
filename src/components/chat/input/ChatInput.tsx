@@ -57,7 +57,7 @@ import { VoiceRecordButton } from "./VoiceRecordButton"
 import { useVoiceInput } from "./useVoiceInput"
 import { RecordingBar } from "./RecordingBar"
 import { getNextPermissionMode } from "./permissionModes"
-import WorkspaceStatusBar from "@/components/chat/workspace/WorkspaceStatusBar"
+import TaskProgressPanel from "@/components/chat/tasks/TaskProgressPanel"
 import { resolveWorkspaceTaskExecutionState } from "@/components/chat/workspace/taskExecutionState"
 import {
   shouldShowTaskProgressPanel,
@@ -130,6 +130,8 @@ interface ChatInputProps {
   executionState?: ChatTurnStatus | null
   /** 打开右侧工作台面板（状态条点击）。 */
   onOpenWorkspace?: () => void
+  /** True when the right-side workspace panel is expanded and showing task detail. */
+  workspacePanelVisible?: boolean
   /** Larger centered presentation for a brand-new empty conversation. */
   hero?: boolean
 }
@@ -178,6 +180,7 @@ export default function ChatInput({
   taskProgressSnapshot,
   executionState,
   onOpenWorkspace,
+  workspacePanelVisible = false,
   hero = false,
 }: ChatInputProps) {
   const { t } = useTranslation()
@@ -544,9 +547,11 @@ export default function ChatInput({
   }
 
   const taskExecutionState = resolveWorkspaceTaskExecutionState(executionState, loading)
-  // 状态条是否会渲染（WorkspaceStatusBar 内部同款判断）——决定其下方 Plan
-  // Banner 是否需要补顶部圆角。
-  const hasVisibleTaskBar = shouldShowTaskProgressPanel(taskProgressSnapshot)
+  const visibleTaskProgressSnapshot = shouldShowTaskProgressPanel(taskProgressSnapshot)
+    ? taskProgressSnapshot
+    : null
+  // 任务进度 UI 是否会渲染——决定其下方 Plan Banner 是否需要补顶部圆角。
+  const hasVisibleTaskProgress = !!visibleTaskProgressSnapshot
   const pendingQueueItems: PendingSendPreview[] =
     pendingSends && pendingSends.length > 0
       ? pendingSends
@@ -710,11 +715,15 @@ export default function ChatInput({
           onHover={mention.setSelectedIndex}
         />
 
-        <WorkspaceStatusBar
-          snapshot={taskProgressSnapshot}
-          executionState={taskExecutionState}
-          onOpen={onOpenWorkspace ?? (() => {})}
-        />
+        {visibleTaskProgressSnapshot && (
+          <TaskProgressPanel
+            snapshot={visibleTaskProgressSnapshot}
+            executionState={taskExecutionState}
+            variant="embedded"
+            onOpenWorkspace={onOpenWorkspace}
+            workspaceOpen={workspacePanelVisible}
+          />
+        )}
 
         {/* Attached files preview (rendered above textarea) */}
         <AttachmentPreview attachedFiles={attachedFiles} onRemoveFile={onRemoveFile} />
@@ -880,7 +889,7 @@ export default function ChatInput({
         {/* Plan Mode Banner */}
         <AnimatedCollapse open={planState === "planning"}>
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border-b border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs animate-in fade-in slide-in-from-top-1 duration-200${!hasVisibleTaskBar && attachedFiles.length === 0 && !hasPendingQueue ? " rounded-t-2xl" : ""}`}
+            className={`flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border-b border-blue-500/20 text-blue-600 dark:text-blue-400 text-xs animate-in fade-in slide-in-from-top-1 duration-200${!hasVisibleTaskProgress && attachedFiles.length === 0 && !hasPendingQueue ? " rounded-t-2xl" : ""}`}
           >
             <ClipboardList className="h-3.5 w-3.5 shrink-0" />
             <span className="flex-1">{t("planMode.restricted")}</span>
