@@ -193,9 +193,10 @@ pub struct MemoryExtractConfig {
     /// `memory_evidence` alongside the legacy `facts`/`profile`, and dual-write
     /// each claim's shadow into `memories` (linked via `memory_claim_links`).
     /// Runs in the SAME side_query roundtrip as `facts` (a third `claims`
-    /// array). Default OFF — opt-in gray rollout during the dual-track period;
+    /// array). Default ON — the structured claim layer ships enabled so the
+    /// out-of-box experience builds claims / profile without manual opt-in;
     /// also gates the Dashboard "Claims (beta)" view.
-    #[serde(default)]
+    #[serde(default = "crate::default_true")]
     pub extract_claims: bool,
 }
 fn default_extract_token_threshold() -> usize {
@@ -223,7 +224,7 @@ impl Default for MemoryExtractConfig {
             extract_message_threshold: default_extract_message_threshold(),
             extract_idle_timeout_secs: default_extract_idle_timeout_secs(),
             enable_reflection: true,
-            extract_claims: false,
+            extract_claims: true,
         }
     }
 }

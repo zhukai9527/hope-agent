@@ -116,7 +116,7 @@ pub fn spawn_dreaming_cron_loop() {
                         report.note,
                     );
                     // Cheap rule-based Memory Profile synthesis after promotion
-                    // releases the single-cycle guard (Phase 4, gated, off by
+                    // releases the single-cycle guard (Phase 4, gated, on by
                     // default).
                     if cfg.profile_synthesis.enabled {
                         let p = super::run_profile_synthesis_cycle(DreamTrigger::Cron).await;

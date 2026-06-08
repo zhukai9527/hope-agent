@@ -20,8 +20,8 @@ export function useMemoryExtract({ agentId, isAgentMode }: UseMemoryExtractParam
     // Declared so the whole-struct save round-trip (save_extract_config
     // replaces the entire config) never drops it.
     enableReflection: true,
-    // Next-gen claim dual-write (beta). Global-only; also gates the Claims view.
-    extractClaims: false,
+    // Next-gen claim dual-write (default on). Global-only; also gates the Claims view.
+    extractClaims: true,
   })
   const [agentExtractOverride, setAgentExtractOverride] = useState<{
     autoExtract: boolean | null
@@ -93,7 +93,7 @@ export function useMemoryExtract({ agentId, isAgentMode }: UseMemoryExtractParam
           enableReflection?: boolean
           extractClaims?: boolean
         }>("get_extract_config")
-        setGlobalExtract({ enableReflection: true, extractClaims: false, ...global })
+        setGlobalExtract({ enableReflection: true, extractClaims: true, ...global })
 
         if (isAgentMode && agentId) {
           const cfg = await getTransport().call<{ memory?: {

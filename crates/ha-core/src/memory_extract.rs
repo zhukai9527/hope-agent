@@ -104,9 +104,10 @@ Conversation (recent):
 {MESSAGES}"#;
 
 /// Next-gen Dreaming (beta) — combined extraction that ALSO emits structured
-/// `claims`. Used only when `extract_claims` is enabled, so opted-out users
-/// never pay the extra tokens. The `claims` array is the structured long-term
-/// memory; legacy `facts`/`profile` continue to write `MemoryEntry` rows.
+/// `claims`. Used when `extract_claims` is enabled (the default); users who
+/// opt out keep the legacy prompt and skip the extra tokens. The `claims`
+/// array is the structured long-term memory; legacy `facts`/`profile` continue
+/// to write `MemoryEntry` rows.
 const COMBINED_EXTRACT_WITH_CLAIMS_PROMPT: &str = r#"Output ONE JSON object with THREE arrays:
 {
   "facts":    [{"content":"...","type":"user|feedback|project|reference","tags":["..."]}],
@@ -296,9 +297,9 @@ async fn do_extraction(
         .and_then(|m| m.enable_reflection)
         .unwrap_or(global_extract.enable_reflection);
 
-    // Next-gen claim dual-write (beta, opt-in). When on, use the claims-
-    // augmented combined prompt; opted-out users keep the existing prompts and
-    // never pay the extra tokens.
+    // Next-gen claim dual-write (beta, on by default). When on, use the claims-
+    // augmented combined prompt; users who opt out keep the existing prompts
+    // and skip the extra tokens.
     let claims_enabled = global_extract.extract_claims;
     let prompt_template = select_extract_prompt(claims_enabled, reflect_enabled);
     let prompt = prompt_template

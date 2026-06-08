@@ -142,7 +142,7 @@ Dreaming 以三个独立可运行的 cycle 落地（均写 durable run + decisio
 2. **Deep Resolver**（`resolver.rs`，`dreaming_run_resolver`）：
    - **确定性过期**：扫所有 active claim，`valid_until < now` → `Expire` 决策（纯字符串比较，无 LLM）。
    - **保守冲突分析**：按 `(scope_type, scope_id, claim_type, subject, predicate)` 分组，只取 >1 成员且 ≥2 种不同归一化 object 的组（去重是 Light 的活），每轮最多 `MAX_RESOLVER_GROUPS=50` 组各发一次 `side_query`。LLM 回 `duplicates → Merge`（保留最高置信 + 最新者，存档另一方）/ `conflict → NeedsReview`（**绝不自动 supersede**）/ `independent → no_op`。
-3. **Profile 合成**（`profile.rs`，`dreaming_run_profile`，受 `profileSynthesis.enabled` 门控、默认关）：按 scope 取 active claim、按 `confidence × salience` 排序取前 `maxLinesPerScope`（12，排除 `reference` 类）、规则式渲染 Markdown bullet。Idle/Cron 走规则式零 LLM；Manual 额外对每 scope 发一次 `side_query` 重写求流畅（只压缩重组、不创作）。写入 `memory_profile_snapshots`（version=MAX+1）。
+3. **Profile 合成**（`profile.rs`，`dreaming_run_profile`，受 `profileSynthesis.enabled` 门控、默认开）：按 scope 取 active claim、按 `confidence × salience` 排序取前 `maxLinesPerScope`（12，排除 `reference` 类）、规则式渲染 Markdown bullet。Idle/Cron 走规则式零 LLM；Manual 额外对每 scope 发一次 `side_query` 重写求流畅（只压缩重组、不创作）。写入 `memory_profile_snapshots`（version=MAX+1）。
 
 ```mermaid
 graph TD
@@ -162,7 +162,7 @@ graph TD
 
 ### 双写 + canonicalize（`claims::write` / `claims::store`）
 
-自动提取（[`memory_extract.rs`](../../crates/ha-core/src/memory_extract.rs)）在写旧 `MemoryEntry` 的同时，把 `ClaimCandidate` 经 `write_candidate` 双写：
+自动提取（[`memory_extract.rs`](../../crates/ha-core/src/memory_extract.rs)，受 `extractClaims` 开关控制、**默认开**——claim 与 facts 同一次 side_query 抽取，无额外 LLM 调用）在写旧 `MemoryEntry` 的同时，把 `ClaimCandidate` 经 `write_candidate` 双写：
 
 - **作用域固定为提取上下文的 `default_scope`**（会话 / 提取 API 参数），**不信任 LLM 的 scope hint**（防跨项目路由）。
 - **规则式去重**：粗筛 `(scope_type, scope_id, claim_type, subject, predicate)` + Rust 侧 `normalize_object`（折叠空白 + 小写）精确比对；命中 active claim 则合并证据、更新 `updated_at`，否则建新 claim + ≥1 证据。
@@ -251,7 +251,7 @@ claim 与 profile 经三条路径进入系统提示，与 legacy 记忆共存于
 | `narrativeMaxTokens` | `2048` | narrative side_query token 预算 |
 | `narrativeTimeoutSecs` | `60` | narrative 超时 |
 | `narrativeModel` | `null` | 专用模型 `provider:model`；null = 当前聊天 Agent |
-| `profileSynthesis.{enabled, maxLinesPerScope}` | `false` / `12` | Profile 合成（opt-in）/ 每 scope 行数上限 |
+| `profileSynthesis.{enabled, maxLinesPerScope}` | `true` / `12` | Profile 合成 / 每 scope 行数上限 |
 
 GUI 在「设置 → 记忆 → Dreaming」（`DreamingPanel`，含 idle 倒计时与 cron 可视化编辑器）；`ha-settings` 技能可读写同一字段集（风险等级 MEDIUM，登记于 [`skills/ha-settings/SKILL.md`](../../skills/ha-settings/SKILL.md)），二者零偏差。`ActiveMemoryConfig.include_claims`（per-agent，默认关）是 Active Memory v2 的独立开关。
 

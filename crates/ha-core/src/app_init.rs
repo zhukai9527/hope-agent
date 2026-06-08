@@ -898,7 +898,7 @@ pub async fn start_background_tasks() {
                         // After promotion releases the single-cycle guard, run a
                         // cheap rule-based Memory Profile synthesis (Phase 4) so
                         // the profile stays fresh without a separate trigger.
-                        // Gated by `profile_synthesis.enabled` (off by default).
+                        // Gated by `profile_synthesis.enabled` (on by default).
                         if profile_enabled {
                             let p = crate::memory::dreaming::run_profile_synthesis_cycle(
                                 crate::memory::dreaming::DreamTrigger::Idle,
