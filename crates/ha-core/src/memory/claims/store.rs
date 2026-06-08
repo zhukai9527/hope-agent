@@ -20,12 +20,7 @@ use super::types::{
 };
 use super::write;
 
-/// Fixed-width UTC RFC3339 (`...SSSZ`) — same format the dreaming store uses,
-/// so `valid_until < now` comparisons (here and in the injection JOIN) are
-/// lexically monotonic.
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
+use crate::util::now_rfc3339;
 
 /// Shared `WHERE` fragment for claim relevance search: active + not-expired +
 /// scope (design §4.8). Conditions use the `c.` alias so both the FTS JOIN and

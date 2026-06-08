@@ -78,9 +78,7 @@ fn ts(dt: chrono::DateTime<chrono::Utc>) -> String {
     dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn now_rfc3339() -> String {
-    ts(chrono::Utc::now())
-}
+use crate::util::now_rfc3339;
 
 fn rfc3339_in(secs: i64) -> String {
     ts(chrono::Utc::now() + chrono::Duration::seconds(secs))

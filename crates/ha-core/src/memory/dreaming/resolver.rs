@@ -27,9 +27,7 @@ use super::types::{DreamPhase, DreamRunStatus};
 use crate::agent::AssistantAgent;
 use crate::memory::claims::{self, ResolveClaim};
 
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
+use crate::util::now_rfc3339;
 
 /// Cap on conflict groups analyzed per resolver run. Each group is one LLM
 /// side_query, so this bounds per-run LLM calls, cost, and lock-hold time (a

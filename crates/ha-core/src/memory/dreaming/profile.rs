@@ -29,9 +29,7 @@ use crate::agent::AssistantAgent;
 use crate::memory::claims::{self, ResolveClaim};
 use crate::truncate_utf8;
 
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
+use crate::util::now_rfc3339;
 
 /// Cap on scopes synthesised per run. A manual run issues up to one LLM
 /// side_query per scope, so this bounds per-run cost + lock-hold time. Overflow
