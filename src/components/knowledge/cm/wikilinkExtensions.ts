@@ -233,23 +233,24 @@ export function wikilinkHover(
 /** Theme for wikilink chips. */
 export const wikilinkTheme = EditorView.baseTheme({
   ".cm-wikilink": {
-    color: "var(--primary, #6366f1)",
-    backgroundColor: "color-mix(in srgb, var(--primary, #6366f1) 12%, transparent)",
+    // Indigo accent (intentional link color, not the monochrome theme primary).
+    color: "#6366f1",
+    backgroundColor: "color-mix(in srgb, #6366f1 12%, transparent)",
     borderRadius: "3px",
     padding: "0 2px",
   },
   ".cm-wikilink-broken": {
-    color: "var(--destructive, #ef4444)",
-    backgroundColor: "color-mix(in srgb, var(--destructive, #ef4444) 12%, transparent)",
+    color: "var(--color-destructive, #ef4444)",
+    backgroundColor: "color-mix(in srgb, var(--color-destructive, #ef4444) 12%, transparent)",
     textDecoration: "underline wavy",
   },
   ".cm-tooltip.cm-wikilink-tooltip": {
     maxWidth: "320px",
     padding: "8px 10px",
     borderRadius: "6px",
-    border: "1px solid var(--border, #e5e7eb)",
-    backgroundColor: "var(--popover, #fff)",
-    color: "var(--popover-foreground, #111)",
+    border: "1px solid var(--color-border, #e5e7eb)",
+    backgroundColor: "var(--color-popover, #fff)",
+    color: "var(--color-popover-foreground, #111)",
     boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
     fontFamily: "ui-sans-serif, system-ui, sans-serif",
   },
@@ -266,7 +267,7 @@ export const wikilinkTheme = EditorView.baseTheme({
     overflow: "hidden",
   },
   ".cm-wikilink-tooltip-broken .cm-wikilink-tooltip-body": {
-    color: "var(--destructive, #ef4444)",
+    color: "var(--color-destructive, #ef4444)",
     opacity: "1",
   },
 })

@@ -38,6 +38,51 @@ class BulletWidget extends WidgetType {
   }
 }
 
+/** A rendered checkbox standing in for a `[ ]` / `[x]` task marker. The marker's
+ *  document position rides along in a data attribute so the click handler can
+ *  toggle it (positions are rebuilt on every edit, so they stay current). */
+class TaskWidget extends WidgetType {
+  private readonly checked: boolean
+  private readonly pos: number
+
+  constructor(checked: boolean, pos: number) {
+    super()
+    this.checked = checked
+    this.pos = pos
+  }
+  eq(other: TaskWidget) {
+    return other.checked === this.checked && other.pos === this.pos
+  }
+  toDOM() {
+    const span = document.createElement("span")
+    span.className = this.checked ? "cm-live-task cm-live-task-done" : "cm-live-task"
+    span.textContent = this.checked ? "☑" : "☐"
+    span.dataset.taskPos = String(this.pos)
+    span.setAttribute("role", "checkbox")
+    span.setAttribute("aria-checked", this.checked ? "true" : "false")
+    return span
+  }
+  ignoreEvent() {
+    return false
+  }
+}
+
+/** A horizontal rule standing in for `---` / `***` / `___`. */
+class HrWidget extends WidgetType {
+  eq() {
+    return true
+  }
+  toDOM() {
+    const span = document.createElement("span")
+    span.className = "cm-live-hr"
+    span.setAttribute("aria-hidden", "true")
+    return span
+  }
+  ignoreEvent() {
+    return false
+  }
+}
+
 const HEADER_LEVEL_RE = /^ATXHeading([1-6])$/
 const BULLET_RE = /^[-*+]$/
 
@@ -116,7 +161,46 @@ function buildLive(state: EditorState): DecorationSet {
         case "InlineCode":
           decos.push(Decoration.mark({ class: "cm-live-code" }).range(from, to))
           break
+        case "Link": {
+          // Inline link `[label](url)`: hide the brackets + URL, keep a styled
+          // label. Reference / empty-label links (no URL child) are left raw.
+          if (!node.node.getChild("URL")) break
+          const marks = node.node.getChildren("LinkMark")
+          if (marks.length < 2 || marks[0].from !== from) break
+          const labelFrom = marks[0].to
+          const labelTo = marks[1].from
+          if (labelFrom >= labelTo) break
+          decos.push(hidden.range(from, labelFrom)) // `[`
+          decos.push(hidden.range(labelTo, to)) // `](url)`
+          decos.push(Decoration.mark({ class: "cm-live-link" }).range(labelFrom, labelTo))
+          break
+        }
+        case "HorizontalRule":
+          decos.push(Decoration.replace({ widget: new HrWidget() }).range(from, to))
+          break
+        case "TaskMarker": {
+          const checked = /[xX]/.test(state.doc.sliceString(from, to))
+          decos.push(
+            Decoration.replace({ widget: new TaskWidget(checked, from) }).range(from, to),
+          )
+          if (checked) {
+            const line = state.doc.lineAt(from)
+            if (to < line.to) {
+              decos.push(Decoration.mark({ class: "cm-live-done" }).range(to, line.to))
+            }
+          }
+          break
+        }
         case "ListMark": {
+          // Task list items render as a checkbox — drop the bullet so the line
+          // reads "☐ text", not "• ☐ text".
+          const item = node.node.parent
+          if (item?.name === "ListItem" && item.getChild("Task")) {
+            const afterMark =
+              to < state.doc.length && state.doc.sliceString(to, to + 1) === " " ? to + 1 : to
+            decos.push(hidden.range(from, afterMark))
+            break
+          }
           // Render `-`/`*`/`+` as a real bullet; leave ordered-list numbers alone.
           if (BULLET_RE.test(state.doc.sliceString(from, to))) {
             decos.push(bullet.range(from, to))
@@ -149,15 +233,36 @@ function leadingSpaces(s: string): number {
   return n
 }
 
+/** Click a rendered task checkbox to toggle `[ ]` ⇄ `[x]` in place. */
+const taskToggleHandler = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    const target = event.target as HTMLElement | null
+    if (!target || !target.classList?.contains("cm-live-task")) return false
+    const pos = Number(target.dataset.taskPos)
+    if (!Number.isFinite(pos)) return false
+    const marker = view.state.sliceDoc(pos, pos + 3)
+    const m = /^\[([ xX])\]$/.exec(marker)
+    if (!m) return false
+    event.preventDefault()
+    view.dispatch({
+      changes: { from: pos + 1, to: pos + 2, insert: m[1] === " " ? "x" : " " },
+    })
+    return true
+  },
+})
+
 /** Live-preview decorations (syntax-marker hiding). StateField so replacements may
- *  cover line-spanning constructs without the plugin-decoration restriction. */
+ *  cover line-spanning constructs without the plugin-decoration restriction; the
+ *  paired dom handler makes rendered task checkboxes clickable. */
 export function noteLiveDecorations() {
-  return StateField.define<DecorationSet>({
-    create: (state) => buildLive(state),
-    update: (deco, tr) =>
-      tr.docChanged || tr.selection ? buildLive(tr.state) : deco,
-    provide: (f) => EditorView.decorations.from(f),
-  })
+  return [
+    StateField.define<DecorationSet>({
+      create: (state) => buildLive(state),
+      update: (deco, tr) => (tr.docChanged || tr.selection ? buildLive(tr.state) : deco),
+      provide: (f) => EditorView.decorations.from(f),
+    }),
+    taskToggleHandler,
+  ]
 }
 
 /** Visual styling for the hidden-marker spans. */
@@ -174,6 +279,26 @@ export const noteLiveTheme = EditorView.baseTheme({
   },
   ".cm-live-quote": { fontStyle: "italic", opacity: "0.8" },
   ".cm-live-bullet": { opacity: "0.6" },
+  ".cm-live-link": {
+    color: "#6366f1",
+    textDecoration: "underline",
+    textUnderlineOffset: "2px",
+    cursor: "pointer",
+  },
+  ".cm-live-task": {
+    cursor: "pointer",
+    userSelect: "none",
+    marginRight: "0.2em",
+    color: "var(--color-muted-foreground)",
+  },
+  ".cm-live-task-done": { color: "#22c55e" },
+  ".cm-live-done": { textDecoration: "line-through", opacity: "0.55" },
+  ".cm-live-hr": {
+    display: "inline-block",
+    width: "100%",
+    verticalAlign: "middle",
+    borderTop: "1px solid var(--color-border)",
+  },
   ".cm-live-h1": { fontSize: "1.6em", fontWeight: "700", lineHeight: "1.3" },
   ".cm-live-h2": { fontSize: "1.4em", fontWeight: "700", lineHeight: "1.3" },
   ".cm-live-h3": { fontSize: "1.2em", fontWeight: "700", lineHeight: "1.3" },

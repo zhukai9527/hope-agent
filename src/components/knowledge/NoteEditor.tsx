@@ -1,7 +1,7 @@
 import { closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
-import { markdown } from "@codemirror/lang-markdown"
-import { defaultHighlightStyle, indentOnInput, syntaxHighlighting } from "@codemirror/language"
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown"
+import { indentOnInput, syntaxHighlighting } from "@codemirror/language"
 import { lintKeymap } from "@codemirror/lint"
 import { searchKeymap } from "@codemirror/search"
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state"
@@ -22,6 +22,7 @@ import NoteTransclusionView from "./NoteTransclusionView"
 import OutlineView from "./OutlineView"
 import { cleanEmbedRef, noteExcerpt } from "./transclusionParse"
 
+import { noteHighlightStyle } from "./cm/highlightStyle"
 import { noteLiveDecorations, noteLiveTheme } from "./cm/livePreviewExtensions"
 import { notePreviewTheme, notePreviewWidgets } from "./cm/previewExtensions"
 import {
@@ -73,15 +74,28 @@ const editorTheme = EditorView.theme({
     height: "100%",
     fontSize: "13px",
     backgroundColor: "transparent",
+    // Follow the app's light / dark theme — plain (untagged) markdown text and
+    // code-block bodies inherit this, so the editor is readable on both themes.
+    color: "var(--color-foreground)",
   },
   ".cm-content": {
     fontFamily:
       "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
     padding: "12px 16px",
+    color: "var(--color-foreground)",
+    caretColor: "var(--color-foreground)",
   },
   ".cm-scroller": { overflow: "auto" },
   "&.cm-focused": { outline: "none" },
   ".cm-gutters": { backgroundColor: "transparent", border: "none" },
+  // drawSelection() paints its own layer; give it a visible accent tint on both
+  // themes instead of CM6's default gray.
+  ".cm-selectionBackground": {
+    background: "color-mix(in srgb, #6366f1 20%, transparent)",
+  },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+    background: "color-mix(in srgb, #6366f1 28%, transparent)",
+  },
 })
 
 /**
@@ -154,8 +168,10 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
         indentOnInput(),
         EditorView.lineWrapping,
         closeBrackets(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        markdown(),
+        syntaxHighlighting(noteHighlightStyle, { fallback: true }),
+        // GFM base — enables strikethrough / task lists / tables / autolinks in
+        // the parse tree (live-preview decorations render the first three).
+        markdown({ base: markdownLanguage }),
         wikilinkTheme,
         wikilinkDecorations(getData),
         wikilinkCompletion(getData),
