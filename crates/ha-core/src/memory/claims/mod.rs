@@ -13,6 +13,7 @@
 //! (merge / supersede / expire) and Memory Profile land in later PRs.
 
 mod backfill;
+mod review;
 mod store;
 mod types;
 mod write;
@@ -21,6 +22,7 @@ pub use backfill::{
     apply_backfill, plan_backfill, BackfillApplyResult, BackfillCandidate, BackfillPlan,
     BackfillSummary,
 };
+pub use review::{forget_claim, update_claim, ClaimActionOutcome, ClaimUpdate};
 pub use store::{
     expire_claim, get_claim, init_claim_store, link_claim_memory, list_active_claims_for_resolve,
     list_claims, list_pinned_claims, mark_claim_needs_review, merge_claims, parse_claim_scope,

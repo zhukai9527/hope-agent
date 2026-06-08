@@ -211,6 +211,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   memory_get:                      { method: "GET",    path: "/api/memory/{id}" },
   claim_list:                      { method: "GET",    path: "/api/claims" },
   claim_get:                       { method: "GET",    path: "/api/claims/{id}" },
+  claim_update:                    { method: "PATCH",  path: "/api/claims/{id}" },
+  claim_forget:                    { method: "POST",   path: "/api/claims/{id}/forget" },
   memory_backfill_plan:            { method: "GET",    path: "/api/memory/backfill/plan" },
   memory_backfill_apply:           { method: "POST",   path: "/api/memory/backfill/apply" },
   memory_update:                   { method: "PUT",    path: "/api/memory/{id}" },

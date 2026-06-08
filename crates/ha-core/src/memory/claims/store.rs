@@ -236,6 +236,98 @@ pub fn merge_claims(keep_id: &str, drop_id: &str) -> Result<bool> {
     store.merge_claims(keep_id, drop_id)
 }
 
+// ── User-correction primitives (Phase 6 / design §5.2 §5.3) ─────
+//
+// These power the Lucid Review loop: edit / approve / reject / move-scope /
+// pin / forget. Unlike the resolver's `set_claim_status` (active-gated), a
+// user action operates on the stored row in ANY status (e.g. approving a
+// `needs_review` claim back to `active`). Orchestration — diff → decision
+// audit → events — lives in [`super::review`]; these are the storage layer.
+
+/// Snapshot of a claim's user-editable fields, read before a correction so the
+/// audit diff and the re-embed decision can be computed. Returns the RAW
+/// stored `status` (read APIs derive the effective one; a user action mutates
+/// the stored row).
+#[derive(Debug, Clone)]
+pub struct ClaimEditState {
+    pub scope_type: String,
+    pub scope_id: Option<String>,
+    pub content: String,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub tags: Vec<String>,
+    pub status: String,
+    pub salience: f32,
+    pub confidence: f32,
+    pub confidence_source: String,
+}
+
+/// A resolved set of field changes for [`apply_claim_fields`]. Every field is
+/// optional — `None` means "leave unchanged". `scope` sets both columns
+/// together so a move to global clears `scope_id`.
+#[derive(Debug, Clone, Default)]
+pub struct ClaimFieldUpdate {
+    pub content: Option<String>,
+    pub subject: Option<String>,
+    pub predicate: Option<String>,
+    pub object: Option<String>,
+    pub tags: Option<Vec<String>>,
+    /// active | needs_review | expired | archived (caller validates).
+    pub status: Option<String>,
+    /// `(scope_type, scope_id)` — `scope_id=None` for global.
+    pub scope: Option<(String, Option<String>)>,
+    pub salience: Option<f32>,
+    pub confidence: Option<f32>,
+    pub confidence_source: Option<String>,
+}
+
+/// Load a claim's mutable fields for a user-correction diff. `None` if the
+/// claim id is unknown.
+pub fn claim_edit_state(claim_id: &str) -> Result<Option<ClaimEditState>> {
+    let store = store().ok_or_else(|| anyhow!("claim store not initialised"))?;
+    store.claim_edit_state(claim_id)
+}
+
+/// Apply a resolved set of user field changes in one UPDATE (any → any status).
+/// Always bumps `updated_at`. Returns whether a row changed.
+pub fn apply_claim_fields(claim_id: &str, upd: &ClaimFieldUpdate) -> Result<bool> {
+    let store = store().ok_or_else(|| anyhow!("claim store not initialised"))?;
+    store.apply_claim_fields(claim_id, upd)
+}
+
+/// Re-embed a claim's current content into vec0 (call after a content edit so
+/// Active Memory v2 / Context Pack recall reflects the new text). No-op when
+/// the row is gone or embeddings are disabled. MUST run without the write lock
+/// held — `embed_and_index_claim` re-acquires it for the embedding cache.
+pub fn reembed_claim(claim_id: &str) -> Result<()> {
+    let store = store().ok_or_else(|| anyhow!("claim store not initialised"))?;
+    store.reembed_claim(claim_id)
+}
+
+/// Append one highest-priority `manual_correction` evidence row for a user
+/// action (design §5.3 — user corrections are authoritative provenance).
+/// `quote` is user-authored, so `raw_allowed` (no redaction).
+pub fn add_correction_evidence(
+    claim_id: &str,
+    scope_type: &str,
+    scope_id: Option<&str>,
+    evidence_class: &str,
+    quote: &str,
+) -> Result<()> {
+    let store = store().ok_or_else(|| anyhow!("claim store not initialised"))?;
+    store.add_correction_evidence(claim_id, scope_type, scope_id, evidence_class, quote)
+}
+
+/// Forget a claim. `permanent=false` (default) archives it (kept as an audit
+/// trail) and stops its linked legacy memories from re-injecting; `true`
+/// hard-deletes the claim graph (claim + evidence + links + vector) plus any
+/// legacy memory that becomes orphaned. Returns whether the claim existed.
+pub fn forget_claim(claim_id: &str, permanent: bool) -> Result<bool> {
+    let store = store().ok_or_else(|| anyhow!("claim store not initialised"))?;
+    store.forget_claim(claim_id, permanent)
+}
+
 impl ClaimStore {
     fn new(backend: Arc<SqliteMemoryBackend>) -> Self {
         Self { backend }
@@ -972,6 +1064,271 @@ impl ClaimStore {
             Ok(true)
         })
     }
+
+    fn claim_edit_state(&self, claim_id: &str) -> Result<Option<ClaimEditState>> {
+        let conn = self.backend.read_conn()?;
+        let row = conn
+            .query_row(
+                "SELECT scope_type, scope_id, content, subject, predicate,
+                        object, tags_json, status, salience, confidence, confidence_source
+                 FROM memory_claims WHERE id = ?1",
+                params![claim_id],
+                |r| {
+                    let tags_json: String = r.get(6)?;
+                    Ok(ClaimEditState {
+                        scope_type: r.get(0)?,
+                        scope_id: r.get(1)?,
+                        content: r.get(2)?,
+                        subject: r.get(3)?,
+                        predicate: r.get(4)?,
+                        object: r.get(5)?,
+                        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                        status: r.get(7)?,
+                        salience: r.get::<_, f64>(8)? as f32,
+                        confidence: r.get::<_, f64>(9)? as f32,
+                        confidence_source: r.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn apply_claim_fields(&self, claim_id: &str, upd: &ClaimFieldUpdate) -> Result<bool> {
+        // Build the SET clause positionally; each `?N` is pushed in lockstep
+        // with its arg so indices stay aligned (the final `?N` is the WHERE id).
+        let mut sets: Vec<String> = Vec::new();
+        let mut args: Vec<SqlValue> = Vec::new();
+        let push = |sets: &mut Vec<String>, args: &mut Vec<SqlValue>, col: &str, v: SqlValue| {
+            sets.push(format!("{col} = ?{}", args.len() + 1));
+            args.push(v);
+        };
+        if let Some(v) = &upd.content {
+            push(&mut sets, &mut args, "content", SqlValue::Text(v.clone()));
+        }
+        if let Some(v) = &upd.subject {
+            push(&mut sets, &mut args, "subject", SqlValue::Text(v.clone()));
+        }
+        if let Some(v) = &upd.predicate {
+            push(&mut sets, &mut args, "predicate", SqlValue::Text(v.clone()));
+        }
+        if let Some(v) = &upd.object {
+            push(&mut sets, &mut args, "object", SqlValue::Text(v.clone()));
+        }
+        if let Some(v) = &upd.tags {
+            let tags_json = serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string());
+            push(&mut sets, &mut args, "tags_json", SqlValue::Text(tags_json));
+        }
+        if let Some(v) = &upd.status {
+            push(&mut sets, &mut args, "status", SqlValue::Text(v.clone()));
+        }
+        if let Some((stype, sid)) = &upd.scope {
+            push(
+                &mut sets,
+                &mut args,
+                "scope_type",
+                SqlValue::Text(stype.clone()),
+            );
+            push(
+                &mut sets,
+                &mut args,
+                "scope_id",
+                match sid {
+                    Some(x) => SqlValue::Text(x.clone()),
+                    None => SqlValue::Null,
+                },
+            );
+        }
+        if let Some(v) = upd.salience {
+            push(
+                &mut sets,
+                &mut args,
+                "salience",
+                SqlValue::Real(v.clamp(0.0, 1.0) as f64),
+            );
+        }
+        if let Some(v) = upd.confidence {
+            push(
+                &mut sets,
+                &mut args,
+                "confidence",
+                SqlValue::Real(v.clamp(0.0, 1.0) as f64),
+            );
+        }
+        if let Some(v) = &upd.confidence_source {
+            push(
+                &mut sets,
+                &mut args,
+                "confidence_source",
+                SqlValue::Text(v.clone()),
+            );
+        }
+        if sets.is_empty() {
+            return Ok(false);
+        }
+        push(
+            &mut sets,
+            &mut args,
+            "updated_at",
+            SqlValue::Text(now_rfc3339()),
+        );
+        args.push(SqlValue::Text(claim_id.to_string()));
+        let sql = format!(
+            "UPDATE memory_claims SET {} WHERE id = ?{}",
+            sets.join(", "),
+            args.len()
+        );
+        let conn = self.backend.write_conn()?;
+        let changed = conn.execute(&sql, params_from_iter(args))?;
+        Ok(changed > 0)
+    }
+
+    fn reembed_claim(&self, claim_id: &str) -> Result<()> {
+        let content: Option<String> = {
+            let conn = self.backend.read_conn()?;
+            conn.query_row(
+                "SELECT content FROM memory_claims WHERE id = ?1",
+                params![claim_id],
+                |r| r.get(0),
+            )
+            .optional()?
+        };
+        if let Some(content) = content {
+            // Write lock is NOT held here (read_conn dropped above) — safe to
+            // call the embed path which re-acquires the writer.
+            self.backend.embed_and_index_claim(claim_id, &content);
+        }
+        Ok(())
+    }
+
+    fn add_correction_evidence(
+        &self,
+        claim_id: &str,
+        scope_type: &str,
+        scope_id: Option<&str>,
+        evidence_class: &str,
+        quote: &str,
+    ) -> Result<()> {
+        let conn = self.backend.write_conn()?;
+        let now = now_rfc3339();
+        let access_scope = serde_json::json!({
+            "scopeType": scope_type,
+            "scopeId": scope_id,
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO memory_evidence
+                (id, claim_id, source_type, evidence_class, source_id, quote,
+                 redaction_status, access_scope_json, weight, created_at)
+             VALUES (?1, ?2, 'manual', ?3, ?4, ?5, 'raw_allowed', ?6, 1.0, ?7)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                claim_id,
+                evidence_class,
+                format!("manual:{now}"),
+                quote,
+                access_scope,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn forget_claim(&self, claim_id: &str, permanent: bool) -> Result<bool> {
+        let conn = self.backend.write_conn()?;
+        let now = now_rfc3339();
+        with_tx(&conn, || {
+            // Idempotent: already-gone claim → Ok(false).
+            let rowid: Option<i64> = conn
+                .query_row(
+                    "SELECT rowid FROM memory_claims WHERE id = ?1",
+                    params![claim_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(rowid) = rowid else {
+                return Ok(false);
+            };
+
+            // The legacy memories this claim manages — needed to stop them from
+            // re-injecting once the claim is gone / archived.
+            let mut linked: Vec<i64> = Vec::new();
+            {
+                let mut stmt =
+                    conn.prepare("SELECT memory_id FROM memory_claim_links WHERE claim_id = ?1")?;
+                let rows = stmt.query_map(params![claim_id], |r| r.get::<_, i64>(0))?;
+                for r in rows {
+                    linked.push(r?);
+                }
+            }
+
+            if permanent {
+                // Hard-delete the claim graph. vec0 has no delete trigger →
+                // remove by rowid first (the table is created lazily on first
+                // embed, so tolerate it being absent); FTS is trigger-maintained
+                // on the memory_claims DELETE. Evidence is dropped too (design
+                // §5.3 — permanent is the only path that discards provenance).
+                let _ = conn.execute(
+                    "DELETE FROM memory_claims_vec WHERE rowid = ?1",
+                    params![rowid],
+                );
+                conn.execute(
+                    "DELETE FROM memory_evidence WHERE claim_id = ?1",
+                    params![claim_id],
+                )?;
+                conn.execute(
+                    "DELETE FROM memory_claim_links WHERE claim_id = ?1",
+                    params![claim_id],
+                )?;
+                conn.execute("DELETE FROM memory_claims WHERE id = ?1", params![claim_id])?;
+                // Delete only memories that this claim was the sole manager of —
+                // a memory still linked to another claim is left intact.
+                for mid in &linked {
+                    let remaining: i64 = conn.query_row(
+                        "SELECT COUNT(*) FROM memory_claim_links WHERE memory_id = ?1",
+                        params![mid],
+                        |r| r.get(0),
+                    )?;
+                    if remaining == 0 {
+                        let _ =
+                            conn.execute("DELETE FROM memories_vec WHERE rowid = ?1", params![mid]);
+                        conn.execute("DELETE FROM memories WHERE id = ?1", params![mid])?;
+                    }
+                }
+            } else {
+                // Archive: keep the claim + evidence as an audit trail, flip to
+                // `archived` so it stops injecting, and make sure the linked
+                // memories also stop — convert this claim's links to `managed`
+                // so the read-time hidden-set covers them. Unpin a sole-managed
+                // memory too (a pinned memory / `user_pinned` link is otherwise
+                // exempt and would stay injected).
+                conn.execute(
+                    "UPDATE memory_claims SET status = 'archived', updated_at = ?2 WHERE id = ?1",
+                    params![claim_id, now],
+                )?;
+                conn.execute(
+                    "UPDATE memory_claim_links SET sync_mode = 'managed', updated_at = ?2
+                     WHERE claim_id = ?1",
+                    params![claim_id, now],
+                )?;
+                for mid in &linked {
+                    let other_links: i64 = conn.query_row(
+                        "SELECT COUNT(*) FROM memory_claim_links
+                         WHERE memory_id = ?1 AND claim_id != ?2",
+                        params![mid, claim_id],
+                        |r| r.get(0),
+                    )?;
+                    if other_links == 0 {
+                        conn.execute(
+                            "UPDATE memories SET pinned = 0, updated_at = ?2 WHERE id = ?1",
+                            params![mid, now],
+                        )?;
+                    }
+                }
+            }
+            Ok(true)
+        })
+    }
 }
 
 /// Map a scope to its (scope_type, scope_id) columns.
@@ -1595,6 +1952,154 @@ mod tests {
         // Drop not archived, evidence not moved.
         assert_eq!(claim_status(&s, "drop"), "active");
         assert_eq!(evidence_owner(&s, "ev1"), "drop");
+    }
+
+    // ── User-correction primitives (Phase 6) ──
+
+    fn seed_memory(s: &ClaimStore, id: i64, pinned: bool) {
+        let conn = s.backend.write_conn().unwrap();
+        conn.execute(
+            "INSERT INTO memories (id, memory_type, scope_type, content, tags, source, pinned, created_at, updated_at)
+             VALUES (?1, 'fact', 'global', 'm', '[]', 'manual', ?2, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+            params![id, pinned as i64],
+        )
+        .unwrap();
+    }
+    fn memory_exists(s: &ClaimStore, id: i64) -> bool {
+        let conn = s.backend.read_conn().unwrap();
+        conn.query_row("SELECT 1 FROM memories WHERE id = ?1", params![id], |_| {
+            Ok(())
+        })
+        .optional()
+        .unwrap()
+        .is_some()
+    }
+    fn memory_pinned(s: &ClaimStore, id: i64) -> bool {
+        let conn = s.backend.read_conn().unwrap();
+        conn.query_row(
+            "SELECT pinned FROM memories WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            != 0
+    }
+
+    #[test]
+    fn apply_claim_fields_updates_content_and_status() {
+        let s = temp_store();
+        seed_claim(&s, "c1", "needs_review");
+        let upd = ClaimFieldUpdate {
+            content: Some("rewritten".into()),
+            status: Some("active".into()),
+            ..Default::default()
+        };
+        assert!(s.apply_claim_fields("c1", &upd).unwrap());
+        let st = s.claim_edit_state("c1").unwrap().unwrap();
+        assert_eq!(st.content, "rewritten");
+        assert_eq!(st.status, "active");
+    }
+
+    #[test]
+    fn apply_claim_fields_can_move_to_global_clearing_id() {
+        let s = temp_store();
+        // Seed an agent-scoped claim, then move it to global.
+        {
+            let conn = s.backend.write_conn().unwrap();
+            conn.execute(
+                "INSERT INTO memory_claims (id, scope_type, scope_id, claim_type, subject, predicate, object, content, status, created_at, updated_at)
+                 VALUES ('c1', 'agent', 'ha-main', 'preference', 'user', 'uses', 'x', 'c', 'active', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+                [],
+            ).unwrap();
+        }
+        let upd = ClaimFieldUpdate {
+            scope: Some(("global".into(), None)),
+            ..Default::default()
+        };
+        assert!(s.apply_claim_fields("c1", &upd).unwrap());
+        let st = s.claim_edit_state("c1").unwrap().unwrap();
+        assert_eq!(st.scope_type, "global");
+        assert_eq!(st.scope_id, None);
+    }
+
+    #[test]
+    fn apply_claim_fields_empty_is_noop() {
+        let s = temp_store();
+        seed_claim(&s, "c1", "active");
+        assert!(!s
+            .apply_claim_fields("c1", &ClaimFieldUpdate::default())
+            .unwrap());
+    }
+
+    #[test]
+    fn forget_archive_hides_sole_managed_pinned_memory() {
+        let s = temp_store();
+        seed_claim(&s, "c1", "active");
+        seed_memory(&s, 1, true);
+        s.link_claim_memory("c1", 1, "user_pinned").unwrap();
+
+        assert!(s.forget_claim("c1", false).unwrap());
+        // Claim archived (kept), link converted to managed, memory unpinned so
+        // the read-time hidden-set covers it.
+        assert_eq!(claim_status(&s, "c1"), "archived");
+        assert!(memory_exists(&s, 1));
+        assert!(!memory_pinned(&s, 1));
+        let conn = s.backend.read_conn().unwrap();
+        let mode: String = conn
+            .query_row(
+                "SELECT sync_mode FROM memory_claim_links WHERE claim_id = 'c1' AND memory_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mode, "managed");
+    }
+
+    #[test]
+    fn forget_permanent_deletes_graph_and_orphan_memory() {
+        let s = temp_store();
+        seed_claim(&s, "c1", "active");
+        seed_evidence(&s, "ev1", "c1");
+        seed_memory(&s, 1, false);
+        s.link_claim_memory("c1", 1, "managed").unwrap();
+
+        assert!(s.forget_claim("c1", true).unwrap());
+        // Claim, evidence, link, and the orphaned memory are all gone.
+        let conn = s.backend.read_conn().unwrap();
+        assert!(conn
+            .query_row("SELECT 1 FROM memory_claims WHERE id='c1'", [], |_| Ok(()))
+            .optional()
+            .unwrap()
+            .is_none());
+        assert!(conn
+            .query_row("SELECT 1 FROM memory_evidence WHERE id='ev1'", [], |_| Ok(
+                ()
+            ))
+            .optional()
+            .unwrap()
+            .is_none());
+        assert!(!memory_exists(&s, 1));
+    }
+
+    #[test]
+    fn forget_permanent_keeps_memory_shared_with_another_claim() {
+        let s = temp_store();
+        seed_claim(&s, "c1", "active");
+        seed_claim(&s, "c2", "active");
+        seed_memory(&s, 1, false);
+        s.link_claim_memory("c1", 1, "managed").unwrap();
+        s.link_claim_memory("c2", 1, "managed").unwrap();
+
+        assert!(s.forget_claim("c1", true).unwrap());
+        // Memory still managed by c2 → left intact.
+        assert!(memory_exists(&s, 1));
+        assert_eq!(claim_status(&s, "c2"), "active");
+    }
+
+    #[test]
+    fn forget_missing_claim_is_noop() {
+        let s = temp_store();
+        assert!(!s.forget_claim("nope", false).unwrap());
     }
 
     fn candidate(object: &str, evidence_class: Option<&str>) -> ClaimCandidate {

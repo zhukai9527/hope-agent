@@ -68,6 +68,57 @@ pub async fn claim_get(id: String) -> Result<Option<memory::claims::ClaimDetail>
     memory::claims::get_claim(&id).map_err(Into::into)
 }
 
+/// User correction (Lucid Review, design §5.2 §5.3): partial-update one claim —
+/// edit content/triple/tags, change status (approve / reject / mark-outdated),
+/// move scope, or pin/unpin. Writes evidence + a decision-log entry and emits
+/// `memory:claim_changed`. Flat params (not a wrapped struct) so the call shape
+/// matches the HTTP `PATCH /api/claims/{id}` body verbatim — `id` interpolates
+/// into the path there, the rest becomes the JSON body.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn claim_update(
+    id: String,
+    content: Option<String>,
+    subject: Option<String>,
+    predicate: Option<String>,
+    object: Option<String>,
+    tags: Option<Vec<String>>,
+    status: Option<String>,
+    scope_type: Option<String>,
+    scope_id: Option<String>,
+    pinned: Option<bool>,
+    note: Option<String>,
+) -> Result<memory::claims::ClaimActionOutcome, CmdError> {
+    memory::claims::update_claim(memory::claims::ClaimUpdate {
+        claim_id: id,
+        content,
+        subject,
+        predicate,
+        object,
+        tags,
+        status,
+        scope_type,
+        scope_id,
+        pinned,
+        note,
+    })
+    .map_err(Into::into)
+}
+
+/// Forget a claim (design §5.3): `permanent=false` archives it (kept as an audit
+/// trail, linked legacy memories stop injecting); `true` hard-deletes the claim
+/// graph + any legacy memory it solely managed. Maps to
+/// `POST /api/claims/{id}/forget`.
+#[tauri::command]
+pub async fn claim_forget(
+    id: String,
+    permanent: Option<bool>,
+    note: Option<String>,
+) -> Result<memory::claims::ClaimActionOutcome, CmdError> {
+    memory::claims::forget_claim(&id, permanent.unwrap_or(false), note.as_deref())
+        .map_err(Into::into)
+}
+
 /// Dry-run: scan legacy memories and return a backfill plan (exact summary +
 /// capped candidate preview), writing nothing. Maps to
 /// `GET /api/memory/backfill/plan`. Full-table scan runs on a blocking thread.

@@ -51,7 +51,7 @@ pub use profile::{run_profile_synthesis_cycle, ProfileReport};
 pub use resolver::{run_resolver_cycle, ResolverReport};
 pub use store::{
     get_run, init_store, latest_profile_body, list_profile_snapshots, list_runs,
-    recover_on_startup, spawn_retention_loop,
+    record_user_action, recover_on_startup, spawn_retention_loop,
 };
 pub use triggers::{
     check_idle_trigger, dreaming_running, last_activity_epoch_secs, manual_run, touch_activity,

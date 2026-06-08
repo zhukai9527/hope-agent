@@ -115,6 +115,23 @@ pub fn get_run(run_id: &str) -> Result<Option<DreamingRunDetail>> {
     store.get_run(run_id)
 }
 
+/// Record one user-correction action as a durable audit entry: a completed
+/// `user_correction` run carrying a single decision (design §5.3 — "all user
+/// actions have a decision log"). Returns the synthetic run id. `before` /
+/// `after` are JSON snapshots stored verbatim on the decision row. The store
+/// being uninitialised is non-fatal here — the correction itself already
+/// succeeded; the audit row is best-effort, so callers log + continue.
+pub fn record_user_action(
+    decision_type: &str,
+    claim_id: &str,
+    rationale: &str,
+    before: serde_json::Value,
+    after: serde_json::Value,
+) -> Result<String> {
+    let store = store().ok_or_else(|| anyhow!("dreaming store not initialised"))?;
+    store.record_user_action(decision_type, claim_id, rationale, before, after)
+}
+
 /// Latest Memory Profile snapshot per scope (read-only profile view). Owner
 /// plane — no scope filter, returns every scope's most recent snapshot.
 pub fn list_profile_snapshots() -> Result<Vec<ProfileSnapshotRecord>> {
@@ -402,6 +419,58 @@ impl DreamingStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// Persist one user-correction action as a completed `user_correction` run
+    /// plus its single decision, atomically (design §5.3). The run is born
+    /// finished (started == finished == now); no lease — user actions are
+    /// synchronous one-shots, not pipeline cycles.
+    pub(crate) fn record_user_action(
+        &self,
+        decision_type: &str,
+        claim_id: &str,
+        rationale: &str,
+        before: serde_json::Value,
+        after: serde_json::Value,
+    ) -> Result<String> {
+        let conn = self.backend.write_conn()?;
+        let now = now_rfc3339();
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let before_json = before.to_string();
+        let after_json = after.to_string();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<()> {
+            conn.execute(
+                "INSERT INTO dreaming_runs
+                    (id, trigger, phase, status, started_at, finished_at,
+                     decision_count, scope_json)
+                 VALUES (?1, 'user_correction', 'user', 'completed', ?2, ?2, 1, '{}')",
+                params![run_id, now],
+            )?;
+            conn.execute(
+                "INSERT INTO dreaming_decisions
+                    (id, run_id, decision_type, target_type, target_id, score,
+                     rationale, before_json, after_json, created_at)
+                 VALUES (?1, ?2, ?3, 'claim', ?4, NULL, ?5, ?6, ?7, ?8)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    run_id,
+                    decision_type,
+                    claim_id,
+                    rationale,
+                    before_json,
+                    after_json,
+                    now,
+                ],
+            )?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+        conn.execute_batch("COMMIT")?;
+        Ok(run_id)
     }
 
     /// Finalise a Deep resolver run with explicit counts (the resolver has no

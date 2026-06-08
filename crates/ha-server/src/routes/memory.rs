@@ -57,6 +57,14 @@ pub struct ListClaimsQuery {
     pub offset: Option<usize>,
 }
 
+/// `POST /api/claims/{id}/forget` body — both fields optional (`{}` = archive).
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgetClaimBody {
+    pub permanent: Option<bool>,
+    pub note: Option<String>,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────
 
 fn get_backend() -> Result<&'static std::sync::Arc<dyn ha_core::memory::MemoryBackend>, AppError> {
@@ -174,6 +182,32 @@ pub async fn get_claim(
     Path(id): Path<String>,
 ) -> Result<Json<Option<ha_core::memory::claims::ClaimDetail>>, AppError> {
     Ok(Json(ha_core::memory::claims::get_claim(&id)?))
+}
+
+/// `PATCH /api/claims/{id}` -- user correction (Lucid Review, design §5.2):
+/// edit content/triple/tags, change status (approve / reject / mark-outdated),
+/// move scope, or pin/unpin. The path id is authoritative (overrides any
+/// `claimId` in the body). Owner plane.
+pub async fn update_claim(
+    Path(id): Path<String>,
+    Json(mut body): Json<ha_core::memory::claims::ClaimUpdate>,
+) -> Result<Json<ha_core::memory::claims::ClaimActionOutcome>, AppError> {
+    body.claim_id = id;
+    Ok(Json(ha_core::memory::claims::update_claim(body)?))
+}
+
+/// `POST /api/claims/{id}/forget` -- forget a claim (design §5.3). Body:
+/// `{ permanent?: bool, note?: string }`. `permanent=false` archives (kept as
+/// an audit trail); `true` hard-deletes the claim graph. Owner plane.
+pub async fn forget_claim(
+    Path(id): Path<String>,
+    Json(body): Json<ForgetClaimBody>,
+) -> Result<Json<ha_core::memory::claims::ClaimActionOutcome>, AppError> {
+    Ok(Json(ha_core::memory::claims::forget_claim(
+        &id,
+        body.permanent.unwrap_or(false),
+        body.note.as_deref(),
+    )?))
 }
 
 /// `GET /api/memory/backfill/plan` -- dry-run existing-memory backfill plan
