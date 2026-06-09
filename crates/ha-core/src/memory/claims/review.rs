@@ -299,7 +299,8 @@ pub fn update_claim(req: ClaimUpdate) -> Result<ClaimActionOutcome> {
     // Factual corrections get a highest-priority evidence row; pin / unpin /
     // flag are not corrections of the fact, so they skip it.
     let decision_type = resolved.decision_type;
-    let note_text = crate::util::non_empty_trim_or(req.note.as_deref(), default_quote(decision_type));
+    let note_text =
+        crate::util::non_empty_trim_or(req.note.as_deref(), default_quote(decision_type));
     if matches!(
         decision_type,
         "approve" | "edit" | "reject" | "expire" | "move_scope"
