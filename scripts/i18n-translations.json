@@ -622,7 +622,9 @@
         "maxTokens": "1 件あたりの最大トークン",
         "maxTokensDesc": "各提案の長さ（コスト）の上限。",
         "timeout": "提案のタイムアウト（秒）",
-        "timeoutDesc": "これより時間がかかる提案は中止します。"
+        "timeoutDesc": "これより時間がかかる提案は中止します。",
+        "enabled": "スプライトモードを有効化",
+        "enabledDesc": "マスタースイッチ。チャットパネル上部からも切替可能。"
       }
     },
     "subagent": {
@@ -1282,7 +1284,8 @@
         "toastOn": "スプライトモードをオンにしました",
         "toastOnDesc": "編集の手を止めると、そっと提案します。",
         "toastOff": "スプライトモードをオフにしました"
-      }
+      },
+      "openSettings": "ナレッジスペース設定"
     },
     "common": {
       "create": "作成",
@@ -1914,7 +1917,9 @@
         "maxTokens": "제안당 최대 토큰",
         "maxTokensDesc": "각 제안 길이(비용)의 상한.",
         "timeout": "제안 시간 제한(초)",
-        "timeoutDesc": "이보다 오래 걸리는 제안은 중단합니다."
+        "timeoutDesc": "이보다 오래 걸리는 제안은 중단합니다.",
+        "enabled": "스프라이트 모드 사용",
+        "enabledDesc": "마스터 스위치 — 채팅 패널 상단에서도 켜고 끌 수 있습니다."
       }
     },
     "subagent": {
@@ -2574,7 +2579,8 @@
         "toastOn": "스프라이트 모드 켜짐",
         "toastOnDesc": "편집을 잠시 멈추면 살며시 제안해 드려요.",
         "toastOff": "스프라이트 모드 꺼짐"
-      }
+      },
+      "openSettings": "지식 공간 설정"
     },
     "common": {
       "create": "만들기",
@@ -3206,7 +3212,9 @@
         "maxTokens": "每條建議的最大 token",
         "maxTokensDesc": "每條建議長度的上限（控制成本）。",
         "timeout": "建議逾時（秒）",
-        "timeoutDesc": "超過此時長仍未生成則放棄本次建議。"
+        "timeoutDesc": "超過此時長仍未生成則放棄本次建議。",
+        "enabled": "啟用精靈模式",
+        "enabledDesc": "總開關——也可在對話面板頂部一鍵開關。"
       }
     },
     "subagent": {
@@ -3841,7 +3849,8 @@
         "toastOn": "精靈模式已開啟",
         "toastOnDesc": "停筆片刻時，它會輕聲給你一句建議。",
         "toastOff": "精靈模式已關閉"
-      }
+      },
+      "openSettings": "知識空間設定"
     },
     "common": {
       "create": "建立",
@@ -4481,7 +4490,9 @@
         "maxTokens": "Öneri başına maks. token",
         "maxTokensDesc": "Her önerinin uzunluğu (maliyet) için üst sınır.",
         "timeout": "Öneri zaman aşımı (sn)",
-        "timeoutDesc": "Bundan uzun süren bir öneriden vazgeç."
+        "timeoutDesc": "Bundan uzun süren bir öneriden vazgeç.",
+        "enabled": "Peri modunu etkinleştir",
+        "enabledDesc": "Ana anahtar — sohbet paneli başlığından da açılıp kapatılabilir."
       }
     },
     "subagent": {
@@ -5141,7 +5152,8 @@
         "toastOn": "Peri modu açık",
         "toastOnDesc": "Düzenlemeye ara verdiğinizde nazikçe bir öneride bulunur.",
         "toastOff": "Peri modu kapalı"
-      }
+      },
+      "openSettings": "Bilgi alanı ayarları"
     },
     "common": {
       "create": "Oluştur",
@@ -5773,7 +5785,9 @@
         "maxTokens": "Token tối đa mỗi gợi ý",
         "maxTokensDesc": "Giới hạn trên cho độ dài mỗi gợi ý (chi phí).",
         "timeout": "Thời gian chờ gợi ý (giây)",
-        "timeoutDesc": "Bỏ qua gợi ý mất nhiều thời gian hơn mức này."
+        "timeoutDesc": "Bỏ qua gợi ý mất nhiều thời gian hơn mức này.",
+        "enabled": "Bật chế độ tinh linh",
+        "enabledDesc": "Công tắc chính — cũng có thể bật/tắt từ đầu bảng trò chuyện."
       }
     },
     "subagent": {
@@ -6433,7 +6447,8 @@
         "toastOn": "Đã bật chế độ tinh linh",
         "toastOnDesc": "Nó sẽ nhẹ nhàng gợi ý khi bạn tạm dừng soạn thảo.",
         "toastOff": "Đã tắt chế độ tinh linh"
-      }
+      },
+      "openSettings": "Cài đặt không gian tri thức"
     },
     "common": {
       "create": "Tạo",
@@ -7065,7 +7080,9 @@
         "maxTokens": "Máx. de tokens por sugestão",
         "maxTokensDesc": "Limite superior do tamanho de cada sugestão (custo).",
         "timeout": "Tempo limite da sugestão (s)",
-        "timeoutDesc": "Desiste de uma sugestão que demore mais que isto."
+        "timeoutDesc": "Desiste de uma sugestão que demore mais que isto.",
+        "enabled": "Ativar modo duende",
+        "enabledDesc": "Interruptor principal — também alternável no topo do painel de chat."
       }
     },
     "subagent": {
@@ -7725,7 +7742,8 @@
         "toastOn": "Modo duende ativado",
         "toastOnDesc": "Ele intervém com uma sugestão gentil quando você faz uma pausa.",
         "toastOff": "Modo duende desativado"
-      }
+      },
+      "openSettings": "Configurações do espaço de conhecimento"
     },
     "common": {
       "create": "Criar",
@@ -8357,7 +8375,9 @@
         "maxTokens": "Макс. токенов на подсказку",
         "maxTokensDesc": "Верхняя граница длины каждой подсказки (стоимость).",
         "timeout": "Тайм-аут подсказки (с)",
-        "timeoutDesc": "Прекращать подсказку, которая длится дольше этого."
+        "timeoutDesc": "Прекращать подсказку, которая длится дольше этого.",
+        "enabled": "Включить режим спрайта",
+        "enabledDesc": "Главный переключатель — также доступен вверху панели чата."
       }
     },
     "subagent": {
@@ -9017,7 +9037,8 @@
         "toastOn": "Режим спрайта включён",
         "toastOnDesc": "Он мягко подскажет, когда вы остановитесь.",
         "toastOff": "Режим спрайта выключен"
-      }
+      },
+      "openSettings": "Настройки пространства знаний"
     },
     "common": {
       "create": "Создать",
@@ -9649,7 +9670,9 @@
         "maxTokens": "الحد الأقصى للرموز لكل اقتراح",
         "maxTokensDesc": "الحد الأعلى لطول كل اقتراح (التكلفة).",
         "timeout": "مهلة الاقتراح (ثانية)",
-        "timeoutDesc": "التخلي عن أي اقتراح يستغرق وقتًا أطول من ذلك."
+        "timeoutDesc": "التخلي عن أي اقتراح يستغرق وقتًا أطول من ذلك.",
+        "enabled": "تفعيل وضع العفريت",
+        "enabledDesc": "المفتاح الرئيسي — يمكن تبديله أيضًا من أعلى لوحة المحادثة."
       }
     },
     "subagent": {
@@ -10309,7 +10332,8 @@
         "toastOn": "تم تشغيل وضع العفريت",
         "toastOnDesc": "سيتدخل باقتراح لطيف عندما تتوقف عن التحرير.",
         "toastOff": "تم إيقاف وضع العفريت"
-      }
+      },
+      "openSettings": "إعدادات مساحة المعرفة"
     },
     "common": {
       "create": "إنشاء",
@@ -10941,7 +10965,9 @@
         "maxTokens": "Máx. de tokens por sugerencia",
         "maxTokensDesc": "Límite superior de la longitud de cada sugerencia (coste).",
         "timeout": "Tiempo de espera de sugerencia (s)",
-        "timeoutDesc": "Abandona una sugerencia que tarde más que esto."
+        "timeoutDesc": "Abandona una sugerencia que tarde más que esto.",
+        "enabled": "Activar modo duende",
+        "enabledDesc": "Interruptor principal: también se alterna en la cabecera del panel de chat."
       }
     },
     "subagent": {
@@ -11601,7 +11627,8 @@
         "toastOn": "Modo duende activado",
         "toastOnDesc": "Intervendrá con una sugerencia suave cuando hagas una pausa.",
         "toastOff": "Modo duende desactivado"
-      }
+      },
+      "openSettings": "Ajustes del espacio de conocimiento"
     },
     "common": {
       "create": "Crear",
@@ -12233,7 +12260,9 @@
         "maxTokens": "Token maksimum setiap cadangan",
         "maxTokensDesc": "Had atas panjang setiap cadangan (kos).",
         "timeout": "Tamat masa cadangan (s)",
-        "timeoutDesc": "Berhenti pada cadangan yang mengambil masa lebih lama daripada ini."
+        "timeoutDesc": "Berhenti pada cadangan yang mengambil masa lebih lama daripada ini.",
+        "enabled": "Hidupkan mod sprite",
+        "enabledDesc": "Suis utama — boleh juga ditogol dari bahagian atas panel sembang."
       }
     },
     "subagent": {
@@ -12893,7 +12922,8 @@
         "toastOn": "Mod sprite dihidupkan",
         "toastOnDesc": "Ia akan mencelah dengan cadangan lembut apabila anda berhenti seketika.",
         "toastOff": "Mod sprite dimatikan"
-      }
+      },
+      "openSettings": "Tetapan ruang pengetahuan"
     },
     "common": {
       "create": "Cipta",

@@ -4367,6 +4367,8 @@
     "sprite": {
       "title": "Peri / ilham modu",
       "intro": "Düzenlediğiniz notu izleyen ve duraksadığınızda sohbet panelinde nazikçe öneride bulunabilen proaktif bir yoldaş. Her öneri sınırlı bir LLM çağrısıdır; hız sınırlıdır ve gizli oturumlarda asla çalışmaz.",
+      "enabled": "Peri modunu etkinleştir",
+      "enabledDesc": "Ana anahtar — sohbet paneli başlığından da açılıp kapatılabilir.",
       "idleEdit": "Düzenleme durduktan sonra konuş (sn)",
       "idleEditDesc": "Devreye girmeden önce kaç saniye düzenleme durgunluğu.",
       "minChange": "En az değişiklik (karakter)",
@@ -4979,6 +4981,7 @@
     },
     "title": "Bilgi Alanı",
     "searchPlaceholder": "Notlarda ara…",
+    "openSettings": "Bilgi alanı ayarları",
     "newKb": "Yeni alan",
     "spaces": "Alanlar",
     "noSpaces": "Henüz bilgi alanı yok.",

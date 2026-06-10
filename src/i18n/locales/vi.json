@@ -4367,6 +4367,8 @@
     "sprite": {
       "title": "Chế độ tinh linh / cảm hứng",
       "intro": "Một người bạn chủ động dõi theo ghi chú bạn đang soạn và khi bạn dừng lại, có thể nhẹ nhàng gợi ý trong bảng trò chuyện. Mỗi gợi ý là một lệnh gọi LLM giới hạn, có điều tiết và không bao giờ chạy trong phiên ẩn danh.",
+      "enabled": "Bật chế độ tinh linh",
+      "enabledDesc": "Công tắc chính — cũng có thể bật/tắt từ đầu bảng trò chuyện.",
       "idleEdit": "Lên tiếng sau khi ngừng soạn (giây)",
       "idleEditDesc": "Số giây ngừng soạn trước khi nó góp lời.",
       "minChange": "Thay đổi tối thiểu (ký tự)",
@@ -4979,6 +4981,7 @@
     },
     "title": "Không gian kiến thức",
     "searchPlaceholder": "Tìm ghi chú…",
+    "openSettings": "Cài đặt không gian tri thức",
     "newKb": "Không gian mới",
     "spaces": "Không gian",
     "noSpaces": "Chưa có không gian kiến thức nào.",

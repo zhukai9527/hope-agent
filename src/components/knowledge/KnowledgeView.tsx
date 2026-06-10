@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Settings,
   Sparkles,
   Trash2,
   Waypoints,
@@ -65,6 +66,7 @@ import type {
   NoteSearchHit,
   RenameOutcome,
 } from "@/types/knowledge"
+import type { PendingFileQuote } from "@/types/chat"
 
 import { useReembedJob } from "@/hooks/useReembedJob"
 import { useDragWidth } from "@/hooks/useDragWidth"
@@ -568,6 +570,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
         startLine,
         endLine,
         content: sel.text,
+        kbId: openKbId ?? activeKbId ?? undefined,
       })
     } else {
       // Whole-note reference: `[[relPath]]`, with the nearest heading above the
@@ -586,7 +589,31 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
       }
       chatPanelRef.current?.insertToken(formatNoteInsertion(inner))
     }
-  }, [openPath, editorValue])
+  }, [openPath, editorValue, openKbId, activeKbId])
+
+  // Click a staged quote chip → scroll the editor to that selection's start
+  // line. Same note: re-trigger the reveal effect with a fresh target (switching
+  // to source first if we're in a CM6-less mode, else reveal is a no-op). Other
+  // note: open it in the quote's own KB (it carries `kbId`), guarded so we don't
+  // silently discard unsaved edits in the current note. Plain function (not
+  // memoized) so it always closes over the latest `guardNavigation` / `hasUnsaved`
+  // / `mode` rather than a stale snapshot.
+  const jumpToQuoteInEditor = (q: PendingFileQuote) => {
+    const kb = q.kbId ?? openKbId ?? activeKbId
+    if (!kb) return
+    if (kb === (openKbId ?? activeKbId) && q.path === openPath) {
+      if (mode === "preview" || mode === "outline") handleModeChange("source")
+      setRevealTarget({ line: q.startLine })
+    } else {
+      // Switch the active KB first when jumping into a different space, else the
+      // orphan-guard effect (openKbId !== activeKbId) clears the note the instant
+      // it opens. Mirrors the search-result cross-KB jump.
+      guardNavigation(() => {
+        setActiveKbId(kb)
+        void openNote(kb, q.path, { line: q.startLine })
+      })
+    }
+  }
 
   // Quick-rewrite the current selection (or the whole note when nothing is
   // selected). Shared by the editor toolbar button + the floating selection bar.
@@ -1703,6 +1730,18 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
             absorbs window shrinkage instead. */}
         <div className="flex shrink-0 items-center gap-2">
         {onOpenSettings && <KnowledgeEmbeddingBadge onOpenSettings={onOpenSettings} />}
+        {onOpenSettings && (
+          <IconTip label={t("knowledge.openSettings", "Knowledge space settings")} side="bottom">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onOpenSettings}
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+          </IconTip>
+        )}
         <IconTip label={t("knowledge.graph.toggle", "Graph view")} side="bottom">
           <Button
             variant="ghost"
@@ -2225,6 +2264,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
               notePath={openPath}
               getEditorValue={getEditorValue}
               editorRevision={editorRevision}
+              onJumpToQuote={jumpToQuoteInEditor}
             />
           </div>
           <div

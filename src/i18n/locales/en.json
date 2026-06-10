@@ -4375,6 +4375,8 @@
     "sprite": {
       "title": "Sprite / inspiration mode",
       "intro": "A proactive companion that watches the note you're editing and, when you pause, may offer a gentle suggestion in the chat panel. Each suggestion is a bounded LLM call — throttled, and never in incognito sessions.",
+      "enabled": "Enable sprite mode",
+      "enabledDesc": "Master switch — also toggleable from the chat panel header.",
       "idleEdit": "Speak after editing pause (s)",
       "idleEditDesc": "Seconds of editing inactivity before it may chime in.",
       "minChange": "Minimum change (chars)",
@@ -4987,6 +4989,7 @@
     },
     "title": "Knowledge Space",
     "searchPlaceholder": "Search notes…",
+    "openSettings": "Knowledge space settings",
     "newKb": "New space",
     "spaces": "Spaces",
     "noSpaces": "No knowledge spaces yet.",

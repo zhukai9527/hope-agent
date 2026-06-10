@@ -50,6 +50,8 @@ interface Props {
   /** Whether the panel is actually visible. The component stays mounted (so its
    *  imperative ref is always ready) but defers network loads until shown. */
   active?: boolean
+  /** Click a staged quote chip → scroll the editor to that selection. */
+  onJumpToQuote?: (q: PendingFileQuote) => void
 }
 
 /**
@@ -62,7 +64,7 @@ interface Props {
  */
 export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
   function KnowledgeChatPanel(
-    { kbId, notePath, getEditorValue, editorRevision = 0, active = true },
+    { kbId, notePath, getEditorValue, editorRevision = 0, active = true, onJumpToQuote },
     ref,
   ) {
     const { t } = useTranslation()
@@ -375,6 +377,7 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
             onRemoveQuote={(i) =>
               stream.setPendingQuotes((prev) => prev.filter((_, idx) => idx !== i))
             }
+            onJumpToQuote={onJumpToQuote}
             pendingMessage={stream.pendingMessage}
             onCancelPending={() => stream.setPendingMessage(null)}
             onStop={stream.handleStop}

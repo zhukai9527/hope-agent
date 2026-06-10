@@ -4367,6 +4367,8 @@
     "sprite": {
       "title": "Modo duende / inspiración",
       "intro": "Un compañero proactivo que observa la nota que editas y, cuando haces una pausa, puede ofrecer una sugerencia suave en el panel de chat. Cada sugerencia es una llamada acotada al LLM, con límite de frecuencia, y nunca en sesiones de incógnito.",
+      "enabled": "Activar modo duende",
+      "enabledDesc": "Interruptor principal: también se alterna en la cabecera del panel de chat.",
       "idleEdit": "Hablar tras pausa de edición (s)",
       "idleEditDesc": "Segundos de inactividad de edición antes de intervenir.",
       "minChange": "Cambio mínimo (caracteres)",
@@ -4979,6 +4981,7 @@
     },
     "title": "Espacio de conocimiento",
     "searchPlaceholder": "Buscar notas…",
+    "openSettings": "Ajustes del espacio de conocimiento",
     "newKb": "Nuevo espacio",
     "spaces": "Espacios",
     "noSpaces": "Aún no hay espacios de conocimiento.",

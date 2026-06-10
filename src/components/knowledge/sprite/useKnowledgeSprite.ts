@@ -82,11 +82,11 @@ export function useKnowledgeSprite(opts: Opts) {
         .then(setConfig)
         .catch((e) => logger.warn("knowledge", "useKnowledgeSprite::config", "load failed", e))
     void load()
-    return getTransport().listen("config:changed", (raw) => {
-      const p = raw as { category?: string } | null
-      if (p?.category && p.category !== "sprite") return
-      void load()
-    })
+    // The EventBus `config:changed` payload's `category` is unreliable for
+    // routing (the main write path always tags it `"app"`; user-config/rollback
+    // paths use other values), so don't filter on it — reload on any config
+    // change so an external enabled/tuning edit (settings panel) reflects here.
+    return getTransport().listen("config:changed", () => void load())
   }, [active])
 
   // Chat-bar toggle: flip + persist `enabled` (optimistic local update). Needs

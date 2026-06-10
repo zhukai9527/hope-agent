@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Cat, Check, ChevronDown, Loader2 } from "lucide-react"
 
@@ -19,6 +19,15 @@ const SENSE_KEYS: Array<keyof SpriteSenses> = [
   "awareness",
 ]
 
+// Dirty-tracking excludes `enabled`: the master switch auto-persists on toggle
+// (in sync with the chat-bar toggle), so flipping it never marks the tuning
+// fields as unsaved.
+function tuningJson(c: SpriteConfig): string {
+  const copy: Record<string, unknown> = { ...c }
+  delete copy.enabled
+  return JSON.stringify(copy)
+}
+
 /**
  * Knowledge-space sprite / inspiration mode settings (Phase 2). Collapsible
  * section under Settings → Knowledge Space. Master enable + trigger/throttle
@@ -32,18 +41,80 @@ export default function SpriteSection() {
   const [snapshot, setSnapshot] = useState("")
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed">("idle")
+  // Master-switch persistence is in-flight: disable the Switch (deter a racing
+  // double-click) and let the config:changed listener skip its enabled-resync so
+  // an unrelated config write can't flicker the toggle mid-flight.
+  const [toggling, setToggling] = useState(false)
+  const togglingRef = useRef(false)
+  const toggleReqRef = useRef(0)
 
   useEffect(() => {
     getTransport()
       .call<SpriteConfig>("sprite_config_get_cmd")
       .then((c) => {
         setCfg(c)
-        setSnapshot(JSON.stringify(c))
+        setSnapshot(tuningJson(c))
       })
       .catch((e) => logger.warn("knowledge", "SpriteSection::load", "load failed", e))
+    // The chat-bar toggle (or another window) can flip `enabled` while this
+    // panel is open — sync just that field, never the unsaved tuning edits.
+    // NOTE: the EventBus `config:changed` payload's `category` is unreliable for
+    // routing — the main write path always tags it `"app"` (the real category
+    // only reaches the hooks subsystem; user-config/rollback paths use other
+    // values) — so do NOT filter on category; re-pull on any config change.
+    return getTransport().listen("config:changed", () => {
+      // Skip while our own toggle is mid-flight: its handler sets the truth, and
+      // an unrelated config write here would otherwise flicker the switch.
+      if (togglingRef.current) return
+      getTransport()
+        .call<SpriteConfig>("sprite_config_get_cmd")
+        .then((c) => setCfg((prev) => (prev ? { ...prev, enabled: c.enabled } : c)))
+        .catch(() => {})
+    })
   }, [])
 
-  const dirty = cfg != null && JSON.stringify(cfg) !== snapshot
+  const dirty = cfg != null && tuningJson(cfg) !== snapshot
+
+  // Master switch: persist immediately (optimistic), mirroring the chat-bar
+  // toggle. Outside the Save/dirty flow so it stays in sync from either place.
+  const toggleEnabled = useCallback(
+    (on: boolean) => {
+      if (!cfg) return
+      const req = ++toggleReqRef.current
+      togglingRef.current = true
+      setToggling(true)
+      // Optimistic: flip only the local `enabled` (tuning edits untouched).
+      setCfg((c) => (c ? { ...c, enabled: on } : c))
+      void (async () => {
+        try {
+          // Persist ONLY `enabled` on top of the latest PERSISTED config so this
+          // panel's unsaved tuning edits are never silently flushed to disk. If
+          // we can't read a clean disk base, abort (the catch rolls back) rather
+          // than fall back to the local dirty cfg and write tuning edits.
+          const base = await getTransport().call<SpriteConfig>("sprite_config_get_cmd")
+          const saved = await getTransport().call<SpriteConfig>("sprite_config_set_cmd", {
+            config: { ...base, enabled: on },
+          })
+          // Only the latest toggle wins (a stale rapid double-click is ignored).
+          if (toggleReqRef.current === req) {
+            setCfg((prev) => (prev ? { ...prev, enabled: saved.enabled } : saved))
+          }
+        } catch (e) {
+          logger.warn("knowledge", "SpriteSection::toggle", "save failed", e)
+          // Roll back so the switch reflects the persisted (unchanged) state.
+          if (toggleReqRef.current === req) {
+            setCfg((prev) => (prev ? { ...prev, enabled: !on } : prev))
+          }
+        } finally {
+          if (toggleReqRef.current === req) {
+            togglingRef.current = false
+            setToggling(false)
+          }
+        }
+      })()
+    },
+    [cfg],
+  )
 
   const save = useCallback(async () => {
     if (!cfg || saving) return
@@ -61,7 +132,7 @@ export default function SpriteSection() {
         config: { ...cfg, enabled },
       })
       setCfg(saved)
-      setSnapshot(JSON.stringify(saved))
+      setSnapshot(tuningJson(saved))
       setSaveStatus("saved")
       setTimeout(() => setSaveStatus("idle"), 2000)
     } catch (e) {
@@ -108,6 +179,20 @@ export default function SpriteSection() {
 
           {cfg && (
             <>
+              <Row
+                label={t("settings.sprite.enabled", "Enable sprite mode")}
+                desc={t(
+                  "settings.sprite.enabledDesc",
+                  "Master switch — also toggleable from the chat panel header.",
+                )}
+              >
+                <Switch
+                  checked={cfg.enabled}
+                  disabled={toggling}
+                  onCheckedChange={(v) => toggleEnabled(v)}
+                />
+              </Row>
+
               <Row
                 label={t("settings.sprite.idleEdit", "Speak after editing pause (s)")}
                 desc={t("settings.sprite.idleEditDesc", "Seconds of editing inactivity before it may chime in.")}
