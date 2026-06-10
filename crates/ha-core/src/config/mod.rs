@@ -717,6 +717,12 @@ pub struct AppConfig {
     #[serde(default)]
     pub awareness: crate::awareness::AwarenessConfig,
 
+    /// Knowledge-space "sprite / inspiration mode": a proactive, transient
+    /// writing companion that reacts to the note being edited. Disabled by
+    /// default (makes proactive LLM calls).
+    #[serde(default)]
+    pub sprite: crate::sprite::SpriteConfig,
+
     /// Offline memory consolidation ("Dreaming", Phase B3).
     /// Controls when cycles run (idle / cron / manual) and how aggressively
     /// they promote candidates into pinned core memory.
@@ -888,6 +894,7 @@ impl Default for AppConfig {
             recap: RecapConfig::default(),
             async_tools: AsyncToolsConfig::default(),
             awareness: crate::awareness::AwarenessConfig::default(),
+            sprite: crate::sprite::SpriteConfig::default(),
             dreaming: crate::memory::dreaming::DreamingConfig::default(),
             skills: crate::skills::SkillsConfig::default(),
             recall_summary: crate::memory::RecallSummaryConfig::default(),

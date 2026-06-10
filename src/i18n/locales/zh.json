@@ -4372,6 +4372,30 @@
         "memoryToNote": "记忆转笔记"
       }
     },
+    "sprite": {
+      "title": "精灵 / 灵感模式",
+      "intro": "一个有主动性的陪伴助手：你编辑笔记停手片刻时，它可能在对话面板里轻声给一句建议。每条建议都是一次受限的 LLM 调用——已做节流，且无痕会话中绝不触发。",
+      "idleEdit": "停手多久后开口（秒）",
+      "idleEditDesc": "停止编辑多少秒后才可能开口。",
+      "minChange": "最小改动量（字符）",
+      "minChangeDesc": "距上次至少写了这么多字才会反应。",
+      "cooldown": "冷却（秒）",
+      "cooldownDesc": "两次建议之间的最小间隔。",
+      "maxPerHour": "每小时上限",
+      "maxPerHourDesc": "每篇笔记每小时 LLM 调用的硬上限。",
+      "maxTokens": "每条建议的最大 token",
+      "maxTokensDesc": "每条建议长度的上限（控制成本）。",
+      "timeout": "建议超时（秒）",
+      "timeoutDesc": "超过此时长仍未生成则放弃本次建议。",
+      "senses": "精灵的感知来源",
+      "sense": {
+        "doc": "当前文档",
+        "edit": "最近编辑",
+        "conversation": "对话上下文",
+        "memory": "记忆召回",
+        "awareness": "跨会话感知"
+      }
+    },
     "toolNoteCreateName": "新建笔记",
     "toolNoteCreateDesc": "在知识空间新建一篇 markdown 笔记。",
     "toolNoteReadName": "读取笔记",
@@ -5000,7 +5024,7 @@
     "outline": "大纲",
     "outlineEmpty": "无标题",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "加入 AI 对话",
       "newConversation": "新建对话",
       "history": "历史对话",
@@ -5017,7 +5041,24 @@
       "generate": "生成",
       "regenerate": "重新生成",
       "apply": "应用",
-      "failed": "改写失败"
+      "failed": "改写失败",
+      "staleSelection": "改写期间选区已变动 —— 请重新选择后再试。"
+    },
+    "sprite": {
+      "toggle": "精灵模式",
+      "tooltipDesc": "编辑笔记停手片刻时，精灵会结合当前文档、你的记忆与跨会话感知，主动给出写作建议、反馈或鼓励。点击开启 / 关闭。",
+      "toastOn": "精灵模式已开启",
+      "toastOnDesc": "停笔片刻时，它会轻声给你一句建议。",
+      "toastOff": "精灵模式已关闭",
+      "respond": "回应",
+      "dismiss": "关闭",
+      "category": {
+        "writing": "写作",
+        "review": "反馈",
+        "encourage": "鼓励",
+        "remind": "提醒",
+        "connect": "关联"
+      }
     },
     "deleteNoteTitle": "删除笔记",
     "deleteNoteBody": "确定删除「{{name}}」？该 Markdown 文件将从磁盘移除，此操作不可撤销。",

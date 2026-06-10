@@ -8,10 +8,11 @@ import {
   useState,
 } from "react"
 import { useTranslation } from "react-i18next"
-import { Plus, History } from "lucide-react"
+import { toast } from "sonner"
+import { Plus, History, Cat } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { IconTip } from "@/components/ui/tooltip"
+import { IconTip, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import ChatInput from "@/components/chat/ChatInput"
 import MessageList from "@/components/chat/MessageList"
@@ -24,6 +25,8 @@ import type { PendingFileQuote } from "@/types/chat"
 import type { KbDraftAttachment } from "@/types/knowledge"
 import { useKnowledgeChat } from "./useKnowledgeChat"
 import { KnowledgeConversationHistory } from "./KnowledgeConversationHistory"
+import { useKnowledgeSprite } from "../sprite/useKnowledgeSprite"
+import SpriteBubble from "../sprite/SpriteBubble"
 
 /** Per-turn cap on the auto-injected current-note context (chars). Longer notes
  *  are truncated; the assistant uses `note_read` for the full text. */
@@ -42,6 +45,8 @@ interface Props {
   notePath: string | null
   /** Reads the editor's current text for the per-turn current-note context. */
   getEditorValue: () => string
+  /** Increments on every editor change — drives the sprite edit-idle trigger. */
+  editorRevision?: number
   /** Whether the panel is actually visible. The component stays mounted (so its
    *  imperative ref is always ready) but defers network loads until shown. */
   active?: boolean
@@ -56,7 +61,10 @@ interface Props {
  * (`toolScope: "knowledge"`).
  */
 export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
-  function KnowledgeChatPanel({ kbId, notePath, getEditorValue, active = true }, ref) {
+  function KnowledgeChatPanel(
+    { kbId, notePath, getEditorValue, editorRevision = 0, active = true },
+    ref,
+  ) {
     const { t } = useTranslation()
     const isActive = active && !!kbId
     const session = useKnowledgeChat(kbId, notePath, isActive)
@@ -156,7 +164,11 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
       if (was && !session.loading) {
         const sid = session.currentSessionIdRef.current
         if (sid) {
-          void session.switchThread(sid)
+          // Merge DB truth into the current thread (on HTTP this fills in the
+          // final answer that wasn't streamed here). Merge-based + guarded so a
+          // transient error never blanks the conversation and a late resolve
+          // can't clobber a thread the user switched to.
+          void session.reconcileThread(sid)
           void session.reloadThreads()
         }
       }
@@ -177,6 +189,18 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
       }),
       [stream],
     )
+
+    const sprite = useKnowledgeSprite({
+      kbId,
+      notePath,
+      sessionId: session.currentSessionId,
+      agentId: session.currentAgentId,
+      editorRevision,
+      getEditorValue,
+      getRecentMessages: () =>
+        session.messages.map((m) => ({ role: m.role, text: m.content })),
+      active,
+    })
 
     if (!kbId) {
       return (
@@ -201,6 +225,54 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
               onSelect={session.handleSwitchAgent}
             />
           </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!sprite.ready}
+                className={cn(
+                  "relative h-7 w-7 overflow-visible",
+                  sprite.enabled &&
+                    "text-purple-500 hover:text-purple-500 dark:text-purple-400 dark:hover:text-purple-400",
+                )}
+                onClick={() => {
+                  const next = !sprite.enabled
+                  sprite.setEnabled(next)
+                  if (next) {
+                    toast.success(t("knowledge.sprite.toastOn"), {
+                      description: t("knowledge.sprite.toastOnDesc"),
+                    })
+                  } else {
+                    toast(t("knowledge.sprite.toastOff"))
+                  }
+                }}
+              >
+                {/* Enabled: purple cat with slow, diffusing light-wave ripples. */}
+                {sprite.enabled && (
+                  <span
+                    className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                    aria-hidden
+                  >
+                    <span className="absolute h-4 w-4 rounded-full border border-purple-400/60 animate-ping [animation-duration:3s]" />
+                    <span className="absolute h-4 w-4 rounded-full border border-purple-400/40 animate-ping [animation-duration:3s] [animation-delay:1.5s]" />
+                  </span>
+                )}
+                <Cat
+                  className={cn(
+                    "relative h-4 w-4",
+                    sprite.enabled && "drop-shadow-[0_0_3px_#a855f7]",
+                  )}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[240px] leading-relaxed">
+              <div className="font-medium">{t("knowledge.sprite.toggle", "Sprite mode")}</div>
+              <div className="mt-0.5 text-muted-foreground">
+                {t("knowledge.sprite.tooltipDesc")}
+              </div>
+            </TooltipContent>
+          </Tooltip>
           <IconTip label={t("knowledge.chatPanel.newConversation")}>
             <Button
               variant="ghost"
@@ -240,7 +312,7 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
         </div>
 
         {/* Messages */}
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
           <MessageList
             messages={session.messages}
             loading={session.loading}
@@ -250,12 +322,36 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
             onLoadMore={session.handleLoadMore}
             sessionId={session.currentSessionId}
           />
+          {/* Sprite triggered — a soft purple light-wave rises in the list,
+              keyed on the suggestion so it replays each time the sprite speaks. */}
+          {sprite.suggestion && (
+            <div
+              key={sprite.suggestion.text}
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-purple-500/20 via-purple-500/5 to-transparent animate-in fade-in-0 slide-in-from-bottom-4 duration-700"
+            />
+          )}
         </div>
 
         <ApprovalDialog
           requests={stream.approvalRequests}
           onRespond={stream.handleApprovalResponse}
         />
+
+        {/* Sprite bubble — transient, above the composer, never in history. */}
+        {sprite.suggestion && (
+          <SpriteBubble
+            suggestion={sprite.suggestion}
+            agent={currentAgent}
+            onDismiss={sprite.dismiss}
+            onRespond={(text) => {
+              stream.setInput(
+                stream.input ? `${stream.input}\n\n> ${text}\n\n` : `> ${text}\n\n`,
+              )
+              sprite.dismiss()
+            }}
+          />
+        )}
 
         {/* Composer — no top divider; ChatInput supplies its own padding, so it
             sits directly on the surface like the main chat composer. */}

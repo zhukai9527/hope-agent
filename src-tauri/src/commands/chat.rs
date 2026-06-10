@@ -289,22 +289,6 @@ pub async fn chat(
                 attaches,
             );
         }
-        // Knowledge-space sidebar chat: promote the freshly-created session into a
-        // KB chat thread (hidden from the main list + history/default-load), using
-        // the single attached KB as the binding.
-        if tool_scope.as_deref() == Some("knowledge") {
-            if let Some(kb_id) = kb_attachments
-                .as_ref()
-                .and_then(|a| a.first())
-                .map(|a| a.kb_id.clone())
-            {
-                ha_core::knowledge::service::mark_session_as_kb_thread(
-                    &sid,
-                    &kb_id,
-                    kb_anchor_note.as_deref(),
-                );
-            }
-        }
     }
 
     let turn_id = uuid::Uuid::new_v4().to_string();
@@ -347,6 +331,18 @@ pub async fn chat(
             // run as a turn — and crucially, no attachment file has been
             // written yet (we're upstream of all attachment IO).
             let notice = format!("🚫 {reason}");
+            // KB sidebar lazy-create: a blocked first message must leave NO
+            // session behind — neither a hidden `kind=Knowledge` zombie nor a
+            // stray `kind=regular` row polluting the main list / picker / FTS.
+            // Drop the freshly auto-created session; the notice still reaches the
+            // panel via the transient event channel (no `session_created`, so the
+            // frontend never registers it).
+            if new_session_created.is_some() && tool_scope.as_deref() == Some("knowledge") {
+                let _ = db.delete_session(&sid);
+                let _ = on_event
+                    .send(serde_json::json!({ "type": "text", "text": notice }).to_string());
+                return Ok(notice);
+            }
             // If this preflight ran against a freshly-auto-created session,
             // emit `session_created` BEFORE the block notice so the frontend
             // can register the new session and route the notice to it.
@@ -374,6 +370,25 @@ pub async fn chat(
             return Ok(notice);
         }
     };
+
+    // KB sidebar chat: promote the freshly-created session into a knowledge
+    // thread (hidden from the main list; bound to the KB + anchor note) now that
+    // preflight has passed. Doing this in the auto-create block above left a
+    // hidden `kind=Knowledge` zombie + thread row whenever a UserPromptSubmit
+    // hook blocked the very first message.
+    if new_session_created.is_some() && tool_scope.as_deref() == Some("knowledge") {
+        if let Some(kb_id) = kb_attachments
+            .as_ref()
+            .and_then(|a| a.first())
+            .map(|a| a.kb_id.clone())
+        {
+            ha_core::knowledge::service::mark_session_as_kb_thread(
+                &sid,
+                &kb_id,
+                kb_anchor_note.as_deref(),
+            );
+        }
+    }
 
     let attachments_meta =
         ha_core::attachments::persist_chat_user_attachments_meta(&sid, &mut attachments)?;

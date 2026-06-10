@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
-import { parseSessionMessages } from "@/components/chat/chatUtils"
+import { parseSessionMessages, reloadAndMergeSessionMessages } from "@/components/chat/chatUtils"
 import { normalizeEffortForModel } from "@/types/chat"
 import { DEFAULT_AGENT_ID } from "@/types/tools"
 import type {
@@ -61,6 +61,11 @@ export interface UseKnowledgeChatReturn {
   reloadThreads: (query?: string) => Promise<void>
   handleNewThread: () => void
   switchThread: (sessionId: string) => Promise<void>
+  /** Reconcile the current thread with DB truth after a turn ends (HTTP has no
+   *  live reattach here, so this fills in the final answer). Merge-based +
+   *  session-guarded: never blanks the view on a transient error and never
+   *  clobbers a thread the user has since switched to. */
+  reconcileThread: (sessionId: string) => Promise<void>
 }
 
 /**
@@ -90,6 +95,11 @@ export function useKnowledgeChat(
   const sessionCacheRef = useRef<Map<string, Message[]>>(new Map())
   const loadingSessionsRef = useRef<Set<string>>(new Set())
   const manualModelOverrideRef = useRef<ActiveModel | null>(null)
+  // Monotonic guards: a late-resolving messages/model fetch must not clobber a
+  // newer thread switch. Each switch/load bumps the counter; a stale resolve
+  // checks its captured version and bails (last-writer-by-intent, not by RTT).
+  const switchVersionRef = useRef(0)
+  const modelLoadVersionRef = useRef(0)
 
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -116,6 +126,7 @@ export function useKnowledgeChat(
 
   const loadModels = useCallback(
     async (agentId: string): Promise<ModelSnapshot | null> => {
+      const version = ++modelLoadVersionRef.current
       try {
         const [models, active, settings, agentConfig] = await Promise.all([
           getTransport().call<AvailableModel[]>("get_available_models"),
@@ -125,6 +136,10 @@ export function useKnowledgeChat(
             .call<AgentConfig>("get_agent_config", { id: agentId })
             .catch(() => null),
         ])
+        // A newer loadModels (e.g. bootstrap's default-agent load vs the
+        // thread's real-agent load, or a fast note switch) superseded us —
+        // don't let this stale result win the last-writer race.
+        if (modelLoadVersionRef.current !== version) return null
         setAvailableModels(models)
         let displayModel = active
         const manualOverride = manualModelOverrideRef.current
@@ -159,11 +174,17 @@ export function useKnowledgeChat(
     [],
   )
 
+  // Replace-load for SWITCHING to a thread (clears + repopulates). For
+  // reconciling the CURRENT thread after a turn use `reconcileThread` (merge,
+  // no blank-on-error). Version-guarded so a slow A→B→A switch can't let the
+  // late A load overwrite B.
   const loadThreadMessages = useCallback(async (sessionId: string): Promise<boolean> => {
+    const version = ++switchVersionRef.current
     try {
       const [rawMsgs, , hasMoreFromApi] = await getTransport().call<
         [SessionMessage[], number, boolean]
       >("load_session_messages_latest_cmd", { sessionId, limit: PAGE_SIZE })
+      if (switchVersionRef.current !== version) return false
       const parsed = parseSessionMessages(rawMsgs)
       setMessages(parsed)
       sessionCacheRef.current.set(sessionId, parsed)
@@ -172,12 +193,28 @@ export function useKnowledgeChat(
       setLoadingMore(false)
       return true
     } catch (e) {
+      if (switchVersionRef.current !== version) return false
       logger.error("ui", "KnowledgeChat::loadMessages", "Failed to load messages", e)
       setMessages([])
       setHasMore(false)
       setOldestDbId(null)
       return false
     }
+  }, [])
+
+  // Reconcile the CURRENT thread with DB truth after a turn ends. Merge-based:
+  // preserves paged-in scrollback + optimistic/streamed messages, swallows a
+  // transient fetch error instead of blanking the view, and is session-guarded
+  // so a late reload can't clobber a thread the user has since switched to.
+  const reconcileThread = useCallback(async (sessionId: string) => {
+    await reloadAndMergeSessionMessages({
+      sessionId,
+      pageSize: PAGE_SIZE,
+      sessionCacheRef,
+      setMessages: (msgs) => {
+        if (currentSessionIdRef.current === sessionId) setMessages(msgs)
+      },
+    })
   }, [])
 
   const reloadThreads = useCallback(
@@ -241,15 +278,36 @@ export function useKnowledgeChat(
         })
         if (cancelled) return
         if (meta) {
+          const agentId = meta.agentId || DEFAULT_AGENT_ID
           setCurrentSessionId(meta.id)
-          setCurrentAgentId(meta.agentId || DEFAULT_AGENT_ID)
+          // Drop a manual model pick carried from the previously-open note.
+          manualModelOverrideRef.current = null
+          setCurrentAgentId(agentId)
+          // Restore the thread's own agent's model list (bootstrap only loaded
+          // the default agent's) so follow-ups don't inherit a wrong override.
+          void loadModels(agentId)
           setSessions([meta])
-          await loadThreadMessages(meta.id)
+          // If we left this note mid-turn and came back, recompute loading and
+          // keep the cached live view rather than clobbering the in-flight
+          // placeholder with DB truth (mirrors useChatSession).
+          const streaming = loadingSessionsRef.current.has(meta.id)
+          setLoading(streaming)
+          const cached = sessionCacheRef.current.get(meta.id)
+          if (streaming && cached) {
+            setMessages(cached)
+            setHasMore(false)
+            setOldestDbId(null)
+          } else {
+            await loadThreadMessages(meta.id)
+          }
         } else {
           setCurrentSessionId(null)
           setMessages([])
           setHasMore(false)
           setOldestDbId(null)
+          // A draft has no in-flight turn — clear any stuck spinner from the
+          // note we just left.
+          setLoading(false)
         }
       } catch (e) {
         if (!cancelled) logger.error("ui", "KnowledgeChat::defaultLoad", "Failed", e)
@@ -311,6 +369,9 @@ export function useKnowledgeChat(
         setHasMore(false)
         setOldestDbId(null)
       }
+      // Drop the manual model pick — it belonged to the previous agent; the new
+      // agent's baked model should apply.
+      manualModelOverrideRef.current = null
       setCurrentAgentId(agentId)
       void loadModels(agentId)
     },
@@ -322,6 +383,7 @@ export function useKnowledgeChat(
     setMessages([])
     setHasMore(false)
     setOldestDbId(null)
+    manualModelOverrideRef.current = null
   }, [])
 
   const switchThread = useCallback(
@@ -329,10 +391,32 @@ export function useKnowledgeChat(
       if (sessionId === currentSessionIdRef.current) return
       const meta = threads.find((t) => t.sessionId === sessionId)
       setCurrentSessionId(sessionId)
-      if (meta) setSessions([{ id: meta.sessionId } as SessionMeta])
-      await loadThreadMessages(sessionId)
+      if (meta) {
+        setSessions([{ id: meta.sessionId } as SessionMeta])
+        // Restore the thread's baked agent + its model list; otherwise a
+        // follow-up would run with whatever agent/model was last active. Drop
+        // any manual model pick from the previous thread so it doesn't leak.
+        const agentId = meta.agentId || DEFAULT_AGENT_ID
+        manualModelOverrideRef.current = null
+        setCurrentAgentId(agentId)
+        void loadModels(agentId)
+      }
+      // Recompute loading for the target so switching to/from a thread whose
+      // turn is still streaming doesn't leave the spinner stuck (mirrors
+      // useChatSession). For an in-flight thread restore the cached live view
+      // instead of clobbering its placeholder with DB truth.
+      const streaming = loadingSessionsRef.current.has(sessionId)
+      setLoading(streaming)
+      const cached = sessionCacheRef.current.get(sessionId)
+      if (streaming && cached) {
+        setMessages(cached)
+        setHasMore(false)
+        setOldestDbId(null)
+      } else {
+        await loadThreadMessages(sessionId)
+      }
     },
-    [threads, loadThreadMessages],
+    [threads, loadThreadMessages, loadModels],
   )
 
   return {
@@ -364,5 +448,6 @@ export function useKnowledgeChat(
     reloadThreads,
     handleNewThread,
     switchThread,
+    reconcileThread,
   }
 }

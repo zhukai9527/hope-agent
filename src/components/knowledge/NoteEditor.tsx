@@ -24,6 +24,7 @@ import {
   useState,
 } from "react"
 import { useTranslation } from "react-i18next"
+import { MessageSquareQuote, Sparkles } from "lucide-react"
 
 import MarkdownRenderer from "@/components/common/MarkdownRenderer"
 import type { NoteEditorMode } from "@/types/knowledge"
@@ -70,6 +71,12 @@ interface NoteEditorProps {
   /** Outline-mode heading jump: the caller switches to an editable mode and
    *  reveals the line so the jump is visible (CM6 isn't mounted in outline mode). */
   onOutlineJump?: (line: number) => void
+  /** Floating selection toolbar (Cursor-style): add the current selection to the
+   *  AI chat as a quote. Shown automatically when text is selected. */
+  onReferenceSelection?: () => void
+  /** Floating selection toolbar: quick-rewrite the current selection. Hidden in
+   *  read-only mode. */
+  onRewriteSelection?: () => void
 }
 
 /** Imperative handle for AI-rewrite (WS9): read the current selection and splice
@@ -78,6 +85,8 @@ export interface NoteEditorHandle {
   getSelection: () => { from: number; to: number; text: string } | null
   replaceRange: (from: number, to: number, text: string) => void
   docLength: () => number
+  /** Live editor text (CM6 doc) — used to re-anchor a stale quick-rewrite. */
+  getText: () => string
 }
 
 const editorTheme = EditorView.theme({
@@ -142,12 +151,17 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
     onOpenNote,
     embedCacheKey = 0,
     onOutlineJump,
+    onReferenceSelection,
+    onRewriteSelection,
   },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
+  // Floating selection toolbar (Cursor-style) — viewport coords or null.
+  const [selBar, setSelBar] = useState<{ top: number; left: number } | null>(null)
+  const selBarRef = useRef<HTMLDivElement | null>(null)
   const onChangeRef = useRef(onChange)
   const dataRef = useRef<WikilinkData>(data)
   // Hover card (WS9) reads these so the once-built extension always sees the
@@ -282,6 +296,30 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
           if (u.docChanged && !applyingExternalRef.current) {
             onChangeRef.current(u.state.doc.toString())
           }
+          // Drive the floating selection toolbar on selection / doc change.
+          if (u.selectionSet || u.docChanged) {
+            const sel = u.state.selection.main
+            if (sel.empty) {
+              setSelBar(null)
+            } else {
+              const text = u.state.doc.sliceString(sel.from, sel.to)
+              const c = text.trim() ? u.view.coordsAtPos(sel.from) : null
+              setSelBar(
+                c
+                  ? {
+                      top: Math.max(8, c.top - 40),
+                      left: Math.min(c.left, window.innerWidth - 200),
+                    }
+                  : null,
+              )
+            }
+          }
+        }),
+        // Hide the floating toolbar on scroll (its fixed coords would go stale).
+        EditorView.domEventHandlers({
+          scroll() {
+            setSelBar(null)
+          },
         }),
       ],
     })
@@ -406,13 +444,26 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
       view.focus()
     },
     docLength: () => viewRef.current?.state.doc.length ?? 0,
+    getText: () => viewRef.current?.state.doc.toString() ?? "",
   }))
+
+  // Dismiss the floating selection toolbar on any outside mousedown.
+  useEffect(() => {
+    if (!selBar) return
+    const onDown = (e: MouseEvent) => {
+      if (selBarRef.current?.contains(e.target as Node)) return
+      setSelBar(null)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [selBar])
 
   if (showOutline) {
     return <OutlineView content={value} onJump={onOutlineJump} />
   }
 
   const splitActive = showSource && showPreview
+  const showSelBar = selBar && (onReferenceSelection || (!readOnly && onRewriteSelection))
 
   return (
     <div ref={splitContainerRef} className="flex h-full min-h-0 w-full">
@@ -451,6 +502,44 @@ const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEd
             />
           ) : (
             <MarkdownRenderer content={value} />
+          )}
+        </div>
+      )}
+
+      {/* Floating selection toolbar (Cursor-style) — appears on text selection. */}
+      {showSelBar && (
+        <div
+          ref={selBarRef}
+          className="fixed z-50 flex items-center gap-0.5 rounded-lg border border-border/60 bg-popover/95 p-0.5 shadow-lg backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-100"
+          style={{ top: selBar.top, left: selBar.left }}
+        >
+          {onReferenceSelection && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onReferenceSelection()
+                setSelBar(null)
+              }}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-foreground/90 transition-colors hover:bg-secondary"
+            >
+              <MessageSquareQuote className="h-3.5 w-3.5 text-muted-foreground" />
+              {t("knowledge.chatPanel.addToChat", "Add to AI chat")}
+            </button>
+          )}
+          {!readOnly && onRewriteSelection && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onRewriteSelection()
+                setSelBar(null)
+              }}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-foreground/90 transition-colors hover:bg-secondary"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+              {t("knowledge.quickRewrite.title", "Quick rewrite")}
+            </button>
           )}
         </div>
       )}

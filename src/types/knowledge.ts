@@ -50,6 +50,9 @@ export interface KbChatThread {
   sessionId: string
   kbId: string
   anchorNotePath?: string | null
+  /** Agent baked into this thread — restored on history-picker switch so
+   *  follow-ups run with the thread's own agent + model. */
+  agentId: string
   title?: string | null
   /** Thread creation time (epoch ms). */
   createdAt: number
@@ -231,6 +234,38 @@ export interface PassiveRecallConfig {
   maxChars: number
   cacheTtlSecs: number
   showSnippet: boolean
+}
+
+// ── Sprite / inspiration mode (Phase 2) ──────────────────────────
+
+export interface SpriteSenses {
+  doc: boolean
+  edit: boolean
+  conversation: boolean
+  memory: boolean
+  awareness: boolean
+}
+
+export interface SpriteConfig {
+  enabled: boolean
+  idleEditSecs: number
+  minChangeChars: number
+  cooldownSecs: number
+  maxPerSessionPerHour: number
+  senses: SpriteSenses
+  maxTokens: number
+  timeoutSecs: number
+}
+
+export type SpriteCategory = "writing" | "review" | "encourage" | "remind" | "connect"
+
+/** A transient sprite suggestion, delivered via the `sprite:suggestion` event. */
+export interface SpriteSuggestion {
+  sessionId?: string | null
+  kbId: string
+  notePath: string
+  category: SpriteCategory
+  text: string
 }
 
 // ── Layer-2 autonomous maintenance (WS6) ─────────────────────────

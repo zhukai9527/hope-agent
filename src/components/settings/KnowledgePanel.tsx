@@ -40,6 +40,7 @@ import {
 } from "@/types/embedding-models"
 import EmbeddingActivationDialog from "./memory-panel/EmbeddingActivationDialog"
 import KnowledgeMaintenanceSection from "./KnowledgeMaintenanceSection"
+import SpriteSection from "./SpriteSection"
 
 const EMPTY_STATE: EmbeddingSelectionState = {
   selection: { enabled: false, modelConfigId: null, activeSignature: null, lastReembeddedSignature: null },
@@ -205,6 +206,8 @@ export default function KnowledgePanel() {
       <PassiveRecallSection />
 
       <KnowledgeMaintenanceSection />
+
+      <SpriteSection />
 
       <EmbeddingActivationDialog
         open={activationOpen}

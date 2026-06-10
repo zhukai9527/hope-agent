@@ -4364,6 +4364,30 @@
         "memoryToNote": "Memória → nota"
       }
     },
+    "sprite": {
+      "title": "Modo duende / inspiração",
+      "intro": "Um companheiro proativo que observa a nota que você edita e, quando você pausa, pode oferecer uma sugestão gentil no painel de chat. Cada sugestão é uma chamada limitada ao LLM, com limite de frequência, e nunca em sessões anônimas.",
+      "idleEdit": "Falar após pausa de edição (s)",
+      "idleEditDesc": "Segundos de inatividade de edição antes de intervir.",
+      "minChange": "Mudança mínima (caracteres)",
+      "minChangeDesc": "Só reage depois de você escrever pelo menos isso desde a última vez.",
+      "cooldown": "Tempo de espera (s)",
+      "cooldownDesc": "Segundos mínimos entre sugestões.",
+      "maxPerHour": "Máx. por hora",
+      "maxPerHourDesc": "Limite de chamadas ao LLM por nota a cada hora.",
+      "maxTokens": "Máx. de tokens por sugestão",
+      "maxTokensDesc": "Limite superior do tamanho de cada sugestão (custo).",
+      "timeout": "Tempo limite da sugestão (s)",
+      "timeoutDesc": "Desiste de uma sugestão que demore mais que isto.",
+      "senses": "O que o duende percebe",
+      "sense": {
+        "doc": "Documento atual",
+        "edit": "Edição recente",
+        "conversation": "Conversa",
+        "memory": "Recordação de memória",
+        "awareness": "Percepção entre sessões"
+      }
+    },
     "toolNoteCreateName": "Criar Nota",
     "toolNoteCreateDesc": "Cria uma nova nota em markdown em um espaço de conhecimento.",
     "toolNoteReadName": "Ler Nota",
@@ -4992,7 +5016,7 @@
     "outline": "Estrutura",
     "outlineEmpty": "Sem títulos",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "Adicionar ao chat de IA",
       "newConversation": "Nova conversa",
       "history": "Histórico de conversas",
@@ -5009,7 +5033,24 @@
       "generate": "Gerar",
       "regenerate": "Regenerar",
       "apply": "Aplicar",
-      "failed": "Falha ao reescrever"
+      "failed": "Falha ao reescrever",
+      "staleSelection": "A seleção mudou durante a reescrita — selecione novamente e tente de novo."
+    },
+    "sprite": {
+      "toggle": "Modo duende",
+      "tooltipDesc": "Quando você faz uma pausa ao editar uma nota, o duende combina o documento atual, suas memórias e a percepção entre sessões para oferecer proativamente sugestões de escrita, feedback ou incentivo. Clique para ativar / desativar.",
+      "toastOn": "Modo duende ativado",
+      "toastOnDesc": "Ele intervém com uma sugestão gentil quando você faz uma pausa.",
+      "toastOff": "Modo duende desativado",
+      "respond": "Responder",
+      "dismiss": "Dispensar",
+      "category": {
+        "writing": "Escrita",
+        "review": "Feedback",
+        "encourage": "Incentivo",
+        "remind": "Lembrete",
+        "connect": "Conexão"
+      }
     },
     "deleteNoteTitle": "Excluir nota",
     "deleteNoteBody": "Excluir \"{{name}}\"? O arquivo Markdown será removido do disco. Isso não pode ser desfeito.",

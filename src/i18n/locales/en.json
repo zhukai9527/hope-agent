@@ -4372,6 +4372,30 @@
         "memoryToNote": "Memory → note"
       }
     },
+    "sprite": {
+      "title": "Sprite / inspiration mode",
+      "intro": "A proactive companion that watches the note you're editing and, when you pause, may offer a gentle suggestion in the chat panel. Each suggestion is a bounded LLM call — throttled, and never in incognito sessions.",
+      "idleEdit": "Speak after editing pause (s)",
+      "idleEditDesc": "Seconds of editing inactivity before it may chime in.",
+      "minChange": "Minimum change (chars)",
+      "minChangeDesc": "Only react after you've written at least this much since last time.",
+      "cooldown": "Cooldown (s)",
+      "cooldownDesc": "Minimum seconds between suggestions.",
+      "maxPerHour": "Max per hour",
+      "maxPerHourDesc": "Hard cap on LLM calls per note each hour.",
+      "maxTokens": "Max tokens per suggestion",
+      "maxTokensDesc": "Upper bound on each suggestion's length (cost).",
+      "timeout": "Suggestion timeout (s)",
+      "timeoutDesc": "Give up on a suggestion that takes longer than this.",
+      "senses": "What the sprite senses",
+      "sense": {
+        "doc": "Current document",
+        "edit": "Recent edit",
+        "conversation": "Conversation",
+        "memory": "Memory recall",
+        "awareness": "Cross-session awareness"
+      }
+    },
     "toolNoteCreateName": "Create Note",
     "toolNoteCreateDesc": "Create a new markdown note in a knowledge base.",
     "toolNoteReadName": "Read Note",
@@ -5000,7 +5024,7 @@
     "outline": "Outline",
     "outlineEmpty": "No headings",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "Add to AI chat",
       "newConversation": "New conversation",
       "history": "Conversation history",
@@ -5017,7 +5041,24 @@
       "generate": "Generate",
       "regenerate": "Regenerate",
       "apply": "Apply",
-      "failed": "Rewrite failed"
+      "failed": "Rewrite failed",
+      "staleSelection": "The selection moved while rewriting — please reselect and try again."
+    },
+    "sprite": {
+      "toggle": "Sprite mode",
+      "tooltipDesc": "When you pause while editing a note, the sprite blends the current document, your memories and cross-session awareness to proactively offer writing tips, feedback or encouragement. Click to turn on / off.",
+      "toastOn": "Sprite mode on",
+      "toastOnDesc": "It'll chime in with a gentle suggestion when you pause editing.",
+      "toastOff": "Sprite mode off",
+      "respond": "Respond",
+      "dismiss": "Dismiss",
+      "category": {
+        "writing": "Writing",
+        "review": "Feedback",
+        "encourage": "Encouragement",
+        "remind": "Reminder",
+        "connect": "Connection"
+      }
     },
     "deleteNoteTitle": "Delete note",
     "deleteNoteBody": "Delete \"{{name}}\"? The Markdown file will be removed from disk. This cannot be undone.",

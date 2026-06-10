@@ -764,7 +764,7 @@ impl KnowledgeRegistry {
 
         let mut stmt = conn.prepare(
             "SELECT t.session_id, t.kb_id, t.anchor_note_path, t.created_at,
-                    s.title, s.updated_at,
+                    s.title, s.updated_at, s.agent_id,
                     (SELECT COUNT(*) FROM messages m WHERE m.session_id = t.session_id) AS msg_count,
                     (SELECT m.content FROM messages m
                        WHERE m.session_id = t.session_id
@@ -783,8 +783,9 @@ impl KnowledgeRegistry {
                 created_at: r.get(3)?,
                 title: r.get(4)?,
                 updated_at: r.get(5)?,
-                message_count: r.get(6)?,
-                last_snippet: r.get::<_, Option<String>>(7)?.map(|s| {
+                agent_id: r.get(6)?,
+                message_count: r.get(7)?,
+                last_snippet: r.get::<_, Option<String>>(8)?.map(|s| {
                     let trimmed = s.trim();
                     crate::truncate_utf8(trimmed, 160).to_string()
                 }),
@@ -799,6 +800,26 @@ impl KnowledgeRegistry {
                 }
             }
             out.push(thread);
+        }
+        Ok(out)
+    }
+
+    /// Session ids of every knowledge chat thread bound to `kb_id`. Used by
+    /// `delete_kb_cascade` to tear down the (otherwise hidden) `kind=knowledge`
+    /// sessions before the KB row + thread rows are removed — collect first, the
+    /// thread rows cascade away with the KB.
+    pub fn chat_thread_session_ids(&self, kb_id: &str) -> Result<Vec<String>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt =
+            conn.prepare("SELECT session_id FROM knowledge_chat_threads WHERE kb_id = ?1")?;
+        let rows = stmt.query_map(params![kb_id], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
         }
         Ok(out)
     }

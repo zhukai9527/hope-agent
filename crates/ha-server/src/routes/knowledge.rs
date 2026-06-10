@@ -775,6 +775,35 @@ pub async fn kb_passive_recall_config_set(
     )?))
 }
 
+// ── Sprite / inspiration mode ───────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SpriteObserveBody {
+    pub params: ha_core::sprite::SpriteObserveParams,
+}
+
+/// `POST /api/knowledge/sprite/observe` — body `{ params: SpriteObserveParams }`.
+/// Fire-and-forget: the suggestion (if any) arrives via the `sprite:suggestion`
+/// event stream.
+pub async fn kb_sprite_observe(Json(body): Json<SpriteObserveBody>) -> Result<Json<()>, AppError> {
+    tokio::spawn(async move {
+        let _ = ha_core::sprite::observe_and_maybe_speak(body.params).await;
+    });
+    Ok(Json(()))
+}
+
+/// `GET /api/knowledge/sprite/config`
+pub async fn sprite_config_get() -> Result<Json<ha_core::sprite::SpriteConfig>, AppError> {
+    Ok(Json(ha_core::sprite::get_config()))
+}
+
+/// `POST /api/knowledge/sprite/config` — body `{ config: SpriteConfig }`.
+pub async fn sprite_config_set(
+    Json(body): Json<crate::routes::config::ConfigBody<ha_core::sprite::SpriteConfig>>,
+) -> Result<Json<ha_core::sprite::SpriteConfig>, AppError> {
+    Ok(Json(ha_core::sprite::set_config(body.config, "http")?))
+}
+
 /// `GET /api/knowledge/{kb_id}/note/resolve?reference=` — resolve a `[[ ]]` ref
 /// to a note read result (for `![[ ]]` transclusion). Body is `null` (not a 404)
 /// when the ref is broken, so the client treats it identically to the Tauri path.

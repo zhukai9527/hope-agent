@@ -162,6 +162,13 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
   // search precision navigation (G3). New object identity per request re-fires.
   const [revealTarget, setRevealTarget] = useState<{ line: number; col?: number } | null>(null)
   const [editorValue, setEditorValue] = useState("")
+  // Bumped only on *user* edits (NoteEditor.onChange fires only for user doc
+  // changes, not external loads) — drives the sprite edit-idle trigger.
+  const [editorRevision, setEditorRevision] = useState(0)
+  const handleEditorChange = useCallback((v: string) => {
+    setEditorValue(v)
+    setEditorRevision((r) => r + 1)
+  }, [])
   const [baseHash, setBaseHash] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [mode, setMode] = useState<NoteEditorMode>("split")
@@ -580,6 +587,21 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
       chatPanelRef.current?.insertToken(formatNoteInsertion(inner))
     }
   }, [openPath, editorValue])
+
+  // Quick-rewrite the current selection (or the whole note when nothing is
+  // selected). Shared by the editor toolbar button + the floating selection bar.
+  const quickRewriteSelection = useCallback(() => {
+    const sel = editorRef.current?.getSelection()
+    if (sel && sel.from !== sel.to && sel.text.trim()) {
+      setQuickRewrite({ before: sel.text, from: sel.from, to: sel.to })
+    } else {
+      // Whole-note rewrite: read `before` + `to` from the SAME live source
+      // (getText), not the React-mirrored editorValue, so they can't be a
+      // frame out of sync and leave the apply re-anchor replacing only a prefix.
+      const text = editorRef.current?.getText() ?? editorValue
+      setQuickRewrite({ before: text, from: 0, to: text.length })
+    }
+  }, [editorValue])
 
   // setState in these loaders is deferred behind an `await` (async fetch), so
   // there's no synchronous cascading render.
@@ -2003,7 +2025,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
               <div className="flex-1 min-h-0">
                 <NoteEditor
                   value={editorValue}
-                  onChange={setEditorValue}
+                  onChange={handleEditorChange}
                   readOnly={false}
                   mode={mode}
                   data={wikilinkData}
@@ -2084,15 +2106,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2"
-                      onClick={() => {
-                        const sel = editorRef.current?.getSelection()
-                        if (sel && sel.from !== sel.to && sel.text.trim()) {
-                          setQuickRewrite({ before: sel.text, from: sel.from, to: sel.to })
-                        } else {
-                          const len = editorRef.current?.docLength() ?? editorValue.length
-                          setQuickRewrite({ before: editorValue, from: 0, to: len })
-                        }
-                      }}
+                      onClick={() => quickRewriteSelection()}
                     >
                       <Sparkles className="h-3.5 w-3.5" />
                     </Button>
@@ -2139,7 +2153,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                   ref={editorRef}
                   value={editorValue}
                   onChange={(v) => {
-                    setEditorValue(v)
+                    handleEditorChange(v)
                     setDirty(true)
                   }}
                   readOnly={readOnly}
@@ -2159,6 +2173,8 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                     handleModeChange("source")
                     setRevealTarget({ line })
                   }}
+                  onReferenceSelection={referenceCurrentSelectionInChat}
+                  onRewriteSelection={quickRewriteSelection}
                 />
               </div>
             </>
@@ -2208,6 +2224,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
               kbId={openKbId ?? activeKbId}
               notePath={openPath}
               getEditorValue={getEditorValue}
+              editorRevision={editorRevision}
             />
           </div>
           <div
@@ -2790,8 +2807,27 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
             notePath={openPath}
             before={quickRewrite.before}
             onApply={(after) => {
-              editorRef.current?.replaceRange(quickRewrite.from, quickRewrite.to, after)
-              setQuickRewrite(null)
+              const ed = editorRef.current
+              if (!ed) return
+              const { before, from, to } = quickRewrite
+              const doc = ed.getText()
+              // Fast path: the captured range still holds the original text
+              // (no shifting edit happened during generation) — apply in place.
+              if (doc.slice(from, to) === before) {
+                ed.replaceRange(from, to, after)
+                setQuickRewrite(null)
+                return
+              }
+              // The buffer changed under us. Re-anchor by unique occurrence;
+              // refuse on 0 / multiple matches rather than overwrite the wrong
+              // text (mirrors note_patch's unique-hit guard, D14).
+              const idx = before ? doc.indexOf(before) : -1
+              if (idx >= 0 && doc.indexOf(before, idx + 1) === -1) {
+                ed.replaceRange(idx, idx + before.length, after)
+                setQuickRewrite(null)
+                return
+              }
+              toast.error(t("knowledge.quickRewrite.staleSelection"))
             }}
             onClose={() => setQuickRewrite(null)}
           />

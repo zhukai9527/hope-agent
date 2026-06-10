@@ -395,6 +395,9 @@ pub struct KbChatThread {
     pub session_id: String,
     pub kb_id: String,
     pub anchor_note_path: Option<String>,
+    /// Agent baked into this thread's session — restored when the history picker
+    /// switches to it so follow-ups run with the thread's own agent + model.
+    pub agent_id: String,
     /// Session title (LLM- or user-set), `None` until named.
     pub title: Option<String>,
     /// Thread creation time (epoch ms).

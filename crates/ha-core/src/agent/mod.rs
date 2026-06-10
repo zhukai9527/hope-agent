@@ -1,4 +1,4 @@
-mod active_memory;
+pub(crate) mod active_memory;
 pub(super) mod api_types;
 mod config;
 mod content;

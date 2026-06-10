@@ -86,7 +86,8 @@ fn risk_level(category: &str) -> &'static str {
         | "tool_call_narration"
         | "teams"
         | "im_auto_transcribe"
-        | "knowledge_passive_recall" => "medium",
+        | "knowledge_passive_recall"
+        | "sprite" => "medium",
 
         // ── HIGH ───────────────────────────────────────────────
         "proxy" | "embedding" | "shortcuts" | "skills" | "server" | "acp_control" | "skill_env"
@@ -177,6 +178,9 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "knowledge_maintenance" => Some(
             "Layer-2 autonomous maintenance scans knowledge bases and queues note-maintenance proposals (auto-link, dedup merge, tagging, MOC, memory→note, …) for review. Changes take effect on the next cycle. ⚠️ `enabled` lets background cycles run; `autoApprove` makes approved-free writes to the user's notes happen automatically (skipping the review queue) — confirm with the user before enabling either."
+        ),
+        "sprite" => Some(
+            "Knowledge-space sprite / inspiration mode: a proactive companion that, while the user edits a note, makes a bounded LLM call on edit-idle and may surface a transient suggestion bubble. ⚠️ `enabled` makes proactive (unprompted) LLM calls — has a cost. `cooldownSecs` / `maxPerSessionPerHour` throttle frequency; `senses.*` toggle which context (doc / edit / conversation / memory / awareness) is fused in."
         ),
         "stt_providers" => Some(
             "Read-only via this tool. STT provider configs carry API keys (apiKey / authProfiles[*].apiKey) plus provider-specific secrets in `extra` (Volcengine app_id / access_key, iFlytek app_id, Azure region key, etc.). The response from get_settings redacts every secret-bearing field — writes must go through Settings → Speech-to-Text so credentials stay out of conversation logs."
@@ -496,6 +500,7 @@ fn read_category(category: &str) -> Result<Value> {
         "dreaming" => Ok(serde_json::to_value(&cfg.dreaming)?),
         "knowledge_maintenance" => Ok(serde_json::to_value(&cfg.knowledge_maintenance)?),
         "knowledge_passive_recall" => Ok(serde_json::to_value(&cfg.knowledge_passive_recall)?),
+        "sprite" => Ok(serde_json::to_value(&cfg.sprite)?),
         "mcp_global" => Ok(serde_json::to_value(&cfg.mcp_global)?),
         "mcp_servers" => Ok(redact_mcp_servers_value(serde_json::to_value(
             &cfg.mcp_servers,
@@ -648,7 +653,7 @@ fn get_all_overview() -> Result<String> {
             "deferred_tools", "async_tools", "approval",
             "tool_result_disk_threshold", "ask_user_question_timeout", "plan",
             "issue_reporting", "skills_auto_review", "recall_summary", "tool_call_narration",
-            "teams", "im_auto_transcribe", "knowledge_passive_recall"
+            "teams", "im_auto_transcribe", "knowledge_passive_recall", "sprite"
         ],
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
@@ -1006,6 +1011,11 @@ async fn update_app_config(category: &str, values: &Value) -> Result<String> {
             // Clamp (mirrors `service::set_passive_recall_config`).
             store.knowledge_passive_recall = store.knowledge_passive_recall.clamped();
         }
+        "sprite" => {
+            merge_field(&mut store.sprite, values)?;
+            // Clamp so a skill write can't hammer the LLM (mirrors `sprite::set_config`).
+            store.sprite = store.sprite.clamped();
+        }
         "mcp_global" => merge_field(&mut store.mcp_global, values)?,
         "local_llm_auto_maintenance" => {
             // Only the `enabled` toggle is writable through the skill —
@@ -1283,7 +1293,7 @@ mod tests {
 
     #[test]
     fn risk_level_medium_includes_new_categories() {
-        for cat in ["multimodal", "dreaming"] {
+        for cat in ["multimodal", "dreaming", "sprite"] {
             assert_eq!(risk_level(cat), "medium", "{cat} should be medium risk");
         }
     }

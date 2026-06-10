@@ -4364,6 +4364,30 @@
         "memoryToNote": "Bộ nhớ → ghi chú"
       }
     },
+    "sprite": {
+      "title": "Chế độ tinh linh / cảm hứng",
+      "intro": "Một người bạn chủ động dõi theo ghi chú bạn đang soạn và khi bạn dừng lại, có thể nhẹ nhàng gợi ý trong bảng trò chuyện. Mỗi gợi ý là một lệnh gọi LLM giới hạn, có điều tiết và không bao giờ chạy trong phiên ẩn danh.",
+      "idleEdit": "Lên tiếng sau khi ngừng soạn (giây)",
+      "idleEditDesc": "Số giây ngừng soạn trước khi nó góp lời.",
+      "minChange": "Thay đổi tối thiểu (ký tự)",
+      "minChangeDesc": "Chỉ phản ứng sau khi bạn viết ít nhất bằng này kể từ lần trước.",
+      "cooldown": "Thời gian chờ (giây)",
+      "cooldownDesc": "Số giây tối thiểu giữa các gợi ý.",
+      "maxPerHour": "Tối đa mỗi giờ",
+      "maxPerHourDesc": "Giới hạn cứng số lệnh gọi LLM mỗi ghi chú mỗi giờ.",
+      "maxTokens": "Token tối đa mỗi gợi ý",
+      "maxTokensDesc": "Giới hạn trên cho độ dài mỗi gợi ý (chi phí).",
+      "timeout": "Thời gian chờ gợi ý (giây)",
+      "timeoutDesc": "Bỏ qua gợi ý mất nhiều thời gian hơn mức này.",
+      "senses": "Tinh linh cảm nhận gì",
+      "sense": {
+        "doc": "Tài liệu hiện tại",
+        "edit": "Chỉnh sửa gần đây",
+        "conversation": "Hội thoại",
+        "memory": "Gợi nhớ ký ức",
+        "awareness": "Nhận thức xuyên phiên"
+      }
+    },
     "toolNoteCreateName": "Tạo ghi chú",
     "toolNoteCreateDesc": "Tạo một ghi chú markdown mới trong không gian tri thức.",
     "toolNoteReadName": "Đọc ghi chú",
@@ -4992,7 +5016,7 @@
     "outline": "Dàn ý",
     "outlineEmpty": "Không có tiêu đề",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "Thêm vào trò chuyện AI",
       "newConversation": "Cuộc trò chuyện mới",
       "history": "Lịch sử trò chuyện",
@@ -5009,7 +5033,24 @@
       "generate": "Tạo",
       "regenerate": "Tạo lại",
       "apply": "Áp dụng",
-      "failed": "Viết lại thất bại"
+      "failed": "Viết lại thất bại",
+      "staleSelection": "Vùng chọn đã thay đổi khi đang viết lại — vui lòng chọn lại và thử lại."
+    },
+    "sprite": {
+      "toggle": "Chế độ tinh linh",
+      "tooltipDesc": "Khi bạn dừng lại lúc soạn ghi chú, tinh linh kết hợp tài liệu hiện tại, ký ức của bạn và nhận thức xuyên phiên để chủ động đưa ra gợi ý viết, phản hồi hoặc lời động viên. Nhấp để bật / tắt.",
+      "toastOn": "Đã bật chế độ tinh linh",
+      "toastOnDesc": "Nó sẽ nhẹ nhàng gợi ý khi bạn tạm dừng soạn thảo.",
+      "toastOff": "Đã tắt chế độ tinh linh",
+      "respond": "Phản hồi",
+      "dismiss": "Bỏ qua",
+      "category": {
+        "writing": "Viết",
+        "review": "Phản hồi",
+        "encourage": "Động viên",
+        "remind": "Nhắc nhở",
+        "connect": "Liên kết"
+      }
     },
     "deleteNoteTitle": "Xóa ghi chú",
     "deleteNoteBody": "Xóa \"{{name}}\"? Tệp Markdown sẽ bị xóa khỏi đĩa. Không thể hoàn tác.",

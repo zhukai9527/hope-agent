@@ -4364,6 +4364,30 @@
         "memoryToNote": "메모리→노트"
       }
     },
+    "sprite": {
+      "title": "스프라이트 / 영감 모드",
+      "intro": "편집 중인 노트를 지켜보다가 잠시 멈추면 채팅 패널에서 부드럽게 제안하는 능동적 동반자입니다. 각 제안은 제한된 LLM 호출이며, 제한이 걸려 있고 시크릿 세션에서는 절대 작동하지 않습니다.",
+      "idleEdit": "편집 멈춘 후 말하기까지(초)",
+      "idleEditDesc": "편집이 멈춘 뒤 말을 걸기까지의 초.",
+      "minChange": "최소 변경량(글자)",
+      "minChangeDesc": "지난번 이후 최소 이만큼 작성해야 반응합니다.",
+      "cooldown": "쿨다운(초)",
+      "cooldownDesc": "제안 사이의 최소 간격.",
+      "maxPerHour": "시간당 최대",
+      "maxPerHourDesc": "노트당 시간당 LLM 호출 횟수 상한.",
+      "maxTokens": "제안당 최대 토큰",
+      "maxTokensDesc": "각 제안 길이(비용)의 상한.",
+      "timeout": "제안 시간 제한(초)",
+      "timeoutDesc": "이보다 오래 걸리는 제안은 중단합니다.",
+      "senses": "스프라이트가 감지하는 것",
+      "sense": {
+        "doc": "현재 문서",
+        "edit": "최근 편집",
+        "conversation": "대화",
+        "memory": "기억 회상",
+        "awareness": "세션 간 인식"
+      }
+    },
     "toolNoteCreateName": "노트 생성",
     "toolNoteCreateDesc": "지식 공간에 새 markdown 노트를 생성합니다.",
     "toolNoteReadName": "노트 읽기",
@@ -4992,7 +5016,7 @@
     "outline": "개요",
     "outlineEmpty": "제목 없음",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "AI 채팅에 추가",
       "newConversation": "새 대화",
       "history": "대화 기록",
@@ -5009,7 +5033,24 @@
       "generate": "생성",
       "regenerate": "다시 생성",
       "apply": "적용",
-      "failed": "다시 쓰기 실패"
+      "failed": "다시 쓰기 실패",
+      "staleSelection": "다시 쓰는 동안 선택 영역이 바뀌었습니다 — 다시 선택한 후 시도하세요."
+    },
+    "sprite": {
+      "toggle": "스프라이트 모드",
+      "tooltipDesc": "노트를 편집하다 잠시 멈추면, 스프라이트가 현재 문서·당신의 기억·세션 간 인식을 결합해 글쓰기 팁, 피드백, 격려를 능동적으로 건넵니다. 클릭해서 켜기 / 끄기.",
+      "toastOn": "스프라이트 모드 켜짐",
+      "toastOnDesc": "편집을 잠시 멈추면 살며시 제안해 드려요.",
+      "toastOff": "스프라이트 모드 꺼짐",
+      "respond": "응답",
+      "dismiss": "닫기",
+      "category": {
+        "writing": "작성",
+        "review": "피드백",
+        "encourage": "격려",
+        "remind": "알림",
+        "connect": "연결"
+      }
     },
     "deleteNoteTitle": "노트 삭제",
     "deleteNoteBody": "\"{{name}}\"을(를) 삭제할까요? Markdown 파일이 디스크에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.",

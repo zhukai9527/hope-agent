@@ -84,26 +84,45 @@ pub fn mark_session_as_kb_thread(session_id: &str, kb_id: &str, anchor_note: Opt
     let Some(db) = crate::get_session_db() else {
         return;
     };
-    if let Err(e) = db.set_session_kind(session_id, SessionKind::Knowledge) {
-        crate::app_warn!(
-            "knowledge",
-            "kb_thread_mint",
-            "set_session_kind failed for {}: {}",
-            session_id,
-            e
-        );
-        return;
-    }
-    if let Ok(reg) = registry() {
-        if let Err(e) = reg.create_chat_thread(session_id, kb_id, anchor_note) {
+    // Create the thread row FIRST: if it fails, leave the session as a regular
+    // (visible, deletable) chat rather than flipping `kind=Knowledge` and ending
+    // up with a row-less session that's hidden from every list with no way to
+    // reach it.
+    match registry() {
+        Ok(reg) => {
+            if let Err(e) = reg.create_chat_thread(session_id, kb_id, anchor_note) {
+                crate::app_warn!(
+                    "knowledge",
+                    "kb_thread_mint",
+                    "create_chat_thread failed for {}: {}",
+                    session_id,
+                    e
+                );
+                return;
+            }
+        }
+        Err(e) => {
             crate::app_warn!(
                 "knowledge",
                 "kb_thread_mint",
-                "create_chat_thread failed for {}: {}",
+                "registry unavailable for {}: {}",
                 session_id,
                 e
             );
+            return;
         }
+    }
+    if let Err(e) = db.set_session_kind(session_id, SessionKind::Knowledge) {
+        // Thread row exists but kind didn't flip: the session is still visible
+        // in the main list (kind=regular) and listed in the KB picker — odd but
+        // reachable/deletable, not a hidden zombie.
+        crate::app_warn!(
+            "knowledge",
+            "kb_thread_mint",
+            "set_session_kind failed for {} (thread row kept): {}",
+            session_id,
+            e
+        );
     }
 }
 

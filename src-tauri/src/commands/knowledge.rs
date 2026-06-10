@@ -521,6 +521,35 @@ pub async fn kb_maintenance_config_set_cmd(
     service::set_maintenance_config(config, "gui").map_err(Into::into)
 }
 
+// ── Sprite / inspiration mode ───────────────────────────────────
+
+/// Edit-idle trigger from the knowledge panel. Fire-and-forget: throttling +
+/// side_query happen in the background; a suggestion (if any) arrives via the
+/// `sprite:suggestion` event.
+#[tauri::command]
+pub async fn kb_sprite_observe_cmd(
+    params: ha_core::sprite::SpriteObserveParams,
+) -> Result<(), CmdError> {
+    tokio::spawn(async move {
+        let _ = ha_core::sprite::observe_and_maybe_speak(params).await;
+    });
+    Ok(())
+}
+
+/// Read the sprite config (GUI panel).
+#[tauri::command]
+pub async fn sprite_config_get_cmd() -> Result<ha_core::sprite::SpriteConfig, CmdError> {
+    Ok(ha_core::sprite::get_config())
+}
+
+/// Persist the sprite config (GUI panel). Returns the clamped value saved.
+#[tauri::command]
+pub async fn sprite_config_set_cmd(
+    config: ha_core::sprite::SpriteConfig,
+) -> Result<ha_core::sprite::SpriteConfig, CmdError> {
+    ha_core::sprite::set_config(config, "gui").map_err(Into::into)
+}
+
 /// Read the passive related-notes config (GUI panel, read bridge ③).
 #[tauri::command]
 pub async fn kb_passive_recall_config_get_cmd() -> Result<knowledge::PassiveRecallConfig, CmdError>

@@ -274,17 +274,6 @@ pub async fn chat(
             body.incognito.unwrap_or(false),
             &body.kb_attachments,
         );
-        // Knowledge-space sidebar chat: promote the new session into a KB chat
-        // thread bound to the single attached KB (mirrors the Tauri command).
-        if body.tool_scope.as_deref() == Some("knowledge") {
-            if let Some(kb_id) = body.kb_attachments.first().map(|a| a.kb_id.clone()) {
-                ha_core::knowledge::service::mark_session_as_kb_thread(
-                    &sid,
-                    &kb_id,
-                    body.kb_anchor_note.as_deref(),
-                );
-            }
-        }
     }
 
     // Persist per-session permission mode if the body included one.
@@ -369,6 +358,19 @@ pub async fn chat(
             // a stream notice (parity with the desktop path, which sends a
             // `{"type":"text","text":notice}` event on the on_event channel).
             let notice = format!("🚫 {reason}");
+            // KB sidebar lazy-create: a blocked first message must leave NO
+            // session behind (no hidden zombie, no stray regular row in the
+            // main list / picker / FTS). Drop the freshly auto-created session;
+            // `blocked_reason` still carries the notice to the transport.
+            if new_session_created && body.tool_scope.as_deref() == Some("knowledge") {
+                let _ = db.delete_session(&sid);
+                return Ok(Json(ChatResponse {
+                    session_id: sid,
+                    response: notice.clone(),
+                    turn_id,
+                    blocked_reason: Some(notice),
+                }));
+            }
             let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
             return Ok(Json(ChatResponse {
                 session_id: sid,
@@ -378,6 +380,20 @@ pub async fn chat(
             }));
         }
     };
+
+    // KB sidebar chat: promote the freshly-created session into a knowledge
+    // thread now that preflight has passed (mirrors the Tauri command). Doing it
+    // in the auto-create block left a hidden `kind=Knowledge` zombie + thread row
+    // when a UserPromptSubmit hook blocked the first message.
+    if new_session_created && body.tool_scope.as_deref() == Some("knowledge") {
+        if let Some(kb_id) = body.kb_attachments.first().map(|a| a.kb_id.clone()) {
+            ha_core::knowledge::service::mark_session_as_kb_thread(
+                &sid,
+                &kb_id,
+                body.kb_anchor_note.as_deref(),
+            );
+        }
+    }
 
     // Attachments: validate + persist AFTER the preflight, so a blocked prompt
     // returns above before any attachment IO touches disk. The DB content is the

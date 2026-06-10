@@ -340,6 +340,14 @@ fn build_router_with_cors(
                 .post(routes::knowledge::kb_passive_recall_config_set),
         )
         .route(
+            "/knowledge/sprite/observe",
+            post(routes::knowledge::kb_sprite_observe),
+        )
+        .route(
+            "/knowledge/sprite/config",
+            get(routes::knowledge::sprite_config_get).post(routes::knowledge::sprite_config_set),
+        )
+        .route(
             "/knowledge/{kb_id}/dir",
             post(routes::knowledge::kb_mkdir).delete(routes::knowledge::kb_delete_dir),
         )

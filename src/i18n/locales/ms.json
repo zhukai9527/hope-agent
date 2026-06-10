@@ -4364,6 +4364,30 @@
         "memoryToNote": "Memori → nota"
       }
     },
+    "sprite": {
+      "title": "Mod sprite / inspirasi",
+      "intro": "Teman proaktif yang memerhati nota yang anda sunting dan, apabila anda berhenti seketika, mungkin menawarkan cadangan lembut di panel sembang. Setiap cadangan ialah panggilan LLM terhad, dikawal kadar, dan tidak pernah dalam sesi inkognito.",
+      "idleEdit": "Bercakap selepas berhenti menyunting (s)",
+      "idleEditDesc": "Saat tidak menyunting sebelum ia mencelah.",
+      "minChange": "Perubahan minimum (aksara)",
+      "minChangeDesc": "Hanya bertindak selepas anda menulis sekurang-kurangnya sebanyak ini sejak kali terakhir.",
+      "cooldown": "Tempoh rehat (s)",
+      "cooldownDesc": "Saat minimum antara cadangan.",
+      "maxPerHour": "Maksimum sejam",
+      "maxPerHourDesc": "Had panggilan LLM setiap nota setiap jam.",
+      "maxTokens": "Token maksimum setiap cadangan",
+      "maxTokensDesc": "Had atas panjang setiap cadangan (kos).",
+      "timeout": "Tamat masa cadangan (s)",
+      "timeoutDesc": "Berhenti pada cadangan yang mengambil masa lebih lama daripada ini.",
+      "senses": "Apa yang dirasai sprite",
+      "sense": {
+        "doc": "Dokumen semasa",
+        "edit": "Suntingan terkini",
+        "conversation": "Perbualan",
+        "memory": "Imbasan memori",
+        "awareness": "Kesedaran merentas sesi"
+      }
+    },
     "toolNoteCreateName": "Cipta Nota",
     "toolNoteCreateDesc": "Cipta nota markdown baharu dalam ruang pengetahuan.",
     "toolNoteReadName": "Baca Nota",
@@ -4992,7 +5016,7 @@
     "outline": "Rangka",
     "outlineEmpty": "Tiada tajuk",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "Tambah ke sembang AI",
       "newConversation": "Perbualan baharu",
       "history": "Sejarah perbualan",
@@ -5009,7 +5033,24 @@
       "generate": "Jana",
       "regenerate": "Jana semula",
       "apply": "Guna",
-      "failed": "Gagal menulis semula"
+      "failed": "Gagal menulis semula",
+      "staleSelection": "Pilihan berubah semasa menulis semula — sila pilih semula dan cuba lagi."
+    },
+    "sprite": {
+      "toggle": "Mod sprite",
+      "tooltipDesc": "Apabila anda berhenti seketika semasa menyunting nota, sprite menggabungkan dokumen semasa, ingatan anda dan kesedaran merentas sesi untuk menawarkan petua penulisan, maklum balas atau galakan secara proaktif. Klik untuk hidup / mati.",
+      "toastOn": "Mod sprite dihidupkan",
+      "toastOnDesc": "Ia akan mencelah dengan cadangan lembut apabila anda berhenti seketika.",
+      "toastOff": "Mod sprite dimatikan",
+      "respond": "Balas",
+      "dismiss": "Tolak",
+      "category": {
+        "writing": "Penulisan",
+        "review": "Maklum balas",
+        "encourage": "Galakan",
+        "remind": "Peringatan",
+        "connect": "Sambungan"
+      }
     },
     "deleteNoteTitle": "Padam nota",
     "deleteNoteBody": "Padam \"{{name}}\"? Fail Markdown akan dibuang daripada cakera. Tindakan ini tidak boleh dibuat asal.",

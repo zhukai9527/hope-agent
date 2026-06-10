@@ -599,7 +599,31 @@
       "toolSessionToNoteName": "会話をノート化",
       "toolSessionToNoteDesc": "現在の会話を構造化されたノートに抽出します。",
       "toolKnowledgeRecallName": "ナレッジ呼出",
-      "toolKnowledgeRecallDesc": "メモリとノートを同時に検索します（2 段のランク付け結果）。"
+      "toolKnowledgeRecallDesc": "メモリとノートを同時に検索します（2 段のランク付け結果）。",
+      "sprite": {
+        "title": "スプライト / インスピレーションモード",
+        "intro": "編集中のノートを見守り、手が止まったときにチャットパネルでそっと提案する能動的な相棒です。各提案は制限付きの LLM 呼び出しで、スロットリングされ、シークレットセッションでは決して起動しません。",
+        "idleEdit": "編集停止後に話すまで（秒）",
+        "idleEditDesc": "編集が止まってから話しかけるまでの秒数。",
+        "minChange": "最小変更量（文字）",
+        "minChangeDesc": "前回から少なくともこの量を書いてから反応します。",
+        "cooldown": "クールダウン（秒）",
+        "cooldownDesc": "提案と提案の最小間隔。",
+        "maxPerHour": "1 時間あたり上限",
+        "maxPerHourDesc": "ノートごとの 1 時間あたり LLM 呼び出し回数の上限。",
+        "senses": "スプライトが感じ取るもの",
+        "sense": {
+          "doc": "現在の文書",
+          "edit": "最近の編集",
+          "conversation": "会話",
+          "memory": "記憶の想起",
+          "awareness": "セッション横断の把握"
+        },
+        "maxTokens": "1 件あたりの最大トークン",
+        "maxTokensDesc": "各提案の長さ（コスト）の上限。",
+        "timeout": "提案のタイムアウト（秒）",
+        "timeoutDesc": "これより時間がかかる提案は中止します。"
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "このエージェントは削除されました",
@@ -1240,7 +1264,24 @@
         "generate": "生成",
         "regenerate": "再生成",
         "apply": "適用",
-        "failed": "書き換えに失敗しました"
+        "failed": "書き換えに失敗しました",
+        "staleSelection": "書き換え中に選択範囲が変わりました。選び直してもう一度お試しください。"
+      },
+      "sprite": {
+        "toggle": "スプライトモード",
+        "respond": "返信",
+        "dismiss": "閉じる",
+        "category": {
+          "writing": "執筆",
+          "review": "フィードバック",
+          "encourage": "励まし",
+          "remind": "リマインド",
+          "connect": "関連"
+        },
+        "tooltipDesc": "ノートを編集して手を止めると、スプライトが現在の文書・あなたの記憶・セッション横断の把握を踏まえ、執筆のヒントやフィードバック、励ましを能動的に届けます。クリックでオン / オフ。",
+        "toastOn": "スプライトモードをオンにしました",
+        "toastOnDesc": "編集の手を止めると、そっと提案します。",
+        "toastOff": "スプライトモードをオフにしました"
       }
     },
     "common": {
@@ -1850,7 +1891,31 @@
       "toolSessionToNoteName": "대화를 노트로",
       "toolSessionToNoteDesc": "현재 대화를 구조화된 노트로 정제합니다.",
       "toolKnowledgeRecallName": "지식 호출",
-      "toolKnowledgeRecallDesc": "기억과 노트를 함께 검색합니다(순위별 두 구간)."
+      "toolKnowledgeRecallDesc": "기억과 노트를 함께 검색합니다(순위별 두 구간).",
+      "sprite": {
+        "title": "스프라이트 / 영감 모드",
+        "intro": "편집 중인 노트를 지켜보다가 잠시 멈추면 채팅 패널에서 부드럽게 제안하는 능동적 동반자입니다. 각 제안은 제한된 LLM 호출이며, 제한이 걸려 있고 시크릿 세션에서는 절대 작동하지 않습니다.",
+        "idleEdit": "편집 멈춘 후 말하기까지(초)",
+        "idleEditDesc": "편집이 멈춘 뒤 말을 걸기까지의 초.",
+        "minChange": "최소 변경량(글자)",
+        "minChangeDesc": "지난번 이후 최소 이만큼 작성해야 반응합니다.",
+        "cooldown": "쿨다운(초)",
+        "cooldownDesc": "제안 사이의 최소 간격.",
+        "maxPerHour": "시간당 최대",
+        "maxPerHourDesc": "노트당 시간당 LLM 호출 횟수 상한.",
+        "senses": "스프라이트가 감지하는 것",
+        "sense": {
+          "doc": "현재 문서",
+          "edit": "최근 편집",
+          "conversation": "대화",
+          "memory": "기억 회상",
+          "awareness": "세션 간 인식"
+        },
+        "maxTokens": "제안당 최대 토큰",
+        "maxTokensDesc": "각 제안 길이(비용)의 상한.",
+        "timeout": "제안 시간 제한(초)",
+        "timeoutDesc": "이보다 오래 걸리는 제안은 중단합니다."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "이 에이전트는 삭제되었습니다",
@@ -2491,7 +2556,24 @@
         "generate": "생성",
         "regenerate": "다시 생성",
         "apply": "적용",
-        "failed": "다시 쓰기 실패"
+        "failed": "다시 쓰기 실패",
+        "staleSelection": "다시 쓰는 동안 선택 영역이 바뀌었습니다 — 다시 선택한 후 시도하세요."
+      },
+      "sprite": {
+        "toggle": "스프라이트 모드",
+        "respond": "응답",
+        "dismiss": "닫기",
+        "category": {
+          "writing": "작성",
+          "review": "피드백",
+          "encourage": "격려",
+          "remind": "알림",
+          "connect": "연결"
+        },
+        "tooltipDesc": "노트를 편집하다 잠시 멈추면, 스프라이트가 현재 문서·당신의 기억·세션 간 인식을 결합해 글쓰기 팁, 피드백, 격려를 능동적으로 건넵니다. 클릭해서 켜기 / 끄기.",
+        "toastOn": "스프라이트 모드 켜짐",
+        "toastOnDesc": "편집을 잠시 멈추면 살며시 제안해 드려요.",
+        "toastOff": "스프라이트 모드 꺼짐"
       }
     },
     "common": {
@@ -3101,7 +3183,31 @@
       "toolSessionToNoteName": "對話存為筆記",
       "toolSessionToNoteDesc": "將目前對話提煉成一篇結構化筆記。",
       "toolKnowledgeRecallName": "知識召回",
-      "toolKnowledgeRecallDesc": "同時檢索記憶與筆記兩個庫（分兩段回傳）。"
+      "toolKnowledgeRecallDesc": "同時檢索記憶與筆記兩個庫（分兩段回傳）。",
+      "sprite": {
+        "title": "精靈 / 靈感模式",
+        "intro": "一個有主動性的陪伴助手：你編輯筆記停手片刻時，它可能在對話面板裡輕聲給一句建議。每條建議都是一次受限的 LLM 呼叫——已做節流，且無痕會話中絕不觸發。",
+        "idleEdit": "停手多久後開口（秒）",
+        "idleEditDesc": "停止編輯多少秒後才可能開口。",
+        "minChange": "最小變動量（字元）",
+        "minChangeDesc": "距上次至少寫了這麼多字才會反應。",
+        "cooldown": "冷卻（秒）",
+        "cooldownDesc": "兩次建議之間的最小間隔。",
+        "maxPerHour": "每小時上限",
+        "maxPerHourDesc": "每篇筆記每小時 LLM 呼叫的硬上限。",
+        "senses": "精靈的感知來源",
+        "sense": {
+          "doc": "目前文件",
+          "edit": "最近編輯",
+          "conversation": "對話上下文",
+          "memory": "記憶召回",
+          "awareness": "跨會話感知"
+        },
+        "maxTokens": "每條建議的最大 token",
+        "maxTokensDesc": "每條建議長度的上限（控制成本）。",
+        "timeout": "建議逾時（秒）",
+        "timeoutDesc": "超過此時長仍未生成則放棄本次建議。"
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "此 Agent 已被刪除",
@@ -3717,7 +3823,24 @@
         "generate": "生成",
         "regenerate": "重新生成",
         "apply": "套用",
-        "failed": "改寫失敗"
+        "failed": "改寫失敗",
+        "staleSelection": "改寫期間選區已變動 —— 請重新選擇後再試。"
+      },
+      "sprite": {
+        "toggle": "精靈模式",
+        "respond": "回應",
+        "dismiss": "關閉",
+        "category": {
+          "writing": "寫作",
+          "review": "回饋",
+          "encourage": "鼓勵",
+          "remind": "提醒",
+          "connect": "關聯"
+        },
+        "tooltipDesc": "編輯筆記停手片刻時，精靈會結合目前文件、你的記憶與跨會話感知，主動給出寫作建議、回饋或鼓勵。點擊開啟 / 關閉。",
+        "toastOn": "精靈模式已開啟",
+        "toastOnDesc": "停筆片刻時，它會輕聲給你一句建議。",
+        "toastOff": "精靈模式已關閉"
       }
     },
     "common": {
@@ -4335,7 +4458,31 @@
       "toolSessionToNoteName": "Oturumu Nota Çevir",
       "toolSessionToNoteDesc": "Konuşmayı yapılandırılmış bir nota damıtır.",
       "toolKnowledgeRecallName": "Bilgi Çağırma",
-      "toolKnowledgeRecallDesc": "Belleği ve notları birlikte arar (iki sıralı bölüm)."
+      "toolKnowledgeRecallDesc": "Belleği ve notları birlikte arar (iki sıralı bölüm).",
+      "sprite": {
+        "title": "Peri / ilham modu",
+        "intro": "Düzenlediğiniz notu izleyen ve duraksadığınızda sohbet panelinde nazikçe öneride bulunabilen proaktif bir yoldaş. Her öneri sınırlı bir LLM çağrısıdır; hız sınırlıdır ve gizli oturumlarda asla çalışmaz.",
+        "idleEdit": "Düzenleme durduktan sonra konuş (sn)",
+        "idleEditDesc": "Devreye girmeden önce kaç saniye düzenleme durgunluğu.",
+        "minChange": "En az değişiklik (karakter)",
+        "minChangeDesc": "Yalnızca son seferden bu yana en az bu kadar yazdıktan sonra tepki verir.",
+        "cooldown": "Bekleme (sn)",
+        "cooldownDesc": "Öneriler arasındaki en az saniye.",
+        "maxPerHour": "Saatte en fazla",
+        "maxPerHourDesc": "Not başına saatlik LLM çağrı üst sınırı.",
+        "senses": "Perinin algıladıkları",
+        "sense": {
+          "doc": "Geçerli belge",
+          "edit": "Son düzenleme",
+          "conversation": "Sohbet",
+          "memory": "Bellek anımsama",
+          "awareness": "Oturumlar arası farkındalık"
+        },
+        "maxTokens": "Öneri başına maks. token",
+        "maxTokensDesc": "Her önerinin uzunluğu (maliyet) için üst sınır.",
+        "timeout": "Öneri zaman aşımı (sn)",
+        "timeoutDesc": "Bundan uzun süren bir öneriden vazgeç."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Bu ajan silindi",
@@ -4976,7 +5123,24 @@
         "generate": "Oluştur",
         "regenerate": "Yeniden oluştur",
         "apply": "Uygula",
-        "failed": "Yeniden yazma başarısız"
+        "failed": "Yeniden yazma başarısız",
+        "staleSelection": "Yeniden yazma sırasında seçim değişti — lütfen yeniden seçip tekrar deneyin."
+      },
+      "sprite": {
+        "toggle": "Peri modu",
+        "respond": "Yanıtla",
+        "dismiss": "Kapat",
+        "category": {
+          "writing": "Yazma",
+          "review": "Geri bildirim",
+          "encourage": "Teşvik",
+          "remind": "Hatırlatma",
+          "connect": "Bağlantı"
+        },
+        "tooltipDesc": "Bir notu düzenlerken duraksadığınızda peri; geçerli belgeyi, anılarınızı ve oturumlar arası farkındalığı birleştirip proaktif olarak yazma ipuçları, geri bildirim veya teşvik sunar. Açmak / kapatmak için tıklayın.",
+        "toastOn": "Peri modu açık",
+        "toastOnDesc": "Düzenlemeye ara verdiğinizde nazikçe bir öneride bulunur.",
+        "toastOff": "Peri modu kapalı"
       }
     },
     "common": {
@@ -5586,7 +5750,31 @@
       "toolSessionToNoteName": "Lưu hội thoại thành ghi chú",
       "toolSessionToNoteDesc": "Chắt lọc cuộc hội thoại thành một ghi chú có cấu trúc.",
       "toolKnowledgeRecallName": "Truy hồi tri thức",
-      "toolKnowledgeRecallDesc": "Tìm kiếm đồng thời bộ nhớ và ghi chú (hai phần xếp hạng riêng)."
+      "toolKnowledgeRecallDesc": "Tìm kiếm đồng thời bộ nhớ và ghi chú (hai phần xếp hạng riêng).",
+      "sprite": {
+        "title": "Chế độ tinh linh / cảm hứng",
+        "intro": "Một người bạn chủ động dõi theo ghi chú bạn đang soạn và khi bạn dừng lại, có thể nhẹ nhàng gợi ý trong bảng trò chuyện. Mỗi gợi ý là một lệnh gọi LLM giới hạn, có điều tiết và không bao giờ chạy trong phiên ẩn danh.",
+        "idleEdit": "Lên tiếng sau khi ngừng soạn (giây)",
+        "idleEditDesc": "Số giây ngừng soạn trước khi nó góp lời.",
+        "minChange": "Thay đổi tối thiểu (ký tự)",
+        "minChangeDesc": "Chỉ phản ứng sau khi bạn viết ít nhất bằng này kể từ lần trước.",
+        "cooldown": "Thời gian chờ (giây)",
+        "cooldownDesc": "Số giây tối thiểu giữa các gợi ý.",
+        "maxPerHour": "Tối đa mỗi giờ",
+        "maxPerHourDesc": "Giới hạn cứng số lệnh gọi LLM mỗi ghi chú mỗi giờ.",
+        "senses": "Tinh linh cảm nhận gì",
+        "sense": {
+          "doc": "Tài liệu hiện tại",
+          "edit": "Chỉnh sửa gần đây",
+          "conversation": "Hội thoại",
+          "memory": "Gợi nhớ ký ức",
+          "awareness": "Nhận thức xuyên phiên"
+        },
+        "maxTokens": "Token tối đa mỗi gợi ý",
+        "maxTokensDesc": "Giới hạn trên cho độ dài mỗi gợi ý (chi phí).",
+        "timeout": "Thời gian chờ gợi ý (giây)",
+        "timeoutDesc": "Bỏ qua gợi ý mất nhiều thời gian hơn mức này."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Agent này đã bị xoá",
@@ -6227,7 +6415,24 @@
         "generate": "Tạo",
         "regenerate": "Tạo lại",
         "apply": "Áp dụng",
-        "failed": "Viết lại thất bại"
+        "failed": "Viết lại thất bại",
+        "staleSelection": "Vùng chọn đã thay đổi khi đang viết lại — vui lòng chọn lại và thử lại."
+      },
+      "sprite": {
+        "toggle": "Chế độ tinh linh",
+        "respond": "Phản hồi",
+        "dismiss": "Bỏ qua",
+        "category": {
+          "writing": "Viết",
+          "review": "Phản hồi",
+          "encourage": "Động viên",
+          "remind": "Nhắc nhở",
+          "connect": "Liên kết"
+        },
+        "tooltipDesc": "Khi bạn dừng lại lúc soạn ghi chú, tinh linh kết hợp tài liệu hiện tại, ký ức của bạn và nhận thức xuyên phiên để chủ động đưa ra gợi ý viết, phản hồi hoặc lời động viên. Nhấp để bật / tắt.",
+        "toastOn": "Đã bật chế độ tinh linh",
+        "toastOnDesc": "Nó sẽ nhẹ nhàng gợi ý khi bạn tạm dừng soạn thảo.",
+        "toastOff": "Đã tắt chế độ tinh linh"
       }
     },
     "common": {
@@ -6837,7 +7042,31 @@
       "toolSessionToNoteName": "Conversa para Nota",
       "toolSessionToNoteDesc": "Destila a conversa em uma nota estruturada.",
       "toolKnowledgeRecallName": "Recuperar Conhecimento",
-      "toolKnowledgeRecallDesc": "Busca memória e notas em conjunto (duas seções classificadas)."
+      "toolKnowledgeRecallDesc": "Busca memória e notas em conjunto (duas seções classificadas).",
+      "sprite": {
+        "title": "Modo duende / inspiração",
+        "intro": "Um companheiro proativo que observa a nota que você edita e, quando você pausa, pode oferecer uma sugestão gentil no painel de chat. Cada sugestão é uma chamada limitada ao LLM, com limite de frequência, e nunca em sessões anônimas.",
+        "idleEdit": "Falar após pausa de edição (s)",
+        "idleEditDesc": "Segundos de inatividade de edição antes de intervir.",
+        "minChange": "Mudança mínima (caracteres)",
+        "minChangeDesc": "Só reage depois de você escrever pelo menos isso desde a última vez.",
+        "cooldown": "Tempo de espera (s)",
+        "cooldownDesc": "Segundos mínimos entre sugestões.",
+        "maxPerHour": "Máx. por hora",
+        "maxPerHourDesc": "Limite de chamadas ao LLM por nota a cada hora.",
+        "senses": "O que o duende percebe",
+        "sense": {
+          "doc": "Documento atual",
+          "edit": "Edição recente",
+          "conversation": "Conversa",
+          "memory": "Recordação de memória",
+          "awareness": "Percepção entre sessões"
+        },
+        "maxTokens": "Máx. de tokens por sugestão",
+        "maxTokensDesc": "Limite superior do tamanho de cada sugestão (custo).",
+        "timeout": "Tempo limite da sugestão (s)",
+        "timeoutDesc": "Desiste de uma sugestão que demore mais que isto."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Este agente foi excluído",
@@ -7478,7 +7707,24 @@
         "generate": "Gerar",
         "regenerate": "Regenerar",
         "apply": "Aplicar",
-        "failed": "Falha ao reescrever"
+        "failed": "Falha ao reescrever",
+        "staleSelection": "A seleção mudou durante a reescrita — selecione novamente e tente de novo."
+      },
+      "sprite": {
+        "toggle": "Modo duende",
+        "respond": "Responder",
+        "dismiss": "Dispensar",
+        "category": {
+          "writing": "Escrita",
+          "review": "Feedback",
+          "encourage": "Incentivo",
+          "remind": "Lembrete",
+          "connect": "Conexão"
+        },
+        "tooltipDesc": "Quando você faz uma pausa ao editar uma nota, o duende combina o documento atual, suas memórias e a percepção entre sessões para oferecer proativamente sugestões de escrita, feedback ou incentivo. Clique para ativar / desativar.",
+        "toastOn": "Modo duende ativado",
+        "toastOnDesc": "Ele intervém com uma sugestão gentil quando você faz uma pausa.",
+        "toastOff": "Modo duende desativado"
       }
     },
     "common": {
@@ -8088,7 +8334,31 @@
       "toolSessionToNoteName": "Диалог в заметку",
       "toolSessionToNoteDesc": "Извлечь из разговора структурированную заметку.",
       "toolKnowledgeRecallName": "Вызов знаний",
-      "toolKnowledgeRecallDesc": "Искать по памяти и заметкам сразу (два ранжированных раздела)."
+      "toolKnowledgeRecallDesc": "Искать по памяти и заметкам сразу (два ранжированных раздела).",
+      "sprite": {
+        "title": "Режим спрайта / вдохновения",
+        "intro": "Инициативный спутник, который следит за редактируемой заметкой и, когда вы делаете паузу, может мягко подсказать в панели чата. Каждая подсказка — это ограниченный вызов LLM, с троттлингом, и никогда в инкогнито-сессиях.",
+        "idleEdit": "Говорить после паузы (с)",
+        "idleEditDesc": "Сколько секунд бездействия редактирования до вмешательства.",
+        "minChange": "Мин. изменение (символов)",
+        "minChangeDesc": "Реагирует только после того, как вы написали хотя бы столько с прошлого раза.",
+        "cooldown": "Перезарядка (с)",
+        "cooldownDesc": "Минимум секунд между подсказками.",
+        "maxPerHour": "Макс. в час",
+        "maxPerHourDesc": "Предел вызовов LLM на заметку в час.",
+        "senses": "Что воспринимает спрайт",
+        "sense": {
+          "doc": "Текущий документ",
+          "edit": "Недавняя правка",
+          "conversation": "Разговор",
+          "memory": "Воспоминание",
+          "awareness": "Меж-сессионное восприятие"
+        },
+        "maxTokens": "Макс. токенов на подсказку",
+        "maxTokensDesc": "Верхняя граница длины каждой подсказки (стоимость).",
+        "timeout": "Тайм-аут подсказки (с)",
+        "timeoutDesc": "Прекращать подсказку, которая длится дольше этого."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Этот агент был удалён",
@@ -8729,7 +8999,24 @@
         "generate": "Сгенерировать",
         "regenerate": "Сгенерировать заново",
         "apply": "Применить",
-        "failed": "Не удалось переписать"
+        "failed": "Не удалось переписать",
+        "staleSelection": "Выделение сместилось во время переписывания — выделите заново и повторите."
+      },
+      "sprite": {
+        "toggle": "Режим спрайта",
+        "respond": "Ответить",
+        "dismiss": "Закрыть",
+        "category": {
+          "writing": "Письмо",
+          "review": "Отзыв",
+          "encourage": "Поддержка",
+          "remind": "Напоминание",
+          "connect": "Связь"
+        },
+        "tooltipDesc": "Когда вы делаете паузу при редактировании заметки, спрайт объединяет текущий документ, ваши воспоминания и меж-сессионное восприятие, чтобы инициативно предложить совет по письму, отзыв или поддержку. Нажмите, чтобы включить / выключить.",
+        "toastOn": "Режим спрайта включён",
+        "toastOnDesc": "Он мягко подскажет, когда вы остановитесь.",
+        "toastOff": "Режим спрайта выключен"
       }
     },
     "common": {
@@ -9339,7 +9626,31 @@
       "toolSessionToNoteName": "الجلسة إلى ملاحظة",
       "toolSessionToNoteDesc": "تقطير المحادثة إلى ملاحظة منظّمة.",
       "toolKnowledgeRecallName": "استرجاع المعرفة",
-      "toolKnowledgeRecallDesc": "بحث في الذاكرة والملاحظات معًا (قسمان مرتّبان)."
+      "toolKnowledgeRecallDesc": "بحث في الذاكرة والملاحظات معًا (قسمان مرتّبان).",
+      "sprite": {
+        "title": "وضع العفريت / الإلهام",
+        "intro": "رفيق استباقي يراقب الملاحظة التي تحررها، وعندما تتوقف قد يقدم اقتراحًا لطيفًا في لوحة الدردشة. كل اقتراح هو استدعاء محدود للنموذج، مع تقييد للمعدل، ولا يعمل أبدًا في الجلسات الخفية.",
+        "idleEdit": "التحدث بعد توقف التحرير (ثانية)",
+        "idleEditDesc": "عدد الثواني من توقف التحرير قبل أن يتدخل.",
+        "minChange": "أدنى تغيير (أحرف)",
+        "minChangeDesc": "لا يتفاعل إلا بعد كتابتك لهذا القدر على الأقل منذ المرة السابقة.",
+        "cooldown": "فترة التهدئة (ثانية)",
+        "cooldownDesc": "أدنى عدد ثوانٍ بين الاقتراحات.",
+        "maxPerHour": "الحد الأقصى في الساعة",
+        "maxPerHourDesc": "حد أقصى لاستدعاءات النموذج لكل ملاحظة في الساعة.",
+        "senses": "ما يستشعره العفريت",
+        "sense": {
+          "doc": "المستند الحالي",
+          "edit": "آخر تعديل",
+          "conversation": "المحادثة",
+          "memory": "استرجاع الذاكرة",
+          "awareness": "الإدراك عبر الجلسات"
+        },
+        "maxTokens": "الحد الأقصى للرموز لكل اقتراح",
+        "maxTokensDesc": "الحد الأعلى لطول كل اقتراح (التكلفة).",
+        "timeout": "مهلة الاقتراح (ثانية)",
+        "timeoutDesc": "التخلي عن أي اقتراح يستغرق وقتًا أطول من ذلك."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "تم حذف هذا العميل",
@@ -9980,7 +10291,24 @@
         "generate": "إنشاء",
         "regenerate": "إعادة الإنشاء",
         "apply": "تطبيق",
-        "failed": "فشلت إعادة الصياغة"
+        "failed": "فشلت إعادة الصياغة",
+        "staleSelection": "تغيّر التحديد أثناء إعادة الكتابة — يرجى إعادة التحديد والمحاولة مرة أخرى."
+      },
+      "sprite": {
+        "toggle": "وضع العفريت",
+        "respond": "رد",
+        "dismiss": "إغلاق",
+        "category": {
+          "writing": "كتابة",
+          "review": "ملاحظات",
+          "encourage": "تشجيع",
+          "remind": "تذكير",
+          "connect": "ربط"
+        },
+        "tooltipDesc": "عندما تتوقف أثناء تحرير ملاحظة، يمزج العفريت المستند الحالي وذكرياتك وإدراكه عبر الجلسات ليقدم بشكل استباقي اقتراحات للكتابة أو ملاحظات أو تشجيعًا. انقر للتشغيل / الإيقاف.",
+        "toastOn": "تم تشغيل وضع العفريت",
+        "toastOnDesc": "سيتدخل باقتراح لطيف عندما تتوقف عن التحرير.",
+        "toastOff": "تم إيقاف وضع العفريت"
       }
     },
     "common": {
@@ -10590,7 +10918,31 @@
       "toolSessionToNoteName": "Sesión a nota",
       "toolSessionToNoteDesc": "Destila la conversación en una nota estructurada.",
       "toolKnowledgeRecallName": "Recuperar conocimiento",
-      "toolKnowledgeRecallDesc": "Busca en memoria y notas a la vez (dos secciones ordenadas)."
+      "toolKnowledgeRecallDesc": "Busca en memoria y notas a la vez (dos secciones ordenadas).",
+      "sprite": {
+        "title": "Modo duende / inspiración",
+        "intro": "Un compañero proactivo que observa la nota que editas y, cuando haces una pausa, puede ofrecer una sugerencia suave en el panel de chat. Cada sugerencia es una llamada acotada al LLM, con límite de frecuencia, y nunca en sesiones de incógnito.",
+        "idleEdit": "Hablar tras pausa de edición (s)",
+        "idleEditDesc": "Segundos de inactividad de edición antes de intervenir.",
+        "minChange": "Cambio mínimo (caracteres)",
+        "minChangeDesc": "Solo reacciona tras escribir al menos esto desde la última vez.",
+        "cooldown": "Enfriamiento (s)",
+        "cooldownDesc": "Segundos mínimos entre sugerencias.",
+        "maxPerHour": "Máx. por hora",
+        "maxPerHourDesc": "Límite de llamadas al LLM por nota cada hora.",
+        "senses": "Qué percibe el duende",
+        "sense": {
+          "doc": "Documento actual",
+          "edit": "Edición reciente",
+          "conversation": "Conversación",
+          "memory": "Recuerdo de memoria",
+          "awareness": "Conciencia entre sesiones"
+        },
+        "maxTokens": "Máx. de tokens por sugerencia",
+        "maxTokensDesc": "Límite superior de la longitud de cada sugerencia (coste).",
+        "timeout": "Tiempo de espera de sugerencia (s)",
+        "timeoutDesc": "Abandona una sugerencia que tarde más que esto."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Este agente ha sido eliminado",
@@ -11231,7 +11583,24 @@
         "generate": "Generar",
         "regenerate": "Regenerar",
         "apply": "Aplicar",
-        "failed": "Error al reescribir"
+        "failed": "Error al reescribir",
+        "staleSelection": "La selección cambió durante la reescritura: vuelve a seleccionar e inténtalo de nuevo."
+      },
+      "sprite": {
+        "toggle": "Modo duende",
+        "respond": "Responder",
+        "dismiss": "Descartar",
+        "category": {
+          "writing": "Escritura",
+          "review": "Comentarios",
+          "encourage": "Ánimo",
+          "remind": "Recordatorio",
+          "connect": "Conexión"
+        },
+        "tooltipDesc": "Cuando haces una pausa al editar una nota, el duende combina el documento actual, tus recuerdos y la conciencia entre sesiones para ofrecer de forma proactiva sugerencias de escritura, comentarios o ánimo. Haz clic para activar / desactivar.",
+        "toastOn": "Modo duende activado",
+        "toastOnDesc": "Intervendrá con una sugerencia suave cuando hagas una pausa.",
+        "toastOff": "Modo duende desactivado"
       }
     },
     "common": {
@@ -11841,7 +12210,31 @@
       "toolSessionToNoteName": "Sesi ke Nota",
       "toolSessionToNoteDesc": "Saring perbualan menjadi nota berstruktur.",
       "toolKnowledgeRecallName": "Imbas Kembali Pengetahuan",
-      "toolKnowledgeRecallDesc": "Cari memori dan nota serentak (dua bahagian berperingkat)."
+      "toolKnowledgeRecallDesc": "Cari memori dan nota serentak (dua bahagian berperingkat).",
+      "sprite": {
+        "title": "Mod sprite / inspirasi",
+        "intro": "Teman proaktif yang memerhati nota yang anda sunting dan, apabila anda berhenti seketika, mungkin menawarkan cadangan lembut di panel sembang. Setiap cadangan ialah panggilan LLM terhad, dikawal kadar, dan tidak pernah dalam sesi inkognito.",
+        "idleEdit": "Bercakap selepas berhenti menyunting (s)",
+        "idleEditDesc": "Saat tidak menyunting sebelum ia mencelah.",
+        "minChange": "Perubahan minimum (aksara)",
+        "minChangeDesc": "Hanya bertindak selepas anda menulis sekurang-kurangnya sebanyak ini sejak kali terakhir.",
+        "cooldown": "Tempoh rehat (s)",
+        "cooldownDesc": "Saat minimum antara cadangan.",
+        "maxPerHour": "Maksimum sejam",
+        "maxPerHourDesc": "Had panggilan LLM setiap nota setiap jam.",
+        "senses": "Apa yang dirasai sprite",
+        "sense": {
+          "doc": "Dokumen semasa",
+          "edit": "Suntingan terkini",
+          "conversation": "Perbualan",
+          "memory": "Imbasan memori",
+          "awareness": "Kesedaran merentas sesi"
+        },
+        "maxTokens": "Token maksimum setiap cadangan",
+        "maxTokensDesc": "Had atas panjang setiap cadangan (kos).",
+        "timeout": "Tamat masa cadangan (s)",
+        "timeoutDesc": "Berhenti pada cadangan yang mengambil masa lebih lama daripada ini."
+      }
     },
     "subagent": {
       "deletedAgentTooltip": "Agen ini telah dipadam",
@@ -12482,7 +12875,24 @@
         "generate": "Jana",
         "regenerate": "Jana semula",
         "apply": "Guna",
-        "failed": "Gagal menulis semula"
+        "failed": "Gagal menulis semula",
+        "staleSelection": "Pilihan berubah semasa menulis semula — sila pilih semula dan cuba lagi."
+      },
+      "sprite": {
+        "toggle": "Mod sprite",
+        "respond": "Balas",
+        "dismiss": "Tolak",
+        "category": {
+          "writing": "Penulisan",
+          "review": "Maklum balas",
+          "encourage": "Galakan",
+          "remind": "Peringatan",
+          "connect": "Sambungan"
+        },
+        "tooltipDesc": "Apabila anda berhenti seketika semasa menyunting nota, sprite menggabungkan dokumen semasa, ingatan anda dan kesedaran merentas sesi untuk menawarkan petua penulisan, maklum balas atau galakan secara proaktif. Klik untuk hidup / mati.",
+        "toastOn": "Mod sprite dihidupkan",
+        "toastOnDesc": "Ia akan mencelah dengan cadangan lembut apabila anda berhenti seketika.",
+        "toastOff": "Mod sprite dimatikan"
       }
     },
     "common": {

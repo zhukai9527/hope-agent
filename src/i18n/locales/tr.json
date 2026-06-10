@@ -4364,6 +4364,30 @@
         "memoryToNote": "Bellek → not"
       }
     },
+    "sprite": {
+      "title": "Peri / ilham modu",
+      "intro": "Düzenlediğiniz notu izleyen ve duraksadığınızda sohbet panelinde nazikçe öneride bulunabilen proaktif bir yoldaş. Her öneri sınırlı bir LLM çağrısıdır; hız sınırlıdır ve gizli oturumlarda asla çalışmaz.",
+      "idleEdit": "Düzenleme durduktan sonra konuş (sn)",
+      "idleEditDesc": "Devreye girmeden önce kaç saniye düzenleme durgunluğu.",
+      "minChange": "En az değişiklik (karakter)",
+      "minChangeDesc": "Yalnızca son seferden bu yana en az bu kadar yazdıktan sonra tepki verir.",
+      "cooldown": "Bekleme (sn)",
+      "cooldownDesc": "Öneriler arasındaki en az saniye.",
+      "maxPerHour": "Saatte en fazla",
+      "maxPerHourDesc": "Not başına saatlik LLM çağrı üst sınırı.",
+      "maxTokens": "Öneri başına maks. token",
+      "maxTokensDesc": "Her önerinin uzunluğu (maliyet) için üst sınır.",
+      "timeout": "Öneri zaman aşımı (sn)",
+      "timeoutDesc": "Bundan uzun süren bir öneriden vazgeç.",
+      "senses": "Perinin algıladıkları",
+      "sense": {
+        "doc": "Geçerli belge",
+        "edit": "Son düzenleme",
+        "conversation": "Sohbet",
+        "memory": "Bellek anımsama",
+        "awareness": "Oturumlar arası farkındalık"
+      }
+    },
     "toolNoteCreateName": "Not Oluştur",
     "toolNoteCreateDesc": "Bir bilgi alanında yeni bir markdown notu oluşturur.",
     "toolNoteReadName": "Notu Oku",
@@ -4992,7 +5016,7 @@
     "outline": "Anahat",
     "outlineEmpty": "Başlık yok",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "AI sohbete ekle",
       "newConversation": "Yeni sohbet",
       "history": "Sohbet geçmişi",
@@ -5009,7 +5033,24 @@
       "generate": "Oluştur",
       "regenerate": "Yeniden oluştur",
       "apply": "Uygula",
-      "failed": "Yeniden yazma başarısız"
+      "failed": "Yeniden yazma başarısız",
+      "staleSelection": "Yeniden yazma sırasında seçim değişti — lütfen yeniden seçip tekrar deneyin."
+    },
+    "sprite": {
+      "toggle": "Peri modu",
+      "tooltipDesc": "Bir notu düzenlerken duraksadığınızda peri; geçerli belgeyi, anılarınızı ve oturumlar arası farkındalığı birleştirip proaktif olarak yazma ipuçları, geri bildirim veya teşvik sunar. Açmak / kapatmak için tıklayın.",
+      "toastOn": "Peri modu açık",
+      "toastOnDesc": "Düzenlemeye ara verdiğinizde nazikçe bir öneride bulunur.",
+      "toastOff": "Peri modu kapalı",
+      "respond": "Yanıtla",
+      "dismiss": "Kapat",
+      "category": {
+        "writing": "Yazma",
+        "review": "Geri bildirim",
+        "encourage": "Teşvik",
+        "remind": "Hatırlatma",
+        "connect": "Bağlantı"
+      }
     },
     "deleteNoteTitle": "Notu sil",
     "deleteNoteBody": "\"{{name}}\" silinsin mi? Markdown dosyası diskten kaldırılacak. Bu işlem geri alınamaz.",

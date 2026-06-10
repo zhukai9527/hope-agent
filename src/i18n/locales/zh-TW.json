@@ -4364,6 +4364,30 @@
         "memoryToNote": "記憶轉筆記"
       }
     },
+    "sprite": {
+      "title": "精靈 / 靈感模式",
+      "intro": "一個有主動性的陪伴助手：你編輯筆記停手片刻時，它可能在對話面板裡輕聲給一句建議。每條建議都是一次受限的 LLM 呼叫——已做節流，且無痕會話中絕不觸發。",
+      "idleEdit": "停手多久後開口（秒）",
+      "idleEditDesc": "停止編輯多少秒後才可能開口。",
+      "minChange": "最小變動量（字元）",
+      "minChangeDesc": "距上次至少寫了這麼多字才會反應。",
+      "cooldown": "冷卻（秒）",
+      "cooldownDesc": "兩次建議之間的最小間隔。",
+      "maxPerHour": "每小時上限",
+      "maxPerHourDesc": "每篇筆記每小時 LLM 呼叫的硬上限。",
+      "maxTokens": "每條建議的最大 token",
+      "maxTokensDesc": "每條建議長度的上限（控制成本）。",
+      "timeout": "建議逾時（秒）",
+      "timeoutDesc": "超過此時長仍未生成則放棄本次建議。",
+      "senses": "精靈的感知來源",
+      "sense": {
+        "doc": "目前文件",
+        "edit": "最近編輯",
+        "conversation": "對話上下文",
+        "memory": "記憶召回",
+        "awareness": "跨會話感知"
+      }
+    },
     "toolNoteCreateName": "新增筆記",
     "toolNoteCreateDesc": "在知識空間新增一篇 markdown 筆記。",
     "toolNoteReadName": "讀取筆記",
@@ -4992,7 +5016,7 @@
     "outline": "大綱",
     "outlineEmpty": "無標題",
     "chatPanel": {
-        "tab": "AI Agent",
+      "tab": "AI Agent",
       "addToChat": "加入 AI 對話",
       "newConversation": "新增對話",
       "history": "歷史對話",
@@ -5009,7 +5033,24 @@
       "generate": "生成",
       "regenerate": "重新生成",
       "apply": "套用",
-      "failed": "改寫失敗"
+      "failed": "改寫失敗",
+      "staleSelection": "改寫期間選區已變動 —— 請重新選擇後再試。"
+    },
+    "sprite": {
+      "toggle": "精靈模式",
+      "tooltipDesc": "編輯筆記停手片刻時，精靈會結合目前文件、你的記憶與跨會話感知，主動給出寫作建議、回饋或鼓勵。點擊開啟 / 關閉。",
+      "toastOn": "精靈模式已開啟",
+      "toastOnDesc": "停筆片刻時，它會輕聲給你一句建議。",
+      "toastOff": "精靈模式已關閉",
+      "respond": "回應",
+      "dismiss": "關閉",
+      "category": {
+        "writing": "寫作",
+        "review": "回饋",
+        "encourage": "鼓勵",
+        "remind": "提醒",
+        "connect": "關聯"
+      }
     },
     "deleteNoteTitle": "刪除筆記",
     "deleteNoteBody": "要刪除「{{name}}」嗎？Markdown 檔案會從磁碟移除。此操作無法復原。",

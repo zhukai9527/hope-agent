@@ -65,8 +65,32 @@ pub fn delete_kb_cascade(kb_id: &str) -> Result<bool> {
         return Ok(false);
     };
 
+    // Collect the bound knowledge chat sessions BEFORE deleting the KB (which
+    // cascade-removes their thread rows). These `kind=knowledge` sessions are
+    // hidden from the main list / pickers / FTS, so without explicit teardown
+    // they'd become unreachable zombies (+ leaked plan/attachment files).
+    let thread_sessions = registry.chat_thread_session_ids(kb_id).unwrap_or_default();
+
     // Step 1: registry rows (KB + attach) in one transaction.
     registry.delete(kb_id)?;
+
+    // Step 1b: tear down the bound knowledge sessions (messages via CASCADE +
+    // plan/attachment files on disk). Best-effort, mirrors the rest of cascade.
+    if !thread_sessions.is_empty() {
+        if let Some(db) = crate::get_session_db() {
+            for sid in &thread_sessions {
+                if let Err(e) = db.delete_session(sid) {
+                    crate::app_warn!(
+                        "knowledge",
+                        "delete",
+                        "delete kb thread session {} failed: {}",
+                        sid,
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     // Step 2: index cache rows (separate DB, best-effort).
     if let Some(index) = index::get_index_db() {

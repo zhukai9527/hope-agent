@@ -196,6 +196,24 @@ agent 在对话中直接调用，覆盖 CRUD / 链接图谱 / 检索 / 元数据
 
 **原生大纲只读视图（D8 可选层）**：`NoteEditorMode` 第 5 模式 `outline`，`outline.ts::buildOutline` 纯派生标题树（不改 `.md`）→ `OutlineView` 可折叠只读渲染，点标题经 `onOutlineJump` 切回 `source` 再 `setRevealTarget`。**红线：只读、永不替代 CM6 底座 / 不破坏性转写**。
 
+## 精灵 / 灵感模式（Phase 2，`sprite/`）
+
+知识空间专属的**主动型**陪伴助手：用户编辑笔记停手片刻时，精灵主动在对话面板冒出一个**瞬态气泡**——写作建议 / 反馈 / 关联 / 提醒 / 情绪价值。默认全关（`AppConfig.sprite.enabled`）。
+
+**架构（与 dreaming/maintenance 的关键差异）**：精灵反应的是「用户当前正在编辑的那篇文档」，而当前文档**只有前端知道**。因此精灵**不是**后台 app-idle 轮询循环，而是 **前端编辑空闲触发 → `kb_sprite_observe_cmd`（owner 命令，fire-and-forget spawn）→ `sprite::observe_and_maybe_speak`（节流 + side_query + emit）→ `sprite:suggestion` EventBus 事件 → 前端 `SpriteBubble`**。只复用 dreaming/maintenance 的 `SPRITE_RUNNING` 串行锁 + `side_query` 范式，**无 cron loop / idle ticker / app_init 接线**。
+
+**触发（前端 `useKnowledgeSprite`）**：`KnowledgeView` 的 `NoteEditor.onChange`（只在用户真编辑时触发，非外部载入）bump `editorRevision` → 传给 `KnowledgeChatPanel` → hook 按 `idleEditSecs`(默认 8) debounce；触发时 `getEditorValue()` 取正文、对比上次观测算粗 diff（首尾公共串取中段）；`changed ≥ minChangeChars`(默认 80) 且 `enabled` 开 → POST `kb_sprite_observe_cmd`。**开关在对话栏**：面板顶 ✨ 按钮直接翻 `SpriteConfig.enabled`（`setEnabled` 乐观更新 + `sprite_config_set_cmd` 持久化 + 监听 `config:changed` 回流），不再有 localStorage 的 per-note 开关。
+
+**节流（后端三层，闸在 LLM 之前）**：`SPRITE_RUNNING` CAS 串行锁（同一时刻仅一次观测，跨 side_query 持锁）+ 每 key（`session_id` 否则 `note_path`）`cooldown_secs`(默认 45) + 文档 hash 去重（同文档不重复调用）+ `max_per_session_per_hour`(默认 12)。任一不过直接 `Skipped`，不发 LLM。
+
+**上下文融合（`context::build_instruction`，各 `senses.*` 开关）**：内置英文 persona(`context.rs::PERSONA`，**不外露配置**) + 当前文档(截断) + 最近编辑 + 对话上下文(前端送最近 6 条) + 记忆召回(`active_memory::shortlist_candidates`，scope = Agent + 可选 Global) + 跨会话感知(`awareness::collect::collect_entries`)，各段 `truncate_utf8` 预算裁剪。整条指令为英文、要求模型用文档语言作答。`build_analysis_agent` 的 `side_query`（**不复用主对话 cache**，bounded）→ 解析 `{category,text}`，`none`/空 = 沉默不发。`category ∈ writing|review|encourage|remind|connect`。
+
+**incognito 零精灵（两道关卡）**：后端 `observe_and_maybe_speak` 首行 `is_session_incognito` 短路（零召回 / 零 side_query / 零 emit）；前端 incognito 同样不触发（知识会话本就非 incognito，防御性）。
+
+**呈现**：`SpriteBubble` 渲染于 `MessageList` 与 composer 之间（柔光 + Agent 头像 + 分类角标），**瞬态、不进对话历史**；「回应」把建议塞进输入框顺势聊；新建议替换旧、发消息清空。前端按 `notePath`(+`sessionId`) 过滤 `sprite:suggestion`。
+
+**配置**：`SpriteConfig`(`config.rs`，`clamped()` 钳值，**无 persona 字段**) 挂 `AppConfig.sprite`；设置三件套 = `SpriteSection` GUI（设置 → 知识空间，**只放调参不放 enabled**；保存时 merge 最新 `enabled` 防覆盖对话栏开关）+ `tools/settings.rs` 的 `sprite` 分支（MEDIUM）+ `ha-settings/SKILL.md`。owner 命令 `sprite_config_{get,set}_cmd`（GUI + 对话栏开关）+ `kb_sprite_observe_cmd`（触发），**均非 agent 工具**。
+
 ## 自主维护（Layer 2，`knowledge/maintenance/`）
 
 模块 [`knowledge/maintenance/`](../../crates/ha-core/src/knowledge/maintenance/)（零 Tauri），镜像 `memory/dreaming`：后台周期扫描每个**内部** KB（外部只读 root 跳过），产出**维护提案**进 draft 审阅队列；用户在维护面板确认前绝不动笔记。**默认全关**（`AppConfig.knowledge_maintenance`）。
