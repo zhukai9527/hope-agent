@@ -153,6 +153,18 @@ agent 在对话中直接调用，覆盖 CRUD / 链接图谱 / 检索 / 元数据
 
 **读取桥③ —— 被动相关笔记**（[`agent/related_notes.rs`](../../crates/ha-core/src/agent/related_notes.rs)，D7，opt-in 默认关）：`AppConfig.knowledge_passive_recall`。每个用户轮在 `tokio::join!` 里与 awareness / active_memory 并发跑 `refresh_related_notes_suffix`：incognito short-circuit → 读 clamp 后 config → `hash(user_text)` TtlCache（默认 120s）→ `spawn_blocking` 内从 agent 线接的 `chat_source / origin_chat_source / channel_kb_context` 重建 `KnowledgeAccessContext` → `effective_kb_access` 拿可访问 KB → `search::search_notes` 取 top-N → 渲染「## Related Notes」**只给标题**（`show_snippet` 可开一行摘要）套 `<untrusted_external_data>` 信封。**无 LLM 调用**（比 active_memory 廉价）。结果写 `agent.related_notes_suffix` slot，四 Provider adapter 注入：**Anthropic 走 plain system block（无 `cache_control`——4 个 breakpoint 已被 prefix / awareness / active_memory / last-tool 占满，加第 5 个会 400）**；OpenAI* / Codex 加独立 system message。红线：注入即 untrusted / incognito 零被动召回 / IM 未 opt-in 零访问（access 链同 `note_*`）/ 只给标题（正文走通道①②）。
 
+## 写盘 / 坐标 / 解析 / 布局契约
+
+AGENTS.md 只列这些为单行红线，细节在此。
+
+- **写盘原子化**：所有笔记写经底层 `project_write_text` → [`crate::platform::write_atomic`](../../crates/ha-core/src/platform/mod.rs)（同目录 temp → fsync → 原子 rename，跨平台 rename / 权限处理集中在 `platform/`，与 `write_secure_file` 共用 `write_replace` 核心），崩溃 / 断电不留截断文件，外部库尤其受益。新文件落 0644 / 改写保留原权限（Unix），Windows 走 remove-dest 再 rename。**禁止回退到 `fs::write` 直写笔记**。
+- **stale-write guard 真相源**：`expected_file_hash` 比**磁盘当前 raw BLAKE3**（`mod.rs::blake3_hex`，over raw bytes，不归一化换行），**不比 `note.content_hash`**（索引缓存）。`note_patch` 走 `old/new` 唯一文本命中（0 / 多次都拒）。
+- **坐标系契约（D14）**：持久 offset = 码点偏移；跨端定位 = `line`（1-based）+ `col`（0-based 码点列，tab=1），相对原始全文（含 frontmatter / 原 CRLF），`PosMap` 算；`note_patch` 不用坐标寻址。
+- **resolve 确定性（#8）**：`resolver::resolve` 路径式 > 唯一 basename > 最短路径再字典序，NFC + 大小写不敏感、**不用 mtime**；任何 note add / delete 后 `reresolve_kb_links` 全 KB 重解析（broken ↔ resolved 翻转）。
+- **chunk 参数（D12，GUI-only）**：`AppConfig.knowledge_chunk: ChunkConfig`（`max_chars` / `overlap_chars`，server 端 `clamped()` 钳 `[200,8000]` / `[0,max/2]`）；owner 命令 `knowledge_chunk_{get,set}_cmd`，set 触发全 KB 重切（向量开 → 重嵌、关 → FTS-only，不 stamp signature）。与 `knowledge_embedding` 同因重 reindex 副作用 **不进 `ha-settings`**。
+- **embedding 独立 selector（D7）**：知识空间有自己的 `AppConfig.knowledge_embedding`（独立 enable / model / signature / reembed），与 `memory_embedding` 物理隔离、**不寄生不回退**；共享 `embedding_models` 命名库 + `create_embedding_provider` 工厂；切模型走 `knowledge_embedding_{get,set_default,disable}`（后台 `KnowledgeReembed` 全 KB reindex）。GUI-only 同上。
+- **图谱布局持久化（Batch J）**：拖节点钉住（`fx/fy`）整体存 `sessions.db.kb_graph_layout`（按 `rel_path` 键不用 index.db id——id 随重建漂移；D9 真相源，`ON DELETE CASCADE` 随 KB 删）。owner 平面 `kb_graph_layout_{get,save}_cmd`（save body `{positions:[{relPath,x,y}]}` 整体替换、空数组 = 重置），不经 `effective_kb_access`、无 agent 工具。
+
 ## 会话感知注入与来源（Phase 3 UX）
 
 **会话侧 KB 访问单一入口**：`Agent::resolve_kb_access()`（[`agent/mod.rs`](../../crates/ha-core/src/agent/mod.rs)）是 agent 侧「本会话能碰哪些 KB」的唯一同步入口——复刻 `chat_source / origin_chat_source / channel_kb_context` + WS8 fail-closed（未线接 source 但 IM-bound 会话重分类为 IM）+ project_id 查询 + `effective_kb_access`，返回 `HashMap<kb_id, KbAccess>`（与 `note.rs::access_map` 同集；incognito / IM-opt-in / archived / external-cap 全应用）。`refresh_related_notes_suffix`（桥③）、no-KB 工具门控、`# Knowledge Bases` 系统提示段三处共用它，**不得各自重写解析链**。结果**按回合 memoize**（`AssistantAgent.kb_access_cache`，在 `reset_chat_flags` 回合起点 + `set_session_id` 重绑时失效），故一回合内 ~5 次调用塌成单次 SQLite 解析。**只服务 schema/prompt/召回——绝不据此 gate 工具执行**（执行边界 `note.rs::access_map` 始终 live，回合中途撤权仍即时拦截真实读写）。

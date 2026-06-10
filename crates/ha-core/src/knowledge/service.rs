@@ -946,6 +946,7 @@ fn welcome_note() -> (String, String) {
     let loc = seed_locale();
     let content = if loc.starts_with("zh") {
         "# 欢迎使用知识空间\n\n\
+         > 你的第二大脑——你手写笔记,AI 作为第一公民和你一起读写、检索、织网。\n\n\
          这是你的第一个知识空间。在这里用 Markdown 记笔记,并用 `[[双链]]` 把它们连接成网络。\n\n\
          ## 试试看\n\n\
          - 新建一篇笔记,记录一个想法\n\
@@ -954,6 +955,7 @@ fn welcome_note() -> (String, String) {
          随时可以重命名或删除这个知识空间。\n"
     } else {
         "# Welcome to your knowledge space\n\n\
+         > Your second brain — you write the notes; the AI reads, writes, searches, and links right alongside you.\n\n\
          This is your first knowledge space. Capture notes in Markdown and connect them \
          into a network with `[[wikilinks]]`.\n\n\
          ## Try it\n\n\
