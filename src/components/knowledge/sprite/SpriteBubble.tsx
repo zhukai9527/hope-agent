@@ -52,7 +52,7 @@ export default function SpriteBubble({
             >
               {t(`knowledge.sprite.category.${cat}`, cat)}
             </span>
-            <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground/90">
+            <p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground/90">
               {suggestion.text}
             </p>
             <button

@@ -321,8 +321,11 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="relative min-h-0 flex-1">
+        {/* Messages — must be a flex column so MessageList (its root is
+            `flex-1 … overflow-hidden`) is height-bounded and scrolls internally
+            instead of growing to full content height and overflowing down over
+            the sprite bubble + composer. */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <MessageList
             messages={session.messages}
             loading={session.loading}

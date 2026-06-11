@@ -43,6 +43,12 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -109,6 +115,9 @@ const KB_RIGHT_MIN_WIDTH = 220
 const KB_RIGHT_MAX_WIDTH = 480
 const KB_CONTENT_MIN_WIDTH = 360 // min usable editor column
 const KB_SPLIT_MIN_WIDTH = 680 // editor area needs this for two side-by-side panes
+// Below this editor-column width the crowded note toolbar can't fit the 5-button
+// mode segmented control, so it collapses to a compact dropdown.
+const KB_TOOLBAR_COMPACT_WIDTH = 560
 const KB_LEFT_AUTO_COLLAPSE_GUTTER = 120
 const KB_RESPONSIVE_HYSTERESIS = 120 // gap between collapse-at and expand-at (anti-flap)
 // Collapse animation (must match the chat sidebar / RightPanelShell exactly).
@@ -369,11 +378,16 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
   // re-credits the freed space, with no breakpoint feedback loop. Not observed in
   // graph mode (the editor pane isn't mounted), so it can't mutate mode then.
   const centerRef = useRef<HTMLDivElement | null>(null)
+  // Collapse the note toolbar's mode switch to a dropdown once the editor column
+  // is too narrow for the 5-button segmented control. setState bails on an equal
+  // value, so this only re-renders when crossing the threshold (no flap).
+  const [compactToolbar, setCompactToolbar] = useState(false)
   useEffect(() => {
     const el = centerRef.current
     if (!el || typeof ResizeObserver === "undefined") return
     const evaluate = (width: number) => {
       if (width <= 0) return
+      setCompactToolbar(width < KB_TOOLBAR_COMPACT_WIDTH)
       if (width < KB_SPLIT_MIN_WIDTH) {
         if (mode === "split" && !userModeOverrideRef.current) {
           autoSwitchedToLiveRef.current = true
@@ -1691,7 +1705,11 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
 
   // ── Render ──
   return (
-    <div className="flex flex-1 min-h-0 flex-col bg-background">
+    // `min-w-0`: this is a flex item in the app body's flex row (which is
+    // `overflow-hidden`). Without it the root won't shrink below its content's
+    // min-content (the editor's 360px floor + panes), so it overflows and the
+    // body hard-clips the right pane off-screen instead of the panes compressing.
+    <div className="flex flex-1 min-h-0 min-w-0 flex-col bg-background">
       {/* Header */}
       <div
         className="flex items-center gap-2 border-b border-border-soft/60 px-3 py-2"
@@ -1841,15 +1859,19 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
         {/* Left: KB list + notes — collapsible + resizable (mirrors chat) */}
         <div
           style={{ width: leftCollapsed ? 0 : leftWidth }}
-          className={cn("relative h-full shrink-0", !isResizingLeft && PANE_WIDTH_TRANSITION)}
+          className={cn("relative h-full min-w-0", !isResizingLeft && PANE_WIDTH_TRANSITION)}
         >
           <div className="h-full overflow-hidden">
             <div
-              style={{ width: leftWidth }}
+              // `width` is the preferred size; `maxWidth: 100%` lets the content
+              // reflow/compress (note rows truncate) when the row can't grant the
+              // full pane width (narrow window) instead of being hard-clipped by
+              // the overflow. Mirrors the right pane.
+              style={{ width: leftWidth, maxWidth: "100%" }}
               aria-hidden={leftCollapsed}
               inert={leftCollapsed ? true : undefined}
               className={cn(
-                "flex h-full flex-col border-r border-border-soft/60",
+                "flex h-full min-w-0 flex-col border-r border-border-soft/60",
                 PANE_SURFACE_TRANSITION,
                 leftCollapsed
                   ? "pointer-events-none -translate-x-4 opacity-0"
@@ -2080,7 +2102,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                   }}
                   className="h-7 flex-1 border-0 bg-transparent px-1 text-sm font-medium shadow-none focus-visible:ring-0"
                 />
-                <ModeSwitch mode={mode} onChange={handleModeChange} />
+                <ModeSwitch mode={mode} onChange={handleModeChange} compact={compactToolbar} />
                 <Button variant="outline" size="sm" className="h-7" disabled={saving} onClick={saveDraft}>
                   {saving ? (
                     <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
@@ -2200,7 +2222,7 @@ export default function KnowledgeView({ onBack, onOpenSettings }: KnowledgeViewP
                     </Button>
                   </IconTip>
                 )}
-                <ModeSwitch mode={mode} onChange={handleModeChange} />
+                <ModeSwitch mode={mode} onChange={handleModeChange} compact={compactToolbar} />
                 {!readOnly && (
                   <Button
                     variant="outline"
@@ -3060,22 +3082,56 @@ function RightPanelTabs({
   )
 }
 
+const MODE_KEYS: NoteEditorMode[] = ["source", "live", "split", "preview", "outline"]
+
 function ModeSwitch({
   mode,
   onChange,
+  compact = false,
 }: {
   mode: NoteEditorMode
   onChange: (m: NoteEditorMode) => void
+  /** Narrow editor column: collapse the segmented control into a dropdown so the
+   *  crowded toolbar doesn't wrap. Driven by the center-pane width measurement. */
+  compact?: boolean
 }) {
   const { t } = useTranslation()
+
+  if (compact) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2 text-[11px] font-normal"
+          >
+            {t(`knowledge.mode.${mode}`, mode)}
+            <ChevronDown className="h-3 w-3 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[8rem]">
+          {MODE_KEYS.map((m) => (
+            <DropdownMenuItem key={m} onSelect={() => onChange(m)} className="gap-2 text-xs">
+              <Check
+                className={cn("h-3.5 w-3.5", mode === m ? "text-primary opacity-100" : "opacity-0")}
+              />
+              {t(`knowledge.mode.${m}`, m)}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
   return (
-    <div className="flex overflow-hidden rounded-md border border-border-soft/60">
-      {(["source", "live", "split", "preview", "outline"] as NoteEditorMode[]).map((m) => (
+    <div className="flex shrink-0 overflow-hidden rounded-md border border-border-soft/60">
+      {MODE_KEYS.map((m) => (
         <button
           key={m}
           onClick={() => onChange(m)}
           className={cn(
-            "px-2 py-0.5 text-[11px]",
+            "whitespace-nowrap px-2 py-0.5 text-[11px]",
             mode === m
               ? "bg-primary/10 text-primary"
               : "text-muted-foreground hover:bg-muted/50",
