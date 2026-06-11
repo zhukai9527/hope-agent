@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 
+import { logger } from "@/lib/logger"
 import type { PreviewSource } from "../previewSource"
 import { DocxView } from "./DocxView"
 import { officeFormatOf } from "./officeFormat"
@@ -38,7 +39,14 @@ export function OfficeRichPreview({ source }: { source: PreviewSource }) {
       try {
         const url = await source.rawUrl(false)
         if (cancelled) return
+        // Clear any prior failure/bytes now that a new source is loading. Done
+        // post-await (not synchronously in the effect body) to stay clear of the
+        // set-state-in-effect lint; this covers a `key` collision where React
+        // reuses this instance instead of remounting it.
+        setFailed(false)
+        setData(null)
         if (!url) {
+          logger.warn("ui", "OfficeRichPreview::fetch", "no preview URL for source — falling back to text")
           setFailed(true)
           return
         }
@@ -51,8 +59,15 @@ export function OfficeRichPreview({ source }: { source: PreviewSource }) {
           return
         }
         setData(buf)
-      } catch {
-        if (!cancelled) setFailed(true)
+      } catch (e) {
+        if (!cancelled) {
+          logger.error(
+            "ui",
+            "OfficeRichPreview::fetch",
+            `office bytes fetch failed (e.g. CSP connect-src / network): ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+          )
+          setFailed(true)
+        }
       }
     })()
     return () => {

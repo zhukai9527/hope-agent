@@ -1133,7 +1133,11 @@
     "quoted": "已引用到對話",
     "officeLoading": "正在算繪預覽…",
     "prevSlide": "上一頁",
-    "nextSlide": "下一頁"
+    "nextSlide": "下一頁",
+    "zoomOut": "縮小",
+    "zoomIn": "放大",
+    "fitWidth": "符合寬度",
+    "officeNoContent": "無法從該檔案擷取內容"
   },
   "diffPanel": {
     "fileTooLarge": "檔案過大，僅渲染前 256KB",

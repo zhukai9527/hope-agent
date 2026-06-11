@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import MarkdownRenderer from "@/components/common/MarkdownRenderer"
 import type { ExtractedContent } from "@/lib/transport"
 import type { PreviewSource } from "../previewSource"
+import { BinaryPlaceholder } from "../../project/file-browser/BinaryPlaceholder"
 import { OfficeLoading } from "./OfficeLoading"
 
 /**
@@ -32,7 +33,19 @@ export function OfficeTextFallback({ source }: { source: PreviewSource }) {
     }
   }, [source])
 
-  if (error) return <div className="px-4 py-3 text-sm text-destructive">{error}</div>
+  // Extraction failed too (e.g. remote attachment with no local bytes) — keep
+  // open/download affordances so the file isn't a dead end, matching the
+  // pane-level binary fallback.
+  if (error)
+    return (
+      <BinaryPlaceholder
+        name={source.name}
+        sizeBytes={source.sizeBytes ?? 0}
+        note={error}
+        onOpen={() => void source.rawUrl(false).then((u) => u && window.open(u, "_blank"))}
+        onDownload={() => void source.rawUrl(true).then((u) => u && window.open(u, "_blank"))}
+      />
+    )
   if (!data) return <OfficeLoading />
 
   const { text, images } = data
@@ -54,7 +67,9 @@ export function OfficeTextFallback({ source }: { source: PreviewSource }) {
       ))}
       {text ? <MarkdownRenderer content={text} /> : null}
       {!text && images.length === 0 ? (
-        <div className="text-sm text-muted-foreground">{t("fileBrowser.empty", "No content")}</div>
+        <div className="text-sm text-muted-foreground">
+          {t("fileBrowser.officeNoContent", "No content could be extracted from this file.")}
+        </div>
       ) : null}
     </div>
   )

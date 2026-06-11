@@ -1133,7 +1133,11 @@
     "quoted": "Adicionado ao chat",
     "officeLoading": "Gerando pré-visualização…",
     "prevSlide": "Slide anterior",
-    "nextSlide": "Próximo slide"
+    "nextSlide": "Próximo slide",
+    "zoomOut": "Diminuir zoom",
+    "zoomIn": "Aumentar zoom",
+    "fitWidth": "Ajustar à largura",
+    "officeNoContent": "Não foi possível extrair conteúdo deste arquivo."
   },
   "diffPanel": {
     "fileTooLarge": "Arquivo muito grande, somente os primeiros 256KB são renderizados",
