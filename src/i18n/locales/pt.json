@@ -1130,7 +1130,10 @@
     "rendered": "Renderizado",
     "extractedPreview": "Pré-visualização do conteúdo extraído — abra no sistema para o layout original.",
     "quoteToChat": "Citar no chat",
-    "quoted": "Adicionado ao chat"
+    "quoted": "Adicionado ao chat",
+    "officeLoading": "Gerando pré-visualização…",
+    "prevSlide": "Slide anterior",
+    "nextSlide": "Próximo slide"
   },
   "diffPanel": {
     "fileTooLarge": "Arquivo muito grande, somente os primeiros 256KB são renderizados",
