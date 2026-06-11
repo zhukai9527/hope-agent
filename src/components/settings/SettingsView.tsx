@@ -10,6 +10,7 @@ import {
   Brain,
   Code,
   Compass,
+  Library,
   Globe,
   Info,
   MessageSquare,
@@ -50,6 +51,7 @@ import UserProfilePanel from "@/components/settings/profile-panel"
 import AboutPanel from "@/components/settings/AboutPanel"
 import LogPanel from "@/components/settings/log-panel"
 import MemoryPanel from "@/components/settings/MemoryPanel"
+import KnowledgePanel from "@/components/settings/KnowledgePanel"
 import PermissionsPanel from "@/components/settings/PermissionsPanel"
 import CrashHistoryPanel from "@/components/settings/CrashHistoryPanel"
 import NotificationPanel from "@/components/settings/NotificationPanel"
@@ -123,6 +125,11 @@ const SECTIONS: SettingsSectionItem[] = [
     id: "memory",
     icon: <Brain className="h-4 w-4" />,
     labelKey: "settings.memory",
+  },
+  {
+    id: "knowledge",
+    icon: <Library className="h-4 w-4" />,
+    labelKey: "settings.knowledge.tab",
   },
   {
     id: "chat",
@@ -376,6 +383,7 @@ export default function SettingsView({
             {activeSection === "teams" && <TeamsPanel />}
             {activeSection === "profile" && <UserProfilePanel onSaved={onProfileSaved} />}
             {activeSection === "memory" && <MemoryPanel />}
+            {activeSection === "knowledge" && <KnowledgePanel />}
             {activeSection === "notifications" && <NotificationPanel />}
             {activeSection === "tools" && <ToolSettingsPanel />}
             {activeSection === "mcp" && <McpServersPanel />}

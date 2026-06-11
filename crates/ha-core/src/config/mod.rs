@@ -524,7 +524,34 @@ pub struct AppConfig {
     pub embedding_models: Vec<crate::memory::EmbeddingModelConfig>,
     /// Active memory vector-search embedding selection.
     #[serde(default)]
-    pub memory_embedding: crate::memory::MemoryEmbeddingSelection,
+    pub memory_embedding: crate::memory::EmbeddingSelection,
+    /// Active knowledge-base vector-search embedding selection. Independent of
+    /// `memory_embedding` (knowledge has its own enable / model / signature /
+    /// reembed lifecycle) but draws from the same shared `embedding_models`
+    /// library — see D7.
+    #[serde(default)]
+    pub knowledge_embedding: crate::memory::EmbeddingSelection,
+    /// Knowledge note chunking parameters (D12, advanced). Changing them
+    /// triggers a full reindex (re-chunk + re-embed) of every KB. GUI-only
+    /// (dedicated owner commands, not `update_settings`) like `knowledge_embedding`.
+    #[serde(default)]
+    pub knowledge_chunk: crate::knowledge::ChunkConfig,
+    /// Knowledge hybrid `note_search` ranking parameters (fusion weights / RRF-k /
+    /// MMR-λ / candidate pool). Pure query-time, no reindex — a normal MEDIUM
+    /// setting (GUI + `update_settings`), unlike `knowledge_chunk`.
+    #[serde(default)]
+    pub knowledge_search: crate::knowledge::KnowledgeSearchConfig,
+    /// Knowledge Layer-2 autonomous maintenance (WS6): scheduling + per-task
+    /// toggles + auto-approve for the proposal review queue. Disabled by default.
+    #[serde(default)]
+    pub knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig,
+    /// Read bridge ③ — passive related-notes prompt (Phase 3, D7): each user turn
+    /// surface the top accessible-KB note titles as an independent untrusted cache
+    /// block. Opt-in, disabled by default (access is already per-session gated, so
+    /// a single global toggle suffices). MEDIUM risk (context/cost), writable via
+    /// `update_settings`.
+    #[serde(default)]
+    pub knowledge_passive_recall: crate::knowledge::PassiveRecallConfig,
     /// Deprecated legacy embedding config. Kept as a deserialization sink only;
     /// user-facing embedding config lives in `embedding_models` +
     /// `memory_embedding`.
@@ -707,6 +734,12 @@ pub struct AppConfig {
     #[serde(default)]
     pub awareness: crate::awareness::AwarenessConfig,
 
+    /// Knowledge-space "sprite / inspiration mode": a proactive, transient
+    /// writing companion that reacts to the note being edited. Disabled by
+    /// default (makes proactive LLM calls).
+    #[serde(default)]
+    pub sprite: crate::sprite::SpriteConfig,
+
     /// Offline memory consolidation ("Dreaming", Phase B3).
     /// Controls when cycles run (idle / cron / manual) and how aggressively
     /// they promote candidates into pinned core memory.
@@ -833,7 +866,12 @@ impl Default for AppConfig {
             skill_env_check: true,
             conditional_skills_enabled: true,
             embedding_models: Vec::new(),
-            memory_embedding: crate::memory::MemoryEmbeddingSelection::default(),
+            memory_embedding: crate::memory::EmbeddingSelection::default(),
+            knowledge_embedding: crate::memory::EmbeddingSelection::default(),
+            knowledge_chunk: crate::knowledge::ChunkConfig::default(),
+            knowledge_search: crate::knowledge::KnowledgeSearchConfig::default(),
+            knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig::default(),
+            knowledge_passive_recall: crate::knowledge::PassiveRecallConfig::default(),
             embedding: crate::memory::EmbeddingConfig::default(),
             memory_extract: crate::memory::MemoryExtractConfig::default(),
             memory_selection: crate::memory::MemorySelectionConfig::default(),
@@ -882,6 +920,7 @@ impl Default for AppConfig {
             recap: RecapConfig::default(),
             async_tools: AsyncToolsConfig::default(),
             awareness: crate::awareness::AwarenessConfig::default(),
+            sprite: crate::sprite::SpriteConfig::default(),
             dreaming: crate::memory::dreaming::DreamingConfig::default(),
             skills: crate::skills::SkillsConfig::default(),
             recall_summary: crate::memory::RecallSummaryConfig::default(),

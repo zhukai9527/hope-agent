@@ -30,7 +30,7 @@ import { parseOpenSettingsSection } from "@/components/settings/openSettingsEven
 import OnboardingWizard from "@/components/onboarding"
 import { CURRENT_ONBOARDING_VERSION } from "@/components/onboarding/version"
 import IconSidebar from "@/components/common/IconSidebar"
-import ChatScreen from "@/components/chat/ChatScreen"
+import ChatScreen, { type ChatInsert } from "@/components/chat/ChatScreen"
 import StarrySky from "@/components/common/StarrySky"
 import DangerousModeBanner from "@/components/common/DangerousModeBanner"
 import MissingModelDialog from "@/components/local-model/MissingModelDialog"
@@ -43,6 +43,7 @@ import {
 const DashboardView = lazy(() => import("@/components/dashboard/DashboardView"))
 const CronCalendarView = lazy(() => import("@/components/cron/CronCalendarView"))
 const PlansView = lazy(() => import("@/components/plans/PlansView"))
+const KnowledgeView = lazy(() => import("@/components/knowledge/KnowledgeView"))
 const SettingsView = lazy(() => import("@/components/settings/SettingsView"))
 
 export default function App() {
@@ -62,6 +63,7 @@ export default function App() {
     | "calendar"
     | "dashboard"
     | "plans"
+    | "knowledge"
   >("loading")
   const [agentIdForSettings, setAgentIdForSettings] = useState<string | undefined>(undefined)
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(
@@ -73,8 +75,9 @@ export default function App() {
   const [userAvatar, setUserAvatar] = useState<string | null>(null)
   const [pendingSessionId, setPendingSessionId] = useState<string | undefined>(undefined)
   const [currentChatProjectId, setCurrentChatProjectId] = useState<string | null>(null)
-  // PlansView pushes `@plan:<short_id>:v<n>` tokens here; ChatInput appends and clears.
-  const [pendingChatInsert, setPendingChatInsert] = useState<string | undefined>(undefined)
+  // PlansView pushes `@plan:<short_id>:v<n>` tokens here; KnowledgeView pushes
+  // `[[note]]` refs (with a KB to auto-attach). ChatScreen appends + clears.
+  const [pendingChatInsert, setPendingChatInsert] = useState<ChatInsert | undefined>(undefined)
   const [totalUnreadCount, setTotalUnreadCount] = useState(0)
   const [sessionsRefreshTrigger, setSessionsRefreshTrigger] = useState(0)
   const { pendingUpdate: globalPendingUpdate, downloadStatus } = useDesktopUpdateStore()
@@ -195,6 +198,10 @@ export default function App() {
 
     const handleSnapshot = (raw: unknown) => {
       const job = parsePayload<LocalModelJobSnapshot>(raw)
+      // Reembed / reindex jobs aren't installs — their progress + completion is
+      // shown in the memory / knowledge panels. Skip the install-flavored global
+      // toast ("{model} 已安装" / "安装失败" 等), which only fits model installs.
+      if (job.kind === "memory_reembed" || job.kind === "knowledge_reembed") return
       if (completedLocalModelJobToasts.current.has(job.jobId)) return
       completedLocalModelJobToasts.current.add(job.jobId)
       if (job.status === "completed") {
@@ -432,6 +439,7 @@ export default function App() {
                 onOpenCalendar={() => setView("calendar")}
                 onOpenDashboard={() => handleOpenDashboard()}
                 onOpenPlans={() => setView("plans")}
+                onOpenKnowledge={() => setView("knowledge")}
                 userAvatar={userAvatar}
                 totalUnreadCount={totalUnreadCount}
                 onMarkAllRead={() => setSessionsRefreshTrigger((n) => n + 1)}
@@ -556,9 +564,23 @@ export default function App() {
                       setView("chat")
                     }}
                     onInsertMention={(token) => {
-                      setPendingChatInsert(token)
+                      setPendingChatInsert({ token })
                       setView("chat")
                     }}
+                  />
+                </Suspense>
+              )}
+              {view === "knowledge" && (
+                <Suspense
+                  fallback={
+                    <div className="flex-1 flex items-center justify-center">
+                      <div className="animate-spin h-6 w-6 border-2 border-foreground border-t-transparent rounded-full" />
+                    </div>
+                  }
+                >
+                  <KnowledgeView
+                    onBack={() => setView("chat")}
+                    onOpenSettings={() => handleOpenSettings("knowledge")}
                   />
                 </Suspense>
               )}

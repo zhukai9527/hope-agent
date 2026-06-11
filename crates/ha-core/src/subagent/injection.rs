@@ -396,6 +396,7 @@ pub(crate) async fn inject_and_run_parent(
             plan_context_override: None,
             skill_allowed_tools: Vec::new(),
             denied_tools: Vec::new(),
+            tool_scope: None,
             subagent_depth: 0,
             steer_run_id: None,
             auto_approve_tools: false,
@@ -404,6 +405,9 @@ pub(crate) async fn inject_and_run_parent(
             abort_on_cancel: true,
             persist_final_error_event: false,
             source: crate::chat_engine::stream_seq::ChatSource::ParentInjection,
+            origin_source: None,
+            // Parent-injection turns are owner-internal, never IM. No opt-in gate.
+            channel_kb_context: None,
             event_sink: Arc::new(ParentInjectionSink {
                 parent_session_id: parent_session_id.clone(),
                 run_id: run_id.clone(),

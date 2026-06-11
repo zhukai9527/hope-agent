@@ -93,6 +93,10 @@ lru = "0.12"
 minisign-verify = { workspace = true }
 tar = "0.4"
 flate2 = "1"
+blake3 = "1.8.5"
+pulldown-cmark = "0.13.4"
+notify = "8.2.0"
+unicode-normalization = "0.1.25"
 
 [features]
 default = []

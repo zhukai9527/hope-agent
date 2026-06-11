@@ -97,6 +97,7 @@ pub enum LocalModelJobKind {
     OllamaPull,
     OllamaPreload,
     MemoryReembed,
+    KnowledgeReembed,
 }
 
 impl LocalModelJobKind {
@@ -108,6 +109,7 @@ impl LocalModelJobKind {
             Self::OllamaPull => "ollama_pull",
             Self::OllamaPreload => "ollama_preload",
             Self::MemoryReembed => "memory_reembed",
+            Self::KnowledgeReembed => "knowledge_reembed",
         }
     }
 
@@ -119,6 +121,7 @@ impl LocalModelJobKind {
             "ollama_pull" => Some(Self::OllamaPull),
             "ollama_preload" => Some(Self::OllamaPreload),
             "memory_reembed" => Some(Self::MemoryReembed),
+            "knowledge_reembed" => Some(Self::KnowledgeReembed),
             _ => None,
         }
     }
@@ -817,6 +820,12 @@ pub fn retry_job(
                 // 一次失败的 reembed），故不传 successor 链路。
                 None,
             )
+        }
+        LocalModelJobKind::KnowledgeReembed => {
+            // Retry re-runs a full reindex of every KB under the active
+            // knowledge embedding model; the chat-completion hook is irrelevant.
+            let _ = on_chat_complete;
+            crate::knowledge::reembed::start_knowledge_reembed_job(None, "retry")
         }
     }?;
 

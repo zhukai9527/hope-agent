@@ -4,10 +4,18 @@ import { File, Folder, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { FloatingMenu } from "@/components/ui/floating-menu"
 import type { MentionEntry, MentionMode } from "./types"
+import type { ReferenceableNote } from "@/types/knowledge"
 
 interface FileMentionMenuProps {
   isOpen: boolean
   entries: MentionEntry[]
+  /** Knowledge-note section rows (already filtered). */
+  noteEntries: ReferenceableNote[]
+  /** Knowledge-note fetch in flight. */
+  notesLoading: boolean
+  /** Whether a note source exists (drives the note header / empty state). */
+  noteCapable: boolean
+  /** Flat cursor over `[...entries, ...noteEntries]`. */
   selectedIndex: number
   mode: MentionMode
   /** Absolute path of the directory being shown (list mode) — surfaced as breadcrumb. */
@@ -16,13 +24,20 @@ interface FileMentionMenuProps {
   loading: boolean
   error: string | null
   truncated: boolean
+  /** File rows stay hidden for a bare `@`; other mentionable types can still show. */
+  hasFileQuery: boolean
   onSelect: (entry: MentionEntry) => void
+  onSelectNote: (note: ReferenceableNote) => void
+  /** Hover handler; receives the FLAT index across both sections. */
   onHover: (index: number) => void
 }
 
 export default function FileMentionMenu({
   isOpen,
   entries,
+  noteEntries,
+  notesLoading,
+  noteCapable,
   selectedIndex,
   mode,
   dirPath,
@@ -30,7 +45,9 @@ export default function FileMentionMenu({
   loading,
   error,
   truncated,
+  hasFileQuery,
   onSelect,
+  onSelectNote,
   onHover,
 }: FileMentionMenuProps) {
   const { t } = useTranslation()
@@ -40,9 +57,29 @@ export default function FileMentionMenu({
     selectedRef.current?.scrollIntoView({ block: "nearest" })
   }, [selectedIndex])
 
+  if (!isOpen) return null
+
+  const hasFiles = entries.length > 0
+  const hasNotes = noteEntries.length > 0
+  const showFileSection = !!workingDir && hasFileQuery
+  // Nothing to paint: no file section (working dir / its loading+empty/error) and
+  // no note rows or in-flight note load. Avoids an empty floating box when `@`
+  // opens with no working dir and nothing to show.
+  if (!showFileSection && !error && !hasNotes && !notesLoading) return null
+
   // Compute breadcrumb relative to workingDir for list mode; search mode shows
   // the working dir basename.
   const breadcrumb = computeBreadcrumb(workingDir, dirPath, mode)
+  const showNoteSection = hasNotes || (noteCapable && notesLoading)
+  const sectionHeaderClass =
+    "flex items-center gap-2 px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider"
+  const rowClass = (selected: boolean) =>
+    cn(
+      "w-full text-left px-2.5 py-1.5 rounded-md transition-all duration-100 flex items-center gap-2 outline-none",
+      selected
+        ? "bg-secondary text-foreground shadow-sm"
+        : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
+    )
 
   return (
     <FloatingMenu
@@ -51,60 +88,97 @@ export default function FileMentionMenu({
       className="max-h-[320px] overflow-y-auto overscroll-contain p-1.5"
       role="listbox"
     >
-      <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider">
-        <span className="truncate">
-          {mode === "search"
-            ? t("chat.fileMention.searchHeader")
-            : t("chat.fileMention.breadcrumb", { path: breadcrumb || "/" })}
-        </span>
-        {loading && <Loader2 className="h-3 w-3 animate-spin" />}
-        {truncated && (
-          <span className="ml-auto text-[10px] text-amber-500/80 normal-case tracking-normal">
-            {t("chat.fileMention.truncated")}
+      {/* ── Files section (only when a working dir is set) ── */}
+      {showFileSection && (
+        <div className={sectionHeaderClass}>
+          <span className="truncate">
+            {mode === "search"
+              ? t("chat.fileMention.searchHeader")
+              : t("chat.fileMention.breadcrumb", { path: breadcrumb || "/" })}
           </span>
-        )}
-      </div>
+          {loading && <Loader2 className="h-3 w-3 animate-spin" />}
+          {truncated && (
+            <span className="ml-auto text-[10px] text-amber-500/80 normal-case tracking-normal">
+              {t("chat.fileMention.truncated")}
+            </span>
+          )}
+        </div>
+      )}
 
       {error && <div className="px-2.5 py-2 text-[12px] text-destructive">{error}</div>}
 
-      {!loading && !error && entries.length === 0 && (
+      {showFileSection && !loading && !error && !hasFiles && (
         <div className="px-2.5 py-2 text-[12px] text-muted-foreground/70">
           {t("chat.fileMention.empty")}
         </div>
       )}
 
-      {entries.map((entry, idx) => {
-        const isSelected = idx === selectedIndex
+      {showFileSection &&
+        entries.map((entry, idx) => {
+          const isSelected = idx === selectedIndex
+          return (
+            <button
+              key={`file-${entry.path}-${idx}`}
+              ref={isSelected ? selectedRef : undefined}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              className={rowClass(isSelected)}
+              onClick={() => onSelect(entry)}
+              onMouseEnter={() => onHover(idx)}
+            >
+              {entry.isDir ? (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+              ) : (
+                <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="font-mono text-[13px] truncate">
+                {entry.name}
+                {entry.isDir ? "/" : ""}
+              </span>
+              {mode === "search" && entry.relPath !== entry.name && (
+                <span className="ml-auto truncate text-[11px] text-muted-foreground/60 font-mono">
+                  {entry.relPath}
+                </span>
+              )}
+            </button>
+          )
+        })}
+
+      {/* ── Knowledge-notes section ── */}
+      {showNoteSection && (
+        <div
+          className={cn(
+            sectionHeaderClass,
+            showFileSection && hasFiles && "mt-1 border-t border-border/40 pt-1.5",
+          )}
+        >
+          <span className="truncate normal-case tracking-normal">
+            {t("knowledge.mention.heading", "Knowledge notes")}
+          </span>
+          {notesLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+        </div>
+      )}
+
+      {noteEntries.map((note, j) => {
+        const flatIdx = entries.length + j
+        const isSelected = flatIdx === selectedIndex
         return (
           <button
-            key={`${entry.path}-${idx}`}
+            key={`note-${note.kbId}-${note.relPath}`}
             ref={isSelected ? selectedRef : undefined}
             type="button"
             role="option"
             aria-selected={isSelected}
-            className={cn(
-              "w-full text-left px-2.5 py-1.5 rounded-md transition-all duration-100 flex items-center gap-2 outline-none",
-              isSelected
-                ? "bg-secondary text-foreground shadow-sm"
-                : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
-            )}
-            onClick={() => onSelect(entry)}
-            onMouseEnter={() => onHover(idx)}
+            className={rowClass(isSelected)}
+            onClick={() => onSelectNote(note)}
+            onMouseEnter={() => onHover(flatIdx)}
           >
-            {entry.isDir ? (
-              <Folder className="h-3.5 w-3.5 shrink-0 text-primary/70" />
-            ) : (
-              <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            )}
-            <span className="font-mono text-[13px] truncate">
-              {entry.name}
-              {entry.isDir ? "/" : ""}
+            <span className="shrink-0 text-sm leading-none">{note.kbEmoji || "📓"}</span>
+            <span className="text-[13px] truncate">{note.title}</span>
+            <span className="ml-auto max-w-[40%] truncate text-[11px] text-muted-foreground/60">
+              {note.kbName}
             </span>
-            {mode === "search" && entry.relPath !== entry.name && (
-              <span className="ml-auto truncate text-[11px] text-muted-foreground/60 font-mono">
-                {entry.relPath}
-              </span>
-            )}
           </button>
         )
       })}

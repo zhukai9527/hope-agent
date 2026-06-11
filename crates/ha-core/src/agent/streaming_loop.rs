@@ -469,6 +469,7 @@ impl AssistantAgent {
         tokio::join!(
             self.refresh_awareness_suffix(message),
             self.refresh_active_memory_suffix(message),
+            self.refresh_related_notes_suffix(message),
         );
 
         let client =
@@ -605,6 +606,7 @@ impl AssistantAgent {
             let effort_live = self.effective_reasoning_effort(reasoning_effort).await;
             let awareness_suffix = self.current_awareness_suffix();
             let active_suffix = self.current_active_memory_suffix();
+            let related_notes_suffix = self.current_related_notes_suffix();
             // Two-step: cheap existence probe first (one SQL row, no Vec
             // alloc), then list+format only when there's actually an active
             // task. Skips a full task list deserialize on every round of
@@ -631,6 +633,7 @@ impl AssistantAgent {
                 system_prompt: round_system_prompt,
                 awareness_suffix: awareness_suffix.as_deref().map(|s| s.as_str()),
                 active_memory_suffix: active_suffix.as_deref().map(|s| s.as_str()),
+                related_notes_suffix: related_notes_suffix.as_deref().map(|s| s.as_str()),
                 task_reminder_suffix: task_reminder.as_deref(),
                 tool_schemas: &tool_schemas,
                 history_for_api: &api_messages,

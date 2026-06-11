@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import type { ChatAttachment } from "@/lib/transport"
+import type { KbDraftAttachment } from "@/types/knowledge"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
 import {
@@ -193,6 +194,34 @@ export interface UseChatStreamOptions {
    * on the auto-create branch.
    */
   draftWorkingDir?: string | null
+  /**
+   * KB attaches staged before the session existed (composer draft mode). Like
+   * draftWorkingDir, they ride on the `chat` command payload (`kbAttachments`)
+   * as a send-time snapshot and the backend applies them on the auto-create
+   * branch via `apply_draft_attachments` — sent only when no `sessionId` is set
+   * yet and not incognito.
+   */
+  draftKbAttachments?: KbDraftAttachment[]
+  /**
+   * Knowledge-space sidebar chat: the note open when the conversation started.
+   * Sent only on the auto-create send so the backend promotes the new session
+   * into a KB chat thread anchored to it (history / default-load key).
+   */
+  draftKbAnchorNote?: string | null
+  /**
+   * Tool-visibility scope forwarded to the `chat` command. The knowledge-space
+   * sidebar passes `"knowledge"` to trim the injected tool set; omitted for the
+   * main / quick chat (full tools).
+   */
+  toolScope?: "knowledge"
+  /**
+   * Per-turn extra attachments merged at send time, AFTER the visible composer
+   * quotes/files. The knowledge panel uses this to inject the currently-open
+   * note as an invisible `quote` so the assistant always sees "the document I'm
+   * looking at" without the user manually quoting it. Returns `[]` for callers
+   * that don't need it.
+   */
+  getExtraAttachments?: () => ChatAttachment[]
 }
 
 export interface UseChatStreamReturn {
@@ -256,7 +285,16 @@ export function useChatStream({
   reasoningEffort,
   incognitoEnabled = false,
   draftWorkingDir = null,
+  draftKbAttachments = [],
+  draftKbAnchorNote = null,
+  toolScope,
+  getExtraAttachments,
 }: UseChatStreamOptions): UseChatStreamReturn {
+  // Latest draft attaches, snapshotted into the startChat payload at send time
+  // (mirrors how draftWorkingDir is baked into the create call) so a later
+  // New Chat / session switch can't redirect them onto the wrong session.
+  const draftKbAttachmentsRef = useRef(draftKbAttachments)
+  draftKbAttachmentsRef.current = draftKbAttachments
   const { t } = useTranslation()
   const [input, setInputState] = useState("")
   const [attachedFiles, setAttachedFilesState] = useState<File[]>([])
@@ -797,6 +835,10 @@ export function useChatStream({
       quotesToSend,
       currentSessionId,
     )
+    // Per-turn invisible context (knowledge panel: the currently-open note).
+    if (getExtraAttachments) {
+      for (const extra of getExtraAttachments()) attachments.push(extra)
+    }
 
     // Empty assistant placeholder we'll stream into. `_clientId` was generated
     // alongside the user-side one above and survives the placeholder→DB
@@ -986,6 +1028,19 @@ export function useChatStream({
           isPlanTrigger: options?.isPlanTrigger,
           planComment: options?.planComment,
           workingDir: currentSessionId ? undefined : draftWorkingDir ?? undefined,
+          // Send-time snapshot: only on the auto-create send, never incognito.
+          kbAttachments:
+            currentSessionId || incognitoEnabled
+              ? undefined
+              : draftKbAttachmentsRef.current.map((a) => ({
+                  kbId: a.kbId,
+                  access: a.access,
+                })),
+          ...(toolScope ? { toolScope } : {}),
+          // Anchor only matters on the auto-create send; mirrors kbAttachments.
+          ...(toolScope && !currentSessionId && draftKbAnchorNote
+            ? { kbAnchorNote: draftKbAnchorNote }
+            : {}),
         },
         onEvent,
       )

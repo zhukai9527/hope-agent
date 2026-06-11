@@ -4,6 +4,7 @@ use axum::Json;
 use super::helpers::parse_file_upload;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -66,6 +67,20 @@ pub struct ChatRequest {
     /// `chat` command).
     #[serde(default)]
     pub working_dir: Option<String>,
+    /// Composer-staged KB attaches. Only honored when this call also creates the
+    /// session (mirrors `working_dir` / the Tauri `chat` command). No-op for
+    /// incognito.
+    #[serde(default)]
+    pub kb_attachments: Vec<ha_core::knowledge::types::KbAttachInput>,
+    /// Tool-visibility scope (`"knowledge"`). Set by the knowledge-space sidebar
+    /// chat to trim the injected tool set; `None` (default) for normal chats.
+    #[serde(default)]
+    pub tool_scope: Option<String>,
+    /// Knowledge-space sidebar chat: the note open when the conversation started.
+    /// Only honored on the auto-create branch — promotes the new session into a
+    /// KB chat thread.
+    #[serde(default)]
+    pub kb_anchor_note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,15 +125,44 @@ pub struct ChatResponse {
     pub blocked_reason: Option<String>,
 }
 
-fn validate_http_chat_attachments(attachments: &[Attachment]) -> Result<(), AppError> {
+fn validate_http_mention_attachment(session_id: &str, file_path: &str) -> Result<(), AppError> {
+    let requested = PathBuf::from(file_path);
+    if !requested.is_absolute() {
+        return Err(AppError::bad_request(
+            "mention attachment path must be absolute",
+        ));
+    }
+
+    let canon = requested
+        .canonicalize()
+        .map_err(|_| AppError::forbidden("mention attachment is outside the session workspace"))?;
+    let scope = ha_core::filesystem::WorkspaceScope::for_session(session_id)
+        .map_err(|_| AppError::forbidden("mention attachment is outside the session workspace"))?;
+    if scope.contains(&canon) {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "mention attachment is outside the session workspace",
+        ))
+    }
+}
+
+fn validate_http_chat_attachments(
+    session_id: &str,
+    attachments: &[Attachment],
+) -> Result<(), AppError> {
     for att in attachments {
         // "quote" attachments carry the snippet in `data`; their `file_path` is
         // only a reference label (never read from disk), so it's safe.
-        let allowed_with_path = matches!(att.source.as_deref(), Some("upload") | Some("quote"));
-        if att.file_path.is_some() && !allowed_with_path {
-            return Err(AppError::bad_request(
-                "HTTP chat attachments must be uploaded through /api/chat/attachment",
-            ));
+        match (att.source.as_deref(), att.file_path.as_deref()) {
+            (_, None) => {}
+            (Some("upload") | Some("quote"), Some(_)) => {}
+            (Some("mention"), Some(path)) => validate_http_mention_attachment(session_id, path)?,
+            _ => {
+                return Err(AppError::bad_request(
+                    "HTTP chat attachments must be uploaded through /api/chat/attachment",
+                ));
+            }
         }
     }
     Ok(())
@@ -225,6 +269,11 @@ pub async fn chat(
             db.update_session_working_dir(&sid, Some(wd.clone()))
                 .map_err(|e| AppError::bad_request(e.to_string()))?;
         }
+        ha_core::knowledge::service::apply_draft_attachments(
+            &sid,
+            body.incognito.unwrap_or(false),
+            &body.kb_attachments,
+        );
     }
 
     // Persist per-session permission mode if the body included one.
@@ -309,6 +358,19 @@ pub async fn chat(
             // a stream notice (parity with the desktop path, which sends a
             // `{"type":"text","text":notice}` event on the on_event channel).
             let notice = format!("🚫 {reason}");
+            // KB sidebar lazy-create: a blocked first message must leave NO
+            // session behind (no hidden zombie, no stray regular row in the
+            // main list / picker / FTS). Drop the freshly auto-created session;
+            // `blocked_reason` still carries the notice to the transport.
+            if new_session_created && body.tool_scope.as_deref() == Some("knowledge") {
+                let _ = db.delete_session(&sid);
+                return Ok(Json(ChatResponse {
+                    session_id: sid,
+                    response: notice.clone(),
+                    turn_id,
+                    blocked_reason: Some(notice),
+                }));
+            }
             let _ = db.append_message(&sid, &session::NewMessage::event(&notice));
             return Ok(Json(ChatResponse {
                 session_id: sid,
@@ -319,12 +381,26 @@ pub async fn chat(
         }
     };
 
+    // KB sidebar chat: promote the freshly-created session into a knowledge
+    // thread now that preflight has passed (mirrors the Tauri command). Doing it
+    // in the auto-create block left a hidden `kind=Knowledge` zombie + thread row
+    // when a UserPromptSubmit hook blocked the first message.
+    if new_session_created && body.tool_scope.as_deref() == Some("knowledge") {
+        if let Some(kb_id) = body.kb_attachments.first().map(|a| a.kb_id.clone()) {
+            ha_core::knowledge::service::mark_session_as_kb_thread(
+                &sid,
+                &kb_id,
+                body.kb_anchor_note.as_deref(),
+            );
+        }
+    }
+
     // Attachments: validate + persist AFTER the preflight, so a blocked prompt
     // returns above before any attachment IO touches disk. The DB content is the
     // hook-rewritten `effective_prompt`, so the separate `persisted_content`
     // main computed (identical to `raw_prompt`, now consumed by the preflight) is
     // dropped.
-    validate_http_chat_attachments(&body.attachments)?;
+    validate_http_chat_attachments(&sid, &body.attachments)?;
     let attachments_meta =
         ha_core::attachments::persist_chat_user_attachments_meta(&sid, &mut body.attachments)
             .map_err(|e| AppError::internal(e.to_string()))?;
@@ -471,6 +547,7 @@ pub async fn chat(
         plan_context_override: None,
         skill_allowed_tools: Vec::new(),
         denied_tools: Vec::new(),
+        tool_scope: ha_core::tools::ToolScope::from_str_opt(body.tool_scope.as_deref()),
         subagent_depth: 0,
         steer_run_id: None,
         // Honors `--auto-approve-tools` / `HA_SERVER_AUTO_APPROVE_TOOLS=1`
@@ -484,6 +561,9 @@ pub async fn chat(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: ha_core::chat_engine::stream_seq::ChatSource::Http,
+        origin_source: None,
+        // HTTP owner turn — KB access via attach, not the IM opt-in gate.
+        channel_kb_context: None,
         event_sink,
     };
 
@@ -513,7 +593,7 @@ pub async fn chat(
 pub async fn queue_turn_user_message(
     Json(body): Json<QueueTurnUserMessageRequest>,
 ) -> Result<Json<ha_core::chat_engine::turn_injection::QueueTurnUserMessageResult>, AppError> {
-    validate_http_chat_attachments(&body.attachments)?;
+    validate_http_chat_attachments(&body.session_id, &body.attachments)?;
     let result = ha_core::chat_engine::turn_injection::enqueue(
         ha_core::chat_engine::turn_injection::QueueTurnUserMessageArgs {
             request_id: body.request_id,
@@ -821,7 +901,7 @@ mod tests {
             quote_lines: None,
         }];
 
-        assert!(validate_http_chat_attachments(&attachments).is_err());
+        assert!(validate_http_chat_attachments("missing-session", &attachments).is_err());
     }
 
     #[test]
@@ -835,6 +915,6 @@ mod tests {
             quote_lines: None,
         }];
 
-        assert!(validate_http_chat_attachments(&attachments).is_ok());
+        assert!(validate_http_chat_attachments("missing-session", &attachments).is_ok());
     }
 }

@@ -49,6 +49,10 @@ export interface PendingFileQuote {
   startLine: number
   endLine: number
   content: string
+  /** Knowledge-space quotes carry their KB id so "jump to selection" opens the
+   *  right base even if the user has since switched the active KB. Unset for
+   *  main-chat file quotes. */
+  kbId?: string
 }
 
 export type PendingSendMode = "queue" | "force_insert"

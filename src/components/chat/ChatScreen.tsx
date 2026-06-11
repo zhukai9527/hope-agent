@@ -5,6 +5,7 @@ import { parsePayload } from "@/lib/transport"
 import { save } from "@tauri-apps/plugin-dialog"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
+import { useViewportMediaQuery } from "@/hooks/useViewportMediaQuery"
 import { cn } from "@/lib/utils"
 import {
   Brain,
@@ -69,6 +70,7 @@ import WorkspacePanel from "./workspace/WorkspacePanel"
 import { resolveWorkspaceTaskExecutionState } from "./workspace/taskExecutionState"
 import { messagesHaveFileActivity } from "./workspace/useSessionFileChanges"
 import { messagesHaveUrlActivity } from "./workspace/useSessionUrlSources"
+import { messagesHaveKnowledgeActivity } from "./workspace/useSessionKnowledge"
 import { useModelState } from "./hooks/useModelState"
 import SystemPromptDialog from "./SystemPromptDialog"
 import { PlanPanel } from "./plan-mode/PlanPanel"
@@ -91,6 +93,15 @@ import {
 } from "./sidebar/types"
 import { generateClientId } from "./chatScrollKeys"
 import type { Project, ProjectMeta } from "@/types/project"
+import type { KbDraftAttachment } from "@/types/knowledge"
+
+/** A token to append to the chat composer on next render. `attachKbId` (set by the
+ *  KnowledgeView "reference in chat" action) is auto-attached read-only so the
+ *  `[[note]]` injection isn't dropped by `effective_kb_access` at send time. */
+export interface ChatInsert {
+  token: string
+  attachKbId?: string
+}
 
 interface ChatScreenProps {
   onOpenAgentSettings?: (agentId: string) => void
@@ -101,8 +112,9 @@ interface ChatScreenProps {
   onOpenDashboardTab?: (tab: string, initialReportId?: string | null) => void
   sessionsRefreshTrigger?: number
   onCurrentProjectChange?: (projectId: string | null) => void
-  /** Free-form text to append to the chat input on next render (e.g. `@plan:abcd:v0`). */
-  pendingChatInsert?: string
+  /** Token to append to the chat input on next render (e.g. `@plan:abcd:v0` or a
+   *  `[[note]]` ref). */
+  pendingChatInsert?: ChatInsert
   /** Called once the insert has been consumed so App can clear the pending slot. */
   onChatInsertConsumed?: () => void
 }
@@ -181,27 +193,6 @@ function clampResponsiveRightPanelWidth(width: number): number {
   )
 }
 
-function useViewportMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() =>
-    typeof window === "undefined" ? false : window.matchMedia(query).matches,
-  )
-
-  useEffect(() => {
-    if (typeof window === "undefined") return
-
-    const media = window.matchMedia(query)
-    const handleChange = () => setMatches(media.matches)
-    handleChange()
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", handleChange)
-      return () => media.removeEventListener("change", handleChange)
-    }
-    media.addListener(handleChange)
-    return () => media.removeListener(handleChange)
-  }, [query])
-
-  return matches
-}
 
 function isSessionMode(value: unknown): value is SessionMode {
   return value === "default" || value === "smart" || value === "yolo"
@@ -385,6 +376,10 @@ export default function ChatScreen({
   // `currentSessionId` transition effect below.
   const [draftWorkingDir, setDraftWorkingDir] = useState<string | null>(null)
   const [workingDirSaving, setWorkingDirSaving] = useState(false)
+  // KB attaches staged before a session exists. Replayed onto the new session by
+  // useChatStream when `session_created` lands, then cleared via the
+  // `currentSessionId` transition effect below (mirrors draftWorkingDir).
+  const [draftKbAttachments, setDraftKbAttachments] = useState<KbDraftAttachment[]>([])
 
   // Plan mode state (declared early so useChatStream can access it)
   const [planModeState, setPlanModeState] = useState<
@@ -482,6 +477,7 @@ export default function ChatScreen({
   const handleStartNewChat = useCallback(
     async (agentId: string, opts?: { incognito?: boolean }) => {
       setDraftIncognito(opts?.incognito ?? false)
+      setDraftKbAttachments([])
       await handleNewChat(agentId)
     },
     [handleNewChat],
@@ -775,6 +771,9 @@ export default function ChatScreen({
     (enabled: boolean) => {
       if (session.currentSessionId) return
       setDraftIncognito(enabled)
+      // Incognito = zero KB (D10). Drop any staged attaches so they can't ride
+      // into the new incognito session or strand the now-disabled picker badge.
+      if (enabled) setDraftKbAttachments([])
     },
     [session.currentSessionId],
   )
@@ -822,6 +821,17 @@ export default function ChatScreen({
       setDraftWorkingDir(null)
     }
   }, [session.currentSessionId, draftWorkingDir])
+
+  // Drop staged KB attaches once a session exists. On a new-chat first send the
+  // attaches were already baked into the `chat` command payload (`kbAttachments`)
+  // and applied by the backend on the auto-create branch, so clearing here is
+  // pure local cleanup. On switching to an existing session (no send), this just
+  // discards the unsent draft — symmetric with draftWorkingDir.
+  useEffect(() => {
+    if (session.currentSessionId && draftKbAttachments.length > 0) {
+      setDraftKbAttachments([])
+    }
+  }, [session.currentSessionId, draftKbAttachments])
 
   // Reload sessions when external trigger changes (e.g. mark-all-read from IconSidebar)
   useEffect(() => {
@@ -1025,6 +1035,7 @@ export default function ChatScreen({
     reasoningEffort,
     incognitoEnabled,
     draftWorkingDir,
+    draftKbAttachments,
   })
 
   useEffect(() => {
@@ -1068,14 +1079,45 @@ export default function ChatScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.currentSessionId, session.sessions, stream.setPermissionMode])
 
-  // Consume a `@plan:xxx` (or any free-form text) injection from the global
-  // Plans view: append once with a leading space, then notify App so the slot
-  // clears. Runs after `stream` is initialized so `setInput` is available.
+  // Consume a token injection from a global view: `@plan:xxx` from Plans, or a
+  // `[[note]]` ref from Knowledge. Append once with a leading space, then notify
+  // App so the slot clears. A KB ref also auto-attaches its KB (read-only) so the
+  // injection isn't dropped by `effective_kb_access` at send time. Incognito
+  // sessions get zero KB access (D10) — skip the attach, never the insert.
   useEffect(() => {
     if (!pendingChatInsert) return
-    const sep = stream.input && !stream.input.endsWith(" ") ? " " : ""
-    stream.setInput(`${stream.input}${sep}${pendingChatInsert} `)
-    onChatInsertConsumed?.()
+    const { token, attachKbId } = pendingChatInsert
+    const run = async () => {
+      if (attachKbId && !incognitoEnabled) {
+        try {
+          if (session.currentSessionId) {
+            await getTransport().call("attach_session_kb_cmd", {
+              sessionId: session.currentSessionId,
+              kbId: attachKbId,
+              access: "read",
+            })
+          } else {
+            // New chat: stage the attach; it's baked into the `chat` payload on
+            // first send (symmetric with draftWorkingDir / KnowledgePicker).
+            setDraftKbAttachments((prev) =>
+              prev.some((a) => a.kbId === attachKbId)
+                ? prev
+                : [...prev, { kbId: attachKbId, access: "read" }],
+            )
+          }
+        } catch (e) {
+          // Non-fatal: the token is still inserted; the user can attach manually.
+          logger.warn("ui", "ChatScreen::referenceInChat", "auto-attach KB failed", e)
+        }
+      }
+      // Functional updater (not the captured `stream.input`): the `attach` await
+      // above is a transport round-trip during which the user may keep typing —
+      // reading a stale snapshot here would drop those keystrokes. The updater
+      // also composes correctly if two refs are inserted back-to-back.
+      stream.setInput((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${token} `)
+      onChatInsertConsumed?.()
+    }
+    void run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChatInsert])
 
@@ -1801,7 +1843,8 @@ export default function ChatScreen({
   const hasWorkspaceContent =
     (taskProgressSnapshot?.total ?? 0) > 0 ||
     messagesHaveFileActivity(session.messages) ||
-    messagesHaveUrlActivity(session.messages)
+    messagesHaveUrlActivity(session.messages) ||
+    messagesHaveKnowledgeActivity(session.messages)
   // 依赖里带 currentSessionId：切到「已有内容」的旧会话时 hasWorkspaceContent 不发生
   // false→true 跳变，靠 session 变化触发本 effect 重跑(配合 session-reset 复位
   // dismissedRef)，否则旧会话切回来面板不会自动展开。
@@ -2062,150 +2105,156 @@ export default function ChatScreen({
             <CrashRecoveryBanner />
 
             <FileActionsContext.Provider value={fileActionsValue}>
-            <MessageList
-              messages={session.messages}
-              loading={session.loading}
-              executionState={
-                session.currentSessionId
-                  ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
-                  : null
-              }
-              agents={session.agents}
-              hasMore={session.hasMore}
-              loadingMore={session.loadingMore}
-              onLoadMore={session.handleLoadMore}
-              hasMoreAfter={session.hasMoreAfter}
-              loadingMoreAfter={session.loadingMoreAfter}
-              onLoadMoreAfter={session.handleLoadMoreAfter}
-              onResetToLatest={session.resetToLatest}
-              sessionId={session.currentSessionId}
-              incognito={incognitoEnabled}
-              pendingScrollIntent={session.pendingScrollIntent}
-              onScrollTargetHandled={session.clearPendingScrollIntent}
-              pendingQuestionGroup={planMode.pendingQuestionGroup}
-              onQuestionSubmitted={() => planMode.setPendingQuestionGroup(null)}
-              planCardData={planMode.planCardInfo ? { title: planMode.planCardInfo.title } : null}
-              planState={planMode.planState}
-              onOpenPlanPanel={planMode.openPlanPanel}
-              onApprovePlan={handlePlanApprove}
-              onExitPlan={planMode.exitPlanMode}
-              planSubagentRunning={planMode.planSubagentRunning}
-              onSwitchModel={handleMessageSwitchModel}
-              onViewSystemPrompt={loadSystemPrompt}
-              onOpenDashboardTab={onOpenDashboardTab}
-              onSwitchSession={(sid) => {
-                void session.handleSwitchSession(sid)
-              }}
-              onOpenDiff={diffPanel.openDiff}
-              onResume={(message) => {
-                void stream.handleSend(message)
-              }}
-              displayMode={displayMode}
-            />
-            </FileActionsContext.Provider>
+              <MessageList
+                messages={session.messages}
+                loading={session.loading}
+                executionState={
+                  session.currentSessionId
+                    ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
+                    : null
+                }
+                agents={session.agents}
+                hasMore={session.hasMore}
+                loadingMore={session.loadingMore}
+                onLoadMore={session.handleLoadMore}
+                hasMoreAfter={session.hasMoreAfter}
+                loadingMoreAfter={session.loadingMoreAfter}
+                onLoadMoreAfter={session.handleLoadMoreAfter}
+                onResetToLatest={session.resetToLatest}
+                sessionId={session.currentSessionId}
+                incognito={incognitoEnabled}
+                pendingScrollIntent={session.pendingScrollIntent}
+                onScrollTargetHandled={session.clearPendingScrollIntent}
+                pendingQuestionGroup={planMode.pendingQuestionGroup}
+                onQuestionSubmitted={() => planMode.setPendingQuestionGroup(null)}
+                planCardData={planMode.planCardInfo ? { title: planMode.planCardInfo.title } : null}
+                planState={planMode.planState}
+                onOpenPlanPanel={planMode.openPlanPanel}
+                onApprovePlan={handlePlanApprove}
+                onExitPlan={planMode.exitPlanMode}
+                planSubagentRunning={planMode.planSubagentRunning}
+                onSwitchModel={handleMessageSwitchModel}
+                onViewSystemPrompt={loadSystemPrompt}
+                onOpenDashboardTab={onOpenDashboardTab}
+                onSwitchSession={(sid) => {
+                  void session.handleSwitchSession(sid)
+                }}
+                onOpenDiff={diffPanel.openDiff}
+                onResume={(message) => {
+                  void stream.handleSend(message)
+                }}
+                displayMode={displayMode}
+              />
 
-            {/* Memory extraction toast — absolute-positioned above ChatInput
-             * so it doesn't shrink the MessageList scroll container when it
-             * appears/disappears. */}
-            {!isCronSession && !isSubagentSession && (
-              <div
-                className={cn(
-                  "relative",
-                  emptySessionInputHero &&
-                    "absolute inset-x-0 top-[48%] z-20 flex -translate-y-1/2 justify-center px-5 sm:px-8",
-                )}
-              >
-                {memoryToast && (
-                  <div
-                    className={cn(
-                      "absolute bottom-full mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10",
-                      emptySessionInputHero
-                        ? "inset-x-5 mx-auto max-w-[920px] sm:inset-x-8"
-                        : "left-0 right-0 mx-4",
-                    )}
-                  >
-                    <Brain className="h-3.5 w-3.5 shrink-0" />
-                    <span>{t("settings.memoryExtractedToast", { count: memoryToast.count })}</span>
-                    <button
-                      onClick={() => setMemoryToast(null)}
-                      className="ml-auto text-muted-foreground/60 hover:text-muted-foreground"
+              {/* Memory extraction toast — absolute-positioned above ChatInput
+               * so it doesn't shrink the MessageList scroll container when it
+               * appears/disappears. */}
+              {!isCronSession && !isSubagentSession && (
+                <div
+                  className={cn(
+                    "relative",
+                    emptySessionInputHero &&
+                      "absolute inset-x-0 top-[48%] z-20 flex -translate-y-1/2 justify-center px-5 sm:px-8",
+                  )}
+                >
+                  {memoryToast && (
+                    <div
+                      className={cn(
+                        "absolute bottom-full mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/50 text-xs text-muted-foreground animate-in fade-in slide-in-from-bottom-2 duration-300 z-10",
+                        emptySessionInputHero
+                          ? "inset-x-5 mx-auto max-w-[920px] sm:inset-x-8"
+                          : "left-0 right-0 mx-4",
+                      )}
                     >
-                      ×
-                    </button>
-                  </div>
-                )}
+                      <Brain className="h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {t("settings.memoryExtractedToast", { count: memoryToast.count })}
+                      </span>
+                      <button
+                        onClick={() => setMemoryToast(null)}
+                        className="ml-auto text-muted-foreground/60 hover:text-muted-foreground"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
 
-                <div className={cn(emptySessionInputHero && "w-full max-w-[920px]")}>
-                  <ChatInput
-                    input={stream.input}
-                    onInputChange={stream.setInput}
-                    onSend={() => stream.handleSend()}
-                    loading={session.loading}
-                    availableModels={availableModels}
-                    activeModel={activeModel}
-                    reasoningEffort={reasoningEffort}
-                    onModelChange={handleManualModelChange}
-                    onEffortChange={handleSessionEffortChange}
-                    attachedFiles={stream.attachedFiles}
-                    onAttachFiles={(files) =>
-                      stream.setAttachedFiles((prev) => [...prev, ...files])
-                    }
-                    onRemoveFile={(index) =>
-                      stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
-                    }
-                    pendingQuotes={stream.pendingQuotes}
-                    onRemoveQuote={(index) => {
-                      stream.setPendingQuotes((prev) => prev.filter((_, i) => i !== index))
-                      setRevealFile(null) // dropping a quote clears its reveal highlight
-                    }}
-                    onJumpToQuote={handleQuoteJump}
-                    pendingMessage={stream.pendingMessage}
-                    pendingSends={stream.pendingSends}
-                    onCancelPending={() => {
-                      stream.setInput(stream.pendingMessage || "")
-                      stream.setPendingMessage(null)
-                    }}
-                    onDiscardPending={() => {
-                      stream.setPendingMessage(null)
-                    }}
-                    onEditPending={stream.editPendingSend}
-                    onDiscardPendingItem={stream.discardPendingSend}
-                    onForceInsertPending={stream.forceInsertPendingSend}
-                    onCancelForceInsertPending={stream.cancelForceInsertPendingSend}
-                    onStop={stream.handleStop}
-                    currentSessionId={session.currentSessionId}
-                    currentAgentId={session.currentAgentId}
-                    onCommandAction={handleCommandAction}
-                    permissionMode={stream.permissionMode}
-                    onPermissionModeChange={stream.setPermissionMode}
-                    sessionTemperature={sessionTemperature}
-                    onSessionTemperatureChange={setSessionTemperature}
-                    incognitoEnabled={incognitoEnabled}
-                    workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
-                    workingDirInherited={
-                      session.currentSessionId ? workingDirSource === "project" : false
-                    }
-                    workingDirSaving={workingDirSaving}
-                    onWorkingDirChange={
-                      currentSessionMeta?.projectId ? undefined : handleWorkingDirChange
-                    }
-                    planState={planMode.planState}
-                    onEnterPlanMode={planMode.enterPlanMode}
-                    onExitPlanMode={planMode.exitPlanMode}
-                    onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
-                    taskProgressSnapshot={taskProgressSnapshot}
-                    onOpenWorkspace={openWorkspacePanel}
-                    workspacePanelVisible={workspacePanelVisibleInRightPanel}
-                    executionState={
-                      session.currentSessionId
-                        ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
-                        : null
-                    }
-                    hero={emptySessionInputHero}
-                  />
+                  <div className={cn(emptySessionInputHero && "w-full max-w-[920px]")}>
+                    <ChatInput
+                      input={stream.input}
+                      onInputChange={stream.setInput}
+                      onSend={() => stream.handleSend()}
+                      loading={session.loading}
+                      availableModels={availableModels}
+                      activeModel={activeModel}
+                      reasoningEffort={reasoningEffort}
+                      onModelChange={handleManualModelChange}
+                      onEffortChange={handleSessionEffortChange}
+                      attachedFiles={stream.attachedFiles}
+                      onAttachFiles={(files) =>
+                        stream.setAttachedFiles((prev) => [...prev, ...files])
+                      }
+                      onRemoveFile={(index) =>
+                        stream.setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
+                      }
+                      pendingQuotes={stream.pendingQuotes}
+                      onRemoveQuote={(index) => {
+                        stream.setPendingQuotes((prev) => prev.filter((_, i) => i !== index))
+                        setRevealFile(null) // dropping a quote clears its reveal highlight
+                      }}
+                      onJumpToQuote={handleQuoteJump}
+                      pendingMessage={stream.pendingMessage}
+                      pendingSends={stream.pendingSends}
+                      onCancelPending={() => {
+                        stream.setInput(stream.pendingMessage || "")
+                        stream.setPendingMessage(null)
+                      }}
+                      onDiscardPending={() => {
+                        stream.setPendingMessage(null)
+                      }}
+                      onEditPending={stream.editPendingSend}
+                      onDiscardPendingItem={stream.discardPendingSend}
+                      onForceInsertPending={stream.forceInsertPendingSend}
+                      onCancelForceInsertPending={stream.cancelForceInsertPendingSend}
+                      onStop={stream.handleStop}
+                      currentSessionId={session.currentSessionId}
+                      currentAgentId={session.currentAgentId}
+                      onCommandAction={handleCommandAction}
+                      permissionMode={stream.permissionMode}
+                      onPermissionModeChange={stream.setPermissionMode}
+                      sessionTemperature={sessionTemperature}
+                      onSessionTemperatureChange={setSessionTemperature}
+                      incognitoEnabled={incognitoEnabled}
+                      projectId={currentSessionMeta?.projectId ?? null}
+                      draftKbAttachments={draftKbAttachments}
+                      onDraftKbAttachChange={setDraftKbAttachments}
+                      enableNoteMention
+                      workingDir={session.currentSessionId ? effectiveWorkingDir : draftWorkingDir}
+                      workingDirInherited={
+                        session.currentSessionId ? workingDirSource === "project" : false
+                      }
+                      workingDirSaving={workingDirSaving}
+                      onWorkingDirChange={
+                        currentSessionMeta?.projectId ? undefined : handleWorkingDirChange
+                      }
+                      planState={planMode.planState}
+                      onEnterPlanMode={planMode.enterPlanMode}
+                      onExitPlanMode={planMode.exitPlanMode}
+                      onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
+                      taskProgressSnapshot={taskProgressSnapshot}
+                      onOpenWorkspace={openWorkspacePanel}
+                      workspacePanelVisible={workspacePanelVisibleInRightPanel}
+                      executionState={
+                        session.currentSessionId
+                          ? (stream.executionStateBySession.get(session.currentSessionId) ?? null)
+                          : null
+                      }
+                      hero={emptySessionInputHero}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </FileActionsContext.Provider>
           </div>
 
           {/* Diff panel (right side, selected from the title-bar panel switcher) */}

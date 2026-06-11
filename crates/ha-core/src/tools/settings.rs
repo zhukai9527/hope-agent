@@ -86,11 +86,17 @@ fn risk_level(category: &str) -> &'static str {
         | "recall_summary"
         | "tool_call_narration"
         | "teams"
-        | "im_auto_transcribe" => "medium",
+        | "im_auto_transcribe"
+        | "knowledge_passive_recall"
+        | "knowledge_search"
+        | "sprite" => "medium",
 
         // ── HIGH ───────────────────────────────────────────────
         "proxy" | "embedding" | "shortcuts" | "skills" | "server" | "acp_control" | "skill_env"
         | "security" | "security.ssrf" | "smart_mode" | "mcp_global" | "filesystem"
+        // Autonomous maintenance can write to the user's notes (auto_approve =
+        // approval policy) — treat as HIGH so the skill confirms before changes.
+        | "knowledge_maintenance"
         | "auto_update" => "high",
 
         // Read-only categories — no risk since they can't be mutated here.
@@ -179,6 +185,15 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "dreaming" => Some(
             "Dreaming runs offline LLM consolidation cycles. Disabling stops idle / cron triggers entirely; promotion thresholds gate which candidates get pinned into long-term memory."
+        ),
+        "knowledge_maintenance" => Some(
+            "Layer-2 autonomous maintenance scans knowledge bases and queues note-maintenance proposals (auto-link, dedup merge, tagging, MOC, memory→note, …) for review. Changes take effect on the next cycle. ⚠️ `enabled` lets background cycles run; `autoApprove` makes approved-free writes to the user's notes happen automatically (skipping the review queue) — confirm with the user before enabling either."
+        ),
+        "knowledge_search" => Some(
+            "Knowledge hybrid `note_search` ranking. note_search runs keyword (BM25) + semantic (vector) search over note chunks, fuses them with RRF, then re-ranks for diversity with MMR. Pure query-time (no reindex). `textWeight`/`vectorWeight` = fusion balance (ratio matters; raise textWeight for code/jargon, vectorWeight for meaning); `rrfK` = fusion smoothing (lower trusts each method's top hit more); `mmrLambda` = relevance↔diversity (1.0 pure relevance, lower trims near-duplicates); `candidateMultiplier` = candidate pool before MMR (×limit). Defaults (0.4/0.6/60/0.7/3) suit most libraries; send those to restore defaults."
+        ),
+        "sprite" => Some(
+            "Knowledge-space sprite / inspiration mode: a proactive companion that, while the user works on a note, makes a bounded LLM call and may surface a transient suggestion bubble. ⚠️ `enabled` makes proactive (unprompted) LLM calls — has a cost. `proactive` (default true) biases it toward speaking vs. staying quiet. `triggers.*` toggle the occasions it may fire (editIdle / noteOpen / conversation / periodic / paste); `idleEditSecs` + `minChangeChars` gate edit-idle, `periodicSecs` the periodic streak, `pasteMinChars` the paste trigger. `cooldownSecs` / `maxPerSessionPerHour` throttle overall frequency; `senses.*` toggle which context (doc / edit / conversation / memory / awareness) is fused in."
         ),
         "stt_providers" => Some(
             "Read-only via this tool. STT provider configs carry API keys (apiKey / authProfiles[*].apiKey) plus provider-specific secrets in `extra` (Volcengine app_id / access_key, iFlytek app_id, Azure region key, etc.). The response from get_settings redacts every secret-bearing field — writes must go through Settings → Speech-to-Text so credentials stay out of conversation logs."
@@ -498,6 +513,10 @@ fn read_category(category: &str) -> Result<Value> {
         "filesystem" => Ok(serde_json::to_value(&cfg.filesystem)?),
         "multimodal" => Ok(serde_json::to_value(&cfg.multimodal)?),
         "dreaming" => Ok(serde_json::to_value(&cfg.dreaming)?),
+        "knowledge_maintenance" => Ok(serde_json::to_value(&cfg.knowledge_maintenance)?),
+        "knowledge_passive_recall" => Ok(serde_json::to_value(&cfg.knowledge_passive_recall)?),
+        "knowledge_search" => Ok(serde_json::to_value(&cfg.knowledge_search)?),
+        "sprite" => Ok(serde_json::to_value(&cfg.sprite)?),
         "mcp_global" => Ok(serde_json::to_value(&cfg.mcp_global)?),
         "mcp_servers" => Ok(redact_mcp_servers_value(serde_json::to_value(
             &cfg.mcp_servers,
@@ -651,12 +670,12 @@ fn get_all_overview() -> Result<String> {
             "deferred_tools", "async_tools", "approval",
             "tool_result_disk_threshold", "ask_user_question_timeout", "plan",
             "issue_reporting", "skills_auto_review", "recall_summary", "tool_call_narration",
-            "teams", "im_auto_transcribe"
+            "teams", "im_auto_transcribe", "knowledge_passive_recall", "knowledge_search", "sprite"
         ],
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
             "acp_control", "skill_env", "security", "security.ssrf",
-            "smart_mode", "mcp_global", "auto_update"
+            "smart_mode", "mcp_global", "knowledge_maintenance", "auto_update"
         ],
         "read_only": [
             "active_model", "fallback_models", "channels", "mcp_servers",
@@ -1008,6 +1027,27 @@ async fn update_app_config(category: &str, values: &Value) -> Result<String> {
         "filesystem" => merge_field(&mut store.filesystem, values)?,
         "multimodal" => merge_field(&mut store.multimodal, values)?,
         "dreaming" => merge_field(&mut store.dreaming, values)?,
+        "knowledge_maintenance" => {
+            merge_field(&mut store.knowledge_maintenance, values)?;
+            // Clamp so a skill write can't persist out-of-range values (the GUI path
+            // clamps in `service::set_maintenance_config`).
+            store.knowledge_maintenance = store.knowledge_maintenance.clamped();
+        }
+        "knowledge_passive_recall" => {
+            merge_field(&mut store.knowledge_passive_recall, values)?;
+            // Clamp (mirrors `service::set_passive_recall_config`).
+            store.knowledge_passive_recall = store.knowledge_passive_recall.clamped();
+        }
+        "knowledge_search" => {
+            merge_field(&mut store.knowledge_search, values)?;
+            // Clamp (mirrors `service::set_search_config`).
+            store.knowledge_search = store.knowledge_search.clamped();
+        }
+        "sprite" => {
+            merge_field(&mut store.sprite, values)?;
+            // Clamp so a skill write can't hammer the LLM (mirrors `sprite::set_config`).
+            store.sprite = store.sprite.clamped();
+        }
         "mcp_global" => merge_field(&mut store.mcp_global, values)?,
         "local_llm_auto_maintenance" => {
             // Only the `enabled` toggle is writable through the skill —
@@ -1277,6 +1317,7 @@ mod tests {
             "security.ssrf",
             "smart_mode",
             "mcp_global",
+            "knowledge_maintenance",
         ] {
             assert_eq!(risk_level(cat), "high", "{cat} should be high risk");
         }
@@ -1284,7 +1325,7 @@ mod tests {
 
     #[test]
     fn risk_level_medium_includes_new_categories() {
-        for cat in ["multimodal", "dreaming"] {
+        for cat in ["multimodal", "dreaming", "sprite", "knowledge_search"] {
             assert_eq!(risk_level(cat), "medium", "{cat} should be medium risk");
         }
     }
@@ -1546,6 +1587,7 @@ mod tests {
             "channels",
             "multimodal",
             "dreaming",
+            "knowledge_maintenance",
         ] {
             assert!(
                 side_effect_note(cat).is_some(),

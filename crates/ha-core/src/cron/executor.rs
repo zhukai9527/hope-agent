@@ -427,6 +427,7 @@ pub async fn build_and_run_agent_with_context(
         plan_context_override: None,
         skill_allowed_tools: Vec::new(),
         denied_tools: Vec::new(),
+        tool_scope: None,
         subagent_depth: 0,
         steer_run_id: None,
         auto_approve_tools: false,
@@ -437,6 +438,12 @@ pub async fn build_and_run_agent_with_context(
         // Cron is a background/non-interactive runner. Reuse the channel bucket
         // until the status UI grows a dedicated cron source.
         source: crate::chat_engine::stream_seq::ChatSource::Channel,
+        origin_source: None,
+        // Cron reuses the `Channel` source bucket (for activeChatCounts), which
+        // maps to `KbAccessSource::Im`; with no `channel_kb_context` the WS8 gate
+        // denies, so cron turns currently get zero KB access. A dedicated
+        // `ChatSource::Cron` (owner-internal) is the follow-up to grant it.
+        channel_kb_context: None,
         event_sink: Arc::new(crate::chat_engine::NoopEventSink),
     };
 

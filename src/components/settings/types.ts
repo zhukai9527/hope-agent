@@ -6,6 +6,7 @@ export const SETTINGS_SECTION_IDS = [
   "agents",
   "teams",
   "memory",
+  "knowledge",
   "notifications",
   "sandbox",
   "acp",
