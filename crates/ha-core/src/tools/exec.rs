@@ -257,6 +257,17 @@ pub(crate) async fn resolve_exec_command_approval(
                 reason,
                 command
             );
+            // HOOKS-3: exec is excluded from the outer engine gate, so its
+            // command-level policy deny never reached the `fire_permission_denied`
+            // at the engine gate. Fire here with the *command* as matcher target
+            // (not "exec"), so a hook can match dangerous patterns. The
+            // user-decline path fires from `check_and_request_approval`.
+            crate::hooks::fire_permission_denied(
+                ctx.session_id.as_deref(),
+                command,
+                "policy",
+                ctx.tool_call_id.as_deref(),
+            );
             Err(super::rejection::ToolRejection::denied_by_policy(
                 TOOL_EXEC, reason,
             ))

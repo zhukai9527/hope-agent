@@ -493,7 +493,7 @@ pub(crate) async fn check_and_request_approval(
         );
         // PermissionRequest hook (observation): the structured permission event,
         // matchable on the command. Single chokepoint for every approval prompt.
-        crate::hooks::fire_permission_request(session_id, command);
+        crate::hooks::fire_permission_request(session_id, command, None);
         app_info!(
             "tool",
             "approval",
@@ -534,7 +534,7 @@ pub(crate) async fn check_and_request_approval(
             // PermissionDenied hook (observation): the user declined the prompt.
             // Single chokepoint for every user-facing decline.
             if matches!(response, ApprovalResponse::Deny) {
-                crate::hooks::fire_permission_denied(session_id, command, "user_declined");
+                crate::hooks::fire_permission_denied(session_id, command, "user_declined", None);
             }
             Ok(response)
         }

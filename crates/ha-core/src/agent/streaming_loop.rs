@@ -165,6 +165,9 @@ async fn fire_post_tool_use_hook(
             // Phase 1.1: interrupt vs error not distinguished at this site.
             is_interrupt: false,
             duration_ms: elapsed_ms,
+            // Synchronous (foreground) settle — async-job terminals fill this
+            // via `fire_async_job_terminal`.
+            job_id: None,
         }
     } else {
         let tool_response = serde_json::from_str(clean_result)
@@ -175,6 +178,7 @@ async fn fire_post_tool_use_hook(
             tool_input,
             tool_response,
             tool_use_id: call_id.to_string(),
+            job_id: None,
         }
     };
     let outcome = HookDispatcher::dispatch(event, input).await;

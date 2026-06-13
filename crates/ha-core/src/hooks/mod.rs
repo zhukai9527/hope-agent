@@ -765,22 +765,36 @@ pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
 }
 
 /// Fire a `PermissionRequest` observation hook (a tool approval prompt was
-/// raised). `command` is the matcher target (the command / tool being gated).
-pub fn fire_permission_request(session_id: Option<&str>, command: &str) {
+/// raised). `command` is the matcher target (the command / tool being gated);
+/// `tool_use_id` correlates it with the PreToolUse/PostToolUse for the same
+/// call. `job_id` stays `None` — approval always runs before a call detaches
+/// (B5), so there is never a live job id at this point.
+pub fn fire_permission_request(session_id: Option<&str>, command: &str, tool_use_id: Option<&str>) {
     let input = HookInput::PermissionRequest {
         common: observation_common("PermissionRequest", session_id.unwrap_or("")),
         command: command.to_string(),
+        tool_use_id: tool_use_id.map(str::to_string),
+        job_id: None,
     };
     fire_and_forget(HookEvent::PermissionRequest, input);
 }
 
 /// Fire a `PermissionDenied` observation hook (a tool was denied). `reason` is
 /// `user_declined` (the user said no to a prompt) or `policy` (engine auto-deny).
-pub fn fire_permission_denied(session_id: Option<&str>, command: &str, reason: &str) {
+/// `tool_use_id` correlates the denial with its call; `job_id` stays `None`
+/// (approval runs before detach, B5).
+pub fn fire_permission_denied(
+    session_id: Option<&str>,
+    command: &str,
+    reason: &str,
+    tool_use_id: Option<&str>,
+) {
     let input = HookInput::PermissionDenied {
         common: observation_common("PermissionDenied", session_id.unwrap_or("")),
         command: command.to_string(),
         reason: reason.to_string(),
+        tool_use_id: tool_use_id.map(str::to_string),
+        job_id: None,
     };
     fire_and_forget(HookEvent::PermissionDenied, input);
 }
@@ -902,6 +916,7 @@ mod tests {
             tool_input: serde_json::json!({}),
             tool_response: serde_json::json!("ok"),
             tool_use_id: "c1".into(),
+            job_id: None,
         }
     }
 
