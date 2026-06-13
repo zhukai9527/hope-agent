@@ -15,6 +15,7 @@
 
 pub(crate) mod cancel;
 pub(crate) mod db;
+pub(crate) mod error;
 pub(crate) mod injection;
 pub(crate) mod retention;
 pub(crate) mod spawn;

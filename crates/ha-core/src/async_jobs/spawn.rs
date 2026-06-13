@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use super::db::AsyncJobsDB;
+use super::error::JobError;
 use super::injection;
 use super::types::{AsyncJob, AsyncJobStatus, JobOrigin};
 use crate::tools::{ToolExecContext, ASYNC_JOB_TIMEOUT_ARG};
@@ -261,7 +262,9 @@ pub async fn dispatch_with_auto_background(
             Ok(rt) => rt,
             Err(e) => {
                 let mut p = phase_w.lock().unwrap_or_else(|p| p.into_inner());
-                *p = Phase::ResultReady(Err(format!("runtime build failed: {}", e)));
+                *p = Phase::ResultReady(Err(JobError::Failed {
+                    message: format!("runtime build failed: {}", e),
+                }));
                 notify_w.notify_one();
                 return;
             }
@@ -270,36 +273,27 @@ pub async fn dispatch_with_auto_background(
             let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
                 &name_w, &args_w, &ctx_w,
             ));
-            let result: Result<String, String> = if max_secs == 0 {
+            let result: Result<String, JobError> = if max_secs == 0 {
                 tokio::select! {
-                    inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+                    inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
                     _ = cancel_w.cancelled() => {
                         let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(format!(
-                            "Async tool job '{}' was cancelled",
-                            job_id_w
-                        ))
+                        Err(JobError::Cancelled)
                     },
                 }
             } else {
                 let timer = tokio::time::sleep(std::time::Duration::from_secs(max_secs));
                 tokio::pin!(timer);
                 tokio::select! {
-                    inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+                    inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
                     _ = &mut timer => {
                         cancel_w.cancel();
                         let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(format!(
-                            "Async tool job '{}' exceeded max_job_secs ({}s) and was cancelled",
-                            job_id_w, max_secs
-                        ))
+                        Err(JobError::TimedOut { max_secs })
                     },
                     _ = cancel_w.cancelled() => {
                         let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(format!(
-                            "Async tool job '{}' was cancelled",
-                            job_id_w
-                        ))
+                        Err(JobError::Cancelled)
                     },
                 }
             };
@@ -356,7 +350,7 @@ pub async fn dispatch_with_auto_background(
             let mut p = phase.lock().unwrap_or_else(|p| p.into_inner());
             if matches!(*p, Phase::ResultReady(_)) {
                 if let Phase::ResultReady(r) = std::mem::replace(&mut *p, Phase::Consumed) {
-                    return r.map_err(|e| anyhow::anyhow!(e));
+                    return r.map_err(JobError::into_inline_error);
                 }
             }
         }
@@ -373,7 +367,7 @@ pub async fn dispatch_with_auto_background(
                 match std::mem::replace(&mut *p, Phase::Pending) {
                     Phase::ResultReady(r) => {
                         *p = Phase::Consumed;
-                        return r.map_err(|e| anyhow::anyhow!(e));
+                        return r.map_err(JobError::into_inline_error);
                     }
                     Phase::Pending => {
                         // Persist the job row before returning a synthetic id.
@@ -442,7 +436,7 @@ pub async fn dispatch_with_auto_background(
 #[derive(Debug)]
 enum Phase {
     Pending,
-    ResultReady(Result<String, String>),
+    ResultReady(Result<String, JobError>),
     /// Main thread gave up; OS thread will finalize when done.
     DetachedRunning,
     /// OS thread finished after detach; main thread already returned synthetic.
@@ -468,36 +462,27 @@ async fn run_job_to_completion(
     let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
         &tool_name, &args, &ctx,
     ));
-    let result: Result<String, String> = if max_secs == 0 {
+    let result: Result<String, JobError> = if max_secs == 0 {
         tokio::select! {
-            inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+            inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
             _ = cancel_token.cancelled() => {
                 let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                Err(format!(
-                    "Async tool job '{}' was cancelled",
-                    job_id
-                ))
+                Err(JobError::Cancelled)
             },
         }
     } else {
         let timer = tokio::time::sleep(std::time::Duration::from_secs(max_secs));
         tokio::pin!(timer);
         tokio::select! {
-            inner = &mut dispatch => inner.map_err(|e| e.to_string()),
+            inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
             _ = &mut timer => {
                 cancel_token.cancel();
                 let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                Err(format!(
-                    "Async tool job '{}' exceeded max_job_secs ({}s) and was cancelled",
-                    job_id, max_secs
-                ))
+                Err(JobError::TimedOut { max_secs })
             },
             _ = cancel_token.cancelled() => {
                 let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                Err(format!(
-                    "Async tool job '{}' was cancelled",
-                    job_id
-                ))
+                Err(JobError::Cancelled)
             },
         }
     };
@@ -522,7 +507,7 @@ async fn finalize_job(
     session_id: Option<&str>,
     agent_id: Option<&str>,
     tool_call_id: Option<String>,
-    result: Result<String, String>,
+    result: Result<String, JobError>,
     preview_bytes: usize,
 ) {
     let (status, preview, path, error_text) = match result {
@@ -530,17 +515,13 @@ async fn finalize_job(
             let (preview, path) = persist_result(job_id, &output, preview_bytes);
             (AsyncJobStatus::Completed, Some(preview), path, None)
         }
-        Err(e) => {
-            let is_timeout = e.contains("exceeded max_job_secs");
-            let is_cancelled = e.contains("was cancelled");
-            let st = if is_timeout {
-                AsyncJobStatus::TimedOut
-            } else if is_cancelled {
-                AsyncJobStatus::Cancelled
-            } else {
-                AsyncJobStatus::Failed
-            };
-            (st, None, None, Some(e))
+        Err(job_err) => {
+            // Typed terminal status — no more re-parsing the error message
+            // (MISC-7). `DeniedByUser` folds into `Failed` with STOP-preserving
+            // text via `display_for_injection`.
+            let status = job_err.to_status();
+            let error_text = job_err.display_for_injection();
+            (status, None, None, Some(error_text))
         }
     };
 
