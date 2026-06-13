@@ -437,6 +437,8 @@ flowchart TD
 
 `tools/execution.rs:decide_async_path()` 在通过可见性 / 审批 / Plan-mode 路径门后立即决策。`bypass_async_dispatch=true` 的 ctx（递归再入路径）整段跳过，保证不会无限套娃。
 
+> **exec 例外（审批前移）**：`exec` 的命令级审批不走外层引擎门（`needs_permission_engine` 排除 `TOOL_EXEC`），其门在 `tool_exec` 内部。对 async-eligible 的 exec，`execute_tool_with_context` 在 detach 前先调 `exec::resolve_exec_command_approval`（命令门单一真相源）跑完审批，再 spawn——见下「exec 命令审批前移」。
+
 ```mermaid
 flowchart TD
     Start([工具调用通过审批 + 路径门]) --> CheckBypass{ctx.bypass_async_dispatch?}
@@ -472,6 +474,18 @@ flowchart TD
 | **3. Auto-Background** | `model-decide` 策略 + `asyncTools.autoBackgroundSecs > 0`（默认 30s） | 先同步跑，超预算再 detach，结果不丢 |
 
 `job_timeout_secs` 是 async-capable 工具 schema 自动注入的可选单次参数，只控制外层 async job 的最长运行时长。`0` 或省略表示沿用用户配置；当 `asyncTools.maxJobSecs = 0` 时，正数 `job_timeout_secs` 可给本次 job 设置外层超时；当 `asyncTools.maxJobSecs > 0` 时，`job_timeout_secs` 只能比用户配置更短，不能放宽它。该字段在递归执行真实工具前会被剥离，不会传给 `exec` / `web_search` / `image_generate` 本体。
+
+### exec 命令审批前移
+
+非 exec 的 async-capable 工具（`web_search` / `image_generate` / …）在到达 detach 分支前已经过外层引擎门审批，所以「先批准、后台化」天然成立。`exec` 不同：它被 `needs_permission_engine` 排除，命令级审批（危险命令 / 编辑命令 / AllowAlways 前缀 / 交互弹窗）历来只在 `tool_exec` 内部跑。若不处理，`run_in_background: true` 的 exec 会先 spawn、立刻回 synthetic `{status:"started"}`，**审批弹窗反而在后台 OS 线程上、"started" 之后才出现**——模型误以为命令已在跑（ASYNC-1），PreToolUse / 审批 hook 时序倒置（HOOKS-2）。
+
+修复：`execute_tool_with_context` 在 detach 前，对 async-eligible 的 exec 调用命令门单一真相源 `exec::resolve_exec_command_approval`：
+
+- **Deny** → 直接返回 `ToolRejection`，**不 spawn**，模型得到 STOP，不会看到幽灵 job
+- **Allow** → 把 `exec_pre_approved = true` 带入 spawn 的 ctx，后台 re-dispatch 经 `should_run_exec_command_gate()`（`!auto_approve_tools && !exec_pre_approved`）跳过内层门——审批恰好一次。同时把授权来源 `ApprovalOrigin` 写进 ctx，落 job 的 `approval_origin` 审计列
+- **Auto-Background 档**：审批在 `dispatch_with_auto_background` 之前同步完成，所以审批等待**不**计入 `autoBackgroundSecs` / `maxJobSecs` 预算（消「审批慢→假转后台」，ASYNC-2）
+
+`exec_pre_approved` 与 `external_pre_approved` 物理分开：后者只压制引擎门、**绝不**压制命令门（async re-entry 安全红线）；前者仅在命令门已对本次调用跑过、用户已批准后才置位，故可安全压制内层门。
 
 ### Auto-Background 的相位机
 
@@ -524,16 +538,23 @@ CREATE TABLE async_tool_jobs (
     tool_name       TEXT NOT NULL,
     tool_call_id    TEXT,
     args_json       TEXT NOT NULL,
-    status          TEXT NOT NULL,           -- running / completed / failed / interrupted / timed_out
+    status          TEXT NOT NULL,           -- running / cancelling / completed / failed / interrupted / timed_out / awaiting_approval
     result_preview  TEXT,                    -- inline 预览（head + tail）
     result_path     TEXT,                    -- 大结果 spool 磁盘路径
     error           TEXT,
     created_at      INTEGER NOT NULL,
     completed_at    INTEGER,
     injected        INTEGER NOT NULL DEFAULT 0,
-    origin          TEXT NOT NULL DEFAULT 'explicit'  -- explicit / policy_forced / auto_backgrounded
+    origin          TEXT NOT NULL DEFAULT 'explicit', -- explicit / policy_forced / auto_backgrounded
+    -- 审批/资源治理列骨架（A-7 一次性引入，写入逻辑分散在后续子任务）：
+    approval_origin TEXT,                     -- 授权来源（B4 写：user / timeout_proceed / yolo / policy_allow / …）
+    incognito       INTEGER NOT NULL DEFAULT 0, -- 无痕标记（E4）
+    pid             INTEGER,                  -- 子进程 pid，重启孤儿探测用（I3）
+    cancel_requested INTEGER NOT NULL DEFAULT 0 -- 跨进程取消 flag（I4）
 );
 ```
+
+> `status` 第八态 `awaiting_approval`（A-5）为**非终态**：后台 exec 在审批前移落地前理论上可短暂处于此态（不消耗墙钟预算、不入终态 SQL 列表）；replay 把它同 `running` 标 `interrupted`。
 
 **大结果 spool**：超过 `asyncTools.inlineResultBytes`（默认 4096）的输出写到 `~/.hope-agent/async_jobs/{job_id}.txt`，DB 只存 head/tail 预览 + 路径。后续 `job_status` / 注入消息引用磁盘路径，模型可以用 `read` 工具拉全文。
 

@@ -183,9 +183,6 @@ fn parse_exec_timeout_secs(args: &Value) -> u64 {
     }
 }
 
-/// Shared handling for `ApprovalCheckError::TimedOut` in the exec path.
-/// Returns `Ok(())` when the configured timeout action is Proceed and
-/// `Err(..)` (after marking the process session Failed) when Deny.
 /// Decide what to do when the exec approval dialog times out, per
 /// `approval_timeout_action`. Registry-free (see
 /// [`resolve_exec_command_approval`]); callers own any `ProcessSession`
@@ -318,7 +315,12 @@ pub(crate) async fn resolve_exec_command_approval(
                     Ok(ApprovalOrigin::User)
                 }
                 Ok(ApprovalResponse::Deny) => {
-                    app_warn!("tool", "exec", "Command execution denied by user: {}", command);
+                    app_warn!(
+                        "tool",
+                        "exec",
+                        "Command execution denied by user: {}",
+                        command
+                    );
                     Err(super::rejection::ToolRejection::denied_by_user(TOOL_EXEC))
                 }
                 Err(ApprovalCheckError::TimedOut { timeout_secs }) => {

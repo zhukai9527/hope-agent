@@ -104,7 +104,9 @@ mod tests {
         );
         assert_eq!(
             JobError::DeniedByUser {
-                rejection: ToolRejection::DeniedByUser { name: "exec".into() }
+                rejection: ToolRejection::DeniedByUser {
+                    name: "exec".into()
+                }
             }
             .to_status(),
             AsyncJobStatus::Failed,
@@ -115,7 +117,9 @@ mod tests {
     #[test]
     fn denied_injection_text_preserves_stop_semantics() {
         let je = JobError::DeniedByUser {
-            rejection: ToolRejection::DeniedByUser { name: "exec".into() },
+            rejection: ToolRejection::DeniedByUser {
+                name: "exec".into(),
+            },
         };
         let s = je.display_for_injection();
         assert!(s.starts_with("Tool error: "), "needs Tool error: prefix");
@@ -152,7 +156,9 @@ mod tests {
     #[test]
     fn inline_error_restores_rejection_stop_semantics() {
         let je = JobError::DeniedByUser {
-            rejection: ToolRejection::DeniedByUser { name: "exec".into() },
+            rejection: ToolRejection::DeniedByUser {
+                name: "exec".into(),
+            },
         };
         let e = je.into_inline_error();
         // Downcasts back to a ToolRejection so the streaming loop renders the
