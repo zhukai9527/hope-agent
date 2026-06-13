@@ -43,7 +43,7 @@
 | `SessionStart` | `source` ∈ {startup, resume, …} | `agent::context` / `hooks::fire_session_start_observation` |
 | `SessionEnd` | `source` | `hooks::fire_session_end` / `dispatch_session_end`（`mod.rs`）|
 | `UserPromptExpansion` | 命令名 | `hooks::fire_user_prompt_expansion`（`mod.rs`）|
-| `PostToolUse` | `tool_name` | `streaming_loop::fire_post_tool_use_hook`（同步成功路径）+ `hooks::fire_async_job_terminal`（异步 job 终局，`job_id=Some`）|
+| `PostToolUse` | `tool_name` | `streaming_loop::fire_post_tool_use_hook`（同步成功路径 + 异步提交时的 synthetic「started」占位 fire,`job_id` 缺省）+ `hooks::fire_async_job_terminal`（异步 job 终局，`job_id=Some`）|
 | `PostToolUseFailure` | `tool_name` | 同上（`is_error=true`；异步取消 / 重启中断 `is_interrupt=true`）|
 | `PostToolBatch` | 无 | `agent::streaming_loop`（每 API round 全部 tool settle 后一次）|
 | `PermissionRequest` | `tool_name` | `hooks::fire_permission_request`（`mod.rs`）|
@@ -68,7 +68,12 @@
 `async_capable` 工具被后台化后，真实结果在**离开当轮**之后才落地，同步路径的 `fire_post_tool_use_hook` 看不到它。`async_jobs::spawn::finalize_job` 在写完终局后调 `hooks::fire_async_job_terminal` 补发终局 hook，对齐 Claude Code 的 PostToolUse 覆盖面：
 
 - **事件选择**：`Completed` → `PostToolUse`；`Failed` / `TimedOut` / `Cancelled` / `Interrupted` → `PostToolUseFailure`。映射单点在 `AsyncJobStatus::terminal_hook_flags()`（返回 `(is_error, is_interrupt)`）。
-- **`job_id` 关联（红线）**：终局 fire 一定带 `job_id=Some`。同一 `tool_use_id` 会 fire **两次**——后台化提交时的 `PreToolUse`（`job_id` 字段不存在）+ 这条终局 `PostToolUse(Failure)`（`job_id=Some`）。hook 靠 `job_id` 有无区分二者。`tool_input` 为 `Null`（finalize 处只有 job id、没有原始入参），matcher 按 `tool_name` 命中。
+- **`job_id` 关联（红线）**：一个被后台化的 `tool_use_id` 实际 fire **三次**，不是两次:
+  1. **提交时 `PreToolUse`**（`job_id` 字段不存在）——在 detach 之前。
+  2. **synthetic「started」占位 `PostToolUse`**:detach 立即把 `{"job_id":..,"status":"started",..}` 当作 tool_result 返回,它不以 `Tool error:` 开头故 `is_error=false`,`fire_post_tool_use_hook` 照常发一条 `PostToolUse`,且 `job_id=None`。由于 `job_id` 带 `skip_serializing_if=Option::is_none`,**该条 JSON 里 `job_id` 字段缺省,与一次普通同步完成字节级同形**——单凭「`job_id` 有无」无法把它和真同步完成区分。要识别这条占位 fire 必须看 `tool_response.status == "started"`。
+  3. **终局 `PostToolUse(Failure)`**（`job_id=Some`）——真实结果落地时由 `fire_async_job_terminal` 发。`tool_input` 为 `Null`(finalize 处只有 job id、没有原始入参),matcher 按 `tool_name` 命中。
+
+  即:`job_id=Some` 唯一标识**终局** fire(把它与前两条都分开);要把 synthetic「started」占位与真同步完成分开,则看 `tool_response.status`。
 - **取消可见(HOOKS-4)**：取消的 job 也 fire（`is_interrupt=true`），不再对 hooks 静默；但**不**走 `dispatch_injection`（取消多源于 turn-cancel / session-delete，注入会凭空起新回合 / 命中幽灵会话）。
 - **重启补发(HOOKS-1)**：`replay_pending_jobs` 对 terminal-but-uninjected 行补发终局 hook，覆盖重启时被标 `interrupted` 的 job(进程死前从未 fire)。正常 finalize 过的 job 是 `injected=true`，被 `list_pending_injection` 排除，不重复 fire。
 - **线程红线**：`fire_async_job_terminal` **强制走进程级 `fire_and_forget_runtime()`**，不用 `Handle::try_current()`——finalize 跑在 job OS 线程的 current-thread runtime 上，该 runtime 线程结束即 drop，spawn 在其上的 dispatch 会被静默杀掉。纯 fire-and-forget，不阻塞 finalize。
