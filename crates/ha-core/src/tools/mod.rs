@@ -56,7 +56,7 @@ mod write;
 pub(crate) use task::task_reminder_text;
 
 pub use approval::{
-    deny_pending_for_session, emit_approval_resolved, submit_approval_response,
+    deny_pending_for_session, emit_approval_resolved, submit_approval_response, ApprovalOrigin,
     ApprovalResolutionSource, ApprovalResponse, ApprovalSubmitError, EVENT_APPROVAL_RESOLVED,
 };
 pub use definitions::{

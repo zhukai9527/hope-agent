@@ -242,6 +242,13 @@ pub struct ToolExecContext {
     /// This flag may suppress the command gate precisely because it is set only
     /// once that gate has already passed for this exact call.
     pub exec_pre_approved: bool,
+    /// How a backgrounded call was authorized, for the async-job
+    /// `approval_origin` audit column (TIMEOUT-2). Set by the exec async
+    /// approval-reorder alongside [`Self::exec_pre_approved`] and read by
+    /// [`crate::async_jobs::spawn::record_running_job`]. `None` for synchronous
+    /// dispatch and for jobs that skipped the gate (auto-approve / external
+    /// pre-approved — wired separately by F6).
+    pub approval_origin: Option<approval::ApprovalOrigin>,
     /// Per-session permission mode (Default / Smart / Yolo). Resolved from the
     /// `sessions.permission_mode` column at agent build time. The engine
     /// consumes this together with `global_yolo` to decide approval behavior.
@@ -1210,6 +1217,7 @@ pub async fn execute_tool_with_context(
     // phantom job. Non-exec async tools already ran the engine gate above, so
     // they reach the spawn branches already approved.
     let mut exec_pre_approved = false;
+    let mut exec_approval_origin: Option<approval::ApprovalOrigin> = None;
     if name == TOOL_EXEC
         && !matches!(async_decision, AsyncDecision::Sync)
         && ctx.should_run_exec_command_gate()
@@ -1220,8 +1228,9 @@ pub async fn execute_tool_with_context(
             .and_then(|v| v.as_str())
             .map(|raw| ctx.resolve_path(raw))
             .unwrap_or_else(|| ctx.default_cwd());
-        exec::resolve_exec_command_approval(command, args, ctx, &session_cwd).await?;
+        let origin = exec::resolve_exec_command_approval(command, args, ctx, &session_cwd).await?;
         exec_pre_approved = true;
+        exec_approval_origin = Some(origin);
     }
 
     // Log tool execution start
@@ -1272,8 +1281,10 @@ pub async fn execute_tool_with_context(
     if let AsyncDecision::ImmediateBackground(origin) = async_decision {
         let mut spawn_ctx = ctx.clone();
         // For exec the command gate already ran above; carry the verdict so the
-        // re-dispatch inside the background runtime doesn't prompt again.
+        // re-dispatch inside the background runtime doesn't prompt again, plus
+        // the audit origin for the job's `approval_origin` column.
         spawn_ctx.exec_pre_approved = exec_pre_approved;
+        spawn_ctx.approval_origin = exec_approval_origin;
         let raw = async_jobs::spawn_explicit_job(name, args.clone(), spawn_ctx, origin)?;
         // Skip the disk-persist tail since the synthetic JSON is small and
         // mirrors the same shape `job_status` returns later.
@@ -1301,8 +1312,9 @@ pub async fn execute_tool_with_context(
         inner_ctx.external_pre_approved = true;
         // For exec the command gate already ran above (before the budget timer
         // starts); carry the verdict so the inner re-dispatch doesn't prompt
-        // again on the background OS thread.
+        // again on the background OS thread, plus the audit origin.
         inner_ctx.exec_pre_approved = exec_pre_approved;
+        inner_ctx.approval_origin = exec_approval_origin;
         let raw =
             async_jobs::dispatch_with_auto_background(name, args, &inner_ctx, auto_bg_secs).await?;
         // The inner worker suppresses generic disk persistence so detached jobs

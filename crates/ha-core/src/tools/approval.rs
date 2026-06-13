@@ -154,6 +154,44 @@ impl ApprovalResolutionSource {
     }
 }
 
+/// How a backgrounded tool call got authorized to run — the persistent audit
+/// counterpart to [`ApprovalResolutionSource`] (transient broadcast), sharing
+/// the same snake_case word table. Stored in the async-job `approval_origin`
+/// column so audits can tell a real human grant apart from a weaker
+/// timeout-proceed (TIMEOUT-2). Written by the exec async approval-reorder; the
+/// sync exec path / other origins are wired by later subtasks (F6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalOrigin {
+    /// User clicked Approve (once or always), or a prior AllowAlways prefix
+    /// matched — a real human grant.
+    User,
+    /// Approval dialog timed out and `approval_timeout_action=proceed` — a
+    /// weaker authorization than an explicit click.
+    TimeoutProceed,
+    /// A YOLO session or global dangerous-skip bypassed the gate.
+    Yolo,
+    /// IM auto-approve account / slash-skill execution skipped all gates.
+    AutoApprove,
+    /// Async-job re-entry pre-approved at the outer engine gate.
+    ExternalPreApproved,
+    /// The permission engine allowed the command without prompting (safe for
+    /// the current session preset, not via YOLO).
+    PolicyAllow,
+}
+
+impl ApprovalOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::TimeoutProceed => "timeout_proceed",
+            Self::Yolo => "yolo",
+            Self::AutoApprove => "auto_approve",
+            Self::ExternalPreApproved => "external_pre_approved",
+            Self::PolicyAllow => "policy_allow",
+        }
+    }
+}
+
 /// Why a [`submit_approval_response`] call failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalSubmitError {

@@ -41,8 +41,10 @@ pub fn record_running_job(
         completed_at: None,
         injected: false,
         origin: origin.as_str().to_string(),
-        // A-7 column skeleton — real values wired by later subtasks:
-        approval_origin: None,   // B4 / F6 (audit)
+        // B4: how the backgrounded call was authorized (audit, TIMEOUT-2). Set
+        // by the exec async approval-reorder; `None` for tools that skipped the
+        // gate. Remaining A-7 columns wired by later subtasks:
+        approval_origin: ctx.approval_origin.map(|o| o.as_str().to_string()),
         incognito: false,        // E4 (from ctx.incognito)
         pid: None,               // I3 (orphan cleanup)
         cancel_requested: false, // I4 (cross-process cancel)

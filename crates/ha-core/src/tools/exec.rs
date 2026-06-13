@@ -11,7 +11,7 @@ use crate::process_registry::{
 
 use super::approval::{
     approval_timeout_action, check_and_request_approval, is_command_allowed, ApprovalCheckError,
-    ApprovalResponse,
+    ApprovalOrigin, ApprovalResponse,
 };
 use super::TOOL_EXEC;
 
@@ -189,8 +189,9 @@ fn parse_exec_timeout_secs(args: &Value) -> u64 {
 /// Decide what to do when the exec approval dialog times out, per
 /// `approval_timeout_action`. Registry-free (see
 /// [`resolve_exec_command_approval`]); callers own any `ProcessSession`
-/// cleanup on the `Deny` branch.
-fn exec_approval_timeout_outcome(command: &str, timeout_secs: u64) -> Result<()> {
+/// cleanup on the `Deny` branch. On `Proceed` reports the weaker
+/// [`ApprovalOrigin::TimeoutProceed`] authorization for the audit column.
+fn exec_approval_timeout_outcome(command: &str, timeout_secs: u64) -> Result<ApprovalOrigin> {
     match approval_timeout_action() {
         crate::config::ApprovalTimeoutAction::Deny => {
             app_warn!(
@@ -213,8 +214,21 @@ fn exec_approval_timeout_outcome(command: &str, timeout_secs: u64) -> Result<()>
                 timeout_secs,
                 command
             );
-            Ok(())
+            Ok(ApprovalOrigin::TimeoutProceed)
         }
+    }
+}
+
+/// Classify a no-prompt engine `Allow` for the audit column: a YOLO session or
+/// global dangerous-skip means the gate was bypassed; otherwise the engine
+/// just deemed the command safe under the current preset.
+fn exec_policy_allow_origin(ctx: &super::ToolExecContext) -> ApprovalOrigin {
+    if crate::security::dangerous::is_dangerous_skip_active()
+        || matches!(ctx.session_mode, crate::permission::SessionMode::Yolo)
+    {
+        ApprovalOrigin::Yolo
+    } else {
+        ApprovalOrigin::PolicyAllow
     }
 }
 
@@ -234,10 +248,10 @@ pub(crate) async fn resolve_exec_command_approval(
     args: &Value,
     ctx: &super::ToolExecContext,
     session_cwd: &str,
-) -> Result<()> {
+) -> Result<ApprovalOrigin> {
     let decision = super::execution::resolve_tool_permission(TOOL_EXEC, args, ctx, false).await;
     match decision {
-        crate::permission::Decision::Allow => Ok(()),
+        crate::permission::Decision::Allow => Ok(exec_policy_allow_origin(ctx)),
         crate::permission::Decision::Deny { reason } => {
             app_warn!(
                 "tool",
@@ -262,7 +276,7 @@ pub(crate) async fn resolve_exec_command_approval(
                     "Command auto-approved by allowlist prefix: {}",
                     command
                 );
-                return Ok(());
+                return Ok(ApprovalOrigin::User);
             }
             let reason_payload = Some(super::approval::ApprovalReasonPayload::from(&reason));
             match check_and_request_approval(
@@ -275,7 +289,7 @@ pub(crate) async fn resolve_exec_command_approval(
             {
                 Ok(ApprovalResponse::AllowOnce) => {
                     app_info!("tool", "exec", "Command approved (once): {}", command);
-                    Ok(())
+                    Ok(ApprovalOrigin::User)
                 }
                 Ok(ApprovalResponse::AllowAlways) => {
                     if allow_always_ok {
@@ -301,7 +315,7 @@ pub(crate) async fn resolve_exec_command_approval(
                             command
                         );
                     }
-                    Ok(())
+                    Ok(ApprovalOrigin::User)
                 }
                 Ok(ApprovalResponse::Deny) => {
                     app_warn!("tool", "exec", "Command execution denied by user: {}", command);
