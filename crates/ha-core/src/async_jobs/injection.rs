@@ -273,6 +273,11 @@ pub fn build_tool_job_push_message(
         AsyncJobStatus::Cancelling => {
             format!("Async tool \"{tool_name}\" is cancelling; wait for terminal notification.")
         }
+        AsyncJobStatus::AwaitingApproval => {
+            // Non-terminal: never finalized, so it shouldn't reach the
+            // injection path. Defensive arm to keep the match exhaustive.
+            format!("Async tool \"{tool_name}\" is awaiting a human approval decision.")
+        }
     };
     format!(
         "<task-notification>\n\

@@ -8,6 +8,12 @@ pub enum AsyncJobStatus {
     /// Cancellation has been requested and the running future has been
     /// signalled, but the runner has not yet finalized the row.
     Cancelling,
+    /// Registered (row written) but execution is blocked waiting for a human
+    /// approval decision. NOT terminal and not yet consuming wall-clock budget
+    /// — distinguishes "running" from "waiting on a human" for
+    /// job_status / dashboard / replay (a backgrounded exec parked on its
+    /// command-level approval gate sits here, not in `Running`).
+    AwaitingApproval,
     Completed,
     Failed,
     /// Job was running when the application restarted; the process state
@@ -30,6 +36,7 @@ impl AsyncJobStatus {
         match self {
             Self::Running => "running",
             Self::Cancelling => "cancelling",
+            Self::AwaitingApproval => "awaiting_approval",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
@@ -42,6 +49,7 @@ impl AsyncJobStatus {
         match s {
             "running" => Some(Self::Running),
             "cancelling" => Some(Self::Cancelling),
+            "awaiting_approval" => Some(Self::AwaitingApproval),
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "interrupted" => Some(Self::Interrupted),
@@ -52,7 +60,10 @@ impl AsyncJobStatus {
     }
 
     pub fn is_terminal(self) -> bool {
-        !matches!(self, Self::Running | Self::Cancelling)
+        !matches!(
+            self,
+            Self::Running | Self::Cancelling | Self::AwaitingApproval
+        )
     }
 }
 
@@ -107,6 +118,7 @@ mod tests {
         for s in [
             AsyncJobStatus::Running,
             AsyncJobStatus::Cancelling,
+            AsyncJobStatus::AwaitingApproval,
             AsyncJobStatus::Completed,
             AsyncJobStatus::Failed,
             AsyncJobStatus::Interrupted,
@@ -127,6 +139,7 @@ mod tests {
     fn is_terminal_marks_only_running_as_non_terminal() {
         assert!(!AsyncJobStatus::Running.is_terminal());
         assert!(!AsyncJobStatus::Cancelling.is_terminal());
+        assert!(!AsyncJobStatus::AwaitingApproval.is_terminal());
         for s in [
             AsyncJobStatus::Completed,
             AsyncJobStatus::Failed,

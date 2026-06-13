@@ -145,15 +145,17 @@ impl AsyncJobsDB {
             .map_err(Into::into)
     }
 
-    /// All jobs whose status is still active (`running` / `cancelling`) —
-    /// used by startup replay.
+    /// All jobs whose status is still active (`running` / `cancelling` /
+    /// `awaiting_approval`) — used by startup replay. `awaiting_approval` is
+    /// included because a restart kills the in-memory approval channel, so the
+    /// job is unrecoverable and must be marked `interrupted` like the rest.
     pub fn list_running(&self) -> Result<Vec<AsyncJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin
-             FROM async_tool_jobs WHERE status IN ('running','cancelling')",
+             FROM async_tool_jobs WHERE status IN ('running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map([], row_to_job)?;
         let mut out = Vec::new();
