@@ -81,6 +81,7 @@ import { useWorkspaceEnvironment } from "./useWorkspaceEnvironment"
 import { useScrollPagedRender } from "./useScrollPagedRender"
 import { useSessionKnowledge } from "./useSessionKnowledge"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
+import { PANEL_SCROLL_FADE } from "../right-panel/panelFade"
 import {
   formatGitRef,
   resolveWorkspaceEnvironmentStatus,
@@ -153,7 +154,7 @@ function WorkspaceSection({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   return (
-    <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/95 shadow-sm">
+    <div className="overflow-hidden rounded-2xl border border-border/80 bg-surface-floating shadow-sm">
       <button
         type="button"
         aria-expanded={expanded}
@@ -1109,7 +1110,7 @@ export default function WorkspacePanel({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex items-center gap-2 px-3 py-2">
         <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="truncate text-sm font-medium">{t("workspace.panelTitle", "工作台")}</span>
         <Button
@@ -1124,7 +1125,9 @@ export default function WorkspacePanel({
         </Button>
       </div>
 
-      <div className="flex-1 space-y-2 overflow-auto p-2">
+      {/* 上下边缘柔化淡出 —— 内容滚到边界时渐隐不硬切（mask 渐变到透明，露出面板底色）。
+          Tauri = WebKit,补 `-webkit-mask-image` 兜底。 */}
+      <div className={cn("flex-1 space-y-2 overflow-auto p-2", PANEL_SCROLL_FADE)}>
         {/* 会话 — 复刻状态悬浮窗的能力(模型 / 上下文 / 动作),核心常驻 + 展开更多。 */}
         <SessionSection
           sessionId={sessionId}

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { X, RefreshCw, Maximize2, Minimize2, ExternalLink, PanelLeftClose } from "lucide-react"
 import { IconTip } from "@/components/ui/tooltip"
 import { RightPanelShell } from "./right-panel/RightPanelShell"
+import { PANEL_SCROLL_FADE } from "./right-panel/panelFade"
 
 interface CanvasInfo {
   projectId: string
@@ -413,7 +414,7 @@ export default function CanvasPanel({
       >
         {/* Title Bar */}
         <div
-          className="flex h-11 items-center gap-2 border-b border-border-soft bg-surface-panel/95 px-4 shrink-0"
+          className="flex h-11 items-center gap-2 bg-surface-panel/95 px-4 shrink-0"
           data-tauri-drag-region
         >
           <span className="text-sm font-medium truncate flex-1">{canvas.title}</span>
@@ -456,7 +457,7 @@ export default function CanvasPanel({
       {/* Title Bar */}
       <div
         className={cn(
-          "flex h-11 items-center gap-2 border-b border-border-soft bg-surface-panel px-4 shrink-0",
+          "flex h-11 items-center gap-2 bg-surface-panel px-4 shrink-0",
           maximized && "h-[72px] items-end pb-2 pt-7",
         )}
         data-tauri-drag-region
@@ -513,7 +514,7 @@ export default function CanvasPanel({
       </div>
 
       {/* iframe preview */}
-      <div className="flex-1 overflow-hidden bg-white dark:bg-surface-app">
+      <div className={cn("flex-1 overflow-hidden bg-white dark:bg-surface-app", PANEL_SCROLL_FADE)}>
         <iframe
           ref={iframeRef}
           key={`${canvas.projectId}-${refreshKey}`}
