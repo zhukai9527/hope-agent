@@ -158,6 +158,49 @@ impl AsyncJobsDB {
         Ok(())
     }
 
+    /// Record the OS pid of a running job's spawned child process (I3), so a
+    /// crash/restart can detect and terminate orphaned process trees. Only
+    /// touches still-active rows. Returns whether a row was updated.
+    pub fn set_pid(&self, job_id: &str, pid: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let rows = conn.execute(
+            "UPDATE async_tool_jobs SET pid=?2
+                WHERE job_id=?1
+                  AND status IN ('running','cancelling','awaiting_approval')",
+            params![job_id, pid],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Set the cross-process cancel flag (I4): a process that does not own the
+    /// in-memory `CancellationToken` for `job_id` sets this so the owning
+    /// process's runner observes it on its next poll and aborts the work. Only
+    /// touches still-active rows. Returns whether a row was updated.
+    pub fn set_cancel_requested(&self, job_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let rows = conn.execute(
+            "UPDATE async_tool_jobs SET cancel_requested=1
+                WHERE job_id=?1
+                  AND status IN ('running','cancelling','awaiting_approval')",
+            params![job_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Whether the cross-process cancel flag is set for `job_id` (I4). Single
+    /// PK lookup; the runner polls this so another process can cancel it.
+    pub fn is_cancel_requested(&self, job_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let flag: Option<i64> = conn
+            .query_row(
+                "SELECT cancel_requested FROM async_tool_jobs WHERE job_id=?1",
+                params![job_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(flag.unwrap_or(0) != 0)
+    }
+
     pub fn load(&self, job_id: &str) -> Result<Option<AsyncJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
@@ -424,6 +467,25 @@ mod tests {
         // Policy is drop-and-rebuild, not migrate — the stale row is gone.
         assert!(db.load("old").unwrap().is_none());
         assert!(db.load("new").unwrap().is_some());
+    }
+
+    #[test]
+    fn set_pid_and_cancel_requested_roundtrip_on_active_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        db.insert(&sample_job("j")).unwrap();
+        // pid (I3) lands on the active row.
+        assert!(db.set_pid("j", 4242).unwrap());
+        assert_eq!(db.load("j").unwrap().unwrap().pid, Some(4242));
+        // cross-process cancel flag (I4) roundtrips.
+        assert!(!db.is_cancel_requested("j").unwrap());
+        assert!(db.set_cancel_requested("j").unwrap());
+        assert!(db.is_cancel_requested("j").unwrap());
+        // Both setters no-op once the row is terminal (guard: active statuses only).
+        db.update_terminal("j", AsyncJobStatus::Completed, None, None, None, 1)
+            .unwrap();
+        assert!(!db.set_pid("j", 9999).unwrap());
+        assert!(!db.set_cancel_requested("j").unwrap());
     }
 
     /// A current-shape table must NOT be dropped on reopen (no spurious data loss).

@@ -319,6 +319,25 @@ pub struct ToolExecContext {
     /// doesn't care; the regular non-orchestrator callers of
     /// `execute_tool_with_context` leave it `None`).
     pub effective_args_sink: Option<Arc<AsyncMutex<Option<Value>>>>,
+    /// Callback to record the OS pid of a tool's spawned child process (e.g.
+    /// `exec`'s shell child) into the owning async-job row, so a crash/restart
+    /// can detect and terminate orphaned process trees (I3). Set by
+    /// [`crate::async_jobs::spawn::spawn_explicit_job`] for backgrounded jobs;
+    /// `None` for foreground dispatch (no job row to annotate). Invoked via
+    /// [`Self::emit_pid`].
+    pub pid_sink: Option<PidSink>,
+}
+
+/// Wrapper around the [`ToolExecContext::pid_sink`] callback. A newtype with a
+/// hand-written `Debug` because `ToolExecContext` derives `Debug` and a bare
+/// `Arc<dyn Fn>` is not `Debug`.
+#[derive(Clone)]
+pub struct PidSink(pub Arc<dyn Fn(u32) + Send + Sync>);
+
+impl std::fmt::Debug for PidSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PidSink(..)")
+    }
 }
 
 impl ToolExecContext {
@@ -549,6 +568,16 @@ impl ToolExecContext {
     pub async fn emit_metadata(&self, value: Value) {
         if let Some(sink) = &self.metadata_sink {
             *sink.lock().await = Some(value);
+        }
+    }
+
+    /// Record a spawned child-process pid into the owning async-job row for
+    /// restart orphan cleanup (I3). No-op unless a [`PidSink`] is wired (only
+    /// backgrounded jobs set one). Synchronous + cheap (a single guarded DB
+    /// UPDATE behind the closure).
+    pub fn emit_pid(&self, pid: u32) {
+        if let Some(sink) = &self.pid_sink {
+            (sink.0)(pid);
         }
     }
 

@@ -172,6 +172,18 @@ pub fn spawn_explicit_job(
     ctx.suppress_global_tool_timeout = true;
     ctx.suppress_result_disk_persistence = true;
     ctx.cancellation_token = Some(cancel_token.clone());
+    // I3: let the re-dispatched tool record its spawned child pid into this
+    // job's row, so a crash/restart can terminate the orphaned process tree
+    // (the row already exists — recorded above). Cheap guarded UPDATE per spawn.
+    {
+        let pid_db = db.clone();
+        let pid_job_id = job_id.clone();
+        ctx.pid_sink = Some(crate::tools::PidSink(std::sync::Arc::new(
+            move |pid: u32| {
+                let _ = pid_db.set_pid(&pid_job_id, pid as i64);
+            },
+        )));
+    }
     let preview_bytes = preview_byte_budget();
     let tool_name_owned = tool_name.to_string();
     let job_id_owned = job_id.clone();

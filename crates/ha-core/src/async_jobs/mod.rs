@@ -173,6 +173,25 @@ pub fn replay_pending_jobs() {
     match db.list_running() {
         Ok(rows) => {
             for job in rows {
+                // I3: a job left `running` at restart may have a child process
+                // tree that outlived the crash (a backgrounded exec). If we
+                // recorded its pid and that pid is still alive, it's an orphan
+                // with no remaining owner — terminate the whole group before
+                // marking the row interrupted. (pid-reuse risk is bounded: the
+                // restart window is short and exec children run in their own
+                // process group; logged for audit.)
+                if let Some(pid) = job.pid {
+                    if pid > 0 && crate::platform::pid_alive(pid as u32) {
+                        app_warn!(
+                            "async_jobs",
+                            "replay",
+                            "Terminating orphaned process tree pid={} for interrupted job {}",
+                            pid,
+                            &job.job_id
+                        );
+                        crate::platform::terminate_process_tree(pid as u32);
+                    }
+                }
                 if let Err(e) = db.update_terminal(
                     &job.job_id,
                     AsyncJobStatus::Interrupted,

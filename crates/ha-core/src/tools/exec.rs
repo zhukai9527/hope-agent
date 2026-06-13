@@ -825,6 +825,20 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
     let mut exec_handle =
         spawn_exec_waiter(session_id.clone(), cmd, timeout_secs, max_output).await?;
 
+    // I3: surface the spawned child pid to the owning async-job row (if this
+    // exec is running inside a backgrounded job) so a crash/restart can detect
+    // and terminate the orphaned process tree. Gated on `pid_sink` so a
+    // foreground exec pays nothing (no extra registry lock).
+    if ctx.pid_sink.is_some() {
+        let pid = {
+            let registry = get_registry().lock().await;
+            registry.get_session(&session_id).and_then(|s| s.pid)
+        };
+        if let Some(pid) = pid {
+            ctx.emit_pid(pid);
+        }
+    }
+
     // If background=true, return immediately after the process is spawned and
     // registered. The detached waiter updates the process registry on exit.
     if background {
