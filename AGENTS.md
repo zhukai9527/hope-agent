@@ -185,7 +185,8 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 - **Smart 模式忽略 `custom_approval_tools`**——UI 必须显式提示
 - **保护路径 / 危险命令 / 编辑命令**：三独立列表，存 `~/.hope-agent/permission/*.json`；非 YOLO 模式强制弹窗（AllowAlways 按钮置灰），YOLO 只 `app_warn!` 不弹
 - **Global YOLO**：CLI flag `--dangerously-skip-all-approvals` 与 `permission.global_yolo` OR 组合；判定入口 `security::dangerous::is_dangerous_skip_active()`，**与 Plan Mode 正交**
-- **审批超时**：`approval_timeout_secs`（默认 300s，`0` 不限）+ `approval_timeout_action ∈ deny|proceed`
+- **审批超时**：`approval_timeout_secs`（默认 300s，`0` 不限）+ `approval_timeout_action ∈ deny|proceed`。**strict 原因超时永不放行**（红线）：`proceed` 只对非 strict 生效；strict 原因（`forbids_allow_always`：保护路径 / 危险命令 / 高危 macOS 控制 / Plan-ask）超时强制 deny + `app_warn('permission','strict_timeout_deny')`。strict 判定单一真相源 `AskReason::forbids_allow_always`，`ApprovalReasonKind::is_strict()` 镜像（穷举单测断言一致）。超时另发统一 `approval:resolved`（`source=timeout_deny|timeout_proceed`）撤窗
+- **审批授权来源审计**：每个后台 job 的 `async_jobs.approval_origin` 列记录授权方式（`ApprovalOrigin`：user / timeout_proceed / yolo / auto_approve / external_pre_approved / policy_allow），由审批闸单点算出写入 spawn ctx（exec + 非 exec 全覆盖）
 - **无人值守审批 fail-closed**（[`permission::approval_surface`](crates/ha-core/src/permission/approval_surface.rs)）：审批阻塞前经单一入口 `check_and_request_approval` 预检 `evaluate_approval_surface(session_id)`——确证无人能批（cron `is_cron` / 无客户端 headless + 无 IM attach / ACP 无 capability / subagent 无父 surface）时按 `permission.unattended_approval_action ∈ deny(默认)|proceed` 处理：deny → `ToolRejection::denied_unattended` 即时拒绝(不再永久挂死)、proceed → 自动放行；emit `approval:unattended` 事件。**保守红线**：任何可能 surface(desktop 窗口 / web 客户端 / IM)即 Attended,唯 cron 例外。判 ACP 必须用 `is_acp()` 非 `ChatSource`(ACP 复用 Http)
 - **Agent 工具开关**：`AgentConfig.capabilities.tools.allow/deny` 仅表示非 Core 工具的显式开 / 关覆盖；Core 工具不受影响。system_prompt / schemas / tool_search / 执行层统一走 `dispatch::resolve_tool_fate`
 - **工具结果磁盘持久化**：> `toolResultDiskThreshold`（默认 50KB）写盘，上下文留 head+tail 预览
@@ -253,7 +254,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 详见 [`im-channel.md`](docs/architecture/im-channel.md)。
 
 - 12 个插件，状态文件落 `~/.hope-agent/channels/`；入站媒体走 plug → worker → `Attachment` → `~/.hope-agent/attachments/{session_id}/`
-- 工具审批通过 EventBus `approval_required` 监听，按 `supports_buttons` 走原生按钮或文本；`auto_approve_tools=true` 跳审批
+- 工具审批通过 EventBus `approval_required` 监听，按 `supports_buttons` 走原生按钮或文本；`auto_approve_tools=true` 跳审批（opt-in）。**绕过审计**：`auto_approve_tools` 跳过引擎门时，若被跳过的调用本会命中 strict 原因（`forbids_allow_always`），跑一次 no-enforce 探测并 `app_warn('permission','auto_approve_bypass')`——纯审计不拦截（排除 `external_pre_approved` async 重入防重复告警）
 - **Auto-start 失败统一走 [`channel/start_watchdog.rs`](crates/ha-core/src/channel/start_watchdog.rs)**——退避 30s/60s/2m/5m，sweep 15s，user 操作永远胜过 watchdog；失败日志带 `classify_channel_error` 分类
 - **流式预览 Transport 三选一**（[`worker/streaming.rs`](crates/ha-core/src/channel/worker/streaming.rs) `select_stream_preview_transport`）：`Draft (Telegram DM 专属) > Card (capabilities.supports_card_stream，目前仅飞书 cardkit) > Message (send_message+edit_message)`。Card / Draft 失败有降级（Card 创建期失败 → 切 Message；中后期 `update_card_element` 失败 → `broken=true`，收尾走 `send_message` 兜底）。新增飞书风格"无编辑标记"流式靠 `ChannelPlugin` 上 4 个 default-impl=`Err` 的 cardkit trait 方法（`create_card_stream` / `send_card_message` / `update_card_element` / `close_card_stream`）—— 仅飞书实现，11 个非飞书 channel 的 `capabilities.supports_card_stream=false` 走旧路径不变
 - **`ImReplyMode` 三态对所有渠道生效**（`ChannelAccountConfig.settings.imReplyMode`，默认 `split`，[`channel/types.rs`](crates/ha-core/src/channel/types.rs)）：

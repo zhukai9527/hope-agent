@@ -211,6 +211,19 @@ pub struct PermissionGlobalConfig {
 }
 ```
 
+#### 审批超时 × strict 原因（Epic F / TIMEOUT-1）
+
+`approval_timeout_action=proceed` **只对非 strict 原因生效**。strict 原因(`AskReason::forbids_allow_always`:保护路径 / 危险命令 / 高危 macOS 控制 / Plan-ask)超时**强制 deny**,无视 `proceed`——否则无人值守下危险操作会被超时自动放行。落点三处共用同一谓词:
+
+- `ApprovalCheckError::TimedOut { timeout_secs, strict }`:`check_and_request_approval` 在 `reason` 被移动前算出 `strict`(`ApprovalReasonKind::is_strict()`,镜像 `forbids_allow_always` 单一真相源,`reason_kind_is_strict_matches_ask_reason` 穷举断言一致)。
+- `run_tool_approval`(非 exec 工具)+ `exec_approval_timeout_outcome`(exec):strict + `proceed` → deny + `app_warn('permission','strict_timeout_deny')`。
+- 超时分支额外 emit 统一 `approval:resolved`(`ApprovalResolutionSource::{TimeoutDeny,TimeoutProceed}`,决议 = `strict || action=deny ? deny : proceed`)与 submit 路径对称撤窗。
+
+#### 审批授权来源审计(Epic F / TIMEOUT-2 + IMYOLO-1)
+
+- **`approval_origin`**:每个后台 job 的 `async_jobs.approval_origin` 列记录授权方式(`ApprovalOrigin`:`user` / `timeout_proceed` / `yolo` / `auto_approve` / `external_pre_approved` / `policy_allow`)。审批闸单点算出写入 spawn ctx:`run_tool_approval` 返回 origin(批准→`User`、非 strict 超时放行→`TimeoutProceed`),exec 走 reorder,其余 bypass 由 spawn 前兜底(`external_pre_approved` / `auto_approve` / `policy_allow_origin` 区分 PolicyAllow 与 Yolo)。
+- **`auto_approve_bypass` 探测**:`auto_approve_tools`(IM auto-approve 账号 / skill 斜杠)跳过引擎门时,若被跳过的调用本会命中 strict 原因,跑一次 no-enforce `resolve_tool_permission` 探测并 `app_warn('permission','auto_approve_bypass')`——纯审计不拦截(IM auto-approve 是 opt-in);显式排除 `external_pre_approved`(async 重入已在外层门审计)防重复告警。
+
 ### `AgentConfig.capabilities`（权限相关字段）
 
 ```rust
