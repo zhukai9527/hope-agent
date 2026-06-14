@@ -634,7 +634,7 @@ sequenceDiagram
 
 ### 并发上限（max_concurrent_jobs，I2 / MISC-5）
 
-显式后台路径（`run_in_background: true` / `always-background` 策略）每个 job 占一条独立 OS 线程 + current-thread runtime。无上限时模型可跨回合连发 `run_in_background` 线性堆叠耗尽线程 / 内存（YOLO / `auto_approve_tools` 下更无人工闸）。`async_jobs::slots` 用进程级原子 CAS 计数 + RAII `JobSlotGuard` 封顶：`spawn_explicit_job` 起线程前 `try_acquire_job_slot()`，slot 随 runner 线程生命周期释放（成功 / 失败 / runtime 构建失败各路径都自动归还）；达 `asyncTools.maxConcurrentJobs`（默认 8，`0` = 不限，每次 acquire 实时读配置）时返回可操作错误结果（提示模型等待 / 查 `job_status` / 改同步执行），不再多堆一条线程。**范围**：只闸显式后台路径（无界向量）；auto-background detach 的 worker 在 detach 决策前已 spawn、不适配 slot-RAII，改由每回合工具并发 + 同步预算天然约束。
+显式后台路径（`run_in_background: true` / `always-background` 策略）每个 job 占一条独立 OS 线程 + current-thread runtime。无上限时模型可跨回合连发 `run_in_background` 线性堆叠耗尽线程 / 内存（YOLO / `auto_approve_tools` 下更无人工闸）。`async_jobs::slots` 用进程级原子 CAS 计数 + RAII `JobSlotGuard` 封顶：`spawn_explicit_job` 起线程前 `try_acquire_job_slot()`，slot 随 runner 线程生命周期释放（成功 / 失败 / runtime 构建失败各路径都自动归还）；达 `asyncTools.maxConcurrentJobs`（默认硬件推导 `clamp(逻辑核数 - 2, 4, 16)`，`0` = 不限，每次 acquire 实时读配置）时返回可操作错误结果（提示模型等待 / 查 `job_status` / 改同步执行），不再多堆一条线程。**范围**：只闸显式后台路径（无界向量）；auto-background detach 的 worker 在 detach 决策前已 spawn、不适配 slot-RAII，改由每回合工具并发 + 同步预算天然约束。
 
 ### Retention / Orphan 清扫
 
@@ -658,7 +658,7 @@ sequenceDiagram
 | `enabled` | `true` | 总开关，关闭后所有 async-capable 工具退化为纯同步执行，`job_status` 工具也不注入 |
 | `autoBackgroundSecs` | `30` | Tier 3 同步预算。`0` 关闭自动后台化，仅保留 Tier 1/2 |
 | `maxJobSecs` | `0`（不限时） | 后台 job 的用户硬上限；超时 → status=`timed_out` 并注入失败消息。`0` = async job 层默认不限时；具体工具仍可有自己的内部超时（如正数 `exec.timeout`；`exec.timeout=0` 也表示不限）。当全局为 `0` 时，模型单次 `job_timeout_secs > 0` 可为本次 job 设置外层超时；当全局为正数时，`job_timeout_secs` 只能收紧这个上限，不能放宽 |
-| `maxConcurrentJobs` | `8`（`0` = 不限） | 显式后台路径（`run_in_background` / `always-background`）并发上限，见上「并发上限」节。达上限时新的后台请求返回可操作错误结果；只闸显式路径，auto-background 不计入 |
+| `maxConcurrentJobs` | 硬件推导 `clamp(逻辑核数-2,4,16)`（`0` = 不限） | 显式后台路径（`run_in_background` / `always-background`）并发上限，见上「并发上限」节。达上限时新的后台请求返回可操作错误结果；只闸显式路径，auto-background 不计入 |
 | `inlineResultBytes` | `4096` | 注入消息内联 preview 上限；超过时 spool 到磁盘并注入路径引用 |
 | `retentionSecs` | `30 * SECS_PER_DAY`（30 天） | 终态行 + spool 文件 TTL；超期由 daily background loop 清扫。`0` = 永不清理（长跑实例累积风险，仅极端调试用） |
 | `orphanGraceSecs` | `24 * SECS_PER_HOUR`（24h） | 孤儿 spool 文件 TTL：`~/.hope-agent/async_jobs/` 下名字未被任何 DB 行引用、且 mtime 超过这个 grace 的文件被删（grace 防与新写入 race）。`0` 关闭孤儿清扫 |

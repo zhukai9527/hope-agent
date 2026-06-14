@@ -237,9 +237,10 @@ pub struct AsyncToolsConfig {
     /// so an uncapped model could linearly exhaust threads/memory by firing
     /// many `run_in_background` calls across rounds. When the cap is reached a
     /// new background request returns an error result telling the model to wait
-    /// (it can poll `job_status`) or run synchronously. Default: 8. Set to 0
-    /// for no limit. (Auto-background transfers of merely-slow sync calls are
-    /// bounded separately by per-turn tool concurrency + the sync budget.)
+    /// (it can poll `job_status`) or run synchronously. Default: hardware-derived
+    /// `clamp(logical_cores - 2, 4, 16)` (see `default_async_max_concurrent_jobs`).
+    /// Set to 0 for no limit. (Auto-background transfers of merely-slow sync calls
+    /// are bounded separately by per-turn tool concurrency + the sync budget.)
     #[serde(default = "default_async_max_concurrent_jobs")]
     pub max_concurrent_jobs: usize,
 }
@@ -263,7 +264,14 @@ fn default_async_job_status_max_wait_secs() -> u64 {
     7200
 }
 fn default_async_max_concurrent_jobs() -> usize {
-    8
+    // Hardware-derived default so the cap doesn't oversubscribe the machine:
+    // `clamp(logical_cores - 2, 4, 16)`. `available_parallelism` reports logical
+    // cores (incl. SMT); we leave 2 for the main loop + UI/IO. A user-set `0`
+    // still means unlimited (handled in the slot acquire path, not here).
+    // Aligned with the Workflow engine's `min(16, cores - 2)` concurrency cap.
+    std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(2).clamp(4, 16))
+        .unwrap_or(8)
 }
 
 impl AsyncToolsConfig {
@@ -1049,5 +1057,56 @@ mod mcp_compat_tests {
         assert_eq!(cfg.mcp_global.max_concurrent_calls, 0);
         // Other defaults remain intact:
         assert_eq!(cfg.mcp_global.backoff_max_secs, 300);
+    }
+}
+
+#[cfg(test)]
+mod async_tools_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn max_concurrent_jobs_default_is_hardware_clamped() {
+        // Hardware-derived default must always land in the [4, 16] band
+        // regardless of core count: clamp(logical_cores - 2, 4, 16).
+        let d = default_async_max_concurrent_jobs();
+        assert!(
+            (4..=16).contains(&d),
+            "default {} out of clamp band [4,16]",
+            d
+        );
+    }
+
+    #[test]
+    fn async_tools_uses_hardware_default_when_field_absent() {
+        // A config without asyncTools.maxConcurrentJobs must fall back to the
+        // hardware-derived default, not a hardcoded literal.
+        let cfg: AppConfig = serde_json::from_str(r#"{"providers":[]}"#).unwrap();
+        assert_eq!(
+            cfg.async_tools.max_concurrent_jobs,
+            default_async_max_concurrent_jobs()
+        );
+    }
+
+    #[test]
+    fn explicit_zero_unlimited_survives_deserialization() {
+        // A user-set 0 (= unlimited) must NOT be overwritten by the default.
+        let json = serde_json::json!({
+            "providers": [],
+            "asyncTools": { "maxConcurrentJobs": 0 }
+        });
+        let cfg: AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.async_tools.max_concurrent_jobs, 0);
+    }
+
+    #[test]
+    fn default_impl_matches_serde_default() {
+        // The hand-written `AsyncToolsConfig::default` (used by `AppConfig::default`)
+        // and the `#[serde(default = ...)]` helper are two independent sources of the
+        // same default; pin them together so a future edit to one literal can't
+        // silently diverge from the other.
+        assert_eq!(
+            AsyncToolsConfig::default().max_concurrent_jobs,
+            default_async_max_concurrent_jobs()
+        );
     }
 }
