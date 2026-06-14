@@ -170,6 +170,12 @@ pub enum ApprovalResolutionSource {
     Im,
     /// Auto-denied because the owning session was deleted / purged (A-9).
     SessionDeleted,
+    /// Approval dialog timed out and was resolved to **deny** — either
+    /// `approval_timeout_action=deny` or a strict reason force-denied (F2/F3).
+    TimeoutDeny,
+    /// Approval dialog timed out and was resolved to **proceed**
+    /// (`approval_timeout_action=proceed`, non-strict reason).
+    TimeoutProceed,
 }
 
 impl ApprovalResolutionSource {
@@ -179,6 +185,8 @@ impl ApprovalResolutionSource {
             Self::Http => "http",
             Self::Im => "im",
             Self::SessionDeleted => "session_deleted",
+            Self::TimeoutDeny => "timeout_deny",
+            Self::TimeoutProceed => "timeout_proceed",
         }
     }
 }
@@ -718,6 +726,21 @@ pub(crate) async fn check_and_request_approval(
                     }),
                 );
             }
+            // F4 (TIMEOUT-3 / SURFACE-1): also emit the unified `approval:resolved`
+            // so every surface dismisses its dialog symmetrically with the submit
+            // path (G6). The effective decision mirrors what F2/F3 enforce: a
+            // strict reason OR `action=deny` resolves to deny, else proceed.
+            let resolved_deny = strict
+                || matches!(
+                    approval_timeout_action(),
+                    crate::config::ApprovalTimeoutAction::Deny
+                );
+            let (decision, resolution_source) = if resolved_deny {
+                ("deny", ApprovalResolutionSource::TimeoutDeny)
+            } else {
+                ("allow_once", ApprovalResolutionSource::TimeoutProceed)
+            };
+            emit_approval_resolved(&request_id, session_id, decision, resolution_source);
             if let Some(logger) = crate::get_logger() {
                 logger.log(
                     "warn",
