@@ -1174,13 +1174,6 @@ pub async fn execute_tool_with_context(
         run_tool_approval(name, args, ctx, None, false).await?;
     }
 
-    // Smart mode: remember files edited in this session so later edits to the
-    // same file don't re-prompt. Reached only after the permission/approval
-    // gate let the call proceed (deny/decline `?`-return above). Recorded
-    // mode-agnostically (cheap; only the Smart resolver reads it) so a mid-
-    // session switch into Smart still trusts files touched earlier.
-    record_smart_session_edits(name, args, ctx);
-
     // Log tool execution start
     if let Some(logger) = crate::get_logger() {
         let args_preview = {
@@ -1563,7 +1556,19 @@ pub async fn execute_tool_with_context(
     }
 
     match result {
-        Ok(output) => maybe_persist_large_tool_result(name, output, ctx),
+        Ok(output) => {
+            // Smart mode only: remember a file the agent SUCCESSFULLY edited so
+            // re-edits in this session skip the prompt. Gated on success (a
+            // failed write/edit/apply_patch returns Err and is excluded) and on
+            // Smart mode (Default/YOLO/auto-approve edits must NOT leak forward
+            // into Smart's trusted set — only edits actually vetted under Smart
+            // count). Plan-mode-blocked edits returned Err before dispatch, so
+            // they never reach here either.
+            if ctx.session_mode == crate::permission::SessionMode::Smart {
+                record_smart_session_edits(name, args, ctx);
+            }
+            maybe_persist_large_tool_result(name, output, ctx)
+        }
         other => other,
     }
 }

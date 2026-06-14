@@ -280,7 +280,8 @@ pub async fn resolve_async(ctx: &ResolveContext<'_>) -> Decision
 在 `_confidence` / judge 之外，Smart 对**文件编辑工具**（`write` / `edit` / `apply_patch`）额外做一层**确定性**放行（`engine::smart_edit_already_session_touched`）：当一次调用的**所有**目标路径都是**本会话已编辑过的文件**时直接 `Allow`，不依赖模型自报、不调 LLM——用户对该文件已经放行过一次，再编辑不必重复打断。
 
 - **跟踪器**：`session_edits` 进程内（`permission/session_edits.rs`，`session_id → HashSet<PathBuf>`）记录每个被放行执行的编辑目标。
-- **记录点**：`tools/execution.rs::record_smart_session_edits`——在权限/审批门**放行之后**（deny/decline 已提前返回），与模式无关地记录（只有 Smart 解析器读取，故 Default/YOLO 下记录无副作用，且支持会话中途切到 Smart 仍信任此前编辑过的文件）。路径用 `rules::resolved_edit_target_paths` 解析为与引擎查询一致的规范绝对形式。
+- **记录点**：`tools/execution.rs::record_smart_session_edits`——仅在 **Smart 模式**下、且编辑工具**成功执行后**（`Ok` 分支）记录。失败的 write/edit/apply_patch 返回 `Err` 不记录；Plan Mode 拦截的编辑在 dispatch 前已 `Err` 返回，也不记录。**不跨模式记录**——Default / YOLO / auto-approve 下的编辑不会泄漏进 Smart 信任集，只有真正在 Smart 下放行并落地的编辑才计入（避免"切到 Smart 后此前未经 Smart 审视的编辑被静默信任"）。路径用 `rules::resolved_edit_target_paths` 解析为与引擎查询一致的规范绝对形式。
+- **生命周期**：`session/db.rs::delete_session` 删会话时调 `session_edits::clear` 清除该会话信任集（不跨会话存活、长跑 server 进程不累积）。
 - **`apply_patch` 多目标**：**全部**命中已编辑集才放行，任一未编辑过即落回 floor。
 
 **工作目录不单独给确定性放行**：目录内文件的**首次**写/编辑仍走判断——模型对常规目录内编辑自报 `_confidence:"high"` → 放行，对大范围覆盖 / 删除等高风险**不**自报 → 弹窗（或配了 judge_model 由它裁决）。目录外的写/编辑同理但提示词更保守。这样目录内"更松但保留判断闸门"，而非无条件静默。保护路径 / 危险命令在模式分发前已拦截，此层永远碰不到它们。**仅 Smart**——Default 仍逐次确认编辑。

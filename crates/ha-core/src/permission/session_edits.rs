@@ -34,11 +34,19 @@ pub fn record(session_id: &str, path: &Path) {
         return;
     }
     let mut map = store().lock().unwrap_or_else(PoisonError::into_inner);
-    let set = map.entry(session_id.to_string()).or_default();
-    if set.len() >= MAX_PATHS_PER_SESSION && !set.contains(path) {
-        return;
+    // get_mut first so a repeat edit of the same file (the common case) takes no
+    // key allocation; only the genuine first edit of a session allocates the id.
+    match map.get_mut(session_id) {
+        Some(set) => {
+            if set.contains(path) || set.len() >= MAX_PATHS_PER_SESSION {
+                return;
+            }
+            set.insert(path.to_path_buf());
+        }
+        None => {
+            map.insert(session_id.to_string(), HashSet::from([path.to_path_buf()]));
+        }
     }
-    set.insert(path.to_path_buf());
 }
 
 /// Whether `path` was already edited earlier in `session_id`.
