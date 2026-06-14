@@ -26,6 +26,14 @@ export function useApprovals(currentSessionId: string | null): UseApprovalsRetur
   // approval:resolved listener tell our own action apart from a resolution that
   // happened on another surface, without needing to know our own surface id.
   const locallyResolvedRef = useRef<Set<string>>(new Set())
+  // Keep the latest `t` in a ref so the long-lived approval:resolved listener can
+  // subscribe once ([] deps) instead of tearing down + re-subscribing on every
+  // language change — that gap could drop an approval:resolved event and leave a
+  // dialog stuck open.
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
   const approvalRequests = useMemo(
     () =>
       allApprovalRequests.filter((request) => {
@@ -82,13 +90,13 @@ export function useApprovals(currentSessionId: string | null): UseApprovalsRetur
           return prev.filter((r) => r.request_id !== requestId)
         })
         if (!wasOurOwn && wasPresent && ELSEWHERE_TOAST_SOURCES.has(payload.source ?? "")) {
-          toast.info(t("approval.resolvedElsewhere"))
+          toast.info(tRef.current("approval.resolvedElsewhere"))
         }
       } catch (e) {
         logger.error("ui", "ChatScreen::approval", "Failed to parse approval resolved", e)
       }
     })
-  }, [t])
+  }, [])
 
   async function handleApprovalResponse(
     requestId: string,
