@@ -152,7 +152,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 - **优先级**：Project > Agent > Global，唯一入口 `effective_memory_budget(agent, global)`
 - **`recall_memory` / `memory_get` 工具返回完整原文**，预算只约束 system prompt 注入
 - Active Memory / Awareness / User Profile 都作为**独立 cache block** 注入，不作废静态前缀缓存
-- **会话级无痕（`sessions.incognito`）**：单一真相源；不注入 Memory / Active Memory / Awareness、跳过自动提取；**关闭即焚**——不进侧边栏列表 / 全局 FTS / Dashboard 统计；**与 Project / IM Channel 互斥**（前端灰化 + 后端入口防御）
+- **会话级无痕（`sessions.incognito`）**：单一真相源；不注入 Memory / Active Memory / Awareness、跳过自动提取；**关闭即焚**——不进侧边栏列表 / 全局 FTS / Dashboard 统计；**与 Project / IM Channel 互斥**（前端灰化 + 后端入口防御）。**四旁路守卫红线（Epic E）**：`is_session_incognito` fail-closed 三态（行不存在按无痕兜底）；`ToolExecContext.incognito` 单点注入，门控大工具结果落盘（无痕走内存）与异步任务 args/spool（无痕占位 + 不 spool）；AllowAlways 经 `choose_scope` 强制内存 `Session` scope 绝不落盘；焚毁 `cleanup_watcher` 在 `session:purged`（区别于 `session:deleted`）清盘 `tool_results/` + job 行/spool；异步注入与在途回合在会话已删/已焚时跳过（防幽灵回合）。全貌见 [`session.md`](docs/architecture/session.md#四旁路守卫epic-e)
 
 ### Knowledge Base（知识空间）
 

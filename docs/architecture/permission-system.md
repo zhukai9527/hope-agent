@@ -33,7 +33,8 @@ Hope Agent 的权限/审批系统决定**每一次工具调用是否需要弹审
 2. **一根信任度轴**：从最严格到最宽松——Plan Mode > Default 模式 > Smart 模式 > Yolo 模式（session 级）+ 全局 YOLO（process 级）
 3. **Plan Mode 正交**：Plan Mode 是一种"工作模式"而非权限模式，能强行覆盖任何 YOLO 与 Smart override
 4. **保护层不可绕过**：保护路径 + 危险命令 + 高风险 macOS 控制在非 YOLO 模式下强制弹审批且不能 AllowAlways；YOLO 模式只 warn 不弹
-5. **clean break，不做迁移**：老的 `ToolPermissionMode` / `exec-approvals.json` / `auto_approve_tools` 等字段全部删除，老用户审批规则需要重新设置
+5. **无痕禁持久化 AllowAlways**（Epic E / INCOG-6）：无痕会话的 AllowAlways 被 `allowlist::choose_scope` 强制为内存 `Session` scope（焚毁随 `clear_session_rules` 清除），绝不落 project / agent-home / global 磁盘；`exec` 走同一 `add_allow_always_for_call` 故自动覆盖。前端按 `ApprovalRequest.incognito` 隐藏「始终允许」按钮（UX 半），后端 `choose_scope` 是不可绕过的红线半。无痕「四旁路守卫」全貌见 [session.md](session.md#四旁路守卫epic-e)
+6. **clean break，不做迁移**：老的 `ToolPermissionMode` / `exec-approvals.json` / `auto_approve_tools` 等字段全部删除，老用户审批规则需要重新设置
 
 ```mermaid
 graph TD
