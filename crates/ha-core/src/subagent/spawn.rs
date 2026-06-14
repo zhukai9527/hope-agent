@@ -10,7 +10,7 @@ use super::injection::{build_subagent_push_message, inject_and_run_parent};
 use super::mailbox::SUBAGENT_MAILBOX;
 use super::types::{SpawnParams, SubagentEvent, SubagentRun, SubagentStatus};
 use super::{
-    max_depth_for_agent, DEFAULT_TIMEOUT_SECS, MAX_CONCURRENT_PER_SESSION, MAX_RESULT_CHARS,
+    max_concurrent_for_agent, max_depth_for_agent, DEFAULT_TIMEOUT_SECS, MAX_RESULT_CHARS,
 };
 
 // ── Spawn Logic ─────────────────────────────────────────────────
@@ -48,13 +48,14 @@ pub async fn spawn_subagent(
         ));
     }
 
-    // 2. Check concurrent limit
+    // 2. Check concurrent limit (per-agent configurable via subagents.maxConcurrent)
+    let max_concurrent = max_concurrent_for_agent(&params.parent_agent_id);
     let active_count = session_db.count_active_subagent_runs(&params.parent_session_id)?;
-    if active_count >= MAX_CONCURRENT_PER_SESSION {
+    if active_count >= max_concurrent {
         return Err(anyhow::anyhow!(
             "Max concurrent sub-agents reached ({}/{}). Wait for some to complete or kill them.",
             active_count,
-            MAX_CONCURRENT_PER_SESSION
+            max_concurrent
         ));
     }
 
