@@ -2869,6 +2869,25 @@ impl SessionDB {
         Ok(result)
     }
 
+    /// List the ids of every session assigned to `project_id` (any status /
+    /// kind). Used by project deletion to cancel each session's in-flight async
+    /// jobs *before* the sessions are unassigned — afterwards there's no
+    /// `project_id` link to find them and they would run on orphaned. Epic E
+    /// (DELETE-6).
+    pub fn session_ids_in_project(&self, project_id: &str) -> Result<Vec<String>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id FROM sessions WHERE project_id = ?1")?;
+        let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Get a single session's metadata.
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionMeta>> {
         let conn = self
