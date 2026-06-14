@@ -1744,7 +1744,9 @@ fn maybe_persist_large_tool_result(
 ) -> anyhow::Result<String> {
     // E3 (INCOG-5): incognito sessions never spill tool output to disk — keep it
     // inline (in-memory) so the burn-on-close leaves no `tool_results/` trace.
-    if ctx.suppress_result_disk_persistence || ctx.incognito || !should_persist_large_result(&output)
+    if ctx.suppress_result_disk_persistence
+        || ctx.incognito
+        || !should_persist_large_result(&output)
     {
         return Ok(output);
     }

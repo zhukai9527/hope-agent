@@ -854,7 +854,10 @@ mod tests {
         // incognito job — only the bounded inline preview is kept, with no path.
         let big = "x".repeat(10_000);
         let (preview, path) = persist_result("job_incognito", &big, 100, true);
-        assert!(path.is_none(), "incognito job must not produce a spool path");
+        assert!(
+            path.is_none(),
+            "incognito job must not produce a spool path"
+        );
         assert!(
             preview.len() < big.len(),
             "preview should be truncated to the inline budget"
