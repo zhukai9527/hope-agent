@@ -373,6 +373,9 @@ Worker Dispatcher (worker.rs)
     │       │           └── PassThrough 类 (技能调用/search) → 替换为转换后指令，继续 ↓
     │       └── NO  → 继续 ↓
     ├── 5b. append_message(user_msg) 保存真实对话用户消息
+    ├── 5c. [单飞闸 I8] active_turn::try_acquire(session, Channel, 合成 turn_id, cancel)
+    │       ├── Err（同会话已有活动回合，含被 GUI/HTTP 接管） → 回一句「正在处理上一条」并 return
+    │       └── Ok → 持守 guard 至回合 + 投递结束（RAII）
     ├── 6. chat_engine::run_chat_engine() 共享聊天引擎
     │       ├── 构建 Agent（model chain + failover）
     │       ├── 恢复会话历史 (restore_agent_context)
@@ -387,6 +390,8 @@ Worker Dispatcher (worker.rs)
     ├── 9. chunk_message() 分块（4096 字符限制）
     └── 10. send_message() 逐块发送
 ```
+
+> **入站单飞（I8 / MISC-2 修复）**：dispatcher 用 `MAX_CONCURRENT_INBOUND` semaphore 限**全局**并发，但不串行化**同一会话**——两条快速到达的消息会并发 spawn 两个 `handle_inbound_message`，后到者在引擎深处输给 `stream_seq::begin` 竞争（此时 pipeline 已 spawn），以「active stream」错误回复收场。步骤 5c 接上 GUI/HTTP 同款 `active_turn::try_acquire` 单飞守卫：在持久化用户消息**之后**、引擎启动**之前**加闸，故每条入站照常入库 + 过 `UserPromptSubmit` preflight，仅「引擎回合」被单飞。守卫跨 IM/GUI/HTTP 在同一（1:1 attach）会话上互斥。用**合成 turn_id** 仅作单飞锁、引擎仍 `turn_id: None`（Channel 走 `channel:*` 总线，给它 seq-tracked turn_id 会改变 stream 接受 / 广播语义）；cancel `Arc` 一处创建供 `try_acquire` / `engine_params` / channel 取消注册表共用，使跨端取消能真正中止该引擎回合。被拒的消息已入库、搭下一回合上下文（无自动出队）。
 
 ### 出站流程
 

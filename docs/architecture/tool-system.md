@@ -615,12 +615,26 @@ sequenceDiagram
 
 当结果文件不可用时，completed 通知可带 `<output-preview>`；媒体结果可带 `<media-items-json>`。失败 / 超时 / 中断走 `<error>` 子标签。注入时若父会话忙，请求进 `PENDING_INJECTIONS` 队列等下次空闲（与子 Agent 注入完全同源）。
 
+**注入终局（I7，MISC-15）**：`inject_and_run_parent` 返回 `InjectionOutcome{Injected, Queued, Abandoned}` 并接收一个 `on_injected` 回调（tool-job 传「标 `injected=1`」闭包，subagent 传 `None`）。回调仅在真正落地（父回合跑完 / 结果已被取走 / 全模型失败终局 = `Injected`）时触发，并随 `PendingInjection` 穿过重排队，使延迟注入最终落地时照样标记来源完成。父会话在 `announce_timeout` 内始终不空闲时返回 **`Abandoned`**——**不**触发回调、**不**重排队、行保持 `injected=0`，留待上面的「重启回放」补投。旧实现无论结果都在 `block_on` 后无条件 `mark_injected`，于是 `Abandoned` 被误标已注入、replay 不再补投、通知永久丢失。
+
 ### 重启回放
 
 `app_init::start_background_tasks` 启动时调用 `async_jobs::replay_pending_jobs()`：
 
-1. 扫描 `status='running'` 行：本地进程已死，无法续跑 → 改为 `interrupted`，附 error 文案后入注入队列
-2. 扫描 `status in (completed/failed/timed_out/interrupted) AND injected=0`：上次进程崩在注入之前 → 重新派送
+1. 扫描 `status='running'` 行：本地进程已死，无法续跑 → 改为 `interrupted`，附 error 文案后入注入队列。**I3 孤儿清理**：若该行记录了 `pid` 且进程仍存活（崩溃前 detach 的后台 `exec` 子进程组 `process_group(0)` 幸存），先 `platform::terminate_process_tree(pid)` 整组结束孤儿、`app_warn!` 留痕，再标 `interrupted`——避免「DB 称中断、命令实际仍在跑」的状态谎言 + 资源泄漏
+2. 扫描 `status in (completed/failed/timed_out/interrupted) AND injected=0`：上次进程崩在注入之前 **或** 上次注入因父会话长期忙碌被放弃（I7 `Abandoned`，下文）→ 重新派送
+
+### 取消传导
+
+后台 job 的取消有三条入口，覆盖「会话删除 / 跨进程 / 回合取消 grace 窗口」三种来源：
+
+- **会话删除（A-8，DELETE-4）**：`session:deleted` → `cancel_jobs_for_session(session_id)` 取消该会话全部活动 job，关掉「删会话后后台 job 失去取消入口、无限运行」的口子
+- **跨进程取消（I4，MISC-4）**：`cancel_job` 除了命中本进程内存 cancel token，还写 DB `cancel_requested=1`；`run_job_to_completion` 在运行期每 ~5s `poll` 一次本行的 `cancel_requested`，命中即 `cancel_token.cancel()` 并 abort——这样桌面 + 自托管 server **共用同一 `async_jobs.db`** 时，由另一进程实际执行的 job 也能被中止，而不是只把 DB 状态改成 `cancelled` 却任其在对方进程跑完、结果被 active-status guard 静默丢弃。（auto-background detach 出来的 worker 暂未接 poll 臂——它在 detach 决策前就 spawn，结构上不便旁路，记为已知限制）
+- **回合取消 grace 窗口（I5，MISC-2）**：`execute_tool_with_cancel` 的 cancel 臂给在途 dispatch 一个 5s 收尾窗口；若用户恰在窗口内批准了一个可后台化工具，dispatch 会返回合成 `{job_id,status:"started"}` 并已 detach 出带**全新** cancel token 的 runner（回合取消传导不到它）。cancel 臂现在捕获该结果、`extract_started_job_id` 解析出 job_id 后调 `cancel_job` 回收,使「已取消」名实相符。同步内联工具未及时收尾仍照旧 drop,其 `exec` 进程组由 `ProcessGroupGuard::drop` 回收
+
+### 并发上限（max_concurrent_jobs，I2 / MISC-5）
+
+显式后台路径（`run_in_background: true` / `always-background` 策略）每个 job 占一条独立 OS 线程 + current-thread runtime。无上限时模型可跨回合连发 `run_in_background` 线性堆叠耗尽线程 / 内存（YOLO / `auto_approve_tools` 下更无人工闸）。`async_jobs::slots` 用进程级原子 CAS 计数 + RAII `JobSlotGuard` 封顶：`spawn_explicit_job` 起线程前 `try_acquire_job_slot()`，slot 随 runner 线程生命周期释放（成功 / 失败 / runtime 构建失败各路径都自动归还）；达 `asyncTools.maxConcurrentJobs`（默认 8，`0` = 不限，每次 acquire 实时读配置）时返回可操作错误结果（提示模型等待 / 查 `job_status` / 改同步执行），不再多堆一条线程。**范围**：只闸显式后台路径（无界向量）；auto-background detach 的 worker 在 detach 决策前已 spawn、不适配 slot-RAII，改由每回合工具并发 + 同步预算天然约束。
 
 ### Retention / Orphan 清扫
 
@@ -644,6 +658,7 @@ sequenceDiagram
 | `enabled` | `true` | 总开关，关闭后所有 async-capable 工具退化为纯同步执行，`job_status` 工具也不注入 |
 | `autoBackgroundSecs` | `30` | Tier 3 同步预算。`0` 关闭自动后台化，仅保留 Tier 1/2 |
 | `maxJobSecs` | `0`（不限时） | 后台 job 的用户硬上限；超时 → status=`timed_out` 并注入失败消息。`0` = async job 层默认不限时；具体工具仍可有自己的内部超时（如正数 `exec.timeout`；`exec.timeout=0` 也表示不限）。当全局为 `0` 时，模型单次 `job_timeout_secs > 0` 可为本次 job 设置外层超时；当全局为正数时，`job_timeout_secs` 只能收紧这个上限，不能放宽 |
+| `maxConcurrentJobs` | `8`（`0` = 不限） | 显式后台路径（`run_in_background` / `always-background`）并发上限，见上「并发上限」节。达上限时新的后台请求返回可操作错误结果；只闸显式路径，auto-background 不计入 |
 | `inlineResultBytes` | `4096` | 注入消息内联 preview 上限；超过时 spool 到磁盘并注入路径引用 |
 | `retentionSecs` | `30 * SECS_PER_DAY`（30 天） | 终态行 + spool 文件 TTL；超期由 daily background loop 清扫。`0` = 永不清理（长跑实例累积风险，仅极端调试用） |
 | `orphanGraceSecs` | `24 * SECS_PER_HOUR`（24h） | 孤儿 spool 文件 TTL：`~/.hope-agent/async_jobs/` 下名字未被任何 DB 行引用、且 mtime 超过这个 grace 的文件被删（grace 防与新写入 race）。`0` 关闭孤儿清扫 |
