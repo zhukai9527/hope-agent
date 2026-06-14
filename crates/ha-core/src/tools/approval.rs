@@ -265,6 +265,18 @@ fn get_pending_approvals() -> &'static TokioMutex<HashMap<String, PendingApprova
     PENDING_APPROVALS.get_or_init(|| TokioMutex::new(HashMap::new()))
 }
 
+/// True iff an approval is currently registered and awaiting a human decision
+/// for `session_id`. Used by `subagent` spawn_and_wait to tell the parent the
+/// child is **paused on an approval** rather than merely "backgrounded" (D6 /
+/// DEADLOCK-5). A pending child approval only persists where it can actually be
+/// answered — unattended surfaces fail-close instead of registering one.
+pub(crate) async fn session_has_pending_approval(session_id: &str) -> bool {
+    let pending = get_pending_approvals().lock().await;
+    pending
+        .values()
+        .any(|e| e.session_id.as_deref() == Some(session_id))
+}
+
 /// Count pending approvals grouped by session id. Approvals registered without
 /// a session id (e.g. global commands triggered outside any chat) are skipped.
 pub async fn pending_approvals_per_session() -> HashMap<String, i64> {
@@ -467,10 +479,29 @@ pub(crate) async fn check_and_request_approval(
     if let crate::permission::ApprovalSurface::Unattended(unattended) =
         crate::permission::evaluate_approval_surface(session_id)
     {
-        match crate::config::cached_config()
+        let action = crate::config::cached_config()
             .permission
-            .unattended_approval_action
-        {
+            .unattended_approval_action;
+        // Structured signal for any in-app consumer (cron run telemetry / dashboard
+        // / future UI), parallel to `approval_required`. The whole-job timeout no
+        // longer masks the cause (D2/D3 fail-close instead of hanging); this makes
+        // "a tool needed an approval no one could give" observable, not just prose
+        // in the model's reply.
+        if let Some(bus) = crate::globals::get_event_bus() {
+            bus.emit(
+                "approval:unattended",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "reason": unattended.as_str(),
+                    "action": match action {
+                        crate::permission::UnattendedApprovalAction::Proceed => "proceed",
+                        crate::permission::UnattendedApprovalAction::Deny => "deny",
+                    },
+                    "command": command,
+                }),
+            );
+        }
+        match action {
             crate::permission::UnattendedApprovalAction::Proceed => {
                 app_warn!(
                     "tool",
