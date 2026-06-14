@@ -296,6 +296,7 @@ impl Default for AsyncToolsConfig {
 }
 
 pub use crate::permission::ApprovalTimeoutAction;
+pub use crate::permission::UnattendedApprovalAction;
 
 // ── Default helpers ─────────────────────────────────────────────
 

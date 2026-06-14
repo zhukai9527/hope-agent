@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 = 계속 대기",
       "timeoutSeconds": "타임아웃 초",
       "timeoutTitle": "승인 대화상자 타임아웃",
+      "unattendedTitle": "무인 승인",
+      "unattendedDesc": "도구가 승인을 필요로 하지만 아무도 응답할 수 없는 경우(cron 실행 / 연결된 클라이언트도 IM 채팅도 없는 헤드리스 서버 / 권한 기능을 선언하지 않은 ACP 클라이언트 / 표시 화면이 없는 서브에이전트)의 동작. '실행 차단'(권장)은 페일클로즈로 거부하고, '진행'은 도구를 자동 실행합니다(보안 완화, 신뢰할 수 있는 무인 자동화 전용).",
       "title": "권한",
       "yoloCliActive": "⚠️ CLI 플래그 --dangerously-skip-all-approvals가 활성화되어 있으며 GUI에서 비활성화할 수 없습니다.",
       "yoloDesc": "켜면 모든 도구가 승인 없이 실행됩니다. Plan Mode만 계속 차단할 수 있습니다. 보호 경로 / 위험 명령 일치는 경고 로그를 남기고 실행됩니다.",

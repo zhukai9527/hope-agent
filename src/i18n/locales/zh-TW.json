@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 表示無限等待",
       "timeoutSeconds": "超時秒數",
       "timeoutTitle": "審批彈窗超時",
+      "unattendedTitle": "無人值守審批",
+      "unattendedDesc": "當工具需要審批卻無人能回應時(排程任務 / 無客戶端的 headless 服務且無 IM 會話 / 未宣告權限能力的 ACP 客戶端 / 無呈現介面的子代理)的處理方式。「阻止執行」(建議)fail-closed 拒絕;「放行」自動執行工具——屬安全放寬,僅用於受信的無人值守自動化。",
       "title": "權限",
       "yoloCliActive": "⚠️ 目前 CLI 啟動參數 --dangerously-skip-all-approvals 已啟用，無法在 GUI 關閉。",
       "yoloDesc": "開啟後所有工具直接執行，僅 Plan 模式仍能攔截。保護路徑 / 危險命令命中只記 warn 日誌不再彈審批。",

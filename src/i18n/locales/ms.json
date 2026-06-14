@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 = tunggu selamanya",
       "timeoutSeconds": "Saat Tamat Masa",
       "timeoutTitle": "Tamat Masa Dialog Kelulusan",
+      "unattendedTitle": "Kelulusan tanpa pengawasan",
+      "unattendedDesc": "Apa yang perlu dilakukan apabila alat memerlukan kelulusan tetapi tiada sesiapa boleh menjawab — larian cron, pelayan headless tanpa klien bersambung dan tanpa sembang IM, klien ACP tanpa keupayaan kebenaran, atau subejen tanpa antara muka. 'Sekat pelaksanaan' (disyorkan) gagal-tertutup menolak; 'Teruskan' menjalankan alat secara automatik — pelonggaran keselamatan untuk automasi tanpa pengawasan yang dipercayai sahaja.",
       "title": "Kebenaran",
       "yoloCliActive": "⚠️ Bendera CLI --dangerously-skip-all-approvals sedang aktif dan tidak boleh dimatikan daripada GUI.",
       "yoloDesc": "Apabila dihidupkan, semua alat berjalan tanpa kelulusan; hanya Plan Mode masih boleh menyekat. Padanan laluan dilindungi / arahan berbahaya menulis amaran tetapi tetap dijalankan.",

@@ -38,7 +38,6 @@ static RUNTIME_ROLE: OnceLock<&'static str> = OnceLock::new();
 /// not be used for "current version" comparisons in the updater path.
 static APP_VERSION: OnceLock<&'static str> = OnceLock::new();
 
-
 /// Register the calling binary's `CARGO_PKG_VERSION` so [`app_version`]
 /// returns the user-facing app version. Idempotent; first call wins.
 pub fn set_app_version(version: &'static str) {

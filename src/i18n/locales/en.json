@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 = wait forever",
       "timeoutSeconds": "Timeout Seconds",
       "timeoutTitle": "Approval Dialog Timeout",
+      "unattendedTitle": "Unattended Approvals",
+      "unattendedDesc": "What to do when a tool needs approval but no one can answer — a cron run, a headless server with no connected client or IM chat, an ACP client without a permission capability, or a subagent with no surface. 'Block execution' (recommended) fails closed; 'Proceed' auto-runs the tool, a security loosening for trusted unattended automation only.",
       "title": "Permission",
       "yoloCliActive": "⚠️ The CLI flag --dangerously-skip-all-approvals is active and cannot be disabled from the GUI.",
       "yoloDesc": "When on, all tools run without approval; only Plan Mode can still block. Protected-path / dangerous-command matches log a warning but execute.",

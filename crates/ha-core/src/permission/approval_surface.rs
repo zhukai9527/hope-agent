@@ -160,8 +160,48 @@ pub fn evaluate_approval_surface(session_id: Option<&str>) -> ApprovalSurface {
 }
 
 fn load_session_meta(session_id: &str) -> Option<crate::session::SessionMeta> {
-    crate::get_session_db()
-        .and_then(|db| db.get_session(session_id).ok().flatten())
+    crate::get_session_db().and_then(|db| db.get_session(session_id).ok().flatten())
+}
+
+/// True iff `session_id` is currently attached to an IM channel conversation
+/// (the authoritative 1:1 attach table is the source of truth; falls back to the
+/// denormalized `channel_info` on the session row if the channel DB is absent).
+fn session_is_im_attached(session_id: &str, meta: Option<&crate::session::SessionMeta>) -> bool {
+    if let Some(db) = crate::get_channel_db() {
+        if let Ok(Some(_conv)) = db.get_conversation_by_session(session_id) {
+            return true;
+        }
+        // channel DB present but no row → genuinely not attached.
+        return meta.is_some_and(|m| m.channel_info.is_some());
+    }
+    meta.is_some_and(|m| m.channel_info.is_some())
+}
+
+/// Walk a subagent's parent chain looking for an IM-attached ancestor whose
+/// user could answer a bubbled approval. Bounded so a corrupt parent cycle
+/// can't loop forever; a cron ancestor ends the walk (cron is never a surface).
+fn subagent_chain_has_im_surface(child: Option<&crate::session::SessionMeta>) -> bool {
+    const MAX_DEPTH: usize = 8;
+    let Some(db) = crate::get_session_db() else {
+        return false;
+    };
+    let mut next_parent = child.and_then(|m| m.parent_session_id.clone());
+    for _ in 0..MAX_DEPTH {
+        let Some(parent_id) = next_parent.take() else {
+            return false;
+        };
+        let Ok(Some(parent)) = db.get_session(&parent_id) else {
+            return false;
+        };
+        if parent.is_cron {
+            return false;
+        }
+        if session_is_im_attached(&parent_id, Some(&parent)) {
+            return true;
+        }
+        next_parent = parent.parent_session_id.clone();
+    }
+    false
 }
 
 #[cfg(test)]
@@ -209,45 +249,4 @@ mod tests {
         set_acp_permission_capable(false);
         assert!(!acp_permission_capable());
     }
-}
-
-/// True iff `session_id` is currently attached to an IM channel conversation
-/// (the authoritative 1:1 attach table is the source of truth; falls back to the
-/// denormalized `channel_info` on the session row if the channel DB is absent).
-fn session_is_im_attached(session_id: &str, meta: Option<&crate::session::SessionMeta>) -> bool {
-    if let Some(db) = crate::get_channel_db() {
-        if let Ok(Some(_conv)) = db.get_conversation_by_session(session_id) {
-            return true;
-        }
-        // channel DB present but no row → genuinely not attached.
-        return meta.is_some_and(|m| m.channel_info.is_some());
-    }
-    meta.is_some_and(|m| m.channel_info.is_some())
-}
-
-/// Walk a subagent's parent chain looking for an IM-attached ancestor whose
-/// user could answer a bubbled approval. Bounded so a corrupt parent cycle
-/// can't loop forever; a cron ancestor ends the walk (cron is never a surface).
-fn subagent_chain_has_im_surface(child: Option<&crate::session::SessionMeta>) -> bool {
-    const MAX_DEPTH: usize = 8;
-    let Some(db) = crate::get_session_db() else {
-        return false;
-    };
-    let mut next_parent = child.and_then(|m| m.parent_session_id.clone());
-    for _ in 0..MAX_DEPTH {
-        let Some(parent_id) = next_parent.take() else {
-            return false;
-        };
-        let Ok(Some(parent)) = db.get_session(&parent_id) else {
-            return false;
-        };
-        if parent.is_cron {
-            return false;
-        }
-        if session_is_im_attached(&parent_id, Some(&parent)) {
-            return true;
-        }
-        next_parent = parent.parent_session_id.clone();
-    }
-    false
 }

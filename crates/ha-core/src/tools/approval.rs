@@ -435,7 +435,9 @@ pub(crate) enum ApprovalCheckError {
     RequestSerialization,
     EventBusUnavailable,
     Cancelled,
-    TimedOut { timeout_secs: u64 },
+    TimedOut {
+        timeout_secs: u64,
+    },
     /// No human could answer this prompt (cron / headless-no-client / ACP-no-
     /// capability / subagent-no-parent-surface) and `unattendedApprovalAction`
     /// is `deny`. Fail-closed without blocking (Epic D). Callers render it via
@@ -529,9 +531,7 @@ pub(crate) async fn check_and_request_approval(
                     unattended.as_str(),
                     None,
                 );
-                return Err(ApprovalCheckError::Unattended {
-                    reason: unattended,
-                });
+                return Err(ApprovalCheckError::Unattended { reason: unattended });
             }
         }
     }

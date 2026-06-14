@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 = esperar siempre",
       "timeoutSeconds": "Segundos de espera",
       "timeoutTitle": "Tiempo límite del diálogo de aprobación",
+      "unattendedTitle": "Aprobaciones desatendidas",
+      "unattendedDesc": "Qué hacer cuando una herramienta necesita aprobación pero nadie puede responder: una ejecución de cron, un servidor headless sin cliente conectado ni chat de IM, un cliente ACP sin capacidad de permisos, o un subagente sin superficie. 'Bloquear ejecución' (recomendado) falla en cerrado; 'Continuar' ejecuta la herramienta automáticamente, una relajación de seguridad solo para automatización desatendida de confianza.",
       "title": "Permisos",
       "yoloCliActive": "⚠️ La bandera CLI --dangerously-skip-all-approvals está activa y no puede desactivarse desde la GUI.",
       "yoloDesc": "Cuando está activo, todas las herramientas se ejecutan sin aprobación; solo Plan Mode puede seguir bloqueando. Las rutas protegidas / comandos peligrosos registran una advertencia pero se ejecutan.",

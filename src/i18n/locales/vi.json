@@ -2501,6 +2501,8 @@
       "timeoutHint": "0 = chờ mãi",
       "timeoutSeconds": "Số giây chờ",
       "timeoutTitle": "Thời gian chờ hộp thoại phê duyệt",
+      "unattendedTitle": "Phê duyệt không người trực",
+      "unattendedDesc": "Phải làm gì khi một công cụ cần phê duyệt nhưng không ai có thể trả lời — một lần chạy cron, một máy chủ headless không có client kết nối và không có chat IM, một client ACP không khai báo khả năng quyền, hoặc một subagent không có giao diện. 'Chặn thực thi' (khuyến nghị) fail-closed từ chối; 'Tiếp tục' tự chạy công cụ, một sự nới lỏng bảo mật chỉ dành cho tự động hóa không người trực đáng tin cậy.",
       "title": "Quyền",
       "yoloCliActive": "⚠️ Cờ CLI --dangerously-skip-all-approvals đang bật và không thể tắt từ GUI.",
       "yoloDesc": "Khi bật, mọi công cụ chạy không cần phê duyệt; chỉ Plan Mode vẫn có thể chặn. Khớp đường dẫn bảo vệ / lệnh nguy hiểm sẽ ghi cảnh báo nhưng vẫn thực thi.",
