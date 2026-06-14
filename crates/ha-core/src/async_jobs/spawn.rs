@@ -139,6 +139,26 @@ pub fn spawn_explicit_job(
         }
     };
 
+    // I2 (MISC-5): reserve a background-job concurrency slot before committing
+    // any state. The guard is moved into the runner thread below and released
+    // when that thread exits, so the slot frees exactly when the job ends. At
+    // the cap, surface an actionable error result the model can act on (wait /
+    // poll job_status / run synchronously) instead of stacking another OS
+    // thread. Held across all early returns below — dropped (released) on each.
+    let slot = match super::slots::try_acquire_job_slot() {
+        Some(slot) => slot,
+        None => {
+            let max = crate::config::cached_config()
+                .async_tools
+                .max_concurrent_jobs;
+            return Err(anyhow::anyhow!(
+                "Background job limit reached ({max} concurrent). Too many tools are already \
+                 running in the background — wait for some to finish (check `job_status`) before \
+                 backgrounding more, or re-run this one synchronously (without `run_in_background`)."
+            ));
+        }
+    };
+
     let job_id = new_job_id();
     // review#1: register the cancel token BEFORE the row becomes queryable, so a
     // concurrent cancel (e.g. cancel_jobs_for_session on session delete) that
@@ -191,6 +211,10 @@ pub fn spawn_explicit_job(
     // Run on a dedicated OS thread so we don't constrain the dispatch future
     // to be `Send`. This mirrors `subagent::injection::inject_and_run_parent`.
     std::thread::spawn(move || {
+        // Hold the concurrency slot for the job's whole lifetime; it releases
+        // when this thread exits via any path (success, failure, or the
+        // runtime-build-failure early return below).
+        let _slot = slot;
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

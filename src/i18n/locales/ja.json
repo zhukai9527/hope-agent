@@ -2526,6 +2526,8 @@
     "asyncToolsJobStatusMaxWaitDesc": "単一の job_status(block=true) 呼び出しの上限。ジョブごとの最大時間 = 0 の場合のみ適用され、それ以外はジョブごとの最大時間が優先されます。",
     "asyncToolsMaxJob": "ジョブごとの最大時間",
     "asyncToolsMaxJobDesc": "バックグラウンドジョブの最大実行時間。超過すると強制終了されます。0 = async job 層では無制限。個別のツールは独自のタイムアウトを適用する場合があります。",
+    "asyncToolsMaxConcurrent": "バックグラウンドジョブの最大同時実行数",
+    "asyncToolsMaxConcurrentDesc": "同時に実行できる run_in_background ツールジョブの上限。各ジョブは専用の OS スレッドを占有します。上限に達すると新しいバックグラウンド要求は拒否されます（モデルには待機するか同期実行するよう伝えられます）。0 = 無制限。デフォルト 8。",
     "asyncToolsOrphanGrace": "孤立 spool の猶予時間",
     "asyncToolsOrphanGraceDesc": "DB 行から参照されない spool ファイルはこの時間（時間）後に削除されます。猶予期間により書き込み中との競合を防ぎます。",
     "asyncToolsRetention": "終了ジョブの保持日数",

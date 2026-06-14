@@ -2526,6 +2526,8 @@
     "asyncToolsJobStatusMaxWaitDesc": "Tek bir job_status(block=true) çağrısının üst sınırı. Yalnızca iş başına maksimum süre = 0 olduğunda uygulanır; aksi halde iş başına maksimum süre önceliklidir.",
     "asyncToolsMaxJob": "Maks. iş süresi",
     "asyncToolsMaxJobDesc": "Arka plan işinin çalışabileceği süre sınırı. Aşılırsa sonlandırılır. 0 = async job katmanında sınır yok; tek tek araçlar kendi zaman aşımlarını uygulayabilir.",
+    "asyncToolsMaxConcurrent": "Maks. eşzamanlı arka plan işi",
+    "asyncToolsMaxConcurrentDesc": "Aynı anda çalışabilecek run_in_background araç işlerinin üst sınırı; her biri ayrı bir OS iş parçacığı tutar. Sınıra ulaşıldığında yeni arka plan istekleri reddedilir (modele beklemesi veya senkron çalıştırması söylenir). 0 = sınırsız. Varsayılan 8.",
     "asyncToolsOrphanGrace": "Yetim spool bekleme süresi",
     "asyncToolsOrphanGraceDesc": "Veritabanında referansı olmayan spool dosyaları bu saatler sonra temizlenir. Bekleme süresi, uçuş halindeki yazmalarla yarışı önler.",
     "asyncToolsRetention": "Sonlanmış iş saklama",
