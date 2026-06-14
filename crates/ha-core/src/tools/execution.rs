@@ -291,6 +291,14 @@ pub struct ToolExecContext {
     /// preview layer must not wrap the output first and turn the async
     /// output-file into a pointer to a second file.
     pub suppress_result_disk_persistence: bool,
+    /// Whether the owning session is incognito (`sessions.incognito`). Resolved
+    /// once per ctx build from the session row. Incognito sessions must leave no
+    /// disk trace, so this gates large-tool-result spooling
+    /// ([`maybe_persist_large_tool_result`]) and async-job persistence
+    /// ([`crate::async_jobs::spawn::record_running_job`] /
+    /// `persist_result`), and forces AllowAlways grants to in-memory session
+    /// scope ([`Self::allowlist_grant_context`]). Epic E (INCOG-2/5/6).
+    pub incognito: bool,
     /// Best-effort cancellation signal for the currently executing tool.
     /// The chat turn, async-job timeout, or runtime_cancel path can trip this
     /// token; resource-owning tools such as `exec` use it to clean up process
@@ -1733,7 +1741,10 @@ fn maybe_persist_large_tool_result(
     output: String,
     ctx: &ToolExecContext,
 ) -> anyhow::Result<String> {
-    if ctx.suppress_result_disk_persistence || !should_persist_large_result(&output) {
+    // E3 (INCOG-5): incognito sessions never spill tool output to disk — keep it
+    // inline (in-memory) so the burn-on-close leaves no `tool_results/` trace.
+    if ctx.suppress_result_disk_persistence || ctx.incognito || !should_persist_large_result(&output)
+    {
         return Ok(output);
     }
     if crate::tools::image_markers::has_valid_image_markers(&output) {
@@ -1929,6 +1940,37 @@ fn maybe_activate_conditional_skills(name: &str, args: &Value, ctx: &ToolExecCon
             activated,
             session_id
         );
+    }
+}
+
+/// Recursively delete a session's large-tool-result spill directory
+/// (`~/.hope-agent/tool_results/<session_id>/`). Called by the session cleanup
+/// watcher on **purge** (incognito burn-on-close) as a backstop — incognito
+/// sessions never write here in the first place (E3 keeps results inline), but
+/// this clears anything written before the incognito flag was visible or by a
+/// prior build. Best-effort: a missing dir or a remove error is logged, never
+/// propagated. Epic E (INCOG-5).
+pub fn purge_tool_results_for_session(session_id: &str) {
+    if session_id.is_empty() {
+        return;
+    }
+    let dir = match crate::paths::root_dir() {
+        Ok(root) => root.join("tool_results").join(session_id),
+        Err(_) => return,
+    };
+    if !dir.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            app_warn!(
+                "tool",
+                "purge_tool_results",
+                "failed to purge tool_results dir for session {}: {}",
+                session_id,
+                e
+            );
+        }
     }
 }
 

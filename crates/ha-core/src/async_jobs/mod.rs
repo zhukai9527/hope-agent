@@ -172,6 +172,43 @@ pub fn cancel_jobs_for_session(session_id: &str) -> usize {
     cancelled
 }
 
+/// Physically delete **all** job rows for `session_id` and their spool files.
+/// Called by the session cleanup watcher on **purge** (incognito burn-on-close)
+/// — incognito jobs already skip the spool ([`spawn::record_running_job`] +
+/// `persist_result`), so this is a backstop that also drops the redacted job
+/// rows themselves so nothing about the burned session lingers. Returns the
+/// number of rows deleted. Epic E (INCOG-2).
+pub fn purge_jobs_for_session(session_id: &str) -> u64 {
+    let Some(db) = get_async_jobs_db() else {
+        return 0;
+    };
+    match db.purge_jobs_for_session(session_id) {
+        Ok(stats) => {
+            if stats.rows_deleted > 0 || stats.spool_files_deleted > 0 {
+                app_info!(
+                    "async_jobs",
+                    "cleanup",
+                    "purged {} job row(s) + {} spool file(s) for burned session {}",
+                    stats.rows_deleted,
+                    stats.spool_files_deleted,
+                    session_id
+                );
+            }
+            stats.rows_deleted
+        }
+        Err(e) => {
+            app_warn!(
+                "async_jobs",
+                "cleanup",
+                "purge_jobs_for_session failed for {}: {}",
+                session_id,
+                e
+            );
+            0
+        }
+    }
+}
+
 /// Replay logic invoked from `start_background_tasks`:
 ///   1. Mark every job left in `running` as `interrupted` (the underlying
 ///      process did not survive the restart).

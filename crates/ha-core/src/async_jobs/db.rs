@@ -13,6 +13,46 @@ pub struct PurgeStats {
     pub spool_bytes_freed: u64,
 }
 
+/// Delete the on-disk spool files for a batch of just-removed job rows,
+/// tallying freed files/bytes into `stats`. Runs outside the DB mutex (the rows
+/// are already gone); a missing file is a no-op and any other error is logged,
+/// never propagated. Shared by `purge_terminal_older_than` (age sweep) and
+/// `purge_jobs_for_session` (incognito burn).
+fn remove_spool_files(deleted_rows: &[(String, Option<String>)], stats: &mut PurgeStats) {
+    for (job_id, spool_path) in deleted_rows {
+        let Some(path) = spool_path else { continue };
+        match std::fs::metadata(path) {
+            Ok(meta) => {
+                let bytes = meta.len();
+                match std::fs::remove_file(path) {
+                    Ok(()) => {
+                        stats.spool_files_deleted += 1;
+                        stats.spool_bytes_freed += bytes;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => crate::app_warn!(
+                        "async_jobs",
+                        "purge",
+                        "Failed to delete spool file {} for job {}: {}",
+                        path,
+                        job_id,
+                        e
+                    ),
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => crate::app_warn!(
+                "async_jobs",
+                "purge",
+                "Failed to stat spool file {} for job {}: {}",
+                path,
+                job_id,
+                e
+            ),
+        }
+    }
+}
+
 /// SQLite-backed persistence for async tool jobs.
 ///
 /// Independent of `session.db` to keep the hot chat path lock-free; mirrors
@@ -310,39 +350,44 @@ impl AsyncJobsDB {
             return Ok(stats);
         }
 
-        for (job_id, spool_path) in &deleted_rows {
-            let Some(path) = spool_path else { continue };
-            match std::fs::metadata(path) {
-                Ok(meta) => {
-                    let bytes = meta.len();
-                    match std::fs::remove_file(path) {
-                        Ok(()) => {
-                            stats.spool_files_deleted += 1;
-                            stats.spool_bytes_freed += bytes;
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => crate::app_warn!(
-                            "async_jobs",
-                            "purge",
-                            "Failed to delete spool file {} for job {}: {}",
-                            path,
-                            job_id,
-                            e
-                        ),
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => crate::app_warn!(
-                    "async_jobs",
-                    "purge",
-                    "Failed to stat spool file {} for job {}: {}",
-                    path,
-                    job_id,
-                    e
-                ),
+        remove_spool_files(&deleted_rows, &mut stats);
+        Ok(stats)
+    }
+
+    /// Delete **every** job row owned by `session_id` (any status) and remove
+    /// their on-disk spool files. Called by the session cleanup watcher on
+    /// **purge** (incognito burn-on-close) so a burned session leaves no job row
+    /// or spooled output behind. Distinct from `cancel_jobs_for_session` (stops
+    /// only *active* jobs) and from the age-based retention sweep. Active jobs
+    /// are cancelled first by the watcher; deleting a still-settling row here is
+    /// safe — the runner's later `update_terminal` no-ops on the missing row, and
+    /// any spool file written in that race is caught by the orphan sweep in
+    /// `retention.rs`. Epic E (INCOG-2).
+    pub fn purge_jobs_for_session(&self, session_id: &str) -> Result<PurgeStats> {
+        let mut stats = PurgeStats::default();
+
+        let deleted_rows: Vec<(String, Option<String>)> = {
+            let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+            let mut stmt = conn.prepare(
+                "DELETE FROM async_tool_jobs WHERE session_id = ?1
+                 RETURNING job_id, result_path",
+            )?;
+            let rows = stmt.query_map(params![session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
             }
+            out
+        };
+
+        stats.rows_deleted = deleted_rows.len() as u64;
+        if deleted_rows.is_empty() {
+            return Ok(stats);
         }
 
+        remove_spool_files(&deleted_rows, &mut stats);
         Ok(stats)
     }
 

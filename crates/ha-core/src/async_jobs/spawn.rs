@@ -26,13 +26,22 @@ pub fn record_running_job(
     args: &Value,
     origin: JobOrigin,
 ) -> Result<()> {
+    // E4 (INCOG-2): an incognito job must not persist its raw tool args (which
+    // can carry sensitive commands / prompts) in plaintext on disk. Store a
+    // redaction placeholder — the live in-memory dispatch still receives the
+    // real args; only the durable `async_jobs.db` row is scrubbed.
+    let args_json = if ctx.incognito {
+        "{\"_incognito_redacted\":true}".to_string()
+    } else {
+        serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
+    };
     let job = AsyncJob {
         job_id: job_id.to_string(),
         session_id: ctx.session_id.clone(),
         agent_id: ctx.agent_id.clone(),
         tool_name: tool_name.to_string(),
         tool_call_id: ctx.tool_call_id.clone(),
-        args_json: serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()),
+        args_json,
         status: AsyncJobStatus::Running,
         result_preview: None,
         result_path: None,
@@ -43,11 +52,11 @@ pub fn record_running_job(
         origin: origin.as_str().to_string(),
         // B4: how the backgrounded call was authorized (audit, TIMEOUT-2). Set
         // by the exec async approval-reorder; `None` for tools that skipped the
-        // gate. Remaining A-7 columns wired by later subtasks:
+        // gate.
         approval_origin: ctx.approval_origin.map(|o| o.as_str().to_string()),
-        incognito: false,        // E4 (from ctx.incognito)
-        pid: None,               // I3 (orphan cleanup)
-        cancel_requested: false, // I4 (cross-process cancel)
+        incognito: ctx.incognito, // E4: gates spool persistence at finalize.
+        pid: None,                // I3 (orphan cleanup)
+        cancel_requested: false,  // I4 (cross-process cancel)
     };
     db.insert(&job)
 }
@@ -413,6 +422,7 @@ pub async fn dispatch_with_auto_background(
                     tool_call_id,
                     r,
                     preview_bytes,
+                    ctx_w.incognito,
                 )
                 .await;
             }
@@ -546,6 +556,7 @@ async fn run_job_to_completion(
     let session_id = ctx.session_id.clone();
     let agent_id = ctx.agent_id.clone();
     let tool_call_id = ctx.tool_call_id.clone();
+    let incognito = ctx.incognito;
 
     // I4: cross-process cancel watcher. A cancel issued from another process
     // (desktop + headless server share async_jobs.db) can't reach this
@@ -613,10 +624,12 @@ async fn run_job_to_completion(
         tool_call_id,
         result,
         preview_bytes,
+        incognito,
     )
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finalize_job(
     db: &AsyncJobsDB,
     job_id: &str,
@@ -626,10 +639,11 @@ async fn finalize_job(
     tool_call_id: Option<String>,
     result: Result<String, JobError>,
     preview_bytes: usize,
+    incognito: bool,
 ) {
     let (status, preview, path, error_text) = match result {
         Ok(output) => {
-            let (preview, path) = persist_result(job_id, &output, preview_bytes);
+            let (preview, path) = persist_result(job_id, &output, preview_bytes, incognito);
             (AsyncJobStatus::Completed, Some(preview), path, None)
         }
         Err(job_err) => {
@@ -721,12 +735,22 @@ async fn finalize_job(
 /// Returning a stable output file lets the parent agent decide when to spend a
 /// `read` call on detailed output instead of embedding arbitrary tool text in
 /// the notification envelope.
-fn persist_result(job_id: &str, output: &str, max_bytes: usize) -> (String, Option<String>) {
+fn persist_result(
+    job_id: &str,
+    output: &str,
+    max_bytes: usize,
+    incognito: bool,
+) -> (String, Option<String>) {
     let preview = if output.len() <= max_bytes {
         output.to_string()
     } else {
         truncate_preview(output, max_bytes)
     };
+    // E4 (INCOG-2): incognito jobs keep only the bounded inline preview — never
+    // spool the full output to disk, so burn-on-close leaves no spool file.
+    if incognito {
+        return (preview, None);
+    }
     let path = match crate::paths::async_job_result_path(job_id) {
         Ok(p) => p,
         Err(e) => {

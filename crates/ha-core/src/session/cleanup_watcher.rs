@@ -65,14 +65,20 @@ pub fn spawn_session_cleanup_watcher() {
                 continue;
             };
 
-            cleanup_session(session_id).await;
+            // Purge (incognito burn-on-close) additionally scrubs on-disk
+            // artifacts that a plain delete leaves to age-based GC.
+            let is_purge = event.name == EVENT_SESSION_PURGED;
+            cleanup_session(session_id, is_purge).await;
         }
     });
 }
 
 /// Fan out cleanup for one removed session. Each step is best-effort and
-/// independent so a failure in one subsystem can't block the rest.
-async fn cleanup_session(session_id: &str) {
+/// independent so a failure in one subsystem can't block the rest. When
+/// `is_purge` (incognito burn-on-close), also physically scrub on-disk
+/// artifacts (tool-result spills + async-job rows/spool) so the burned session
+/// leaves no trace — a plain delete leaves these to age-based GC. Epic E.
+async fn cleanup_session(session_id: &str, is_purge: bool) {
     // A-8: cancel active / awaiting-approval background jobs (DELETE-4).
     let cancelled_jobs = crate::async_jobs::cancel_jobs_for_session(session_id);
 
@@ -95,6 +101,16 @@ async fn cleanup_session(session_id: &str) {
         snapshot
             .cancel
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    // E3/E4 (INCOG-2/5): on incognito burn, scrub the session's on-disk
+    // artifacts. Incognito tool results / job spools are skipped at write time,
+    // so these are backstops — but they also drop the (redacted) async-job rows
+    // and any pre-flag spills so the burned session leaves nothing behind. A
+    // plain delete leaves these to age-based retention; only purge scrubs now.
+    if is_purge {
+        crate::tools::purge_tool_results_for_session(session_id);
+        crate::async_jobs::purge_jobs_for_session(session_id);
     }
 
     if cancelled_jobs > 0 || denied > 0 {

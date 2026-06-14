@@ -66,7 +66,9 @@ pub use definitions::{
     get_submit_plan_tool, get_tool_search_tool, get_tools_for_provider, get_web_search_tool,
     is_async_capable, is_concurrent_safe, is_internal_tool, CoreSubclass, ToolDefinition, ToolTier,
 };
-pub use execution::{execute_tool_with_context, PidSink, ToolExecContext};
+pub use execution::{
+    execute_tool_with_context, purge_tool_results_for_session, PidSink, ToolExecContext,
+};
 pub use rejection::{ToolRejection, TOOL_ERROR_PREFIX};
 
 // ── Tool Name Constants ──────────────────────────────────────────
