@@ -206,6 +206,9 @@ pub fn spawn_explicit_job(
     };
     if let Err(e) = record_running_job(&db, &job_id, &ctx, tool_name, &args, origin, status) {
         super::cancel::remove_job(&job_id);
+        // R3: this early-return bypasses finalize_job — drop the tail ring
+        // registered above (no-op if none was). Paired with every cancel::remove_job.
+        super::output_tail::remove(&job_id);
         return Err(e);
     }
 
@@ -235,6 +238,7 @@ pub fn spawn_explicit_job(
                 // The wait queue itself is full — roll back the row + token and
                 // hard-reject so the model can wait or run synchronously.
                 super::cancel::remove_job(&job_id);
+                super::output_tail::remove(&job_id); // R3: bypasses finalize_job
                 let _ = db.delete(&job_id);
                 Err(anyhow::anyhow!(
                     "Background job queue is full — too many tools are already running or waiting. \
@@ -300,6 +304,9 @@ fn start_runner(
                 super::wait::notify_completion(&job_id_owned);
                 emit_completion_event(&job_id_owned, &tool_name_owned, "failed");
                 super::cancel::remove_job(&job_id_owned);
+                // R3: this build-failure path also bypasses finalize_job — drop
+                // the tail ring (no-op if none).
+                super::output_tail::remove(&job_id_owned);
                 // I6: don't silently lose the job. `finalize_job` never runs on
                 // this build-failure path, so fire the terminal hook (H4 parity)
                 // and inject the failure back into the parent session.
@@ -436,6 +443,13 @@ pub async fn dispatch_with_auto_background(
     let mut ctx_w = ctx.clone();
     ctx_w.cancellation_token = Some(cancel_w.clone());
     ctx_w.suppress_result_disk_persistence = true;
+    // R3 note: auto-backgrounded exec deliberately does NOT register an
+    // output_tail ring here. Unlike the explicit `run_in_background` path
+    // (spawn_explicit_job), this runs the tool from the start without yet
+    // knowing it will detach, and has a synchronous-completion outcome that
+    // bypasses finalize_job — wiring the ring would need removal on that path
+    // too. Auto-background is a separate concern (PRD §5.5, pending R1); for
+    // now `output_tail` is an explicit-backgrounding feature only.
     let preview_bytes = preview_byte_budget();
     let max_secs = effective_max_job_secs(args);
 

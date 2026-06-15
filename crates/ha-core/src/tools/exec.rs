@@ -459,34 +459,40 @@ async fn wait_with_output_teed(
 ) -> std::io::Result<std::process::Output> {
     use tokio::io::AsyncReadExt;
 
-    async fn drain<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>, job_id: &str) -> Vec<u8> {
+    // Propagate pipe read errors (matches stock `wait_with_output`, which uses
+    // `try_join` internally) rather than swallowing them as EOF — otherwise a
+    // transient read error would silently truncate the job's real result and
+    // report success.
+    async fn drain<R: tokio::io::AsyncRead + Unpin>(
+        pipe: Option<R>,
+        job_id: &str,
+    ) -> std::io::Result<Vec<u8>> {
         let mut buf = Vec::new();
         if let Some(mut pipe) = pipe {
             let mut chunk = [0u8; 4096];
             loop {
-                match pipe.read(&mut chunk).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        crate::async_jobs::output_tail::append(job_id, &chunk[..n]);
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
+                let n = pipe.read(&mut chunk).await?;
+                if n == 0 {
+                    break;
                 }
+                crate::async_jobs::output_tail::append(job_id, &chunk[..n]);
+                buf.extend_from_slice(&chunk[..n]);
             }
         }
-        buf
+        Ok(buf)
     }
 
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();
-    // Wait for the child AND drain both pipes concurrently (matches the
-    // semantics of `wait_with_output`).
-    let (status, stdout, stderr) = tokio::join!(
+    // Wait for the child AND drain both pipes concurrently, short-circuiting on
+    // the first error (matches the semantics of `wait_with_output`).
+    let (status, stdout, stderr) = tokio::try_join!(
         child.wait(),
         drain(stdout_pipe, &job_id),
         drain(stderr_pipe, &job_id),
-    );
+    )?;
     Ok(std::process::Output {
-        status: status?,
+        status,
         stdout,
         stderr,
     })
