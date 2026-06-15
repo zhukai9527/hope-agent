@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
-use crate::async_jobs::{self, wait, JobStatus};
+use crate::async_jobs::{self, wait, JobKind, JobStatus};
 
 const DEFAULT_WAIT_SECS: u64 = 5;
 const MAX_BLOCK_WAIT_SECS: u64 = 10;
@@ -157,6 +157,7 @@ fn format_job_response(job: &crate::async_jobs::BackgroundJob) -> String {
 fn job_response_value(job: &crate::async_jobs::BackgroundJob, include_output_tail: bool) -> Value {
     let mut payload = json!({
         "job_id": job.job_id,
+        "kind": job.kind.as_str(),
         "tool": job.tool_name,
         "status": job.status.as_str(),
         "origin": job.origin,
@@ -222,6 +223,24 @@ fn job_response_value(job: &crate::async_jobs::BackgroundJob, include_output_tai
                     "hint".to_string(),
                     json!("This job is NOT executing yet — it is queued, waiting for a free background slot (the concurrency cap is full). It starts automatically when a slot frees, and you will get the auto-injected task-notification on completion. Do not claim it is running, and do not repeatedly poll in this chat turn."),
                 );
+            }
+        }
+
+        // R6: a subagent projection carries NO run content (result/error live in
+        // the subagent record). Surface the run id and, when terminal, point the
+        // agent at the subagent tool to read the actual result.
+        if job.kind == JobKind::Subagent {
+            if let Some(run_id) = &job.subagent_run_id {
+                map.insert("subagent_run_id".to_string(), json!(run_id));
+                if job.status.is_terminal() {
+                    map.insert(
+                        "hint".to_string(),
+                        json!(format!(
+                            "This is a background subagent run; its result/error lives in the subagent \
+                             record, not in this job row. Fetch it with subagent(action='result', run_id='{run_id}')."
+                        )),
+                    );
+                }
             }
         }
     }
@@ -556,6 +575,7 @@ mod tests {
         let job = BackgroundJob {
             job_id: job_id.to_string(),
             kind: JobKind::Tool,
+            subagent_run_id: None,
             session_id: None,
             agent_id: None,
             tool_name: "test_tool".into(),
@@ -763,6 +783,7 @@ mod tests {
         let job = BackgroundJob {
             job_id: job_id.to_string(),
             kind: JobKind::Tool,
+            subagent_run_id: None,
             session_id: Some(session_id.to_string()),
             agent_id: None,
             tool_name: "test_tool".into(),
@@ -969,6 +990,48 @@ mod tests {
             .expect("ok");
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["status"], "running");
+        assert!(v.get("output_tail").is_none());
+    }
+
+    /// R6: a subagent projection's status response advertises kind=subagent +
+    /// the FK run id, and (when terminal) directs the agent to fetch the actual
+    /// result via the subagent tool — the projection itself carries no content.
+    #[test]
+    fn subagent_projection_response_surfaces_run_id_and_fetch_hint() {
+        let job = BackgroundJob {
+            job_id: "job_sa".into(),
+            kind: JobKind::Subagent,
+            subagent_run_id: Some("run_xyz".into()),
+            session_id: Some("s1".into()),
+            agent_id: Some("ha-main".into()),
+            tool_name: "subagent:researcher".into(),
+            tool_call_id: None,
+            args_json: "{}".into(),
+            status: JobStatus::Completed,
+            result_preview: None,
+            result_path: None,
+            error: None,
+            created_at: 0,
+            completed_at: Some(5),
+            injected: true,
+            origin: JobOrigin::Explicit.as_str().to_string(),
+            approval_origin: None,
+            incognito: false,
+            pid: None,
+            cancel_requested: false,
+        };
+        let v = job_response_value(&job, true);
+        assert_eq!(v["kind"], "subagent");
+        assert_eq!(v["subagent_run_id"], "run_xyz");
+        assert!(
+            v["hint"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("subagent(action='result'"),
+            "terminal subagent projection must point at the subagent result tool"
+        );
+        // The projection never carries run content.
+        assert!(v.get("result_preview").is_none());
         assert!(v.get("output_tail").is_none());
     }
 }

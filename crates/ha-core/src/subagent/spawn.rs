@@ -98,6 +98,39 @@ pub async fn spawn_subagent(
     };
     session_db.insert_subagent_run(&run)?;
 
+    // R6: project user-delegated background subagent runs into the unified
+    // `background_jobs` surface (one-way; `subagent_runs` stays the truth
+    // source) so they appear in `job_status` list/cancel + the future panel.
+    // Gate: only runs that auto-inject (`!skip_parent_injection` — excludes
+    // internal plan / team / hook spawns) and non-incognito parents (close-and-
+    // burn leaves no persisted trace). Best-effort: a projection failure must
+    // never block the spawn.
+    if !params.skip_parent_injection {
+        let parent_incognito = session_db
+            .get_session(&params.parent_session_id)
+            .ok()
+            .flatten()
+            .map(|m| m.incognito)
+            .unwrap_or(false);
+        if !parent_incognito {
+            if let Err(e) = crate::async_jobs::JobManager::project_subagent_spawn(
+                &run_id,
+                &params.parent_session_id,
+                &params.parent_agent_id,
+                &params.agent_id,
+                SubagentStatus::Spawning,
+            ) {
+                crate::app_warn!(
+                    "subagent",
+                    "spawn",
+                    "Failed to project subagent run {} into background_jobs: {}",
+                    run_id,
+                    e
+                );
+            }
+        }
+    }
+
     // 6. Register cancel flag and steer mailbox slot
     let cancel_flag = cancel_registry.register(&run_id);
     SUBAGENT_MAILBOX.register(&run_id);

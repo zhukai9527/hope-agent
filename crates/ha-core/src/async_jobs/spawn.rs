@@ -41,6 +41,8 @@ pub fn record_running_job(
         job_id: job_id.to_string(),
         // R1: this path is the Tool executor — the only wired `JobKind` today.
         kind: super::types::JobKind::Tool,
+        // R6: tool jobs never reference a subagent run.
+        subagent_run_id: None,
         session_id: ctx.session_id.clone(),
         agent_id: ctx.agent_id.clone(),
         tool_name: tool_name.to_string(),

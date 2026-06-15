@@ -18,7 +18,8 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use super::types::{BackgroundJob, JobOrigin};
+use super::types::{BackgroundJob, JobKind, JobOrigin, JobStatus};
+use crate::subagent::SubagentStatus;
 use crate::tools::ToolExecContext;
 
 /// Single entry point for background-job operations (R1). Zero-sized; all
@@ -111,5 +112,92 @@ impl JobManager {
     /// + orphan spool files. No-op ticker if retention is disabled.
     pub fn spawn_retention_loop() {
         super::retention::spawn_background_loop()
+    }
+
+    // ── Subagent projection (R6) ───────────────────────────────────────────
+    //
+    // A background subagent run gets a one-way scheduling projection here so it
+    // shows up in the unified job surface (`list` / `status` / `cancel`) and the
+    // future R4 panel. `subagent_runs` stays the execution truth source; this
+    // projection carries status / lifecycle ONLY — never run content.
+
+    /// Map a subagent run's status onto the unified job status for its
+    /// projection. `Spawning`/`Running` → `Running` (active); terminal states map
+    /// 1:1 (`Error`→`Failed`, `Timeout`→`TimedOut`, `Killed`→`Cancelled`).
+    fn subagent_status_as_job(status: SubagentStatus) -> JobStatus {
+        match status {
+            SubagentStatus::Spawning | SubagentStatus::Running => JobStatus::Running,
+            SubagentStatus::Completed => JobStatus::Completed,
+            SubagentStatus::Error => JobStatus::Failed,
+            SubagentStatus::Timeout => JobStatus::TimedOut,
+            SubagentStatus::Killed => JobStatus::Cancelled,
+        }
+    }
+
+    /// Create a one-way scheduling projection for a background subagent run (R6).
+    ///
+    /// The caller gates this (only user-delegated, non-incognito runs are
+    /// projected — `!skip_parent_injection && !parent_incognito`). The row holds
+    /// NO run content: `args_json` is empty and result/error are never set (they
+    /// live only in `subagent_runs`). `injected=true` keeps it out of the
+    /// tool-job injection/replay path entirely — the subagent does its own
+    /// `inject_and_run_parent`. No-op if the jobs DB is uninitialized.
+    pub fn project_subagent_spawn(
+        run_id: &str,
+        parent_session_id: &str,
+        parent_agent_id: &str,
+        child_agent_id: &str,
+        status: SubagentStatus,
+    ) -> Result<()> {
+        let Some(db) = super::get_async_jobs_db() else {
+            return Ok(());
+        };
+        let job = BackgroundJob {
+            job_id: super::spawn::new_job_id(),
+            kind: JobKind::Subagent,
+            subagent_run_id: Some(run_id.to_string()),
+            session_id: Some(parent_session_id.to_string()),
+            agent_id: Some(parent_agent_id.to_string()),
+            // Label only — the task content is NOT copied (lives in subagent_runs).
+            tool_name: format!("subagent:{child_agent_id}"),
+            tool_call_id: None,
+            args_json: "{}".to_string(),
+            status: Self::subagent_status_as_job(status),
+            result_preview: None,
+            result_path: None,
+            error: None,
+            created_at: chrono::Utc::now().timestamp(),
+            completed_at: None,
+            injected: true,
+            origin: JobOrigin::Explicit.as_str().to_string(),
+            approval_origin: None,
+            incognito: false,
+            pid: None,
+            cancel_requested: false,
+        };
+        db.insert(&job)
+    }
+
+    /// One-way sync (R6): propagate a subagent run's status onto its projection,
+    /// keyed by `subagent_run_id`. Best-effort and a no-op when no projection
+    /// exists (foreground / internal / incognito runs are never projected).
+    /// NEVER writes run content back — status + completed_at only.
+    pub fn sync_subagent_projection(run_id: &str, status: SubagentStatus) {
+        let Some(db) = super::get_async_jobs_db() else {
+            return;
+        };
+        let job_status = Self::subagent_status_as_job(status);
+        let completed_at = job_status
+            .is_terminal()
+            .then(|| chrono::Utc::now().timestamp());
+        if let Err(e) = db.update_subagent_projection_status(run_id, job_status, completed_at) {
+            crate::app_warn!(
+                "async_jobs",
+                "subagent_projection",
+                "Failed to sync projection for subagent run {}: {}",
+                run_id,
+                e
+            );
+        }
     }
 }

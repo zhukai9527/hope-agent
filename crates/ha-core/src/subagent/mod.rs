@@ -107,6 +107,41 @@ static PENDING_INJECTIONS: std::sync::LazyLock<Mutex<Vec<injection::PendingInjec
 static SESSION_IDLE_NOTIFY: std::sync::LazyLock<tokio::sync::Notify> =
     std::sync::LazyLock::new(|| tokio::sync::Notify::new());
 
+/// Request cancellation of a sub-agent run by `run_id` — the shared entry used
+/// by the `kill` tool action, runtime-task cancel, and the R6 background-job
+/// cancel routing (`async_jobs::cancel_job` for a `kind=subagent` projection).
+///
+/// Signals the in-process cancel flag (the running task aborts via its
+/// `abort_on_cancel` chat engine and settles `Killed`, which syncs the
+/// projection through `update_subagent_status`). If no flag is registered (the
+/// run already settled and was removed from the registry) and the run is still
+/// active, stamps it `Killed` directly so a caller is never left with an
+/// un-cancellable row. Returns true if a cancel was signalled or stamped.
+pub fn request_cancel_run(run_id: &str) -> bool {
+    if let Some(registry) = crate::get_subagent_cancels() {
+        if registry.cancel(run_id) {
+            return true;
+        }
+    }
+    // No in-process flag — fall back to stamping terminal if still active.
+    if let Some(db) = crate::get_session_db() {
+        if let Ok(Some(run)) = db.get_subagent_run(run_id) {
+            if !run.status.is_terminal() {
+                let _ = db.update_subagent_status(
+                    run_id,
+                    SubagentStatus::Killed,
+                    None,
+                    Some("Killed via background-job cancel"),
+                    None,
+                    None,
+                );
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // ── Re-exports ──────────────────────────────────────────────────
 
 pub use cancel::SubagentCancelRegistry;

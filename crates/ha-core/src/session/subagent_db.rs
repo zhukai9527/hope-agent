@@ -38,24 +38,32 @@ impl SessionDB {
         model_used: Option<&str>,
         duration_ms: Option<u64>,
     ) -> Result<()> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-        conn.execute(
-            "UPDATE subagent_runs SET status = ?1, result = COALESCE(?2, result),
+        {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "UPDATE subagent_runs SET status = ?1, result = COALESCE(?2, result),
                 error = COALESCE(?3, error), model_used = COALESCE(?4, model_used),
                 duration_ms = COALESCE(?5, duration_ms)
              WHERE run_id = ?6",
-            params![
-                status.as_str(),
-                result,
-                error,
-                model_used,
-                duration_ms.map(|d| d as i64),
-                run_id,
-            ],
-        )?;
+                params![
+                    status.as_str(),
+                    result,
+                    error,
+                    model_used,
+                    duration_ms.map(|d| d as i64),
+                    run_id,
+                ],
+            )?;
+        } // drop the SessionDB lock before the cross-DB projection sync below.
+          // R6: this is the single status choke point, so mirroring here keeps the
+          // `background_jobs` subagent projection in lockstep with the truth source
+          // for ALL transition paths (run lifecycle + the three kill fallbacks).
+          // Best-effort + no-op when the run was never projected (foreground /
+          // internal / incognito) — and it NEVER writes run content back.
+        crate::async_jobs::JobManager::sync_subagent_projection(run_id, status);
         Ok(())
     }
 

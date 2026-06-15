@@ -71,6 +71,21 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
         return Ok(Some(job));
     }
 
+    // R6: a `kind=subagent` projection's cancel routes to the subagent cancel
+    // registry (`subagent_runs` is the truth source). The run's own terminal
+    // handling stamps it Killed and syncs the projection → Cancelled via
+    // `update_subagent_status`. We do NOT run the tool-job cancel dance
+    // (terminal hooks / injection) here — the subagent fires its own
+    // SubagentStop hook + `inject_and_run_parent`. We optimistically reflect
+    // `cancelling` so the caller sees progress; the terminal lands via sync.
+    if job.kind == JobKind::Subagent {
+        if let Some(run_id) = &job.subagent_run_id {
+            crate::subagent::request_cancel_run(run_id);
+        }
+        let _ = db.mark_cancelling(job_id, Some("Cancellation requested"));
+        return db.load(job_id);
+    }
+
     // R7.1: a job still waiting in the in-memory scheduler queue has no runner
     // that will ever settle it — pull it out and finalize `Cancelled` directly.
     // The queue lock serializes this against the scheduler, so `Some` here means

@@ -69,20 +69,21 @@ impl JobsDB {
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // Schema evolution for this rebuildable cache. Newer columns (R1's
-        // `kind`, and the A-7 approval/governance columns) are referenced by
-        // every INSERT/SELECT below; a `background_jobs` table from a prior
-        // version lacks them, and `CREATE TABLE IF NOT EXISTS` would NOT add
-        // them — every spawn would then fail with "no such column". Project
-        // policy is "no migration — drop and rebuild": this DB is a pure cache
-        // (terminal rows are advisory, in-flight rows are marked interrupted on
-        // restart regardless), so on a stale schema we drop the table and let
-        // the CREATE below rebuild the current shape. The probe targets the
-        // newest column (`kind`); a failing probe means the table is either
-        // absent (DROP is a no-op) or stale (DROP clears it); a current table
-        // passes and is untouched. Bump the probe column when adding new ones.
+        // Schema evolution for this rebuildable cache. Newer columns (R6's
+        // `subagent_run_id`, R1's `kind`, the A-7 approval/governance columns)
+        // are referenced by every INSERT/SELECT below; a `background_jobs` table
+        // from a prior version lacks them, and `CREATE TABLE IF NOT EXISTS` would
+        // NOT add them — every spawn would then fail with "no such column".
+        // Project policy is "no migration — drop and rebuild": this DB is a pure
+        // cache (terminal rows are advisory, in-flight rows are marked
+        // interrupted on restart regardless), so on a stale schema we drop the
+        // table and let the CREATE below rebuild the current shape. The probe
+        // targets the newest column (`subagent_run_id`, R6); a failing probe
+        // means the table is either absent (DROP is a no-op) or stale (DROP
+        // clears it); a current table passes and is untouched. Bump the probe
+        // column when adding new ones.
         if conn
-            .prepare("SELECT kind FROM background_jobs LIMIT 0")
+            .prepare("SELECT subagent_run_id FROM background_jobs LIMIT 0")
             .is_err()
         {
             conn.execute_batch("DROP TABLE IF EXISTS background_jobs;")?;
@@ -107,13 +108,16 @@ impl JobsDB {
                 incognito INTEGER NOT NULL DEFAULT 0,
                 pid INTEGER,
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
-                kind TEXT NOT NULL DEFAULT 'tool'
+                kind TEXT NOT NULL DEFAULT 'tool',
+                subagent_run_id TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_background_jobs_session_status
                 ON background_jobs(session_id, status);
             CREATE INDEX IF NOT EXISTS idx_background_jobs_status_injected
-                ON background_jobs(status, injected);",
+                ON background_jobs(status, injected);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_subagent_run
+                ON background_jobs(subagent_run_id);",
         )?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -127,8 +131,9 @@ impl JobsDB {
                 job_id, session_id, agent_id, tool_name, tool_call_id,
                 args_json, status, result_preview, result_path, error,
                 created_at, completed_at, injected, origin,
-                approval_origin, incognito, pid, cancel_requested, kind
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+                approval_origin, incognito, pid, cancel_requested, kind,
+                subagent_run_id
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
             params![
                 job.job_id,
                 job.session_id,
@@ -149,6 +154,7 @@ impl JobsDB {
                 job.pid,
                 job.cancel_requested as i32,
                 job.kind.as_str(),
+                job.subagent_run_id,
             ],
         )?;
         Ok(())
@@ -204,6 +210,36 @@ impl JobsDB {
             "UPDATE background_jobs SET status='running'
                 WHERE job_id=?1 AND status='queued'",
             params![job_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// R6: one-way sync of a `kind='subagent'` projection's status from its
+    /// `subagent_runs` source of truth, keyed by `subagent_run_id`. Updates ONLY
+    /// status + completed_at — never run content (task/result/error live in
+    /// `subagent_runs`). Guarded `status NOT IN (<terminal>)` so a terminal
+    /// projection is frozen (a late/duplicate sync can't reopen it), and scoped
+    /// `kind='subagent'` so it can never touch a tool job. Returns whether a row
+    /// matched (false ⇒ no projection for this run — a foreground / internal /
+    /// incognito run that was never projected, so the sync is a no-op).
+    pub fn update_subagent_projection_status(
+        &self,
+        subagent_run_id: &str,
+        status: JobStatus,
+        completed_at: Option<i64>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let sql = format!(
+            "UPDATE background_jobs
+                SET status = ?2, completed_at = COALESCE(?3, completed_at)
+                WHERE subagent_run_id = ?1
+                  AND kind = 'subagent'
+                  AND status NOT IN ({})",
+            JobStatus::TERMINAL_STATUS_SQL_LIST
+        );
+        let rows = conn.execute(
+            &sql,
+            params![subagent_run_id, status.as_str(), completed_at],
         )?;
         Ok(rows > 0)
     }
@@ -278,7 +314,8 @@ impl JobsDB {
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested, kind
+                    approval_origin, incognito, pid, cancel_requested, kind,
+                    subagent_run_id
              FROM background_jobs WHERE job_id=?1",
         )?;
         stmt.query_row(params![job_id], row_to_job)
@@ -297,7 +334,8 @@ impl JobsDB {
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested, kind
+                    approval_origin, incognito, pid, cancel_requested, kind,
+                    subagent_run_id
              FROM background_jobs WHERE status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map([], row_to_job)?;
@@ -318,7 +356,8 @@ impl JobsDB {
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested, kind
+                    approval_origin, incognito, pid, cancel_requested, kind,
+                    subagent_run_id
              FROM background_jobs
              WHERE session_id=?1 AND status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
@@ -432,7 +471,8 @@ impl JobsDB {
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested, kind
+                    approval_origin, incognito, pid, cancel_requested, kind,
+                    subagent_run_id
              FROM background_jobs
              WHERE status IN ({})
                AND injected=0",
@@ -462,13 +502,15 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
         );
         JobStatus::Interrupted
     });
-    // `kind` is the last column (index 18); legacy/unknown values fall back to
-    // `Tool` (the only kind written before R1) so a stale row never breaks load.
+    // `kind` (index 18); legacy/unknown values fall back to `Tool` (the only
+    // kind written before R1) so a stale row never breaks load.
     let kind_str: String = row.get(18)?;
     let kind = JobKind::parse(&kind_str).unwrap_or(JobKind::Tool);
     Ok(BackgroundJob {
         job_id: row.get(0)?,
         kind,
+        // `subagent_run_id` (index 19, R6) — FK for kind=subagent projections.
+        subagent_run_id: row.get(19)?,
         session_id: row.get(1)?,
         agent_id: row.get(2)?,
         tool_name: row.get(3)?,
@@ -497,6 +539,7 @@ mod tests {
         BackgroundJob {
             job_id: id.to_string(),
             kind: JobKind::Tool,
+            subagent_run_id: None,
             session_id: None,
             agent_id: None,
             tool_name: "exec".into(),
@@ -636,6 +679,67 @@ mod tests {
         assert!(
             db.load("keep").unwrap().is_some(),
             "current-schema table must survive reopen"
+        );
+    }
+
+    /// R6: the subagent projection status sync is one-way (status/completed_at
+    /// only), round-trips the FK, and freezes once terminal (a late/duplicate
+    /// sync can't reopen a settled projection).
+    fn subagent_projection(job_id: &str, run_id: &str) -> BackgroundJob {
+        let mut j = sample_job(job_id);
+        j.kind = JobKind::Subagent;
+        j.subagent_run_id = Some(run_id.to_string());
+        j.tool_name = "subagent:helper".into();
+        j.injected = true; // projections never inject via the tool path
+        j
+    }
+
+    #[test]
+    fn subagent_projection_status_sync_is_one_way_and_frozen_when_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = JobsDB::open(&dir.path().join("background_jobs.db")).unwrap();
+        db.insert(&subagent_projection("proj1", "run_abc")).unwrap();
+        // The FK + kind round-trip through the row mapper.
+        let loaded = db.load("proj1").unwrap().unwrap();
+        assert_eq!(loaded.kind, JobKind::Subagent);
+        assert_eq!(loaded.subagent_run_id.as_deref(), Some("run_abc"));
+        // running -> completed syncs status + completed_at.
+        assert!(db
+            .update_subagent_projection_status("run_abc", JobStatus::Completed, Some(123))
+            .unwrap());
+        let loaded = db.load("proj1").unwrap().unwrap();
+        assert_eq!(loaded.status, JobStatus::Completed);
+        assert_eq!(loaded.completed_at, Some(123));
+        // Terminal is frozen: a stray later sync must NOT reopen it.
+        assert!(!db
+            .update_subagent_projection_status("run_abc", JobStatus::Cancelled, Some(456))
+            .unwrap());
+        assert_eq!(
+            db.load("proj1").unwrap().unwrap().status,
+            JobStatus::Completed
+        );
+        // Unknown run id is a no-op (foreground / unprojected run).
+        assert!(!db
+            .update_subagent_projection_status("nope", JobStatus::Running, None)
+            .unwrap());
+    }
+
+    #[test]
+    fn subagent_projection_sync_is_scoped_to_subagent_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = JobsDB::open(&dir.path().join("background_jobs.db")).unwrap();
+        // A tool job is never touched by the subagent sync even if its
+        // subagent_run_id column somehow matched (scoped `kind='subagent'`).
+        let mut tool = sample_job("tool1");
+        tool.subagent_run_id = Some("shared".into());
+        db.insert(&tool).unwrap();
+        assert!(!db
+            .update_subagent_projection_status("shared", JobStatus::Completed, Some(1))
+            .unwrap());
+        assert_eq!(
+            db.load("tool1").unwrap().unwrap().status,
+            JobStatus::Running,
+            "tool job must be untouched by the subagent sync"
         );
     }
 }

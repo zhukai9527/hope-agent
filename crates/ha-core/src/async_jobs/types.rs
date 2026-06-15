@@ -129,9 +129,14 @@ impl JobStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundJob {
     pub job_id: String,
-    /// What kind of work this job runs. `Tool` for every row today; the column
-    /// is the seam `Subagent` (R6) / `Group` (R5) fill later.
+    /// What kind of work this job runs. `Tool` for tool jobs; `Subagent` (R6)
+    /// for a background-subagent projection; `Group` (R5) is the remaining seam.
     pub kind: JobKind,
+    /// For `kind = Subagent` (R6): FK to `subagent_runs.run_id` — the execution
+    /// truth source. This row is a one-way scheduling projection (status /
+    /// lifecycle only); run content (task / result / error) lives ONLY in
+    /// `subagent_runs` and is never copied here. `None` for tool jobs.
+    pub subagent_run_id: Option<String>,
     pub session_id: Option<String>,
     pub agent_id: Option<String>,
     pub tool_name: String,
