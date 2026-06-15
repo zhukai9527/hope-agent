@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
-use crate::async_jobs::{self, wait, AsyncJobStatus};
+use crate::async_jobs::{self, wait, JobStatus};
 
 const DEFAULT_WAIT_SECS: u64 = 5;
 const MAX_BLOCK_WAIT_SECS: u64 = 10;
@@ -145,7 +145,7 @@ fn compute_effective_timeout(requested_ms: Option<u64>) -> Duration {
     Duration::from_secs(requested_secs.min(ceiling))
 }
 
-fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
+fn format_job_response(job: &crate::async_jobs::BackgroundJob) -> String {
     // Single-job status DOES include the running-output tail (that's its point).
     job_response_value(job, true).to_string()
 }
@@ -154,7 +154,7 @@ fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
 /// ~8KB) running-output tail: `true` for the single-job `status` view, but
 /// `false` for `list` (a compact id roster — N×8KB tails would balloon it) and
 /// `wait` (its `settled` entries are terminal, so they have no tail anyway).
-fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bool) -> Value {
+fn job_response_value(job: &crate::async_jobs::BackgroundJob, include_output_tail: bool) -> Value {
     let mut payload = json!({
         "job_id": job.job_id,
         "tool": job.tool_name,
@@ -171,7 +171,7 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bo
             );
         }
         match job.status {
-            AsyncJobStatus::Completed => {
+            JobStatus::Completed => {
                 if let Some(preview) = &job.result_preview {
                     map.insert("result_preview".to_string(), json!(preview));
                 }
@@ -183,15 +183,15 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bo
                     );
                 }
             }
-            AsyncJobStatus::Failed
-            | AsyncJobStatus::TimedOut
-            | AsyncJobStatus::Interrupted
-            | AsyncJobStatus::Cancelled => {
+            JobStatus::Failed
+            | JobStatus::TimedOut
+            | JobStatus::Interrupted
+            | JobStatus::Cancelled => {
                 if let Some(err) = &job.error {
                     map.insert("error".to_string(), json!(err));
                 }
             }
-            AsyncJobStatus::Running => {
+            JobStatus::Running => {
                 insert_running_poll_guidance(map, job);
                 if include_output_tail {
                     insert_output_tail(map, job);
@@ -201,7 +201,7 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bo
                     json!("Job is still running. Do not wait or repeatedly call job_status in this chat turn; continue independent work if possible, otherwise stop and rely on the auto-injected task-notification. If `output_tail` is present, it shows the most recent output so far — use it to judge progress vs stuck."),
                 );
             }
-            AsyncJobStatus::Cancelling => {
+            JobStatus::Cancelling => {
                 insert_running_poll_guidance(map, job);
                 if include_output_tail {
                     insert_output_tail(map, job);
@@ -211,13 +211,13 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bo
                     json!("Cancellation has been requested; the job is shutting down. Do not repeatedly poll in this chat turn; wait for the terminal task-notification."),
                 );
             }
-            AsyncJobStatus::AwaitingApproval => {
+            JobStatus::AwaitingApproval => {
                 map.insert(
                     "hint".to_string(),
                     json!("This job is NOT executing yet — it is blocked waiting for a human to approve the tool call. Do not claim it is running or report progress on it. Do not repeatedly poll in this chat turn; it resolves once the user answers the approval (you will get a terminal task-notification)."),
                 );
             }
-            AsyncJobStatus::Queued => {
+            JobStatus::Queued => {
                 map.insert(
                     "hint".to_string(),
                     json!("This job is NOT executing yet — it is queued, waiting for a free background slot (the concurrency cap is full). It starts automatically when a slot frees, and you will get the auto-injected task-notification on completion. Do not claim it is running, and do not repeatedly poll in this chat turn."),
@@ -231,7 +231,7 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bo
 /// Attach the running-output tail (R3 ①) for a still-running job, if one was
 /// captured (backgrounded, non-incognito `exec`). Lets the agent peek the latest
 /// output of a long job without waiting — judging "progressing" vs "stuck".
-fn insert_output_tail(map: &mut serde_json::Map<String, Value>, job: &crate::async_jobs::AsyncJob) {
+fn insert_output_tail(map: &mut serde_json::Map<String, Value>, job: &crate::async_jobs::BackgroundJob) {
     if let Some(tail) = crate::async_jobs::output_tail::read(&job.job_id) {
         if !tail.is_empty() {
             map.insert("output_tail".to_string(), json!(tail));
@@ -241,7 +241,7 @@ fn insert_output_tail(map: &mut serde_json::Map<String, Value>, job: &crate::asy
 
 fn insert_running_poll_guidance(
     map: &mut serde_json::Map<String, Value>,
-    job: &crate::async_jobs::AsyncJob,
+    job: &crate::async_jobs::BackgroundJob,
 ) {
     let age_secs = chrono::Utc::now()
         .timestamp()
@@ -511,8 +511,8 @@ mod tests {
     use super::*;
     use crate::async_jobs::{
         self,
-        db::AsyncJobsDB,
-        types::{AsyncJob, AsyncJobStatus, JobOrigin},
+        db::JobsDB,
+        types::{BackgroundJob, JobKind, JobOrigin, JobStatus},
     };
     use crate::runtime_tasks::{cancel_runtime_task, RuntimeTaskKind};
     use std::path::PathBuf;
@@ -538,7 +538,7 @@ mod tests {
                 "ha-core-job-status-tests-{}.db",
                 uuid::Uuid::new_v4().simple()
             ));
-            let db = AsyncJobsDB::open(&path).expect("open db");
+            let db = JobsDB::open(&path).expect("open db");
             async_jobs::set_async_jobs_db(Arc::new(db));
             TestFixturePath { _path: path }
         })
@@ -550,14 +550,15 @@ mod tests {
 
     fn insert_running(job_id: &str) {
         let db = async_jobs::get_async_jobs_db().expect("db");
-        let job = AsyncJob {
+        let job = BackgroundJob {
             job_id: job_id.to_string(),
+            kind: JobKind::Tool,
             session_id: None,
             agent_id: None,
             tool_name: "test_tool".into(),
             tool_call_id: None,
             args_json: "{}".into(),
-            status: AsyncJobStatus::Running,
+            status: JobStatus::Running,
             result_preview: None,
             result_path: None,
             error: None,
@@ -577,7 +578,7 @@ mod tests {
         let db = async_jobs::get_async_jobs_db().expect("db");
         db.update_terminal(
             job_id,
-            AsyncJobStatus::Completed,
+            JobStatus::Completed,
             Some(preview),
             None,
             None,
@@ -626,7 +627,7 @@ mod tests {
         let db = async_jobs::get_async_jobs_db().expect("db");
         db.update_terminal(
             &job_id,
-            AsyncJobStatus::Interrupted,
+            JobStatus::Interrupted,
             None,
             None,
             Some("interrupted"),
@@ -702,7 +703,7 @@ mod tests {
         let db = async_jobs::get_async_jobs_db().expect("db");
         db.update_terminal(
             &job_id,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Cancelled,
             None,
             None,
             Some("cancelled"),
@@ -739,7 +740,7 @@ mod tests {
         assert_eq!(result.status, "completed");
         let db = async_jobs::get_async_jobs_db().expect("db");
         let job = db.load(&job_id).expect("load").expect("job exists");
-        assert_eq!(job.status, AsyncJobStatus::Completed);
+        assert_eq!(job.status, JobStatus::Completed);
         assert_eq!(job.result_preview.as_deref(), Some("done"));
     }
 
@@ -756,14 +757,15 @@ mod tests {
 
     fn insert_running_in_session(job_id: &str, session_id: &str) {
         let db = async_jobs::get_async_jobs_db().expect("db");
-        let job = AsyncJob {
+        let job = BackgroundJob {
             job_id: job_id.to_string(),
+            kind: JobKind::Tool,
             session_id: Some(session_id.to_string()),
             agent_id: None,
             tool_name: "test_tool".into(),
             tool_call_id: None,
             args_json: "{}".into(),
-            status: AsyncJobStatus::Running,
+            status: JobStatus::Running,
             result_preview: None,
             result_path: None,
             error: None,

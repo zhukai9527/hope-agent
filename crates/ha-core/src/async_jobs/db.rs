@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-use super::types::{AsyncJob, AsyncJobStatus};
+use super::types::{BackgroundJob, JobKind, JobStatus};
 
 /// Row-level result of a retention sweep.
 #[derive(Debug, Clone, Default)]
@@ -53,40 +53,42 @@ fn remove_spool_files(deleted_rows: &[(String, Option<String>)], stats: &mut Pur
     }
 }
 
-/// SQLite-backed persistence for async tool jobs.
+/// SQLite-backed persistence for background jobs (R1 unified `background_jobs`
+/// table — was `async_tool_jobs`).
 ///
 /// Independent of `session.db` to keep the hot chat path lock-free; mirrors
-/// the layout used by `cron::CronDB` and `recap` (see `paths::async_jobs_db_path`).
-pub struct AsyncJobsDB {
+/// the layout used by `cron::CronDB` and `recap` (see `paths::background_jobs_db_path`).
+pub struct JobsDB {
     pub(crate) conn: Mutex<Connection>,
 }
 
-impl AsyncJobsDB {
+impl JobsDB {
     pub fn open(db_path: &std::path::Path) -> Result<Self> {
         let conn = Connection::open(db_path)
             .with_context(|| format!("Failed to open async_jobs DB at {}", db_path.display()))?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // Schema evolution for this rebuildable cache. The approval/governance
-        // columns (approval_origin / incognito / pid / cancel_requested) are
-        // referenced by every INSERT/SELECT below; an `async_tool_jobs` table
-        // from a prior version lacks them, and `CREATE TABLE IF NOT EXISTS`
-        // would NOT add them — every async spawn would then fail with "no such
-        // column". Project policy is "no migration — drop and rebuild": this DB
-        // is a pure cache (terminal rows are advisory, in-flight rows are
-        // marked interrupted on restart regardless), so on a stale schema we
-        // drop the table and let the CREATE below rebuild the current shape.
-        // A failing probe means the table is either absent (DROP is a no-op) or
-        // stale (DROP clears it); a current table passes and is untouched.
+        // Schema evolution for this rebuildable cache. Newer columns (R1's
+        // `kind`, and the A-7 approval/governance columns) are referenced by
+        // every INSERT/SELECT below; a `background_jobs` table from a prior
+        // version lacks them, and `CREATE TABLE IF NOT EXISTS` would NOT add
+        // them — every spawn would then fail with "no such column". Project
+        // policy is "no migration — drop and rebuild": this DB is a pure cache
+        // (terminal rows are advisory, in-flight rows are marked interrupted on
+        // restart regardless), so on a stale schema we drop the table and let
+        // the CREATE below rebuild the current shape. The probe targets the
+        // newest column (`kind`); a failing probe means the table is either
+        // absent (DROP is a no-op) or stale (DROP clears it); a current table
+        // passes and is untouched. Bump the probe column when adding new ones.
         if conn
-            .prepare("SELECT approval_origin FROM async_tool_jobs LIMIT 0")
+            .prepare("SELECT kind FROM background_jobs LIMIT 0")
             .is_err()
         {
-            conn.execute_batch("DROP TABLE IF EXISTS async_tool_jobs;")?;
+            conn.execute_batch("DROP TABLE IF EXISTS background_jobs;")?;
         }
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS async_tool_jobs (
+            "CREATE TABLE IF NOT EXISTS background_jobs (
                 job_id TEXT PRIMARY KEY,
                 session_id TEXT,
                 agent_id TEXT,
@@ -104,28 +106,29 @@ impl AsyncJobsDB {
                 approval_origin TEXT,
                 incognito INTEGER NOT NULL DEFAULT 0,
                 pid INTEGER,
-                cancel_requested INTEGER NOT NULL DEFAULT 0
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                kind TEXT NOT NULL DEFAULT 'tool'
             );
 
-            CREATE INDEX IF NOT EXISTS idx_async_jobs_session_status
-                ON async_tool_jobs(session_id, status);
-            CREATE INDEX IF NOT EXISTS idx_async_jobs_status_injected
-                ON async_tool_jobs(status, injected);",
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_session_status
+                ON background_jobs(session_id, status);
+            CREATE INDEX IF NOT EXISTS idx_background_jobs_status_injected
+                ON background_jobs(status, injected);",
         )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
-    pub fn insert(&self, job: &AsyncJob) -> Result<()> {
+    pub fn insert(&self, job: &BackgroundJob) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         conn.execute(
-            "INSERT INTO async_tool_jobs (
+            "INSERT INTO background_jobs (
                 job_id, session_id, agent_id, tool_name, tool_call_id,
                 args_json, status, result_preview, result_path, error,
                 created_at, completed_at, injected, origin,
-                approval_origin, incognito, pid, cancel_requested
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+                approval_origin, incognito, pid, cancel_requested, kind
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 job.job_id,
                 job.session_id,
@@ -145,6 +148,7 @@ impl AsyncJobsDB {
                 job.incognito as i32,
                 job.pid,
                 job.cancel_requested as i32,
+                job.kind.as_str(),
             ],
         )?;
         Ok(())
@@ -153,7 +157,7 @@ impl AsyncJobsDB {
     pub fn update_terminal(
         &self,
         job_id: &str,
-        status: AsyncJobStatus,
+        status: JobStatus,
         result_preview: Option<&str>,
         result_path: Option<&str>,
         error: Option<&str>,
@@ -161,7 +165,7 @@ impl AsyncJobsDB {
     ) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let rows = conn.execute(
-            "UPDATE async_tool_jobs
+            "UPDATE background_jobs
                 SET status=?1, result_preview=?2, result_path=?3, error=?4, completed_at=?5
                 WHERE job_id=?6
                   AND status IN ('queued','running','cancelling')",
@@ -180,11 +184,11 @@ impl AsyncJobsDB {
     pub fn mark_cancelling(&self, job_id: &str, error: Option<&str>) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let rows = conn.execute(
-            "UPDATE async_tool_jobs
+            "UPDATE background_jobs
                 SET status=?1, error=COALESCE(?2, error)
                 WHERE job_id=?3
                   AND status IN ('running','cancelling')",
-            params![AsyncJobStatus::Cancelling.as_str(), error, job_id],
+            params![JobStatus::Cancelling.as_str(), error, job_id],
         )?;
         Ok(rows > 0)
     }
@@ -197,7 +201,7 @@ impl AsyncJobsDB {
     pub fn mark_running(&self, job_id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let rows = conn.execute(
-            "UPDATE async_tool_jobs SET status='running'
+            "UPDATE background_jobs SET status='running'
                 WHERE job_id=?1 AND status='queued'",
             params![job_id],
         )?;
@@ -210,7 +214,7 @@ impl AsyncJobsDB {
     pub fn delete(&self, job_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         conn.execute(
-            "DELETE FROM async_tool_jobs WHERE job_id=?1",
+            "DELETE FROM background_jobs WHERE job_id=?1",
             params![job_id],
         )?;
         Ok(())
@@ -219,7 +223,7 @@ impl AsyncJobsDB {
     pub fn mark_injected(&self, job_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         conn.execute(
-            "UPDATE async_tool_jobs SET injected=1 WHERE job_id=?1",
+            "UPDATE background_jobs SET injected=1 WHERE job_id=?1",
             params![job_id],
         )?;
         Ok(())
@@ -231,7 +235,7 @@ impl AsyncJobsDB {
     pub fn set_pid(&self, job_id: &str, pid: i64) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let rows = conn.execute(
-            "UPDATE async_tool_jobs SET pid=?2
+            "UPDATE background_jobs SET pid=?2
                 WHERE job_id=?1
                   AND status IN ('running','cancelling','awaiting_approval')",
             params![job_id, pid],
@@ -246,7 +250,7 @@ impl AsyncJobsDB {
     pub fn set_cancel_requested(&self, job_id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let rows = conn.execute(
-            "UPDATE async_tool_jobs SET cancel_requested=1
+            "UPDATE background_jobs SET cancel_requested=1
                 WHERE job_id=?1
                   AND status IN ('queued','running','cancelling','awaiting_approval')",
             params![job_id],
@@ -260,7 +264,7 @@ impl AsyncJobsDB {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let flag: Option<i64> = conn
             .query_row(
-                "SELECT cancel_requested FROM async_tool_jobs WHERE job_id=?1",
+                "SELECT cancel_requested FROM background_jobs WHERE job_id=?1",
                 params![job_id],
                 |row| row.get(0),
             )
@@ -268,14 +272,14 @@ impl AsyncJobsDB {
         Ok(flag.unwrap_or(0) != 0)
     }
 
-    pub fn load(&self, job_id: &str) -> Result<Option<AsyncJob>> {
+    pub fn load(&self, job_id: &str) -> Result<Option<BackgroundJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested
-             FROM async_tool_jobs WHERE job_id=?1",
+                    approval_origin, incognito, pid, cancel_requested, kind
+             FROM background_jobs WHERE job_id=?1",
         )?;
         stmt.query_row(params![job_id], row_to_job)
             .optional()
@@ -287,14 +291,14 @@ impl AsyncJobsDB {
     /// `awaiting_approval` and `queued` are included because a restart kills the
     /// in-memory approval channel / scheduler queue (a queued job's live ctx is
     /// gone), so the job is unrecoverable and must be marked `interrupted` too.
-    pub fn list_running(&self) -> Result<Vec<AsyncJob>> {
+    pub fn list_running(&self) -> Result<Vec<BackgroundJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested
-             FROM async_tool_jobs WHERE status IN ('queued','running','cancelling','awaiting_approval')",
+                    approval_origin, incognito, pid, cancel_requested, kind
+             FROM background_jobs WHERE status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map([], row_to_job)?;
         let mut out = Vec::new();
@@ -307,15 +311,15 @@ impl AsyncJobsDB {
     /// All active (`queued`/`running`/`cancelling`/`awaiting_approval`) jobs owned
     /// by a session — used by session-delete cleanup to cancel them (DELETE-4).
     /// `queued` is included so a session delete also drops jobs still waiting in
-    /// the scheduler queue. Hits the `idx_async_jobs_session_status` index.
-    pub fn list_active_by_session(&self, session_id: &str) -> Result<Vec<AsyncJob>> {
+    /// the scheduler queue. Hits the `idx_background_jobs_session_status` index.
+    pub fn list_active_by_session(&self, session_id: &str) -> Result<Vec<BackgroundJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested
-             FROM async_tool_jobs
+                    approval_origin, incognito, pid, cancel_requested, kind
+             FROM background_jobs
              WHERE session_id=?1 AND status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map(params![session_id], row_to_job)?;
@@ -332,7 +336,7 @@ impl AsyncJobsDB {
     pub fn list_all_spool_paths(&self) -> Result<HashSet<String>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt =
-            conn.prepare("SELECT result_path FROM async_tool_jobs WHERE result_path IS NOT NULL")?;
+            conn.prepare("SELECT result_path FROM background_jobs WHERE result_path IS NOT NULL")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut out = HashSet::new();
         for r in rows {
@@ -356,12 +360,12 @@ impl AsyncJobsDB {
         let deleted_rows: Vec<(String, Option<String>)> = {
             let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
             let sql = format!(
-                "DELETE FROM async_tool_jobs
+                "DELETE FROM background_jobs
                  WHERE status IN ({})
                    AND completed_at IS NOT NULL
                    AND completed_at < ?1
                  RETURNING job_id, result_path",
-                AsyncJobStatus::TERMINAL_STATUS_SQL_LIST
+                JobStatus::TERMINAL_STATUS_SQL_LIST
             );
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(params![cutoff_ts], |row| {
@@ -398,7 +402,7 @@ impl AsyncJobsDB {
         let deleted_rows: Vec<(String, Option<String>)> = {
             let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
             let mut stmt = conn.prepare(
-                "DELETE FROM async_tool_jobs WHERE session_id = ?1
+                "DELETE FROM background_jobs WHERE session_id = ?1
                  RETURNING job_id, result_path",
             )?;
             let rows = stmt.query_map(params![session_id], |row| {
@@ -422,17 +426,17 @@ impl AsyncJobsDB {
 
     /// All terminal jobs that have not yet been injected — used by startup
     /// replay to push pending notifications back into their parent sessions.
-    pub fn list_pending_injection(&self) -> Result<Vec<AsyncJob>> {
+    pub fn list_pending_injection(&self) -> Result<Vec<BackgroundJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let sql = format!(
             "SELECT job_id, session_id, agent_id, tool_name, tool_call_id,
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
-                    approval_origin, incognito, pid, cancel_requested
-             FROM async_tool_jobs
+                    approval_origin, incognito, pid, cancel_requested, kind
+             FROM background_jobs
              WHERE status IN ({})
                AND injected=0",
-            AsyncJobStatus::TERMINAL_STATUS_SQL_LIST
+            JobStatus::TERMINAL_STATUS_SQL_LIST
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], row_to_job)?;
@@ -444,22 +448,27 @@ impl AsyncJobsDB {
     }
 }
 
-fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<AsyncJob> {
+fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<BackgroundJob> {
     let injected: i32 = row.get(12)?;
     let incognito: i32 = row.get(15)?;
     let cancel_requested: i32 = row.get(17)?;
     let status_str: String = row.get(6)?;
-    let status = AsyncJobStatus::parse(&status_str).unwrap_or_else(|| {
+    let status = JobStatus::parse(&status_str).unwrap_or_else(|| {
         crate::app_warn!(
             "async_jobs",
             "row_to_job",
             "Unknown status '{}' in DB; defaulting to Interrupted",
             status_str
         );
-        AsyncJobStatus::Interrupted
+        JobStatus::Interrupted
     });
-    Ok(AsyncJob {
+    // `kind` is the last column (index 18); legacy/unknown values fall back to
+    // `Tool` (the only kind written before R1) so a stale row never breaks load.
+    let kind_str: String = row.get(18)?;
+    let kind = JobKind::parse(&kind_str).unwrap_or(JobKind::Tool);
+    Ok(BackgroundJob {
         job_id: row.get(0)?,
+        kind,
         session_id: row.get(1)?,
         agent_id: row.get(2)?,
         tool_name: row.get(3)?,
@@ -484,15 +493,16 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<AsyncJob> {
 mod tests {
     use super::*;
 
-    fn sample_job(id: &str) -> AsyncJob {
-        AsyncJob {
+    fn sample_job(id: &str) -> BackgroundJob {
+        BackgroundJob {
             job_id: id.to_string(),
+            kind: JobKind::Tool,
             session_id: None,
             agent_id: None,
             tool_name: "exec".into(),
             tool_call_id: None,
             args_json: "{}".into(),
-            status: AsyncJobStatus::Running,
+            status: JobStatus::Running,
             result_preview: None,
             result_path: None,
             error: None,
@@ -507,18 +517,19 @@ mod tests {
         }
     }
 
-    /// A table from before the approval/governance columns must be rebuilt on
-    /// open so the current-shape (18-column) INSERT succeeds — otherwise every
-    /// async spawn fails with "no such column" on upgrade.
+    /// A `background_jobs` table from a prior schema (here: pre-R1, missing the
+    /// `kind` column and the A-7 approval columns) must be rebuilt on open so
+    /// the current-shape INSERT/SELECT succeeds — otherwise every spawn fails
+    /// with "no such column" on upgrade. The probe targets `kind` (newest col).
     #[test]
-    fn open_rebuilds_table_missing_approval_columns() {
+    fn open_rebuilds_table_missing_kind_column() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("async_jobs.db");
-        // Simulate the pre-A-7 (14-column) schema + a stale row.
+        let path = dir.path().join("background_jobs.db");
+        // Simulate a stale schema (no kind / approval columns) + a stale row.
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(
-                "CREATE TABLE async_tool_jobs (
+                "CREATE TABLE background_jobs (
                     job_id TEXT PRIMARY KEY, session_id TEXT, agent_id TEXT,
                     tool_name TEXT NOT NULL, tool_call_id TEXT, args_json TEXT NOT NULL,
                     status TEXT NOT NULL, result_preview TEXT, result_path TEXT, error TEXT,
@@ -529,24 +540,25 @@ mod tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO async_tool_jobs (job_id, tool_name, args_json, status, created_at)
+                "INSERT INTO background_jobs (job_id, tool_name, args_json, status, created_at)
                  VALUES ('old', 'exec', '{}', 'completed', 0)",
                 [],
             )
             .unwrap();
         }
-        let db = AsyncJobsDB::open(&path).expect("open must rebuild stale schema");
+        let db = JobsDB::open(&path).expect("open must rebuild stale schema");
         db.insert(&sample_job("new"))
-            .expect("18-column insert must succeed after rebuild");
+            .expect("insert must succeed after rebuild with kind column");
         // Policy is drop-and-rebuild, not migrate — the stale row is gone.
         assert!(db.load("old").unwrap().is_none());
-        assert!(db.load("new").unwrap().is_some());
+        let loaded = db.load("new").unwrap().expect("new row present");
+        assert_eq!(loaded.kind, JobKind::Tool, "default kind round-trips");
     }
 
     #[test]
     fn set_pid_and_cancel_requested_roundtrip_on_active_rows() {
         let dir = tempfile::tempdir().unwrap();
-        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let db = JobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
         db.insert(&sample_job("j")).unwrap();
         // pid (I3) lands on the active row.
         assert!(db.set_pid("j", 4242).unwrap());
@@ -556,7 +568,7 @@ mod tests {
         assert!(db.set_cancel_requested("j").unwrap());
         assert!(db.is_cancel_requested("j").unwrap());
         // Both setters no-op once the row is terminal (guard: active statuses only).
-        db.update_terminal("j", AsyncJobStatus::Completed, None, None, None, 1)
+        db.update_terminal("j", JobStatus::Completed, None, None, None, 1)
             .unwrap();
         assert!(!db.set_pid("j", 9999).unwrap());
         assert!(!db.set_cancel_requested("j").unwrap());
@@ -565,15 +577,15 @@ mod tests {
     #[test]
     fn mark_running_promotes_only_queued_rows() {
         let dir = tempfile::tempdir().unwrap();
-        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let db = JobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
         // A queued row promotes to running exactly once (scheduler grant).
         let mut q = sample_job("q");
-        q.status = AsyncJobStatus::Queued;
+        q.status = JobStatus::Queued;
         db.insert(&q).unwrap();
         assert!(db.mark_running("q").unwrap(), "queued -> running");
         assert_eq!(
             db.load("q").unwrap().unwrap().status,
-            AsyncJobStatus::Running
+            JobStatus::Running
         );
         // Already running → not re-promoted (guard WHERE status='queued').
         assert!(!db.mark_running("q").unwrap());
@@ -585,9 +597,9 @@ mod tests {
     #[test]
     fn queued_rows_are_active_and_can_settle_terminal() {
         let dir = tempfile::tempdir().unwrap();
-        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let db = JobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
         let mut q = sample_job("q");
-        q.status = AsyncJobStatus::Queued;
+        q.status = JobStatus::Queued;
         q.session_id = Some("s1".into());
         db.insert(&q).unwrap();
         // Startup replay (list_running) must include queued rows so they recover.
@@ -600,18 +612,18 @@ mod tests {
             .any(|j| j.job_id == "q"));
         // update_terminal must be able to settle a queued row (cancel / restart).
         assert!(db
-            .update_terminal("q", AsyncJobStatus::Cancelled, None, None, Some("x"), 1)
+            .update_terminal("q", JobStatus::Cancelled, None, None, Some("x"), 1)
             .unwrap());
         assert_eq!(
             db.load("q").unwrap().unwrap().status,
-            AsyncJobStatus::Cancelled
+            JobStatus::Cancelled
         );
     }
 
     #[test]
     fn delete_removes_row() {
         let dir = tempfile::tempdir().unwrap();
-        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let db = JobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
         db.insert(&sample_job("d")).unwrap();
         db.delete("d").unwrap();
         assert!(db.load("d").unwrap().is_none());
@@ -623,10 +635,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("async_jobs.db");
         {
-            let db = AsyncJobsDB::open(&path).unwrap();
+            let db = JobsDB::open(&path).unwrap();
             db.insert(&sample_job("keep")).unwrap();
         }
-        let db = AsyncJobsDB::open(&path).expect("reopen current schema");
+        let db = JobsDB::open(&path).expect("reopen current schema");
         assert!(
             db.load("keep").unwrap().is_some(),
             "current-schema table must survive reopen"

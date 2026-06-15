@@ -193,21 +193,34 @@ pub fn cron_db_path() -> Result<PathBuf> {
     Ok(root_dir()?.join("cron.db"))
 }
 
-// ── Async Tool Jobs ─────────────────────────────────────────────
+// ── Background Jobs ─────────────────────────────────────────────
 
-/// Async tool jobs database path: ~/.hope-agent/async_jobs.db
-pub fn async_jobs_db_path() -> Result<PathBuf> {
+/// Background jobs database path: ~/.hope-agent/background_jobs.db
+/// (R1: was `async_jobs.db`; pure rebuildable cache, so the rename just points
+/// at a fresh file — the legacy file is best-effort removed at startup.)
+pub fn background_jobs_db_path() -> Result<PathBuf> {
+    Ok(root_dir()?.join("background_jobs.db"))
+}
+
+/// Background jobs result spool directory: ~/.hope-agent/background_jobs/
+pub fn background_jobs_dir() -> Result<PathBuf> {
+    Ok(root_dir()?.join("background_jobs"))
+}
+
+/// Per-job result file: ~/.hope-agent/background_jobs/{job_id}.txt
+pub fn background_job_result_path(job_id: &str) -> Result<PathBuf> {
+    Ok(background_jobs_dir()?.join(format!("{}.txt", job_id)))
+}
+
+/// Legacy pre-R1 paths (`async_jobs.db` + `async_jobs/`), best-effort removed at
+/// startup so the renamed cache doesn't leave orphans on disk. Not a migration —
+/// the data is a rebuildable cache and is simply discarded.
+pub fn legacy_async_jobs_db_path() -> Result<PathBuf> {
     Ok(root_dir()?.join("async_jobs.db"))
 }
 
-/// Async tool jobs result spool directory: ~/.hope-agent/async_jobs/
-pub fn async_jobs_dir() -> Result<PathBuf> {
+pub fn legacy_async_jobs_dir() -> Result<PathBuf> {
     Ok(root_dir()?.join("async_jobs"))
-}
-
-/// Per-job result file: ~/.hope-agent/async_jobs/{job_id}.txt
-pub fn async_job_result_path(job_id: &str) -> Result<PathBuf> {
-    Ok(async_jobs_dir()?.join(format!("{}.txt", job_id)))
 }
 
 /// Local model install/pull jobs database path: ~/.hope-agent/local_model_jobs.db
@@ -535,7 +548,7 @@ pub fn ensure_dirs() -> Result<()> {
         plans_dir()?,
         recap_dir()?,
         reports_dir()?,
-        async_jobs_dir()?,
+        background_jobs_dir()?,
         knowledge_dir()?,
     ];
     for dir in &dirs_to_create {

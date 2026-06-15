@@ -249,13 +249,23 @@ pub fn init_runtime(role: &'static str) {
     ));
     let _ = CRON_DB.set(cron_db);
 
+    // R1: the background-jobs cache moved from `async_jobs.db` → `background_jobs.db`.
+    // Best-effort discard the legacy file/dir (pure rebuildable cache, no migration).
+    if let Ok(old) = paths::legacy_async_jobs_db_path() {
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::remove_file(old.with_extension("db-wal"));
+        let _ = std::fs::remove_file(old.with_extension("db-shm"));
+    }
+    if let Ok(old_dir) = paths::legacy_async_jobs_dir() {
+        let _ = std::fs::remove_dir_all(&old_dir);
+    }
     // Failure here is non-fatal — async tools degrade to sync mode if the DB cannot be opened.
-    match paths::async_jobs_db_path().and_then(|p| crate::async_jobs::AsyncJobsDB::open(&p)) {
+    match paths::background_jobs_db_path().and_then(|p| crate::async_jobs::JobsDB::open(&p)) {
         Ok(db) => crate::async_jobs::set_async_jobs_db(Arc::new(db)),
         Err(e) => crate::app_warn!(
             "async_jobs",
             "init",
-            "Failed to open async_jobs DB ({}); async tool backgrounding disabled",
+            "Failed to open background_jobs DB ({}); async tool backgrounding disabled",
             e
         ),
     }

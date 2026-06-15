@@ -94,9 +94,9 @@ pub fn migrate_default_agent_id_to_ha_main() -> Result<()> {
         update_log_db(db)?;
     }
     update_external_db_if_present(
-        "async_jobs.db",
-        paths::async_jobs_db_path()?,
-        "async_tool_jobs",
+        "background_jobs.db",
+        paths::background_jobs_db_path()?,
+        "background_jobs",
     )?;
     update_external_db_if_present("canvas.db", paths::canvas_db_path()?, "canvas_projects")?;
     update_memory_db_if_present()?;

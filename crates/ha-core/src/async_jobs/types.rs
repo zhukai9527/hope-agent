@@ -1,9 +1,47 @@
 use serde::{Deserialize, Serialize};
 
-/// Lifecycle status of a backgrounded tool execution.
+/// What kind of work a background job runs (R1 unified model). `Tool` is the
+/// only kind wired for execution in this slice; `Subagent` (R6) and `Group`
+/// (R5 fan-out + join) are the typed seams later slices fill — the `kind`
+/// column lets one `background_jobs` table + one `JobManager` front them all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    /// A single backgrounded tool call (`exec` / `web_search` / …).
+    #[default]
+    Tool,
+    /// A whole backgrounded subagent run, projected from `subagent_runs` (R6).
+    Subagent,
+    /// A fan-out of child jobs joined as one unit (R5).
+    Group,
+}
+
+impl JobKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Tool => "tool",
+            Self::Subagent => "subagent",
+            Self::Group => "group",
+        }
+    }
+
+    /// Parse a stored `kind` string. Unknown / legacy values fall back to
+    /// `Tool` (the only kind written before R1) so a stale row never breaks
+    /// a load — mirrors the `JobStatus::parse` fallback discipline.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "tool" => Some(Self::Tool),
+            "subagent" => Some(Self::Subagent),
+            "group" => Some(Self::Group),
+            _ => None,
+        }
+    }
+}
+
+/// Lifecycle status of a background job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AsyncJobStatus {
+pub enum JobStatus {
     /// Reserved (row written) but waiting for a concurrency slot — the cap was
     /// full at spawn, so the job sits in the in-memory scheduler queue until a
     /// slot frees (per-session round-robin). NOT terminal. The queue holds the
@@ -31,7 +69,7 @@ pub enum AsyncJobStatus {
     Cancelled,
 }
 
-impl AsyncJobStatus {
+impl JobStatus {
     /// SQL fragment enumerating all terminal status strings for a
     /// `status IN (...)` clause. Single source of truth so adding a new
     /// variant can't silently skip purge / replay logic.
@@ -87,16 +125,19 @@ impl AsyncJobStatus {
     }
 }
 
-/// A single async tool job row.
+/// A single background job row (R1 unified model — was `AsyncJob`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AsyncJob {
+pub struct BackgroundJob {
     pub job_id: String,
+    /// What kind of work this job runs. `Tool` for every row today; the column
+    /// is the seam `Subagent` (R6) / `Group` (R5) fill later.
+    pub kind: JobKind,
     pub session_id: Option<String>,
     pub agent_id: Option<String>,
     pub tool_name: String,
     pub tool_call_id: Option<String>,
     pub args_json: String,
-    pub status: AsyncJobStatus,
+    pub status: JobStatus,
     /// Inline result preview (head + tail, capped at `inline_result_bytes`).
     pub result_preview: Option<String>,
     /// Path to the spooled full result on disk (when result exceeds inline cap).
@@ -150,45 +191,45 @@ mod tests {
     #[test]
     fn async_job_status_as_str_parse_roundtrip() {
         for s in [
-            AsyncJobStatus::Queued,
-            AsyncJobStatus::Running,
-            AsyncJobStatus::Cancelling,
-            AsyncJobStatus::AwaitingApproval,
-            AsyncJobStatus::Completed,
-            AsyncJobStatus::Failed,
-            AsyncJobStatus::Interrupted,
-            AsyncJobStatus::TimedOut,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Queued,
+            JobStatus::Running,
+            JobStatus::Cancelling,
+            JobStatus::AwaitingApproval,
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Interrupted,
+            JobStatus::TimedOut,
+            JobStatus::Cancelled,
         ] {
-            assert_eq!(AsyncJobStatus::parse(s.as_str()), Some(s));
+            assert_eq!(JobStatus::parse(s.as_str()), Some(s));
         }
     }
 
     #[test]
     fn async_job_status_parse_unknown_returns_none() {
-        assert!(AsyncJobStatus::parse("not-a-status").is_none());
-        assert!(AsyncJobStatus::parse("").is_none());
+        assert!(JobStatus::parse("not-a-status").is_none());
+        assert!(JobStatus::parse("").is_none());
     }
 
     #[test]
     fn terminal_hook_flags_map_status_to_error_and_interrupt() {
         // (is_error, is_interrupt)
         assert_eq!(
-            AsyncJobStatus::Completed.terminal_hook_flags(),
+            JobStatus::Completed.terminal_hook_flags(),
             (false, false)
         );
-        assert_eq!(AsyncJobStatus::Failed.terminal_hook_flags(), (true, false));
+        assert_eq!(JobStatus::Failed.terminal_hook_flags(), (true, false));
         assert_eq!(
-            AsyncJobStatus::TimedOut.terminal_hook_flags(),
+            JobStatus::TimedOut.terminal_hook_flags(),
             (true, false)
         );
         assert_eq!(
-            AsyncJobStatus::Cancelled.terminal_hook_flags(),
+            JobStatus::Cancelled.terminal_hook_flags(),
             (true, true),
             "cancellation is an interrupted failure"
         );
         assert_eq!(
-            AsyncJobStatus::Interrupted.terminal_hook_flags(),
+            JobStatus::Interrupted.terminal_hook_flags(),
             (true, true),
             "restart interruption is an interrupted failure"
         );
@@ -196,16 +237,16 @@ mod tests {
 
     #[test]
     fn is_terminal_marks_only_running_as_non_terminal() {
-        assert!(!AsyncJobStatus::Queued.is_terminal());
-        assert!(!AsyncJobStatus::Running.is_terminal());
-        assert!(!AsyncJobStatus::Cancelling.is_terminal());
-        assert!(!AsyncJobStatus::AwaitingApproval.is_terminal());
+        assert!(!JobStatus::Queued.is_terminal());
+        assert!(!JobStatus::Running.is_terminal());
+        assert!(!JobStatus::Cancelling.is_terminal());
+        assert!(!JobStatus::AwaitingApproval.is_terminal());
         for s in [
-            AsyncJobStatus::Completed,
-            AsyncJobStatus::Failed,
-            AsyncJobStatus::Interrupted,
-            AsyncJobStatus::TimedOut,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Interrupted,
+            JobStatus::TimedOut,
+            JobStatus::Cancelled,
         ] {
             assert!(s.is_terminal(), "{:?} should be terminal", s);
         }
@@ -213,13 +254,13 @@ mod tests {
 
     #[test]
     fn terminal_status_sql_list_covers_every_terminal_variant() {
-        let list = AsyncJobStatus::TERMINAL_STATUS_SQL_LIST;
+        let list = JobStatus::TERMINAL_STATUS_SQL_LIST;
         for s in [
-            AsyncJobStatus::Completed,
-            AsyncJobStatus::Failed,
-            AsyncJobStatus::Interrupted,
-            AsyncJobStatus::TimedOut,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Completed,
+            JobStatus::Failed,
+            JobStatus::Interrupted,
+            JobStatus::TimedOut,
+            JobStatus::Cancelled,
         ] {
             let fragment = format!("'{}'", s.as_str());
             assert!(
@@ -239,5 +280,14 @@ mod tests {
         assert_eq!(JobOrigin::Explicit.as_str(), "explicit");
         assert_eq!(JobOrigin::PolicyForced.as_str(), "policy_forced");
         assert_eq!(JobOrigin::AutoBackgrounded.as_str(), "auto_backgrounded");
+    }
+
+    #[test]
+    fn job_kind_as_str_parse_roundtrip() {
+        for k in [JobKind::Tool, JobKind::Subagent, JobKind::Group] {
+            assert_eq!(JobKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(JobKind::default(), JobKind::Tool);
+        assert!(JobKind::parse("not-a-kind").is_none());
     }
 }

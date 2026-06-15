@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::types::AsyncJobStatus;
+use super::types::JobStatus;
 
 /// In-flight dispatch set. A job_id present here means another task in this
 /// process has already called `dispatch_injection` for it and is either still
@@ -46,7 +46,7 @@ pub fn dispatch_injection(
     job_id: String,
     tool_name: String,
     tool_call_id: Option<String>,
-    status: AsyncJobStatus,
+    status: JobStatus,
     result_preview: Option<String>,
     result_path: Option<String>,
     error: Option<String>,
@@ -265,7 +265,7 @@ pub fn build_tool_job_push_message(
     job_id: &str,
     tool_name: &str,
     tool_call_id: Option<&str>,
-    status: AsyncJobStatus,
+    status: JobStatus,
     result_preview: Option<&str>,
     result_path: Option<&str>,
     error: Option<&str>,
@@ -292,7 +292,7 @@ pub fn build_tool_job_push_message(
     let error_block = error
         .map(|err| format!("<error>{}</error>\n", escape_xml_text(err)))
         .unwrap_or_default();
-    let preview_block = if status == AsyncJobStatus::Completed
+    let preview_block = if status == JobStatus::Completed
         && result_path.is_none()
         && !clean_preview.is_empty()
     {
@@ -304,7 +304,7 @@ pub fn build_tool_job_push_message(
         String::new()
     };
     let summary = match status {
-        AsyncJobStatus::Completed => {
+        JobStatus::Completed => {
             if result_path.is_some() {
                 format!(
                     "Async tool \"{tool_name}\" completed; full output is saved in output-file."
@@ -313,33 +313,33 @@ pub fn build_tool_job_push_message(
                 format!("Async tool \"{tool_name}\" completed; output file is unavailable. See output-preview.")
             }
         }
-        AsyncJobStatus::Failed => {
+        JobStatus::Failed => {
             let err = error.unwrap_or("(unknown error)");
             format!("Async tool \"{tool_name}\" failed: {err}")
         }
-        AsyncJobStatus::TimedOut => {
+        JobStatus::TimedOut => {
             let err = error.unwrap_or("exceeded max_job_secs");
             format!("Async tool \"{tool_name}\" timed out: {err}")
         }
-        AsyncJobStatus::Cancelled => {
+        JobStatus::Cancelled => {
             let err = error.unwrap_or("Job was cancelled.");
             format!("Async tool \"{tool_name}\" was cancelled: {err}")
         }
-        AsyncJobStatus::Interrupted => {
+        JobStatus::Interrupted => {
             format!("Async tool \"{tool_name}\" was interrupted by application restart.")
         }
-        AsyncJobStatus::Running => {
+        JobStatus::Running => {
             format!("Async tool \"{tool_name}\" is still running; wait for the terminal notification, or use job_status only for an occasional status snapshot.")
         }
-        AsyncJobStatus::Cancelling => {
+        JobStatus::Cancelling => {
             format!("Async tool \"{tool_name}\" is cancelling; wait for terminal notification.")
         }
-        AsyncJobStatus::AwaitingApproval => {
+        JobStatus::AwaitingApproval => {
             // Non-terminal: never finalized, so it shouldn't reach the
             // injection path. Defensive arm to keep the match exhaustive.
             format!("Async tool \"{tool_name}\" is awaiting a human approval decision.")
         }
-        AsyncJobStatus::Queued => {
+        JobStatus::Queued => {
             // Non-terminal: a queued job is never finalized, so it shouldn't
             // reach the injection path. Defensive arm to keep the match exhaustive.
             format!("Async tool \"{tool_name}\" is queued, waiting for a free concurrency slot.")

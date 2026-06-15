@@ -26,30 +26,30 @@ pub(crate) mod wait;
 
 use std::sync::{Arc, OnceLock};
 
-pub use db::{AsyncJobsDB, PurgeStats};
+pub use db::{JobsDB, PurgeStats};
 pub use retention::{
     run_once as run_retention_once, spawn_background_loop as spawn_retention_loop,
 };
 pub use spawn::{
     dispatch_with_auto_background, run_scheduler, spawn_explicit_job, synthetic_started_result,
 };
-pub use types::{AsyncJob, AsyncJobStatus, JobOrigin};
+pub use types::{BackgroundJob, JobKind, JobOrigin, JobStatus};
 
-static ASYNC_JOBS_DB: OnceLock<Arc<AsyncJobsDB>> = OnceLock::new();
+static ASYNC_JOBS_DB: OnceLock<Arc<JobsDB>> = OnceLock::new();
 
 /// Set the global async jobs database. Called once during app initialization.
-pub fn set_async_jobs_db(db: Arc<AsyncJobsDB>) {
+pub fn set_async_jobs_db(db: Arc<JobsDB>) {
     let _ = ASYNC_JOBS_DB.set(db);
 }
 
 /// Get the global async jobs database (None until initialization completes).
-pub fn get_async_jobs_db() -> Option<&'static Arc<AsyncJobsDB>> {
+pub fn get_async_jobs_db() -> Option<&'static Arc<JobsDB>> {
     ASYNC_JOBS_DB.get()
 }
 
 /// Best-effort cancellation for an async tool job. Returns the updated job
 /// snapshot when the job exists.
-pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
+pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> {
     let Some(db) = get_async_jobs_db() else {
         return Ok(None);
     };
@@ -73,13 +73,13 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
         const QUEUED_MSG: &str = "Cancelled while queued, before a slot freed";
         let _ = db.update_terminal(
             job_id,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Cancelled,
             None,
             None,
             Some(QUEUED_MSG),
             chrono::Utc::now().timestamp(),
         )?;
-        let (is_error, is_interrupt) = AsyncJobStatus::Cancelled.terminal_hook_flags();
+        let (is_error, is_interrupt) = JobStatus::Cancelled.terminal_hook_flags();
         crate::hooks::fire_async_job_terminal(
             job.session_id.as_deref(),
             job.agent_id.as_deref(),
@@ -98,7 +98,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
                 serde_json::json!({
                     "job_id": job_id,
                     "tool": job.tool_name,
-                    "status": AsyncJobStatus::Cancelled.as_str(),
+                    "status": JobStatus::Cancelled.as_str(),
                 }),
             );
         }
@@ -134,7 +134,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
         const NO_RUNNER_MSG: &str = "Cancelled; no active runner handle was found in this process";
         let _ = db.update_terminal(
             job_id,
-            AsyncJobStatus::Cancelled,
+            JobStatus::Cancelled,
             None,
             None,
             Some(NO_RUNNER_MSG),
@@ -147,7 +147,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
         // fallback, so fire it here. Deliberately NOT routed through
         // dispatch_injection (cancel comes from turn-cancel/session-delete;
         // injecting would spawn an unwanted parent turn / hit a ghost session).
-        let (is_error, is_interrupt) = AsyncJobStatus::Cancelled.terminal_hook_flags();
+        let (is_error, is_interrupt) = JobStatus::Cancelled.terminal_hook_flags();
         crate::hooks::fire_async_job_terminal(
             job.session_id.as_deref(),
             job.agent_id.as_deref(),
@@ -166,7 +166,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
                 serde_json::json!({
                     "job_id": job_id,
                     "tool": job.tool_name,
-                    "status": AsyncJobStatus::Cancelled.as_str(),
+                    "status": JobStatus::Cancelled.as_str(),
                 }),
             );
         }
@@ -178,7 +178,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
                 serde_json::json!({
                     "job_id": job_id,
                     "tool": job.tool_name,
-                    "status": AsyncJobStatus::Cancelling.as_str(),
+                    "status": JobStatus::Cancelling.as_str(),
                 }),
             );
         }
@@ -313,7 +313,7 @@ pub fn replay_pending_jobs() {
                 }
                 if let Err(e) = db.update_terminal(
                     &job.job_id,
-                    AsyncJobStatus::Interrupted,
+                    JobStatus::Interrupted,
                     None,
                     None,
                     Some("interrupted by application restart"),
@@ -366,7 +366,7 @@ pub fn replay_pending_jobs() {
                     );
                 }
 
-                if job.status == AsyncJobStatus::Cancelled {
+                if job.status == JobStatus::Cancelled {
                     let _ = db.mark_injected(&job.job_id);
                     continue;
                 }

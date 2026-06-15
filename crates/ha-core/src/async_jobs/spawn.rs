@@ -3,10 +3,10 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use super::db::AsyncJobsDB;
+use super::db::JobsDB;
 use super::error::JobError;
 use super::injection;
-use super::types::{AsyncJob, AsyncJobStatus, JobOrigin};
+use super::types::{BackgroundJob, JobStatus, JobOrigin};
 use crate::tools::{ToolExecContext, ASYNC_JOB_TIMEOUT_ARG};
 
 const DEFAULT_PREVIEW_BYTES: usize = 4096;
@@ -20,25 +20,27 @@ pub fn new_job_id() -> String {
 /// Persist a freshly spawned job row in the given state — `running` for the
 /// immediate path, `queued` when the cap is full and it must wait for a slot.
 pub fn record_running_job(
-    db: &AsyncJobsDB,
+    db: &JobsDB,
     job_id: &str,
     ctx: &ToolExecContext,
     tool_name: &str,
     args: &Value,
     origin: JobOrigin,
-    status: AsyncJobStatus,
+    status: JobStatus,
 ) -> Result<()> {
     // E4 (INCOG-2): an incognito job must not persist its raw tool args (which
     // can carry sensitive commands / prompts) in plaintext on disk. Store a
     // redaction placeholder — the live in-memory dispatch still receives the
-    // real args; only the durable `async_jobs.db` row is scrubbed.
+    // real args; only the durable `background_jobs.db` row is scrubbed.
     let args_json = if ctx.incognito {
         "{\"_incognito_redacted\":true}".to_string()
     } else {
         serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
     };
-    let job = AsyncJob {
+    let job = BackgroundJob {
         job_id: job_id.to_string(),
+        // R1: this path is the Tool executor — the only wired `JobKind` today.
+        kind: super::types::JobKind::Tool,
         session_id: ctx.session_id.clone(),
         agent_id: ctx.agent_id.clone(),
         tool_name: tool_name.to_string(),
@@ -200,9 +202,9 @@ pub fn spawn_explicit_job(
     // round-robin when a slot frees — instead of hard-rejecting.
     let reservation = super::slots::try_reserve(&session_key);
     let status = if reservation.is_some() {
-        AsyncJobStatus::Running
+        JobStatus::Running
     } else {
-        AsyncJobStatus::Queued
+        JobStatus::Queued
     };
     if let Err(e) = record_running_job(&db, &job_id, &ctx, tool_name, &args, origin, status) {
         super::cancel::remove_job(&job_id);
@@ -257,7 +259,7 @@ pub fn spawn_explicit_job(
 /// lifetime, so the slot releases (and the scheduler wakes) exactly when the job
 /// ends — on every exit path including the runtime-build failure below.
 fn start_runner(
-    db: Arc<AsyncJobsDB>,
+    db: Arc<JobsDB>,
     prepared: super::slots::PreparedJob,
     reservation: super::slots::SlotReservation,
 ) {
@@ -295,7 +297,7 @@ fn start_runner(
                 );
                 let _ = db.update_terminal(
                     &job_id_owned,
-                    AsyncJobStatus::Failed,
+                    JobStatus::Failed,
                     None,
                     None,
                     Some(&err_msg),
@@ -327,7 +329,7 @@ fn start_runner(
                         job_id_owned.clone(),
                         tool_name_owned.clone(),
                         ctx.tool_call_id.clone(),
-                        AsyncJobStatus::Failed,
+                        JobStatus::Failed,
                         None,
                         None,
                         Some(err_msg),
@@ -617,7 +619,7 @@ pub async fn dispatch_with_auto_background(
                         // worker keeps running unsignalled.
                         super::cancel::register_job_token(&job_id, cancel_token.clone());
                         if let Err(e) =
-                            record_running_job(db, &job_id, ctx, name, args, JobOrigin::AutoBackgrounded, AsyncJobStatus::Running)
+                            record_running_job(db, &job_id, ctx, name, args, JobOrigin::AutoBackgrounded, JobStatus::Running)
                         {
                             *p = Phase::Consumed;
                             drop(p);
@@ -707,7 +709,7 @@ fn spawn_cross_process_cancel_watcher(
 }
 
 async fn run_job_to_completion(
-    db: Arc<AsyncJobsDB>,
+    db: Arc<JobsDB>,
     job_id: String,
     tool_name: String,
     args: Value,
@@ -782,7 +784,7 @@ async fn run_job_to_completion(
 
 #[allow(clippy::too_many_arguments)]
 async fn finalize_job(
-    db: &AsyncJobsDB,
+    db: &JobsDB,
     job_id: &str,
     tool_name: &str,
     session_id: Option<&str>,
@@ -795,7 +797,7 @@ async fn finalize_job(
     let (status, preview, path, error_text) = match result {
         Ok(output) => {
             let (preview, path) = persist_result(job_id, &output, preview_bytes, incognito);
-            (AsyncJobStatus::Completed, Some(preview), path, None)
+            (JobStatus::Completed, Some(preview), path, None)
         }
         Err(job_err) => {
             // Typed terminal status — no more re-parsing the error message
@@ -865,7 +867,7 @@ async fn finalize_job(
     }
 
     // Schedule injection back into the parent session.
-    if status == AsyncJobStatus::Cancelled {
+    if status == JobStatus::Cancelled {
         let _ = db.mark_injected(job_id);
     } else if let Some(sid) = session_id {
         injection::dispatch_injection(
@@ -905,7 +907,7 @@ fn persist_result(
     if incognito {
         return (preview, None);
     }
-    let path = match crate::paths::async_job_result_path(job_id) {
+    let path = match crate::paths::background_job_result_path(job_id) {
         Ok(p) => p,
         Err(e) => {
             app_warn!(
