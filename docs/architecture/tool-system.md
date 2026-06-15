@@ -551,11 +551,13 @@ CREATE TABLE background_jobs (              -- R1 由 async_tool_jobs 改名
     incognito       INTEGER NOT NULL DEFAULT 0, -- 无痕标记（E4）
     pid             INTEGER,                  -- 子进程 pid，重启孤儿探测用（I3）
     cancel_requested INTEGER NOT NULL DEFAULT 0, -- 跨进程取消 flag（I4）
-    kind            TEXT NOT NULL DEFAULT 'tool' -- R1：tool（今日唯一）/ subagent（R6）/ group（R5）
+    kind            TEXT NOT NULL DEFAULT 'tool', -- R1：tool / subagent（R6）/ group（R5）
+    subagent_run_id TEXT                          -- R6：kind=subagent 投影的 FK→subagent_runs.run_id
 );
 ```
 
-> **R1 统一模型**：表/文件/概念为 **Background Job**（`JobKind = Tool | Subagent | Group`，今日仅 `Tool` 落地，`Subagent`/`Group` 是 R6/R5 填充的类型化接缝）；stale-schema 探针改 `SELECT kind`（升级即 drop-rebuild，无迁移）。**单一入口 `JobManager`**（`async_jobs::manager`）front 全部 spawn / cancel / list / replay / schedule；`spawn_explicit_job` 等收敛为其 `pub(crate)` 内部（Tool executor）。模块名 `async_jobs/` 与 log category `"async_jobs"` 按 PRD §4.3「沿用血脉演进」保留；`RuntimeTaskKind::AsyncJob` / `async_tool_job:*` 事件不变（R3/R4 再统一前缀）。`group_id` / `subagent_run_id` / `progress_json` / `priority` / `attempt` 等列待对应 slice 消费时再加（drop-rebuild 故零成本延后）。
+> **R1 统一模型**：表/文件/概念为 **Background Job**（`JobKind = Tool | Subagent | Group`，`Tool`+`Subagent`(R6) 已落地，`Group` 是 R5 的类型化接缝）；stale-schema 探针改 `SELECT subagent_run_id`（最新列；升级即 drop-rebuild，无迁移）。
+> **R6 后台 subagent 投影**：用户委派的后台 subagent run 投影为 `kind=subagent` 行（`subagent_run_id` FK，one-way——`subagent_runs` 是执行真相源，投影只承载 status/生命周期、**绝不持有 run 正文也绝不反写**）。`injected=1` 使其**永不进工具注入/replay 路径**（subagent 自有 `inject_and_run_parent`）；同步走 `update_subagent_status` 单一 choke point；取消经 `cancel_job` kind=Subagent 分支路由到 `subagent::request_cancel_run`。详见 [`subagent.md`](subagent.md)。**单一入口 `JobManager`**（`async_jobs::manager`）front 全部 spawn / cancel / list / replay / schedule；`spawn_explicit_job` 等收敛为其 `pub(crate)` 内部（Tool executor）。模块名 `async_jobs/` 与 log category `"async_jobs"` 按 PRD §4.3「沿用血脉演进」保留；`RuntimeTaskKind::AsyncJob` / `async_tool_job:*` 事件不变（R3/R4 再统一前缀）。`group_id` / `subagent_run_id` / `progress_json` / `priority` / `attempt` 等列待对应 slice 消费时再加（drop-rebuild 故零成本延后）。
 
 > `status` 第八态 `awaiting_approval`（A-5）为**非终态**：后台 exec 在审批前移落地前理论上可短暂处于此态（不消耗墙钟预算、不入终态 SQL 列表）；replay 把它同 `running` 标 `interrupted`。
 
