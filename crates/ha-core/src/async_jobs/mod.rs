@@ -91,21 +91,17 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
         return db.load(job_id);
     }
 
-    // R5: cancelling a `Group` cancels each child subagent run and marks the
-    // group terminal FIRST, so the join coordinator's single-winner CAS
-    // (`claim_group_completion`) loses — a cancelled batch never fires a merged
-    // injection. The children's own terminal sync still flows through
-    // `update_subagent_status` (which maps Killed→Cancelled on their
-    // projections) as usual. The group carries no run content, so a lifecycle
-    // message on its `error` column is fine (unlike a subagent projection).
+    // R5: cancelling a `Group` marks the group terminal FIRST, THEN cancels each
+    // child. Order is load-bearing: `request_cancel_run`'s no-flag fallback
+    // stamps a child `Killed` *synchronously*, which flows through
+    // `update_subagent_status` → `try_complete_group` on this very thread — if
+    // the group were still `Running` at that point, the join's single-winner CAS
+    // would win and fire a merged injection for a batch the user just cancelled.
+    // Marking the group `Cancelled` first makes that CAS lose. The children's
+    // own terminal sync (Killed→Cancelled on their projections) still runs as
+    // usual. The group carries no run content, so a lifecycle message on its
+    // `error` column is fine (unlike a subagent projection).
     if job.kind == JobKind::Group {
-        if let Ok(children) = db.group_children(job_id) {
-            for child in &children {
-                if let Some(run_id) = &child.subagent_run_id {
-                    crate::subagent::request_cancel_run(run_id);
-                }
-            }
-        }
         let _ = db.update_terminal(
             job_id,
             JobStatus::Cancelled,
@@ -114,6 +110,13 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
             Some("Cancelled by user"),
             chrono::Utc::now().timestamp(),
         );
+        if let Ok(children) = db.group_children(job_id) {
+            for child in &children {
+                if let Some(run_id) = &child.subagent_run_id {
+                    crate::subagent::request_cancel_run(run_id);
+                }
+            }
+        }
         return db.load(job_id);
     }
 

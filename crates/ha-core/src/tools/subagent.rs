@@ -403,6 +403,49 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
     let session_db = get_session_db()?;
     let cancel_registry = get_cancel_registry()?;
 
+    // R5: validate EVERY task object up front, BEFORE creating the Group or
+    // spawning anything. A malformed task (missing `task` field) must fail the
+    // whole call cleanly. If we validated lazily inside the spawn loop instead,
+    // an error on task k>0 would `?`-return AFTER the group + children `0..k`
+    // were already created — and those grouped children would be stranded
+    // forever (their individual injection is suppressed, but the group is never
+    // sealed, so the merged injection never fires). No `?` may run between the
+    // group's creation and `seal_group` below.
+    struct BatchTask {
+        task: String,
+        agent_id: String,
+        label: Option<String>,
+        timeout_secs: Option<u64>,
+        model_override: Option<String>,
+    }
+    let mut parsed: Vec<BatchTask> = Vec::with_capacity(tasks.len());
+    for task_def in tasks {
+        let task = task_def
+            .get("task")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Each task in batch_spawn must have a 'task' field"))?;
+        parsed.push(BatchTask {
+            task: task.to_string(),
+            agent_id: task_def
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(DEFAULT_AGENT_ID)
+                .to_string(),
+            label: task_def
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            timeout_secs: task_def
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .map(|t| t.min(1800)),
+            model_override: task_def
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        });
+    }
+
     // R5: fan these children out as a single Group so all results arrive as ONE
     // merged injection when the batch finishes, instead of N separate billed
     // turns. Skipped for incognito (no projection survives close-and-burn) and
@@ -417,38 +460,16 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
     };
 
     let mut results = Vec::new();
-    for task_def in tasks {
-        let task = task_def
-            .get("task")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Each task in batch_spawn must have a 'task' field"))?;
-        let agent_id = task_def
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_AGENT_ID)
-            .to_string();
-        let label = task_def
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let timeout_secs = task_def
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .map(|t| t.min(1800));
-        let model_override = task_def
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
+    for bt in parsed {
         let params = SpawnParams {
-            task: task.to_string(),
-            agent_id,
+            task: bt.task,
+            agent_id: bt.agent_id,
             parent_session_id: parent_session_id.to_string(),
             parent_agent_id: parent_agent_id.to_string(),
             depth: ctx.subagent_depth + 1,
-            timeout_secs,
-            model_override,
-            label,
+            timeout_secs: bt.timeout_secs,
+            model_override: bt.model_override,
+            label: bt.label,
             attachments: Vec::new(),
             plan_agent_mode: None,
             plan_mode_allow_paths: Vec::new(),

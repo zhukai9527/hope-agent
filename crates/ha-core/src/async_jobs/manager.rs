@@ -398,7 +398,10 @@ impl JobManager {
         // result), the merged injection is redundant — drain the fetched marks
         // (the suppressed per-child injections would otherwise leak them) and
         // skip the billed turn. A partial collection still injects the full
-        // summary.
+        // summary. The `fetched == len` test is sound because `run_ids` are
+        // distinct: each child is a separate run (unique `Uuid` per spawn) with
+        // its own projection row, so `take_runs_fetched`'s distinct-removal count
+        // can equal the length only when every id was present.
         let fetched = crate::subagent::take_runs_fetched(&run_ids);
         if !run_ids.is_empty() && fetched == run_ids.len() {
             crate::app_info!(
@@ -490,12 +493,23 @@ impl JobManager {
                         failed += 1;
                     }
                     let dur = format!("{:.1}s", r.duration_ms.unwrap_or(0) as f64 / 1000.0);
+                    // Include the task (truncated) + label so the model can map a
+                    // numbered child back to what it ran — load-bearing for
+                    // heterogeneous batches where "[2] coder — error" alone is
+                    // not actionable ("handle failures as you see fit").
+                    let label = r
+                        .label
+                        .as_deref()
+                        .map(|l| format!(" [{}]", escape_xml(l)))
+                        .unwrap_or_default();
                     body.push_str(&format!(
-                        "[{}] {} — {} ({})\n",
+                        "[{}] {}{} — {} ({}) — task: {}\n",
                         idx,
                         escape_xml(&r.child_agent_id),
+                        label,
                         escape_xml(r.status.as_str()),
                         escape_xml(&dur),
+                        escape_xml(&truncate_chars(&r.task, 120)),
                     ));
                     if let Some(res) = r.result.as_deref().map(str::trim).filter(|s| !s.is_empty())
                     {
@@ -558,6 +572,17 @@ fn escape_xml(input: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Truncate to at most `max` chars (char-based, never splits a UTF-8 boundary),
+/// appending `…` when cut. Used to keep a batch child's task line compact.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,6 +603,15 @@ mod tests {
         assert_eq!(escape_xml("a & b < c > d"), "a &amp; b &lt; c &gt; d");
         // `&` must be escaped before `<`/`>` so `&lt;` isn't double-encoded.
         assert_eq!(escape_xml("<"), "&lt;");
+    }
+
+    #[test]
+    fn truncate_chars_is_utf8_safe() {
+        assert_eq!(truncate_chars("hello", 10), "hello");
+        assert_eq!(truncate_chars("hello", 5), "hello");
+        assert_eq!(truncate_chars("hello world", 5), "hell…");
+        // Multibyte chars must not be split mid-codepoint.
+        assert_eq!(truncate_chars("日本語テスト", 3), "日本…");
     }
 
     fn run(
@@ -645,15 +679,17 @@ mod tests {
     fn build_group_push_message_includes_every_child_and_escapes() {
         let dir = tempfile::tempdir().unwrap();
         let sdb = crate::session::SessionDB::open(&dir.path().join("s.db")).unwrap();
-        sdb.insert_subagent_run(&run(
+        let mut r1 = run(
             "r1",
             "researcher",
             SubagentStatus::Completed,
             Some("found 3 papers"),
             None,
             1200,
-        ))
-        .unwrap();
+        );
+        r1.task = "survey recent papers".into();
+        r1.label = Some("research-step".into());
+        sdb.insert_subagent_run(&r1).unwrap();
         sdb.insert_subagent_run(&run(
             "r2",
             "coder",
@@ -678,6 +714,10 @@ mod tests {
         assert!(msg.contains("researcher"));
         assert!(msg.contains("coder"));
         assert!(msg.contains("found 3 papers"));
+        // Each child carries its task + label so the model can map idx → work.
+        assert!(msg.contains("survey recent papers"));
+        assert!(msg.contains("research-step"));
+        assert!(msg.contains("task:"));
         // Child content is XML-escaped (no literal `<`/`>`/`&`).
         assert!(msg.contains("compile &lt;failed&gt; &amp; bailed"));
         // The outer <result> wraps the whole body (no inner </result> leaked).
