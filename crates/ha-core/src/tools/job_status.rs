@@ -35,7 +35,33 @@ impl Drop for WaiterGuard {
     }
 }
 
-pub async fn tool_job_status(args: &Value) -> Result<String> {
+/// Clamp on the number of jobs `wait`/`list` will enumerate, so a runaway
+/// session can't make one tool call fan out unboundedly.
+const MAX_WAIT_TARGETS: usize = 32;
+
+pub async fn tool_job_status(args: &Value, session_id: Option<&str>) -> Result<String> {
+    // R5: `job_status` is the multi-job surface. `action` selects the verb;
+    // omitting it preserves the original single-job `status` behavior so
+    // existing callers (and the synthetic `{job_id}` responses) keep working.
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("status");
+    match action {
+        // `result` is an explicit alias for `status` — a terminal job's payload
+        // already carries result_preview / result_path.
+        "status" | "result" => action_status(args).await,
+        "list" => action_list(session_id),
+        "cancel" => action_cancel(args).await,
+        "wait" => action_wait(args, session_id).await,
+        other => Err(anyhow!(
+            "job_status: unknown action '{}' (expected status | list | wait | cancel | result)",
+            other
+        )),
+    }
+}
+
+async fn action_status(args: &Value) -> Result<String> {
     let job_id = args
         .get("job_id")
         .and_then(|v| v.as_str())
@@ -120,6 +146,10 @@ fn compute_effective_timeout(requested_ms: Option<u64>) -> Duration {
 }
 
 fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
+    job_response_value(job).to_string()
+}
+
+fn job_response_value(job: &crate::async_jobs::AsyncJob) -> Value {
     let mut payload = json!({
         "job_id": job.job_id,
         "tool": job.tool_name,
@@ -184,7 +214,7 @@ fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
             }
         }
     }
-    payload.to_string()
+    payload
 }
 
 fn insert_running_poll_guidance(
@@ -210,16 +240,158 @@ fn insert_running_poll_guidance(
     );
 }
 
+/// R5 `list`: enumerate the session's in-flight background jobs (active =
+/// non-terminal). Lets the model recover job ids it lost track of and see what
+/// it has running, even after the synthetic `{job_id}` scrolled out of context.
+fn action_list(session_id: Option<&str>) -> Result<String> {
+    let session_id = session_id
+        .ok_or_else(|| anyhow!("job_status list: no active session to enumerate jobs for"))?;
+    let db =
+        async_jobs::get_async_jobs_db().ok_or_else(|| anyhow!("Async jobs DB not initialized"))?;
+    let mut jobs = db.list_active_by_session(session_id)?;
+    jobs.sort_by_key(|j| j.created_at);
+    let truncated = jobs.len() > MAX_WAIT_TARGETS;
+    let items: Vec<Value> = jobs
+        .iter()
+        .take(MAX_WAIT_TARGETS)
+        .map(job_response_value)
+        .collect();
+    Ok(json!({
+        "action": "list",
+        "count": items.len(),
+        "truncated": truncated,
+        "jobs": items,
+    })
+    .to_string())
+}
+
+/// R5 `cancel`: best-effort cancel a specific job by id (reuses the cross-process
+/// cancel path). Returns the updated snapshot.
+async fn action_cancel(args: &Value) -> Result<String> {
+    let job_id = args
+        .get("job_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("job_status cancel: missing required `job_id`"))?;
+    match async_jobs::cancel_job(job_id)? {
+        Some(job) => Ok(json!({ "action": "cancel", "job": job_response_value(&job) }).to_string()),
+        None => Err(anyhow!("Unknown job_id: {}", job_id)),
+    }
+}
+
+/// R5 `wait`: a SHORT convenience sync for fast jobs — clamped to
+/// `MAX_BLOCK_WAIT_SECS`, never a long block (turn=1 single-flight would
+/// otherwise lock the session). Targets are an explicit `ids` array, or every
+/// active job in the session when omitted. `mode` ∈ {all (default), any}. On
+/// clamp expiry it returns the still-running ids and steers the model to the
+/// auto-injection path rather than pretending the work is done.
+async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
+    let db =
+        async_jobs::get_async_jobs_db().ok_or_else(|| anyhow!("Async jobs DB not initialized"))?;
+
+    let ids: Vec<String> = match args.get("ids").and_then(|v| v.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        None => {
+            let session_id = session_id
+                .ok_or_else(|| anyhow!("job_status wait: provide `ids` or run within a session"))?;
+            db.list_active_by_session(session_id)?
+                .into_iter()
+                .map(|j| j.job_id)
+                .collect()
+        }
+    };
+    if ids.is_empty() {
+        return Ok(json!({
+            "action": "wait",
+            "settled": [],
+            "still_running": [],
+            "note": "No matching in-flight jobs to wait for."
+        })
+        .to_string());
+    }
+    let ids: Vec<String> = ids.into_iter().take(MAX_WAIT_TARGETS).collect();
+    let wait_any = args.get("mode").and_then(|v| v.as_str()) == Some("any");
+
+    // Register a waiter per id so producers wake us; cleaned up on every return.
+    let _guards: Vec<WaiterGuard> = ids
+        .iter()
+        .map(|id| WaiterGuard {
+            job_id: id.clone(),
+            notify: wait::register_waiter(id),
+        })
+        .collect();
+
+    let effective_timeout = compute_effective_timeout(args.get("timeout_ms").and_then(|v| v.as_u64()));
+    let deadline = std::time::Instant::now() + effective_timeout;
+    let mut backoff = INITIAL_BACKOFF;
+
+    loop {
+        // Snapshot current statuses.
+        let mut settled: Vec<Value> = Vec::new();
+        let mut still_running: Vec<String> = Vec::new();
+        for id in &ids {
+            match db.load(id)? {
+                Some(job) if job.status.is_terminal() => settled.push(job_response_value(&job)),
+                Some(_) => still_running.push(id.clone()),
+                // Unknown id: report it as settled-unknown so the model isn't
+                // left waiting forever on a typo'd / purged id.
+                None => settled.push(json!({ "job_id": id, "status": "unknown" })),
+            }
+        }
+        let done = if wait_any {
+            !settled.is_empty()
+        } else {
+            still_running.is_empty()
+        };
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if done || remaining.is_zero() {
+            let note = if still_running.is_empty() {
+                "All target jobs reached a terminal state."
+            } else {
+                "Returned before all jobs finished (wait is capped at a few seconds). \
+                 Do not keep calling wait — end your turn and rely on the auto-injected \
+                 task-notification for the remaining jobs."
+            };
+            return Ok(json!({
+                "action": "wait",
+                "mode": if wait_any { "any" } else { "all" },
+                "settled": settled,
+                "still_running": still_running,
+                "note": note,
+            })
+            .to_string());
+        }
+
+        let sleep_dur = std::cmp::min(backoff, remaining);
+        // Wake on any waiter's notify or the backoff timer, whichever first.
+        let first_notify = _guards
+            .first()
+            .map(|g| g.notify.clone())
+            .expect("non-empty ids guarantees a guard");
+        tokio::select! {
+            _ = first_notify.notified() => {}
+            _ = tokio::time::sleep(sleep_dur) => {
+                backoff = std::cmp::min(backoff.saturating_mul(3) / 2, MAX_BACKOFF);
+            }
+        }
+    }
+}
+
 /// Tool definition for `job_status` — feature-gated core meta tool.
 pub fn get_job_status_tool() -> super::definitions::ToolDefinition {
     super::definitions::ToolDefinition {
         name: super::TOOL_JOB_STATUS.into(),
-        description: "Inspect an async tool job created by `run_in_background: true` \
-            or auto-backgrounded by the runtime. Use after the model received a synthetic \
-            `{job_id, status: \"started\"}` response from another tool. This is a non-blocking \
-            snapshot tool; do not call it immediately after `started` just to wait, and do not \
-            repeatedly poll in the same chat turn. Rely on the auto-injected `<task-notification>` \
-            for completion. Read `result_path`/`output-file` only when you need detailed output."
+        description: "Inspect and manage async tool jobs created by `run_in_background: true` \
+            or auto-backgrounded by the runtime. Actions: `status` (default) — snapshot one job by \
+            `job_id`; `list` — enumerate this session's in-flight jobs (recover ids you lost track \
+            of); `wait` — a SHORT (capped at a few seconds) convenience sync for fast jobs, over \
+            an explicit `ids` array or all of the session's active jobs, with `mode` all|any; \
+            `cancel` — cancel a job by `job_id`; `result` — alias for status. \
+            This is NOT how you collect long fan-out: do not poll `status` or hammer `wait` in a \
+            loop — end your turn and rely on the auto-injected `<task-notification>` for completion. \
+            Read `result_path` only when you need the full output."
             .into(),
         tier: super::definitions::ToolTier::Core {
             subclass: super::definitions::CoreSubclass::Meta,
@@ -230,12 +402,30 @@ pub fn get_job_status_tool() -> super::definitions::ToolDefinition {
         parameters: json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "list", "wait", "cancel", "result"],
+                    "description": "What to do. Defaults to `status`. `status`/`cancel`/`result` need `job_id`; `list` needs none; `wait` takes optional `ids`/`mode`/`timeout_ms`."
+                },
                 "job_id": {
                     "type": "string",
-                    "description": "The job id returned in the synthetic tool response (e.g. 'job_<uuid>')."
+                    "description": "The job id from the synthetic tool response (e.g. 'job_<uuid>'). Required for status / cancel / result."
+                },
+                "ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "For action=wait: the specific job ids to wait on. Omit to wait on every in-flight job in this session."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["all", "any"],
+                    "description": "For action=wait: return when ALL targets settle (default) or as soon as ANY one does."
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "For action=wait/status(block): upper bound on the wait, clamped to a few seconds — wait never long-blocks."
                 }
             },
-            "required": ["job_id"],
             "additionalProperties": false
         }),
     }
@@ -338,7 +528,7 @@ mod tests {
             finalize_ok(&task_id, "ok");
         });
 
-        let out = tool_job_status(&args).await.expect("tool ok");
+        let out = tool_job_status(&args, None).await.expect("tool ok");
         finisher.await.expect("finisher ok");
         let elapsed = start.elapsed();
 
@@ -371,7 +561,7 @@ mod tests {
 
         let start = Instant::now();
         let args = json!({ "job_id": job_id, "block": true, "timeout_ms": 5000 });
-        let out = tool_job_status(&args).await.expect("tool ok");
+        let out = tool_job_status(&args, None).await.expect("tool ok");
         let elapsed = start.elapsed();
 
         assert!(out.contains("\"status\":\"interrupted\""), "got {out}");
@@ -395,7 +585,7 @@ mod tests {
         });
 
         let args = json!({ "job_id": job_id, "block": true, "timeout_ms": 2000 });
-        tool_job_status(&args).await.expect("tool ok");
+        tool_job_status(&args, None).await.expect("tool ok");
         finisher.await.expect("finisher ok");
 
         assert_eq!(wait::waiter_count(&job_id), 0);
@@ -409,7 +599,7 @@ mod tests {
         insert_running(&job_id);
 
         let args = json!({ "job_id": job_id, "block": false });
-        let out = tool_job_status(&args).await.expect("tool ok");
+        let out = tool_job_status(&args, None).await.expect("tool ok");
         assert!(out.contains("\"status\":\"running\""), "got {out}");
         // No waiter should have been registered.
         assert_eq!(wait::waiter_count(&job_id), 0);
@@ -424,7 +614,7 @@ mod tests {
         let token = crate::async_jobs::cancel::register_job(&job_id);
 
         let wait_args = json!({ "job_id": job_id, "block": true, "timeout_ms": 5000 });
-        let waiter = tokio::spawn(async move { tool_job_status(&wait_args).await });
+        let waiter = tokio::spawn(async move { tool_job_status(&wait_args, None).await });
 
         tokio::time::sleep(Duration::from_millis(20)).await;
         let result = cancel_runtime_task(RuntimeTaskKind::AsyncJob, &job_id)
@@ -483,7 +673,140 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         ensure_fixture();
         let args = json!({ "job_id": "nonexistent", "block": false });
-        let err = tool_job_status(&args).await.unwrap_err();
+        let err = tool_job_status(&args, None).await.unwrap_err();
         assert!(err.to_string().contains("Unknown job_id"));
+    }
+
+    // ── R5: multi-job actions (list / cancel / wait) ──────────────
+
+    fn insert_running_in_session(job_id: &str, session_id: &str) {
+        let db = async_jobs::get_async_jobs_db().expect("db");
+        let job = AsyncJob {
+            job_id: job_id.to_string(),
+            session_id: Some(session_id.to_string()),
+            agent_id: None,
+            tool_name: "test_tool".into(),
+            tool_call_id: None,
+            args_json: "{}".into(),
+            status: AsyncJobStatus::Running,
+            result_preview: None,
+            result_path: None,
+            error: None,
+            created_at: chrono::Utc::now().timestamp(),
+            completed_at: None,
+            injected: false,
+            origin: JobOrigin::Explicit.as_str().to_string(),
+            approval_origin: None,
+            incognito: false,
+            pid: None,
+            cancel_requested: false,
+        };
+        db.insert(&job).expect("insert");
+    }
+
+    #[tokio::test]
+    async fn action_list_enumerates_only_this_sessions_active_jobs() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let sid = format!("sess-{}", uuid::Uuid::new_v4().simple());
+        let other = format!("sess-{}", uuid::Uuid::new_v4().simple());
+        let a = fresh_id();
+        let b = fresh_id();
+        let c = fresh_id();
+        insert_running_in_session(&a, &sid);
+        insert_running_in_session(&b, &sid);
+        insert_running_in_session(&c, &other);
+
+        let out = tool_job_status(&json!({ "action": "list" }), Some(&sid))
+            .await
+            .expect("list ok");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["count"], 2);
+        let ids: Vec<&str> = v["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["job_id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&a.as_str()) && ids.contains(&b.as_str()));
+        assert!(!ids.contains(&c.as_str()));
+    }
+
+    #[tokio::test]
+    async fn action_list_without_session_errors() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let err = tool_job_status(&json!({ "action": "list" }), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no active session"));
+    }
+
+    #[tokio::test]
+    async fn action_wait_reports_still_running_on_timeout_then_settles() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let job_id = fresh_id();
+        insert_running(&job_id);
+
+        // Tight timeout → returns still_running (never long-blocks).
+        let out = tool_job_status(
+            &json!({ "action": "wait", "ids": [job_id], "timeout_ms": 100 }),
+            None,
+        )
+        .await
+        .expect("wait ok");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["still_running"].as_array().unwrap().len(), 1);
+        assert!(v["settled"].as_array().unwrap().is_empty());
+
+        // Once terminal, wait returns it settled with no still_running.
+        finalize_ok(&job_id, "done");
+        let out = tool_job_status(
+            &json!({ "action": "wait", "ids": [job_id], "timeout_ms": 100 }),
+            None,
+        )
+        .await
+        .expect("wait ok");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["still_running"].as_array().unwrap().is_empty());
+        assert_eq!(v["settled"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn action_wait_unknown_id_settles_as_unknown_not_forever() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let out = tool_job_status(
+            &json!({ "action": "wait", "ids": ["no-such-id"], "timeout_ms": 5000 }),
+            None,
+        )
+        .await
+        .expect("wait ok");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // mode=all is satisfied immediately because the unknown id counts as settled.
+        let settled = v["settled"].as_array().unwrap();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0]["status"], "unknown");
+    }
+
+    #[tokio::test]
+    async fn action_cancel_unknown_errors() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let err = tool_job_status(&json!({ "action": "cancel", "job_id": "nope" }), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Unknown job_id"));
+    }
+
+    #[tokio::test]
+    async fn unknown_action_errors() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let err = tool_job_status(&json!({ "action": "frobnicate" }), None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown action"));
     }
 }

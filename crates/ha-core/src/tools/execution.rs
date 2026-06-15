@@ -1618,7 +1618,9 @@ pub async fn execute_tool_with_context(
                 Ok(task::tool_task_list(args, dispatch_ctx.session_id.as_deref()).await)
             }
             super::TOOL_APP_UPDATE => app_update::tool_app_update(args, dispatch_ctx).await,
-            TOOL_JOB_STATUS => job_status::tool_job_status(args).await,
+            TOOL_JOB_STATUS => {
+                job_status::tool_job_status(args, dispatch_ctx.session_id.as_deref()).await
+            }
             super::TOOL_SCHEDULE_WAKEUP => {
                 schedule_wakeup::tool_schedule_wakeup(args, dispatch_ctx).await
             }
