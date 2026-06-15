@@ -398,12 +398,35 @@ pub fn replay_pending() {
             return;
         }
     };
-    let count = pending.len();
+    // Respect the per-session cap on re-arm. The in-memory cap (counted over
+    // ARMED_TIMERS at schedule time) can drift below the persisted count — an
+    // Abandoned firing drops the in-memory timer but leaves the row — letting a
+    // session accumulate more persisted rows than MAX_PENDING_PER_SESSION. Bound
+    // it here: rows are ordered fire_at ASC, so the soonest survive; over-cap
+    // rows are dropped (the cap is the policy).
+    let mut per_session: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut armed = 0usize;
+    let mut dropped = 0usize;
     for w in pending {
+        let c = per_session.entry(w.session_id.clone()).or_insert(0);
+        if *c >= MAX_PENDING_PER_SESSION {
+            let _ = db.delete(&w.id);
+            dropped += 1;
+            continue;
+        }
+        *c += 1;
         arm_timer(w.id, w.session_id, w.agent_id, w.note, w.fire_at, false);
+        armed += 1;
     }
-    if count > 0 {
-        app_info!("wakeup", "replay", "Re-armed {} pending wakeup(s)", count);
+    if armed > 0 || dropped > 0 {
+        app_info!(
+            "wakeup",
+            "replay",
+            "Re-armed {} pending wakeup(s); dropped {} over per-session cap",
+            armed,
+            dropped
+        );
     }
 }
 

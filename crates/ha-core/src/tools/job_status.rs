@@ -52,7 +52,7 @@ pub async fn tool_job_status(args: &Value, session_id: Option<&str>) -> Result<S
         // already carries result_preview / result_path.
         "status" | "result" => action_status(args).await,
         "list" => action_list(session_id),
-        "cancel" => action_cancel(args).await,
+        "cancel" => action_cancel(args, session_id).await,
         "wait" => action_wait(args, session_id).await,
         other => Err(anyhow!(
             "job_status: unknown action '{}' (expected status | list | wait | cancel | result)",
@@ -146,10 +146,15 @@ fn compute_effective_timeout(requested_ms: Option<u64>) -> Duration {
 }
 
 fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
-    job_response_value(job).to_string()
+    // Single-job status DOES include the running-output tail (that's its point).
+    job_response_value(job, true).to_string()
 }
 
-fn job_response_value(job: &crate::async_jobs::AsyncJob) -> Value {
+/// Build a job's JSON snapshot. `include_output_tail` gates the (potentially
+/// ~8KB) running-output tail: `true` for the single-job `status` view, but
+/// `false` for `list` (a compact id roster — N×8KB tails would balloon it) and
+/// `wait` (its `settled` entries are terminal, so they have no tail anyway).
+fn job_response_value(job: &crate::async_jobs::AsyncJob, include_output_tail: bool) -> Value {
     let mut payload = json!({
         "job_id": job.job_id,
         "tool": job.tool_name,
@@ -188,7 +193,9 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob) -> Value {
             }
             AsyncJobStatus::Running => {
                 insert_running_poll_guidance(map, job);
-                insert_output_tail(map, job);
+                if include_output_tail {
+                    insert_output_tail(map, job);
+                }
                 map.insert(
                     "hint".to_string(),
                     json!("Job is still running. Do not wait or repeatedly call job_status in this chat turn; continue independent work if possible, otherwise stop and rely on the auto-injected task-notification. If `output_tail` is present, it shows the most recent output so far — use it to judge progress vs stuck."),
@@ -196,7 +203,9 @@ fn job_response_value(job: &crate::async_jobs::AsyncJob) -> Value {
             }
             AsyncJobStatus::Cancelling => {
                 insert_running_poll_guidance(map, job);
-                insert_output_tail(map, job);
+                if include_output_tail {
+                    insert_output_tail(map, job);
+                }
                 map.insert(
                     "hint".to_string(),
                     json!("Cancellation has been requested; the job is shutting down. Do not repeatedly poll in this chat turn; wait for the terminal task-notification."),
@@ -267,7 +276,8 @@ fn action_list(session_id: Option<&str>) -> Result<String> {
     let items: Vec<Value> = jobs
         .iter()
         .take(MAX_WAIT_TARGETS)
-        .map(job_response_value)
+        // No output_tail: list is an id roster, not a bulk-output dump.
+        .map(|j| job_response_value(j, false))
         .collect();
     Ok(json!({
         "action": "list",
@@ -280,13 +290,35 @@ fn action_list(session_id: Option<&str>) -> Result<String> {
 
 /// R5 `cancel`: best-effort cancel a specific job by id (reuses the cross-process
 /// cancel path). Returns the updated snapshot.
-async fn action_cancel(args: &Value) -> Result<String> {
+///
+/// Session-scoped: a job owned by another session cannot be cancelled from here.
+/// The async_jobs DB is shared across desktop / HTTP / IM / cron (and across
+/// processes), so without this check a model in session A could terminate
+/// background work belonging to session B (another user's IM/cron turn).
+async fn action_cancel(args: &Value, session_id: Option<&str>) -> Result<String> {
     let job_id = args
         .get("job_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("job_status cancel: missing required `job_id`"))?;
+    let db =
+        async_jobs::get_async_jobs_db().ok_or_else(|| anyhow!("Async jobs DB not initialized"))?;
+    let job = db
+        .load(job_id)?
+        .ok_or_else(|| anyhow!("Unknown job_id: {}", job_id))?;
+    // A job that belongs to a session may only be cancelled from that same
+    // session. Jobs with no session (system/orphan) are cancellable by anyone.
+    if let Some(owner) = job.session_id.as_deref() {
+        if session_id != Some(owner) {
+            return Err(anyhow!(
+                "job {} belongs to a different session and cannot be cancelled from here",
+                job_id
+            ));
+        }
+    }
     match async_jobs::cancel_job(job_id)? {
-        Some(job) => Ok(json!({ "action": "cancel", "job": job_response_value(&job) }).to_string()),
+        Some(job) => {
+            Ok(json!({ "action": "cancel", "job": job_response_value(&job, false) }).to_string())
+        }
         None => Err(anyhow!("Unknown job_id: {}", job_id)),
     }
 }
@@ -363,7 +395,7 @@ async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
             match db.load(id)? {
                 Some(job) if job.status.is_terminal() => {
                     saw_real_terminal = true;
-                    settled.push(job_response_value(&job));
+                    settled.push(job_response_value(&job, false));
                 }
                 Some(_) => still_running.push(id.clone()),
                 // Unknown id: report it as settled-unknown so the model isn't
@@ -376,16 +408,20 @@ async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
         let done = still_running.is_empty() || (wait_any && saw_real_terminal);
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if done || remaining.is_zero() {
-            let note = if !dropped.is_empty() {
-                "Too many ids: only the first 32 were waited on; the rest are in `dropped` \
-                 and were NOT checked. Wait on them in a follow-up, or rely on the auto-injected \
-                 task-notification."
-            } else if still_running.is_empty() {
-                "All target jobs reached a terminal state."
-            } else {
-                "Returned before all jobs finished (wait is capped at a few seconds). \
-                 Do not keep calling wait — end your turn and rely on the auto-injected \
-                 task-notification for the remaining jobs."
+            let note = match (!dropped.is_empty(), still_running.is_empty()) {
+                // Too many ids — surface BOTH the dropped overflow AND that the
+                // 32 we did wait on may still be running.
+                (true, _) => {
+                    "Too many ids: only the first 32 were waited on; the rest are in `dropped` \
+                     and were NOT checked. Any ids still in `still_running` haven't finished \
+                     either. End your turn and rely on the auto-injected task-notification."
+                }
+                (false, true) => "All target jobs reached a terminal state.",
+                (false, false) => {
+                    "Returned before all jobs finished (wait is capped at a few seconds). \
+                     Do not keep calling wait — end your turn and rely on the auto-injected \
+                     task-notification for the remaining jobs."
+                }
             };
             return Ok(json!({
                 "action": "wait",
@@ -864,6 +900,56 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["status"], "running");
         assert!(v["output_tail"].as_str().unwrap().contains("linking..."));
+        async_jobs::output_tail::remove(&job_id);
+    }
+
+    #[tokio::test]
+    async fn action_cancel_rejects_cross_session() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let job_id = fresh_id();
+        insert_running_in_session(&job_id, "owner-sess");
+
+        // A different session must NOT be able to cancel another session's job.
+        let err = tool_job_status(
+            &json!({ "action": "cancel", "job_id": job_id }),
+            Some("other-sess"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("different session"), "got {err}");
+
+        // The owning session can.
+        let out = tool_job_status(
+            &json!({ "action": "cancel", "job_id": job_id }),
+            Some("owner-sess"),
+        )
+        .await
+        .expect("owner cancel ok");
+        assert!(out.contains("\"action\":\"cancel\""));
+    }
+
+    #[tokio::test]
+    async fn action_list_omits_output_tail() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        ensure_fixture();
+        let sid = format!("sess-{}", uuid::Uuid::new_v4().simple());
+        let job_id = fresh_id();
+        insert_running_in_session(&job_id, &sid);
+        // Even with a populated tail, `list` must not embed it (id roster only).
+        async_jobs::output_tail::register(&job_id);
+        async_jobs::output_tail::append(&job_id, b"lots of build output\n");
+
+        let out = tool_job_status(&json!({ "action": "list" }), Some(&sid))
+            .await
+            .expect("list ok");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let job0 = &v["jobs"][0];
+        assert_eq!(job0["status"], "running");
+        assert!(
+            job0.get("output_tail").is_none(),
+            "list must omit output_tail"
+        );
         async_jobs::output_tail::remove(&job_id);
     }
 

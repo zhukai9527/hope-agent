@@ -25,6 +25,27 @@ pub async fn tool_schedule_wakeup(args: &Value, ctx: &ToolExecContext) -> Result
         .as_deref()
         .unwrap_or(crate::agent_loader::DEFAULT_AGENT_ID);
 
+    // Only top-level sessions may schedule wakeups. A subagent / forked child
+    // session is a transient worker: it has no future user-facing turns and is
+    // never torn down via the session-cleanup watcher, so a wakeup would later
+    // fire a ghost, billed parent turn into a long-dormant child session that
+    // nobody is watching. Subagent runs carry `subagent_depth > 0` (fast path);
+    // any other child carries a `parent_session_id` (covers forks etc.).
+    if ctx.subagent_depth > 0 {
+        return Err(anyhow!(
+            "schedule_wakeup is not available inside a subagent run — it would resume a transient child session"
+        ));
+    }
+    if let Some(db) = crate::get_session_db() {
+        if let Ok(Some(meta)) = db.get_session(session_id) {
+            if meta.parent_session_id.is_some() {
+                return Err(anyhow!(
+                    "schedule_wakeup is only available for top-level sessions, not child / forked sessions"
+                ));
+            }
+        }
+    }
+
     let delay_secs = args
         .get("delay_secs")
         .and_then(|v| v.as_i64())
