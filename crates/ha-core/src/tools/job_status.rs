@@ -335,8 +335,10 @@ async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
     let ids: Vec<String> = ids.into_iter().take(MAX_WAIT_TARGETS).collect();
     let wait_any = args.get("mode").and_then(|v| v.as_str()) == Some("any");
 
-    // Register a waiter per id so producers wake us; cleaned up on every return.
-    let _guards: Vec<WaiterGuard> = ids
+    // Register a waiter per id so producers wake us; cleaned up on every return
+    // (WaiterGuard::drop). Kept alive for the whole wait so the notifies stay
+    // registered.
+    let guards: Vec<WaiterGuard> = ids
         .iter()
         .map(|id| WaiterGuard {
             job_id: id.clone(),
@@ -353,20 +355,25 @@ async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
         // Snapshot current statuses.
         let mut settled: Vec<Value> = Vec::new();
         let mut still_running: Vec<String> = Vec::new();
+        // Track real terminal settlements separately from unknown ids: an
+        // unknown/typo'd id must NOT count as "any settled" (it would let
+        // mode=any return immediately while real targets are still running).
+        let mut saw_real_terminal = false;
         for id in &ids {
             match db.load(id)? {
-                Some(job) if job.status.is_terminal() => settled.push(job_response_value(&job)),
+                Some(job) if job.status.is_terminal() => {
+                    saw_real_terminal = true;
+                    settled.push(job_response_value(&job));
+                }
                 Some(_) => still_running.push(id.clone()),
                 // Unknown id: report it as settled-unknown so the model isn't
-                // left waiting forever on a typo'd / purged id.
+                // left waiting forever on a typo'd / purged id (but it doesn't
+                // count toward mode=any).
                 None => settled.push(json!({ "job_id": id, "status": "unknown" })),
             }
         }
-        let done = if wait_any {
-            !settled.is_empty()
-        } else {
-            still_running.is_empty()
-        };
+        // Done when nothing is left to wait for, or (mode=any) a real job settled.
+        let done = still_running.is_empty() || (wait_any && saw_real_terminal);
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if done || remaining.is_zero() {
             let note = if !dropped.is_empty() {
@@ -393,13 +400,15 @@ async fn action_wait(args: &Value, session_id: Option<&str>) -> Result<String> {
         }
 
         let sleep_dur = std::cmp::min(backoff, remaining);
-        // Wake on any waiter's notify or the backoff timer, whichever first.
-        let first_notify = _guards
-            .first()
-            .map(|g| g.notify.clone())
-            .expect("non-empty ids guarantees a guard");
+        // Wake as soon as ANY waited id's producer fires (not just the first),
+        // or on the backoff timer. The notifies are re-armed each iteration; the
+        // poll re-checks the DB regardless, so a missed wake only costs latency.
+        let notifies = guards
+            .iter()
+            .map(|g| Box::pin(g.notify.notified()))
+            .collect::<Vec<_>>();
         tokio::select! {
-            _ = first_notify.notified() => {}
+            _ = futures_util::future::select_all(notifies) => {}
             _ = tokio::time::sleep(sleep_dur) => {
                 backoff = std::cmp::min(backoff.saturating_mul(3) / 2, MAX_BACKOFF);
             }

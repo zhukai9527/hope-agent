@@ -214,13 +214,18 @@ fn arm_timer(
         remove_armed(&task_id);
         fire(task_id, session_id, agent_id, note, incognito);
     });
-    map.insert(
+    // Defensive: ids are fresh uuids so a collision shouldn't happen, but if one
+    // ever did, abort the displaced timer rather than silently dropping its
+    // AbortHandle (which would leak an un-cancellable task).
+    if let Some(old) = map.insert(
         id,
         ArmedTimer {
             session_id: session_for_map,
             abort: handle.abort_handle(),
         },
-    );
+    ) {
+        old.abort.abort();
+    }
 }
 
 fn remove_armed(id: &str) {
@@ -273,7 +278,7 @@ fn fire(id: String, session_id: String, agent_id: String, note: Option<String>, 
                     let persisted = !incognito;
                     Arc::new(move || {
                         if persisted {
-                            mark_fired_with_retry(&jid);
+                            delete_delivered_with_retry(&jid);
                         }
                     })
                 };
@@ -310,19 +315,21 @@ fn release_delivering(id: &str) {
         .remove(id);
 }
 
-/// Mark a wakeup fired with retry — mirrors `async_jobs::injection::
-/// mark_injected_with_retry`. The `fired` column is the ONLY durable guard
-/// against a restart re-arming an already-delivered wakeup (the per-process
-/// DELIVERING / FETCHED sets are empty on a fresh boot), so a silently-swallowed
-/// write failure here would cause a duplicate, billed `<wakeup>` turn after the
-/// next Primary restart. Retry transient SQLite errors; log loudly if all fail.
-fn mark_fired_with_retry(id: &str) {
+/// Delete a delivered wakeup row with retry — mirrors `async_jobs::injection::
+/// mark_injected_with_retry`'s robustness. Deleting on delivery (rather than
+/// flag-flipping) is the ONLY durable guard against a restart re-arming an
+/// already-delivered wakeup (the per-process DELIVERING set is empty on a fresh
+/// boot) AND auto-GCs the row (delivered wakeups are transient, no history
+/// value). A silently-swallowed delete failure would cause a duplicate, billed
+/// `<wakeup>` turn after the next Primary restart, so retry transient SQLite
+/// errors and log loudly if all fail.
+fn delete_delivered_with_retry(id: &str) {
     const BACKOFFS_MS: &[u64] = &[0, 100, 500, 2_000];
     let Some(db) = get_wakeup_db() else {
         app_error!(
             "wakeup",
             "fire",
-            "Cannot mark wakeup {} fired: wakeup DB not initialized (may re-fire on restart)",
+            "Cannot delete delivered wakeup {}: wakeup DB not initialized (may re-fire on restart)",
             id
         );
         return;
@@ -332,14 +339,14 @@ fn mark_fired_with_retry(id: &str) {
         if *delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
         }
-        match db.mark_fired(id) {
-            Ok(_) => return,
+        match db.delete(id) {
+            Ok(()) => return,
             Err(e) => {
                 last_err = Some(e.to_string());
                 app_warn!(
                     "wakeup",
                     "fire",
-                    "mark_fired({}) attempt {} failed: {}",
+                    "delete delivered wakeup {} attempt {} failed: {}",
                     id,
                     attempt + 1,
                     e
@@ -350,7 +357,7 @@ fn mark_fired_with_retry(id: &str) {
     app_error!(
         "wakeup",
         "fire",
-        "mark_fired({}) failed after all retries ({}); wakeup may re-fire (duplicate turn) on next Primary restart",
+        "delete delivered wakeup {} failed after all retries ({}); it may re-fire (duplicate turn) on next Primary restart",
         id,
         last_err.unwrap_or_default()
     );

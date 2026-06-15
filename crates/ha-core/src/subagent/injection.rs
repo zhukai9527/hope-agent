@@ -512,8 +512,14 @@ pub(crate) async fn inject_and_run_parent(
         // sub-agent *result* — stamping `subagent_result` made it render as a
         // misleading green "completed" pill with the note dropped, so wakeups
         // get their own `wakeup_trigger` marker (mirrors cron's `cron_trigger`).
+        // The `run_id` MUST stay in the meta even for wakeups: the re-queue
+        // idempotency guard `has_injection_user_msg` matches on `"run_id":"…"`,
+        // so dropping it would defeat dedup and append a duplicate `<wakeup>`
+        // row (+ a second billed turn) every time a wakeup turn is cancelled and
+        // re-queued. The frontend only checks `wakeup_trigger` presence, so the
+        // extra field is invisible to it.
         let meta = if child_agent_id == WAKEUP_CHILD_AGENT_ID {
-            serde_json::json!({ "wakeup_trigger": {} })
+            serde_json::json!({ "wakeup_trigger": { "run_id": &run_id } })
         } else {
             serde_json::json!({
                 "subagent_result": {

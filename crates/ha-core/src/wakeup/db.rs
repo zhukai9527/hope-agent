@@ -100,17 +100,10 @@ impl WakeupDB {
         Ok(rows)
     }
 
-    /// Mark a wakeup fired (delivered). Idempotent; returns whether a row moved
-    /// from unfired → fired, so replay never re-delivers a landed wakeup.
-    pub fn mark_fired(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        let rows = conn.execute(
-            "UPDATE wakeups SET fired = 1 WHERE id = ?1 AND fired = 0",
-            params![id],
-        )?;
-        Ok(rows > 0)
-    }
-
+    /// Delete a wakeup row (delivered, or being cancelled). Delivered wakeups
+    /// are transient — deleting on delivery both prevents a restart re-arming an
+    /// already-fired wakeup (the row is gone, so `list_pending` won't see it) and
+    /// auto-GCs the table. Idempotent: deleting a missing id is a no-op.
     pub fn delete(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         conn.execute("DELETE FROM wakeups WHERE id = ?1", params![id])?;
@@ -151,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_list_and_mark_fired() {
+    fn insert_list_and_delete() {
         let db = temp_db();
         db.insert(&mk("w1", "s1", 200)).unwrap();
         db.insert(&mk("w2", "s1", 150)).unwrap();
@@ -163,9 +156,9 @@ mod tests {
             ["w2", "w1"]
         );
 
-        // mark_fired moves it out of pending and is idempotent.
-        assert!(db.mark_fired("w2").unwrap());
-        assert!(!db.mark_fired("w2").unwrap());
+        // delete (delivery / cancel) removes it from pending; idempotent.
+        db.delete("w2").unwrap();
+        db.delete("w2").unwrap(); // missing id is a no-op
         let pending = db.list_pending().unwrap();
         assert_eq!(
             pending.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),

@@ -68,7 +68,9 @@ describe("parseSessionMessages user attachments", () => {
         id: 81,
         role: "user",
         content: "<wakeup>...</wakeup>",
-        attachmentsMeta: JSON.stringify({ wakeup_trigger: {} }),
+        // Backend includes run_id in the meta (so the re-queue dedup guard
+        // matches); the frontend keys only on `wakeup_trigger` presence.
+        attachmentsMeta: JSON.stringify({ wakeup_trigger: { run_id: "wakeup_abc" } }),
       }),
     ])
 
