@@ -136,7 +136,7 @@ fn effective_max_job_secs(args: &Value) -> u64 {
 /// paths. The actual tool dispatch runs on a separate OS thread + current-thread
 /// runtime to avoid the `Send` requirement on the tool's future, mirroring the
 /// approach used by `subagent::injection::inject_and_run_parent`.
-pub fn spawn_explicit_job(
+pub(crate) fn spawn_explicit_job(
     tool_name: &str,
     args: Value,
     mut ctx: ToolExecContext,
@@ -366,7 +366,7 @@ fn start_runner(
 /// queued jobs (unlike `replay_pending_jobs`, which sweeps shared DB rows and is
 /// therefore Primary-only). Idempotent: at most one loop per process even if
 /// spawned from multiple init paths.
-pub async fn run_scheduler() {
+pub(crate) async fn run_scheduler() {
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return; // a scheduler loop is already running in this process
@@ -418,7 +418,7 @@ pub async fn run_scheduler() {
 /// constrain the underlying tool future to be `Send`. Coordination with the
 /// main thread uses an explicit phase machine to avoid the race window
 /// between "OS thread finished" and "main thread already gave up."
-pub async fn dispatch_with_auto_background(
+pub(crate) async fn dispatch_with_auto_background(
     name: &str,
     args: &Value,
     ctx: &ToolExecContext,

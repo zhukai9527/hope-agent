@@ -454,7 +454,7 @@ async fn execute_tool_with_cancel(
                         job_id,
                         name
                     );
-                    let _ = crate::async_jobs::cancel_job(&job_id);
+                    let _ = crate::async_jobs::JobManager::cancel(&job_id);
                 }
             }
             tools::ToolRejection::cancelled(name).to_tool_result()

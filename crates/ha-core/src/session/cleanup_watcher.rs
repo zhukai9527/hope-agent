@@ -97,7 +97,7 @@ pub fn spawn_session_cleanup_watcher() {
 /// leaves no trace — a plain delete leaves these to age-based GC. Epic E.
 async fn cleanup_session(session_id: &str, is_purge: bool) {
     // A-8: cancel active / awaiting-approval background jobs (DELETE-4).
-    let cancelled_jobs = crate::async_jobs::cancel_jobs_for_session(session_id);
+    let cancelled_jobs = crate::async_jobs::JobManager::cancel_for_session(session_id);
 
     // A-9: deny + resolve pending approvals so a blocked tool turn unblocks and
     // every surface dismisses its dialog (DELETE-1 / INCOG-4).
@@ -132,7 +132,7 @@ async fn cleanup_session(session_id: &str, is_purge: bool) {
     // plain delete leaves these to age-based retention; only purge scrubs now.
     if is_purge {
         crate::tools::purge_tool_results_for_session(session_id);
-        crate::async_jobs::purge_jobs_for_session(session_id);
+        crate::async_jobs::JobManager::purge_for_session(session_id);
     }
 
     if cancelled_jobs > 0 || denied > 0 {

@@ -1,6 +1,13 @@
-//! Async tool execution: detach long-running tool calls into background jobs,
-//! return a synthetic `job_id` to the LLM immediately, and inject the real
+//! Background jobs (R1 unified model): detach long-running work into background
+//! jobs, return a synthetic `job_id` to the LLM immediately, and inject the real
 //! result back into the parent session when ready.
+//!
+//! [`JobManager`] is the single production entry point (spawn / cancel / list /
+//! inspect / replay / schedule). Today only [`JobKind::Tool`] is wired — the
+//! `Subagent` (R6) and `Group` (R5) kinds extend `JobManager`, not parallel
+//! APIs. The module keeps the historical `async_jobs/` name + log category per
+//! the PRD's "evolve the lineage in place" contract; the persisted table / DB
+//! file are `background_jobs`.
 //!
 //! See `docs/architecture/tool-system.md` and AGENTS.md for the higher-level
 //! design. The user-facing entry points are:
@@ -17,6 +24,7 @@ pub(crate) mod cancel;
 pub(crate) mod db;
 pub(crate) mod error;
 pub(crate) mod injection;
+pub(crate) mod manager;
 pub(crate) mod output_tail;
 pub(crate) mod retention;
 pub(crate) mod slots;
@@ -27,29 +35,32 @@ pub(crate) mod wait;
 use std::sync::{Arc, OnceLock};
 
 pub use db::{JobsDB, PurgeStats};
-pub use retention::{
-    run_once as run_retention_once, spawn_background_loop as spawn_retention_loop,
-};
-pub use spawn::{
-    dispatch_with_auto_background, run_scheduler, spawn_explicit_job, synthetic_started_result,
-};
+// R1: `JobManager` is the single production entry point for background-job
+// operations (spawn / cancel / list / replay / schedule). The spawn / scheduler
+// / cancel / retention helpers are now `pub(crate)` internals reached only
+// through it. `synthetic_started_result` stays re-exported as a pure formatter.
+pub use manager::JobManager;
+pub use spawn::synthetic_started_result;
 pub use types::{BackgroundJob, JobKind, JobOrigin, JobStatus};
 
 static ASYNC_JOBS_DB: OnceLock<Arc<JobsDB>> = OnceLock::new();
 
-/// Set the global async jobs database. Called once during app initialization.
-pub fn set_async_jobs_db(db: Arc<JobsDB>) {
+/// Set the global background-jobs database. Called once during app
+/// initialization (`app_init`).
+pub(crate) fn set_async_jobs_db(db: Arc<JobsDB>) {
     let _ = ASYNC_JOBS_DB.set(db);
 }
 
-/// Get the global async jobs database (None until initialization completes).
-pub fn get_async_jobs_db() -> Option<&'static Arc<JobsDB>> {
+/// Get the global background-jobs database (None until initialization
+/// completes). The white-box read accessor used by `job_status` /
+/// `runtime_tasks` / tests; production *operations* go through [`JobManager`].
+pub(crate) fn get_async_jobs_db() -> Option<&'static Arc<JobsDB>> {
     ASYNC_JOBS_DB.get()
 }
 
 /// Best-effort cancellation for an async tool job. Returns the updated job
 /// snapshot when the job exists.
-pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> {
+pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> {
     let Some(db) = get_async_jobs_db() else {
         return Ok(None);
     };
@@ -190,7 +201,7 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> {
 /// by `session_id`. Called by the session cleanup watcher when a session is
 /// deleted or purged so abandoned background jobs don't run on forever
 /// (DELETE-4). Returns the number of jobs cancelled.
-pub fn cancel_jobs_for_session(session_id: &str) -> usize {
+pub(crate) fn cancel_jobs_for_session(session_id: &str) -> usize {
     let Some(db) = get_async_jobs_db() else {
         return 0;
     };
@@ -231,7 +242,7 @@ pub fn cancel_jobs_for_session(session_id: &str) -> usize {
 /// `persist_result`), so this is a backstop that also drops the redacted job
 /// rows themselves so nothing about the burned session lingers. Returns the
 /// number of rows deleted. Epic E (INCOG-2).
-pub fn purge_jobs_for_session(session_id: &str) -> u64 {
+pub(crate) fn purge_jobs_for_session(session_id: &str) -> u64 {
     let Some(db) = get_async_jobs_db() else {
         return 0;
     };
@@ -282,7 +293,7 @@ pub fn purge_jobs_for_session(session_id: &str) -> u64 {
 ///      process did not survive the restart).
 ///   2. Re-dispatch any terminal-but-not-injected jobs back to their parent
 ///      sessions.
-pub fn replay_pending_jobs() {
+pub(crate) fn replay_pending_jobs() {
     let db = match get_async_jobs_db() {
         Some(db) => db.clone(),
         None => return,

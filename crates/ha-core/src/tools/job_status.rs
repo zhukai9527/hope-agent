@@ -315,7 +315,7 @@ async fn action_cancel(args: &Value, session_id: Option<&str>) -> Result<String>
             ));
         }
     }
-    match async_jobs::cancel_job(job_id)? {
+    match async_jobs::JobManager::cancel(job_id)? {
         Some(job) => {
             Ok(json!({ "action": "cancel", "job": job_response_value(&job, false) }).to_string())
         }

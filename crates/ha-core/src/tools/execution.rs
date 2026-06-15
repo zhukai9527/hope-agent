@@ -1470,7 +1470,7 @@ pub async fn execute_tool_with_context(
         // the audit origin for the job's `approval_origin` column.
         spawn_ctx.exec_pre_approved = exec_pre_approved;
         spawn_ctx.approval_origin = tool_approval_origin;
-        let raw = async_jobs::spawn_explicit_job(name, args.clone(), spawn_ctx, origin)?;
+        let raw = async_jobs::JobManager::spawn_tool(name, args.clone(), spawn_ctx, origin)?;
         // Skip the disk-persist tail since the synthetic JSON is small and
         // mirrors the same shape `job_status` returns later.
         return Ok(raw);
@@ -1501,7 +1501,7 @@ pub async fn execute_tool_with_context(
         inner_ctx.exec_pre_approved = exec_pre_approved;
         inner_ctx.approval_origin = tool_approval_origin;
         let raw =
-            async_jobs::dispatch_with_auto_background(name, args, &inner_ctx, auto_bg_secs).await?;
+            async_jobs::JobManager::dispatch_tool_with_auto_background(name, args, &inner_ctx, auto_bg_secs).await?;
         // The inner worker suppresses generic disk persistence so detached jobs
         // can spool their raw output into the async output-file. If the worker
         // finished within the foreground budget, persist large inline output at

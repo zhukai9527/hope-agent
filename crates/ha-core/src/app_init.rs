@@ -882,7 +882,7 @@ pub async fn start_background_tasks() {
     // schedules its OWN queue and never touches another process's jobs;
     // `run_scheduler` is idempotent (at most one loop per process).
     tokio::spawn(async move {
-        crate::async_jobs::run_scheduler().await;
+        crate::async_jobs::JobManager::run_scheduler().await;
     });
 
     if primary {
@@ -1021,7 +1021,7 @@ pub async fn start_background_tasks() {
         // Shutdown / Crash) and any `ParentInjection` turn that the
         // replay schedules will see a coherent `context_json`.
         tokio::spawn(async move {
-            crate::async_jobs::replay_pending_jobs();
+            crate::async_jobs::JobManager::replay_pending();
         });
         crate::local_model_jobs::replay_interrupted_jobs();
 
@@ -1033,7 +1033,7 @@ pub async fn start_background_tasks() {
         // Retention sweep for async_jobs (rows + spool files). Runs once at
         // startup and then once per day. Disabled entirely when both
         // `retention_secs` and `orphan_grace_secs` are `0`.
-        crate::async_jobs::spawn_retention_loop();
+        crate::async_jobs::JobManager::spawn_retention_loop();
 
         // Retention sweep for recap session facets. Runs once at startup and
         // then once per day. Disabled when `recap.cache_retention_days == 0`.
@@ -1203,7 +1203,7 @@ pub async fn start_minimal_background_tasks() {
 
     // R7.1 background-job scheduler (tier-agnostic: process-local queue, idempotent).
     tokio::spawn(async move {
-        crate::async_jobs::run_scheduler().await;
+        crate::async_jobs::JobManager::run_scheduler().await;
     });
 
     if primary {
@@ -1234,7 +1234,7 @@ pub async fn start_minimal_background_tasks() {
         // booting alongside an active desktop would flip the desktop's
         // running tools to Interrupted.
         tokio::spawn(async move {
-            crate::async_jobs::replay_pending_jobs();
+            crate::async_jobs::JobManager::replay_pending();
         });
         crate::local_model_jobs::replay_interrupted_jobs();
 
