@@ -36,8 +36,12 @@ pub fn spawn_session_cleanup_watcher() {
                     // Loud: a dropped session:deleted/purged means that session's
                     // cleanup never runs — pending approvals stay hung, background
                     // jobs keep running, and (purge) incognito artifacts aren't
-                    // scrubbed. The fan-out below is spawned off this loop to keep
-                    // this drain fast and make lagging effectively impossible.
+                    // scrubbed. The fan-out below is spawned off this loop so a slow
+                    // cleanup can't self-inflict lag — but this rides the shared
+                    // EventBus, so an unrelated high-volume burst can still drop a
+                    // lifecycle event. Hence error-level (operator signal), not a
+                    // guarantee; a dedicated lifecycle channel / reconcile would be
+                    // the real fix.
                     app_error!(
                         "session",
                         "cleanup_watcher",

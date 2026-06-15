@@ -164,7 +164,7 @@ pub(crate) fn build_approval_buttons(
 /// drift test), so a future strict reason can never silently slip through on the
 /// IM surface.
 fn reason_forbids_allow_always(reason: Option<&ApprovalReasonPayload>) -> bool {
-    reason.map(|r| r.kind.is_strict()).unwrap_or(false)
+    reason.is_some_and(|r| r.kind.is_strict())
 }
 
 /// Render the approval reason as a one-line suffix for IM prompts.
