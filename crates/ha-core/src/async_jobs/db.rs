@@ -164,7 +164,7 @@ impl AsyncJobsDB {
             "UPDATE async_tool_jobs
                 SET status=?1, result_preview=?2, result_path=?3, error=?4, completed_at=?5
                 WHERE job_id=?6
-                  AND status IN ('running','cancelling')",
+                  AND status IN ('queued','running','cancelling')",
             params![
                 status.as_str(),
                 result_preview,
@@ -187,6 +187,33 @@ impl AsyncJobsDB {
             params![AsyncJobStatus::Cancelling.as_str(), error, job_id],
         )?;
         Ok(rows > 0)
+    }
+
+    /// Promote a queued job to `running` when the scheduler grants it a slot.
+    /// Guarded `WHERE status='queued'` so a concurrent cancel that already moved
+    /// the row to a terminal status can't be clobbered back to running. Returns
+    /// whether a row was updated (false ⇒ the job was cancelled/removed while
+    /// queued, so the scheduler must drop it).
+    pub fn mark_running(&self, job_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let rows = conn.execute(
+            "UPDATE async_tool_jobs SET status='running'
+                WHERE job_id=?1 AND status='queued'",
+            params![job_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Physically delete a single job row by id. Used to roll back a freshly
+    /// inserted row whose enqueue was rejected (queue full) so it never lingers
+    /// as a stale `queued` row.
+    pub fn delete(&self, job_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        conn.execute(
+            "DELETE FROM async_tool_jobs WHERE job_id=?1",
+            params![job_id],
+        )?;
+        Ok(())
     }
 
     pub fn mark_injected(&self, job_id: &str) -> Result<()> {
@@ -221,7 +248,7 @@ impl AsyncJobsDB {
         let rows = conn.execute(
             "UPDATE async_tool_jobs SET cancel_requested=1
                 WHERE job_id=?1
-                  AND status IN ('running','cancelling','awaiting_approval')",
+                  AND status IN ('queued','running','cancelling','awaiting_approval')",
             params![job_id],
         )?;
         Ok(rows > 0)
@@ -255,10 +282,11 @@ impl AsyncJobsDB {
             .map_err(Into::into)
     }
 
-    /// All jobs whose status is still active (`running` / `cancelling` /
-    /// `awaiting_approval`) — used by startup replay. `awaiting_approval` is
-    /// included because a restart kills the in-memory approval channel, so the
-    /// job is unrecoverable and must be marked `interrupted` like the rest.
+    /// All jobs whose status is still active (`queued` / `running` /
+    /// `cancelling` / `awaiting_approval`) — used by startup replay.
+    /// `awaiting_approval` and `queued` are included because a restart kills the
+    /// in-memory approval channel / scheduler queue (a queued job's live ctx is
+    /// gone), so the job is unrecoverable and must be marked `interrupted` too.
     pub fn list_running(&self) -> Result<Vec<AsyncJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
@@ -266,7 +294,7 @@ impl AsyncJobsDB {
                     args_json, status, result_preview, result_path, error,
                     created_at, completed_at, injected, origin,
                     approval_origin, incognito, pid, cancel_requested
-             FROM async_tool_jobs WHERE status IN ('running','cancelling','awaiting_approval')",
+             FROM async_tool_jobs WHERE status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map([], row_to_job)?;
         let mut out = Vec::new();
@@ -276,9 +304,10 @@ impl AsyncJobsDB {
         Ok(out)
     }
 
-    /// All active (`running`/`cancelling`/`awaiting_approval`) jobs owned by a
-    /// session — used by session-delete cleanup to cancel them (DELETE-4).
-    /// Hits the `idx_async_jobs_session_status` index.
+    /// All active (`queued`/`running`/`cancelling`/`awaiting_approval`) jobs owned
+    /// by a session — used by session-delete cleanup to cancel them (DELETE-4).
+    /// `queued` is included so a session delete also drops jobs still waiting in
+    /// the scheduler queue. Hits the `idx_async_jobs_session_status` index.
     pub fn list_active_by_session(&self, session_id: &str) -> Result<Vec<AsyncJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
@@ -287,7 +316,7 @@ impl AsyncJobsDB {
                     created_at, completed_at, injected, origin,
                     approval_origin, incognito, pid, cancel_requested
              FROM async_tool_jobs
-             WHERE session_id=?1 AND status IN ('running','cancelling','awaiting_approval')",
+             WHERE session_id=?1 AND status IN ('queued','running','cancelling','awaiting_approval')",
         )?;
         let rows = stmt.query_map(params![session_id], row_to_job)?;
         let mut out = Vec::new();
@@ -531,6 +560,61 @@ mod tests {
             .unwrap();
         assert!(!db.set_pid("j", 9999).unwrap());
         assert!(!db.set_cancel_requested("j").unwrap());
+    }
+
+    #[test]
+    fn mark_running_promotes_only_queued_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        // A queued row promotes to running exactly once (scheduler grant).
+        let mut q = sample_job("q");
+        q.status = AsyncJobStatus::Queued;
+        db.insert(&q).unwrap();
+        assert!(db.mark_running("q").unwrap(), "queued -> running");
+        assert_eq!(
+            db.load("q").unwrap().unwrap().status,
+            AsyncJobStatus::Running
+        );
+        // Already running → not re-promoted (guard WHERE status='queued').
+        assert!(!db.mark_running("q").unwrap());
+        // A never-queued (running) row cannot be promoted either.
+        db.insert(&sample_job("r")).unwrap();
+        assert!(!db.mark_running("r").unwrap());
+    }
+
+    #[test]
+    fn queued_rows_are_active_and_can_settle_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let mut q = sample_job("q");
+        q.status = AsyncJobStatus::Queued;
+        q.session_id = Some("s1".into());
+        db.insert(&q).unwrap();
+        // Startup replay (list_running) must include queued rows so they recover.
+        assert!(db.list_running().unwrap().iter().any(|j| j.job_id == "q"));
+        // Session-delete cleanup (list_active_by_session) must include them too.
+        assert!(db
+            .list_active_by_session("s1")
+            .unwrap()
+            .iter()
+            .any(|j| j.job_id == "q"));
+        // update_terminal must be able to settle a queued row (cancel / restart).
+        assert!(db
+            .update_terminal("q", AsyncJobStatus::Cancelled, None, None, Some("x"), 1)
+            .unwrap());
+        assert_eq!(
+            db.load("q").unwrap().unwrap().status,
+            AsyncJobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn delete_removes_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = AsyncJobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        db.insert(&sample_job("d")).unwrap();
+        db.delete("d").unwrap();
+        assert!(db.load("d").unwrap().is_none());
     }
 
     /// A current-shape table must NOT be dropped on reopen (no spurious data loss).

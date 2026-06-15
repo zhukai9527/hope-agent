@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AsyncJobStatus {
+    /// Reserved (row written) but waiting for a concurrency slot — the cap was
+    /// full at spawn, so the job sits in the in-memory scheduler queue until a
+    /// slot frees (per-session round-robin). NOT terminal. The queue holds the
+    /// live `ToolExecContext` in memory, so a `Queued` row cannot survive a
+    /// restart and is recovered as `Interrupted` like `Running`.
+    Queued,
     Running,
     /// Cancellation has been requested and the running future has been
     /// signalled, but the runner has not yet finalized the row.
@@ -34,6 +40,7 @@ impl AsyncJobStatus {
 
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Running => "running",
             Self::Cancelling => "cancelling",
             Self::AwaitingApproval => "awaiting_approval",
@@ -47,6 +54,7 @@ impl AsyncJobStatus {
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
+            "queued" => Some(Self::Queued),
             "running" => Some(Self::Running),
             "cancelling" => Some(Self::Cancelling),
             "awaiting_approval" => Some(Self::AwaitingApproval),
@@ -62,7 +70,7 @@ impl AsyncJobStatus {
     pub fn is_terminal(self) -> bool {
         !matches!(
             self,
-            Self::Running | Self::Cancelling | Self::AwaitingApproval
+            Self::Queued | Self::Running | Self::Cancelling | Self::AwaitingApproval
         )
     }
 
@@ -142,6 +150,7 @@ mod tests {
     #[test]
     fn async_job_status_as_str_parse_roundtrip() {
         for s in [
+            AsyncJobStatus::Queued,
             AsyncJobStatus::Running,
             AsyncJobStatus::Cancelling,
             AsyncJobStatus::AwaitingApproval,
@@ -187,6 +196,7 @@ mod tests {
 
     #[test]
     fn is_terminal_marks_only_running_as_non_terminal() {
+        assert!(!AsyncJobStatus::Queued.is_terminal());
         assert!(!AsyncJobStatus::Running.is_terminal());
         assert!(!AsyncJobStatus::Cancelling.is_terminal());
         assert!(!AsyncJobStatus::AwaitingApproval.is_terminal());

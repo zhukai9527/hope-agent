@@ -854,6 +854,15 @@ pub async fn start_background_tasks() {
         crate::weather::start_background_refresh();
     }
 
+    // R7.1 background-job scheduler: promotes queued jobs (status `Queued`) into
+    // free slots, per-session round-robin, as running jobs finish. Tier-agnostic
+    // — the wait queue is process-local (pins live ctx), so each process
+    // schedules its OWN queue and never touches another process's jobs;
+    // `run_scheduler` is idempotent (at most one loop per process).
+    tokio::spawn(async move {
+        crate::async_jobs::run_scheduler().await;
+    });
+
     if primary {
         // Host-level sleep prevention (`prevent_sleep` setting). Primary-only so
         // a single process owns the OS assertion; reacts to config changes.
@@ -1164,6 +1173,11 @@ pub async fn start_minimal_background_tasks() {
     // Memory embedding provider deferred (per-process, tier-agnostic). See
     // start_background_tasks for rationale.
     spawn_embedding_init();
+
+    // R7.1 background-job scheduler (tier-agnostic: process-local queue, idempotent).
+    tokio::spawn(async move {
+        crate::async_jobs::run_scheduler().await;
+    });
 
     if primary {
         // One-shot ask_user table cleanup. Primary-only because Secondary

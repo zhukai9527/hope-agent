@@ -176,6 +176,12 @@ fn format_job_response(job: &crate::async_jobs::AsyncJob) -> String {
                     json!("This job is NOT executing yet — it is blocked waiting for a human to approve the tool call. Do not claim it is running or report progress on it. Do not repeatedly poll in this chat turn; it resolves once the user answers the approval (you will get a terminal task-notification)."),
                 );
             }
+            AsyncJobStatus::Queued => {
+                map.insert(
+                    "hint".to_string(),
+                    json!("This job is NOT executing yet — it is queued, waiting for a free background slot (the concurrency cap is full). It starts automatically when a slot frees, and you will get the auto-injected task-notification on completion. Do not claim it is running, and do not repeatedly poll in this chat turn."),
+                );
+            }
         }
     }
     payload.to_string()

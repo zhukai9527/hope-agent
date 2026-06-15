@@ -29,7 +29,9 @@ pub use db::{AsyncJobsDB, PurgeStats};
 pub use retention::{
     run_once as run_retention_once, spawn_background_loop as spawn_retention_loop,
 };
-pub use spawn::{dispatch_with_auto_background, spawn_explicit_job, synthetic_started_result};
+pub use spawn::{
+    dispatch_with_auto_background, run_scheduler, spawn_explicit_job, synthetic_started_result,
+};
 pub use types::{AsyncJob, AsyncJobStatus, JobOrigin};
 
 static ASYNC_JOBS_DB: OnceLock<Arc<AsyncJobsDB>> = OnceLock::new();
@@ -57,13 +59,53 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
         return Ok(Some(job));
     }
 
-    if !db.mark_cancelling(job_id, Some("Cancellation requested"))? {
+    // R7.1: a job still waiting in the in-memory scheduler queue has no runner
+    // that will ever settle it — pull it out and finalize `Cancelled` directly.
+    // The queue lock serializes this against the scheduler, so `Some` here means
+    // the scheduler did NOT take it and it can never be promoted.
+    if slots::remove_queued(job_id).is_some() {
+        let _ = cancel::cancel_job(job_id); // defensive token trip
+        cancel::remove_job(job_id);
+        const QUEUED_MSG: &str = "Cancelled while queued, before a slot freed";
+        let _ = db.update_terminal(
+            job_id,
+            AsyncJobStatus::Cancelled,
+            None,
+            None,
+            Some(QUEUED_MSG),
+            chrono::Utc::now().timestamp(),
+        )?;
+        let (is_error, is_interrupt) = AsyncJobStatus::Cancelled.terminal_hook_flags();
+        crate::hooks::fire_async_job_terminal(
+            job.session_id.as_deref(),
+            job.agent_id.as_deref(),
+            &job.tool_name,
+            job.tool_call_id.as_deref(),
+            job_id,
+            is_error,
+            is_interrupt,
+            QUEUED_MSG,
+        );
+        let _ = db.mark_injected(job_id);
+        wait::notify_completion(job_id);
+        if let Some(bus) = crate::get_event_bus() {
+            bus.emit(
+                "async_tool_job:completed",
+                serde_json::json!({
+                    "job_id": job_id,
+                    "tool": job.tool_name,
+                    "status": AsyncJobStatus::Cancelled.as_str(),
+                }),
+            );
+        }
         return db.load(job_id);
     }
-    // I4: persist the cross-process cancel flag so a runner owning this job in
-    // ANOTHER process (desktop + headless server share async_jobs.db) observes
-    // it on its next poll and aborts the work — the in-memory token signal
-    // below only reaches a runner in THIS process. Best-effort.
+
+    // I4: persist the cross-process cancel flag FIRST — it now also covers a row
+    // still in the spawn window (`queued` in the DB but not yet handed to the
+    // scheduler queue) so it is cancelled once it runs and polls the flag. The
+    // in-memory token signal below only reaches a runner in THIS process. A
+    // runner owning this job in ANOTHER process observes the flag on its poll.
     if let Err(e) = db.set_cancel_requested(job_id) {
         app_warn!(
             "async_jobs",
@@ -74,6 +116,13 @@ pub fn cancel_job(job_id: &str) -> anyhow::Result<Option<AsyncJob>> {
         );
     }
     let signalled = cancel::cancel_job(job_id);
+
+    if !db.mark_cancelling(job_id, Some("Cancellation requested"))? {
+        // Not running/cancelling (still `queued` in the spawn window, or it just
+        // settled). The cancel flag set above cancels it once it runs; nothing
+        // to force here.
+        return db.load(job_id);
+    }
     if !signalled {
         // No in-process runner owns this job id. Mark it terminal so callers
         // are not left with an un-cancellable row forever; any late runner
@@ -182,6 +231,21 @@ pub fn purge_jobs_for_session(session_id: &str) -> u64 {
     let Some(db) = get_async_jobs_db() else {
         return 0;
     };
+    // R7.1: drop any still-queued jobs for this session from the in-memory
+    // scheduler queue too — otherwise their `PreparedJob` (which pins the burned
+    // session's live ctx, incl. sensitive incognito args) would linger in RAM
+    // after the DB rows are deleted. Removing them also guarantees they are never
+    // promoted (their row is being deleted here anyway).
+    let drained = slots::remove_queued_for_session(session_id);
+    if drained > 0 {
+        app_info!(
+            "async_jobs",
+            "cleanup",
+            "dropped {} queued job(s) from scheduler queue for burned session {}",
+            drained,
+            session_id
+        );
+    }
     match db.purge_jobs_for_session(session_id) {
         Ok(stats) => {
             if stats.rows_deleted > 0 || stats.spool_files_deleted > 0 {

@@ -17,7 +17,8 @@ pub fn new_job_id() -> String {
     format!("job_{}", uuid::Uuid::new_v4().simple())
 }
 
-/// Persist a freshly spawned job row in `running` state. Returns the job id.
+/// Persist a freshly spawned job row in the given state — `running` for the
+/// immediate path, `queued` when the cap is full and it must wait for a slot.
 pub fn record_running_job(
     db: &AsyncJobsDB,
     job_id: &str,
@@ -25,6 +26,7 @@ pub fn record_running_job(
     tool_name: &str,
     args: &Value,
     origin: JobOrigin,
+    status: AsyncJobStatus,
 ) -> Result<()> {
     // E4 (INCOG-2): an incognito job must not persist its raw tool args (which
     // can carry sensitive commands / prompts) in plaintext on disk. Store a
@@ -42,7 +44,7 @@ pub fn record_running_job(
         tool_name: tool_name.to_string(),
         tool_call_id: ctx.tool_call_id.clone(),
         args_json,
-        status: AsyncJobStatus::Running,
+        status,
         result_preview: None,
         result_path: None,
         error: None,
@@ -148,62 +150,30 @@ pub fn spawn_explicit_job(
         }
     };
 
-    // I2 (MISC-5): reserve a background-job concurrency slot before committing
-    // any state. The guard is moved into the runner thread below and released
-    // when that thread exits, so the slot frees exactly when the job ends. At
-    // the cap, surface an actionable error result the model can act on (wait /
-    // poll job_status / run synchronously) instead of stacking another OS
-    // thread. Held across all early returns below — dropped (released) on each.
-    let slot = match super::slots::try_acquire_job_slot() {
-        Some(slot) => slot,
-        None => {
-            let max = crate::config::cached_config()
-                .async_tools
-                .max_concurrent_jobs;
-            return Err(anyhow::anyhow!(
-                "Background job limit reached ({max} concurrent). Too many tools are already \
-                 running in the background — wait for some to finish (check `job_status`) before \
-                 backgrounding more, or re-run this one synchronously (without `run_in_background`)."
-            ));
-        }
-    };
-
     let job_id = new_job_id();
     // review#1: register the cancel token BEFORE the row becomes queryable, so a
-    // concurrent cancel (e.g. cancel_jobs_for_session on session delete) that
-    // sees the fresh `running` row also finds a live token — instead of taking
-    // the "no active runner" branch and marking it Cancelled while this worker
-    // keeps running unsignalled. Roll the registration back if the insert fails.
+    // concurrent cancel (cancel_jobs_for_session on session delete, or a cancel
+    // of a still-QUEUED job) finds a live token. Roll back on any early failure.
     let cancel_token = super::cancel::register_job(&job_id);
-    if let Err(e) = record_running_job(&db, &job_id, &ctx, tool_name, &args, origin) {
-        super::cancel::remove_job(&job_id);
-        return Err(e);
-    }
 
-    let synthetic = synthetic_started_result(&job_id, tool_name, origin);
-
-    // Strip async-job controls from args AND set bypass on the ctx so the
-    // recursive `execute_tool_with_context` call inside the OS thread runtime
-    // goes straight to the sync dispatch path. Without bypass the
-    // `AlwaysBackground` policy would re-enter `spawn_explicit_job` forever.
+    // Prepare the ctx for the (possibly deferred) inner re-dispatch BEFORE the
+    // slot decision, so a queued job carries a ready-to-run ctx in the queue.
     let max_secs = effective_max_job_secs(&args);
-    let clean_args = strip_async_control_args(args);
     ctx.bypass_async_dispatch = true;
-    // Engine gate already ran (or was deliberately skipped for `exec`) at
-    // the outer dispatch; the recursive inner call must not re-prompt (the
-    // user has no surface to answer it from inside a background runtime).
+    // Engine gate already ran (or was deliberately skipped for `exec`) at the
+    // outer dispatch; the recursive inner call must not re-prompt (the user has
+    // no surface to answer it from inside a background runtime).
     // `external_pre_approved` silences the engine-level prompt **without**
     // bypassing `exec`'s command-level dangerous/edit audit — flipping
-    // `auto_approve_tools` here would let any shell command run silently
-    // whenever `run_in_background: true` is set. Visibility / plan-mode
-    // checks still re-run as belt-and-suspenders.
+    // `auto_approve_tools` here would let any shell command run silently whenever
+    // `run_in_background: true` is set. Visibility / plan-mode checks still
+    // re-run as belt-and-suspenders.
     ctx.external_pre_approved = true;
     ctx.suppress_global_tool_timeout = true;
     ctx.suppress_result_disk_persistence = true;
     ctx.cancellation_token = Some(cancel_token.clone());
-    // I3: let the re-dispatched tool record its spawned child pid into this
-    // job's row, so a crash/restart can terminate the orphaned process tree
-    // (the row already exists — recorded above). Cheap guarded UPDATE per spawn.
+    // I3: let the re-dispatched tool record its spawned child pid into this job's
+    // row so a crash/restart can terminate the orphaned process tree.
     {
         let pid_db = db.clone();
         let pid_job_id = job_id.clone();
@@ -213,17 +183,90 @@ pub fn spawn_explicit_job(
             },
         )));
     }
-    let preview_bytes = preview_byte_budget();
-    let tool_name_owned = tool_name.to_string();
-    let job_id_owned = job_id.clone();
 
-    // Run on a dedicated OS thread so we don't constrain the dispatch future
-    // to be `Send`. This mirrors `subagent::injection::inject_and_run_parent`.
+    let synthetic = synthetic_started_result(&job_id, tool_name, origin);
+    let session_key = ctx.session_id.clone().unwrap_or_default();
+
+    // R7.1: try to reserve a concurrency slot. If the cap is full the job QUEUES
+    // (status `Queued`) and the Primary scheduler promotes it per-session
+    // round-robin when a slot frees — instead of hard-rejecting.
+    let reservation = super::slots::try_reserve(&session_key);
+    let status = if reservation.is_some() {
+        AsyncJobStatus::Running
+    } else {
+        AsyncJobStatus::Queued
+    };
+    if let Err(e) = record_running_job(&db, &job_id, &ctx, tool_name, &args, origin, status) {
+        super::cancel::remove_job(&job_id);
+        return Err(e);
+    }
+
+    let clean_args = strip_async_control_args(args);
+    let prepared = super::slots::PreparedJob {
+        job_id: job_id.clone(),
+        tool_name: tool_name.to_string(),
+        args: clean_args,
+        ctx,
+        max_secs,
+        preview_bytes: preview_byte_budget(),
+        cancel_token,
+    };
+
+    match reservation {
+        Some(reservation) => {
+            start_runner(db, prepared, reservation);
+            Ok(synthetic)
+        }
+        None => {
+            if super::slots::enqueue(prepared) {
+                // Wake the scheduler in case a slot is already free (nothing
+                // finished to notify it otherwise).
+                super::slots::wake_scheduler();
+                Ok(synthetic)
+            } else {
+                // The wait queue itself is full — roll back the row + token and
+                // hard-reject so the model can wait or run synchronously.
+                super::cancel::remove_job(&job_id);
+                let _ = db.delete(&job_id);
+                Err(anyhow::anyhow!(
+                    "Background job queue is full — too many tools are already running or waiting. \
+                     Wait for some to finish (check `job_status`) before backgrounding more, or \
+                     re-run this one synchronously (without `run_in_background`)."
+                ))
+            }
+        }
+    }
+}
+
+/// Spawn the dedicated OS thread + current-thread runtime that runs a
+/// backgrounded job to completion. Used by both the immediate path
+/// ([`spawn_explicit_job`]) and the scheduler promote path ([`run_scheduler`]).
+/// The [`super::slots::SlotReservation`] is held for the thread's whole
+/// lifetime, so the slot releases (and the scheduler wakes) exactly when the job
+/// ends — on every exit path including the runtime-build failure below.
+fn start_runner(
+    db: Arc<AsyncJobsDB>,
+    prepared: super::slots::PreparedJob,
+    reservation: super::slots::SlotReservation,
+) {
+    let super::slots::PreparedJob {
+        job_id: job_id_owned,
+        tool_name: tool_name_owned,
+        args: clean_args,
+        ctx,
+        max_secs,
+        preview_bytes,
+        cancel_token,
+    } = prepared;
+
+    // Run on a dedicated OS thread so we don't constrain the dispatch future to
+    // be `Send`. This mirrors `subagent::injection::inject_and_run_parent`.
     std::thread::spawn(move || {
-        // Hold the concurrency slot for the job's whole lifetime; it releases
-        // when this thread exits via any path (success, failure, or the
-        // runtime-build-failure early return below).
-        let _slot = slot;
+        // Hold the slot reservation for the job's whole lifetime; on drop it
+        // decrements the running count and wakes the scheduler, so the freed
+        // slot immediately promotes the next queued job. Released on every exit
+        // path (success, failure, or the runtime-build-failure early return).
+        let _reservation = reservation;
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -251,10 +294,7 @@ pub fn spawn_explicit_job(
                 super::cancel::remove_job(&job_id_owned);
                 // I6: don't silently lose the job. `finalize_job` never runs on
                 // this build-failure path, so fire the terminal hook (H4 parity)
-                // and inject the failure back into the parent session — the model
-                // already saw a synthetic "started" and would otherwise wait
-                // forever. `dispatch_injection` spawns its own thread + runtime,
-                // so it works even though THIS runtime failed to build.
+                // and inject the failure back into the parent session.
                 crate::hooks::fire_async_job_terminal(
                     ctx.session_id.as_deref(),
                     ctx.agent_id.as_deref(),
@@ -297,8 +337,58 @@ pub fn spawn_explicit_job(
             .await;
         });
     });
+}
 
-    Ok(synthetic)
+/// Background-job scheduler task (R7.1): parks until a slot frees / a job is
+/// enqueued (with a periodic fallback tick), then promotes queued jobs into free
+/// slots per-session round-robin until no slot is free or the queue is empty.
+///
+/// **Tier-agnostic** — the wait queue is process-local (it pins each job's live
+/// ctx, which can't be persisted), so EVERY process that can background tools
+/// runs its own scheduler over its OWN queue and never touches another process's
+/// queued jobs (unlike `replay_pending_jobs`, which sweeps shared DB rows and is
+/// therefore Primary-only). Idempotent: at most one loop per process even if
+/// spawned from multiple init paths.
+pub async fn run_scheduler() {
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return; // a scheduler loop is already running in this process
+    }
+    loop {
+        // Wake on slot-free / enqueue, with a periodic fallback so queued jobs
+        // still promote after an event that didn't notify us — e.g. the user
+        // RAISES `max_concurrent_jobs` while the queue is full (no completion to
+        // wake us), or any theoretically-missed notify.
+        tokio::select! {
+            _ = super::slots::scheduler_notified() => {}
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+        }
+        let Some(db) = super::get_async_jobs_db() else {
+            continue;
+        };
+        loop {
+            let Some((prepared, reservation)) = super::slots::try_take_next() else {
+                break;
+            };
+            // Promote the row `queued` -> `running`. If it is no longer queued (a
+            // concurrent cancel already settled it terminal + removed it from the
+            // queue), drop the reservation and skip — the cancel path handled it.
+            match db.mark_running(&prepared.job_id) {
+                Ok(true) => start_runner(db.clone(), prepared, reservation),
+                Ok(false) => drop(reservation),
+                Err(e) => {
+                    app_error!(
+                        "async_jobs",
+                        "scheduler",
+                        "mark_running failed for {}: {}",
+                        prepared.job_id,
+                        e
+                    );
+                    drop(reservation);
+                }
+            }
+        }
+    }
 }
 
 /// Run an async-capable tool synchronously, but transfer it to a background
@@ -505,7 +595,7 @@ pub async fn dispatch_with_auto_background(
                         // worker keeps running unsignalled.
                         super::cancel::register_job_token(&job_id, cancel_token.clone());
                         if let Err(e) =
-                            record_running_job(db, &job_id, ctx, name, args, JobOrigin::AutoBackgrounded)
+                            record_running_job(db, &job_id, ctx, name, args, JobOrigin::AutoBackgrounded, AsyncJobStatus::Running)
                         {
                             *p = Phase::Consumed;
                             drop(p);
