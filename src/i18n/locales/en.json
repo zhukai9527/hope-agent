@@ -2531,7 +2531,7 @@
     "asyncToolsMaxJob": "Max job duration",
     "asyncToolsMaxJobDesc": "Hard limit on how long a background job may run before being killed. 0 = no async-job limit; individual tools may still enforce their own timeouts.",
     "asyncToolsMaxConcurrent": "Max concurrent background jobs",
-    "asyncToolsMaxConcurrentDesc": "Maximum number of run_in_background tool jobs allowed to run at once; each holds a dedicated OS thread. At the cap, new background requests are refused (the model is asked to wait or run synchronously). 0 = unlimited.",
+    "asyncToolsMaxConcurrentDesc": "Maximum number of run_in_background tool jobs allowed to run at once; each holds a dedicated OS thread. 0 = unlimited.",
     "asyncToolsOrphanGrace": "Orphan spool grace period",
     "asyncToolsOrphanGraceDesc": "Spool files not referenced by any DB row are cleaned up after this many hours. Grace window prevents races with in-flight writes.",
     "asyncToolsRetention": "Terminal job retention",
