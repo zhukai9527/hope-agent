@@ -725,6 +725,34 @@ mod tests {
     }
 
     #[test]
+    fn subagent_projection_cancel_never_stamps_error() {
+        // R6 review fix: the cancel path marks a projection `cancelling` with a
+        // None error (status-only), and the terminal sync to Cancelled must
+        // leave `error` None — a projection must never hold run content.
+        let dir = tempfile::tempdir().unwrap();
+        let db = JobsDB::open(&dir.path().join("background_jobs.db")).unwrap();
+        db.insert(&subagent_projection("proj_c", "run_c")).unwrap();
+        // Mirrors cancel_job's kind=Subagent branch: mark_cancelling(_, None).
+        assert!(db.mark_cancelling("proj_c", None).unwrap());
+        let row = db.load("proj_c").unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Cancelling);
+        assert!(
+            row.error.is_none(),
+            "cancelling a subagent projection must not write the error column"
+        );
+        // Run settles Killed → sync maps to Cancelled; error stays None.
+        assert!(db
+            .update_subagent_projection_status("run_c", JobStatus::Cancelled, Some(9))
+            .unwrap());
+        let row = db.load("proj_c").unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Cancelled);
+        assert!(
+            row.error.is_none(),
+            "terminal projection still holds no error"
+        );
+    }
+
+    #[test]
     fn subagent_projection_sync_is_scoped_to_subagent_kind() {
         let dir = tempfile::tempdir().unwrap();
         let db = JobsDB::open(&dir.path().join("background_jobs.db")).unwrap();

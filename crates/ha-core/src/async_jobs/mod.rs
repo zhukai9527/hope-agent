@@ -76,13 +76,18 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
     // handling stamps it Killed and syncs the projection → Cancelled via
     // `update_subagent_status`. We do NOT run the tool-job cancel dance
     // (terminal hooks / injection) here — the subagent fires its own
-    // SubagentStop hook + `inject_and_run_parent`. We optimistically reflect
-    // `cancelling` so the caller sees progress; the terminal lands via sync.
+    // SubagentStop hook + `inject_and_run_parent`.
     if job.kind == JobKind::Subagent {
+        // Optimistically reflect `cancelling` so the caller sees progress.
+        // `None`, not a message: a projection is status/lifecycle-only and must
+        // never hold run content in `error` (that lives in subagent_runs). Do
+        // this BEFORE request_cancel_run so the projection still passes through
+        // `cancelling` even when the no-flag fallback stamps the run Killed
+        // synchronously (which would otherwise sync us straight to Cancelled).
+        let _ = db.mark_cancelling(job_id, None);
         if let Some(run_id) = &job.subagent_run_id {
             crate::subagent::request_cancel_run(run_id);
         }
-        let _ = db.mark_cancelling(job_id, Some("Cancellation requested"));
         return db.load(job_id);
     }
 
