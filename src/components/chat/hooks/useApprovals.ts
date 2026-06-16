@@ -84,6 +84,7 @@ export function useApprovals(currentSessionId: string | null): UseApprovalsRetur
           request_id?: string
           source?: string
         }>(raw)
+        if (!payload) return
         const requestId = payload.requestId ?? payload.request_id
         if (!requestId) return
         const wasOurOwn = locallyResolvedRef.current.delete(requestId)
