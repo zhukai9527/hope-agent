@@ -23,6 +23,7 @@
 pub(crate) mod cancel;
 pub(crate) mod db;
 pub(crate) mod error;
+pub(crate) mod events;
 pub(crate) mod injection;
 pub(crate) mod manager;
 pub(crate) mod output_tail;
@@ -102,14 +103,28 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
     // usual. The group carries no run content, so a lifecycle message on its
     // `error` column is fine (unlike a subagent projection).
     if job.kind == JobKind::Group {
-        let _ = db.update_terminal(
-            job_id,
-            JobStatus::Cancelled,
-            None,
-            None,
-            Some("Cancelled by user"),
-            chrono::Utc::now().timestamp(),
-        );
+        // Only emit terminal if THIS call actually transitioned the group — if
+        // the join coordinator already completed it (CAS won the race), the
+        // update no-ops and we must not emit a spurious second terminal event.
+        let cancelled_now = db
+            .update_terminal(
+                job_id,
+                JobStatus::Cancelled,
+                None,
+                None,
+                Some("Cancelled by user"),
+                chrono::Utc::now().timestamp(),
+            )
+            .unwrap_or(false);
+        if cancelled_now {
+            events::emit_completed(
+                job_id,
+                JobKind::Group,
+                &job.tool_name,
+                JobStatus::Cancelled.as_str(),
+                job.session_id.as_deref(),
+            );
+        }
         if let Ok(children) = db.group_children(job_id) {
             for child in &children {
                 if let Some(run_id) = &child.subagent_run_id {
@@ -152,16 +167,13 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
         );
         let _ = db.mark_injected(job_id);
         wait::notify_completion(job_id);
-        if let Some(bus) = crate::get_event_bus() {
-            bus.emit(
-                "async_tool_job:completed",
-                serde_json::json!({
-                    "job_id": job_id,
-                    "tool": job.tool_name,
-                    "status": JobStatus::Cancelled.as_str(),
-                }),
-            );
-        }
+        events::emit_completed(
+            job_id,
+            job.kind,
+            &job.tool_name,
+            JobStatus::Cancelled.as_str(),
+            job.session_id.as_deref(),
+        );
         return db.load(job_id);
     }
 
@@ -220,28 +232,22 @@ pub(crate) fn cancel_job(job_id: &str) -> anyhow::Result<Option<BackgroundJob>> 
         );
         let _ = db.mark_injected(job_id);
         wait::notify_completion(job_id);
-        if let Some(bus) = crate::get_event_bus() {
-            bus.emit(
-                "async_tool_job:completed",
-                serde_json::json!({
-                    "job_id": job_id,
-                    "tool": job.tool_name,
-                    "status": JobStatus::Cancelled.as_str(),
-                }),
-            );
-        }
+        events::emit_completed(
+            job_id,
+            job.kind,
+            &job.tool_name,
+            JobStatus::Cancelled.as_str(),
+            job.session_id.as_deref(),
+        );
     } else {
         wait::notify_completion(job_id);
-        if let Some(bus) = crate::get_event_bus() {
-            bus.emit(
-                "async_tool_job:updated",
-                serde_json::json!({
-                    "job_id": job_id,
-                    "tool": job.tool_name,
-                    "status": JobStatus::Cancelling.as_str(),
-                }),
-            );
-        }
+        events::emit_updated(
+            job_id,
+            job.kind,
+            &job.tool_name,
+            JobStatus::Cancelling.as_str(),
+            job.session_id.as_deref(),
+        );
     }
     db.load(job_id)
 }

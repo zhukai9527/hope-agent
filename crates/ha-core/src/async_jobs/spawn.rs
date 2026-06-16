@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use super::db::JobsDB;
 use super::error::JobError;
 use super::injection;
-use super::types::{BackgroundJob, JobOrigin, JobStatus};
+use super::types::{BackgroundJob, JobKind, JobOrigin, JobStatus};
 use crate::tools::{ToolExecContext, ASYNC_JOB_TIMEOUT_ARG};
 
 const DEFAULT_PREVIEW_BYTES: usize = 4096;
@@ -217,6 +217,14 @@ pub(crate) fn spawn_explicit_job(
         super::output_tail::remove(&job_id);
         return Err(e);
     }
+    // R3: announce the new job (running or queued) on the unified `job:*` bus.
+    super::events::emit_created(
+        &job_id,
+        super::types::JobKind::Tool,
+        tool_name,
+        status.as_str(),
+        ctx.session_id.as_deref(),
+    );
 
     let clean_args = strip_async_control_args(args);
     let prepared = super::slots::PreparedJob {
@@ -308,7 +316,12 @@ fn start_runner(
                     now_secs(),
                 );
                 super::wait::notify_completion(&job_id_owned);
-                emit_completion_event(&job_id_owned, &tool_name_owned, "failed");
+                emit_completion_event(
+                    &job_id_owned,
+                    &tool_name_owned,
+                    "failed",
+                    ctx.session_id.as_deref(),
+                );
                 super::cancel::remove_job(&job_id_owned);
                 // R3: this build-failure path also bypasses finalize_job — drop
                 // the tail ring (no-op if none).
@@ -449,13 +462,15 @@ pub(crate) async fn dispatch_with_auto_background(
     let mut ctx_w = ctx.clone();
     ctx_w.cancellation_token = Some(cancel_w.clone());
     ctx_w.suppress_result_disk_persistence = true;
-    // R3 note: auto-backgrounded exec deliberately does NOT register an
-    // output_tail ring here. Unlike the explicit `run_in_background` path
-    // (spawn_explicit_job), this runs the tool from the start without yet
-    // knowing it will detach, and has a synchronous-completion outcome that
-    // bypasses finalize_job — wiring the ring would need removal on that path
-    // too. Auto-background is a separate concern (PRD §5.5, pending R1); for
-    // now `output_tail` is an explicit-backgrounding feature only.
+    // R3 ①: auto-backgrounded `exec` tees its running stdout/stderr into a tail
+    // ring too (parity with explicit `run_in_background`), so `job_status` can
+    // show a long auto-detached command's latest output. The ring is registered
+    // INSIDE the worker (below), right before the tool streams — not here —
+    // because this path runs the tool from the start without yet knowing it will
+    // detach. Cleanup is uniform: the worker removes the ring on every
+    // non-detached terminal outcome (`next.is_none()` — sync completion consumed
+    // inline, or the awaiter already bailed), and `finalize_job` removes it on
+    // the detached path. So no exit can leak the ring.
     let preview_bytes = preview_byte_budget();
     let max_secs = effective_max_job_secs(args);
 
@@ -466,6 +481,8 @@ pub(crate) async fn dispatch_with_auto_background(
         {
             Ok(rt) => rt,
             Err(e) => {
+                // Ring not registered yet (we register after the runtime is up),
+                // so nothing to clean here.
                 let mut p = phase_w.lock().unwrap_or_else(|p| p.into_inner());
                 *p = Phase::ResultReady(Err(JobError::Failed {
                     message: format!("runtime build failed: {}", e),
@@ -483,6 +500,12 @@ pub(crate) async fn dispatch_with_auto_background(
             let poll_handle = super::get_async_jobs_db().map(|db| {
                 spawn_cross_process_cancel_watcher(db.clone(), job_id_w.clone(), cancel_w.clone())
             });
+            // R3 ①: register the tail ring now that the runtime is up, before the
+            // tool streams (exec only; incognito leaves no tail, like the spool).
+            if name_w == crate::tools::TOOL_EXEC && !ctx_w.incognito {
+                super::output_tail::register(&job_id_w);
+                ctx_w.output_tail_job_id = Some(job_id_w.clone());
+            }
             let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
                 &name_w, &args_w, &ctx_w,
             ));
@@ -535,11 +558,26 @@ pub(crate) async fn dispatch_with_auto_background(
             };
             drop(p);
 
+            // R3 ①: `finalize_job` removes the tail ring on the detached path
+            // (`next.is_some()`); every other terminal outcome — sync completion
+            // consumed inline (`Pending → ResultReady`) or the awaiter already
+            // bailed (`Consumed`/other) — bypasses `finalize_job`, so drop the
+            // ring here. No-op when none was registered (non-exec / incognito).
+            if next.is_none() {
+                super::output_tail::remove(&job_id_w);
+            }
+
             // If we transitioned to DetachedDone, finalize the job now.
             if let Some(r) = next {
                 let db = match super::get_async_jobs_db() {
                     Some(db) => db.clone(),
-                    None => return,
+                    None => {
+                        // finalize_job (which removes the ring) is unreachable
+                        // here — drop the ring so this early return can't leak it
+                        // (symmetry with the explicit path's hoisted removals).
+                        super::output_tail::remove(&job_id_w);
+                        return;
+                    }
                 };
                 let session_id = ctx_w.session_id.clone();
                 let agent_id = ctx_w.agent_id.clone();
@@ -641,6 +679,14 @@ pub(crate) async fn dispatch_with_auto_background(
                         }
                         *p = Phase::DetachedRunning;
                         drop(p);
+                        // R3: it is now a real background job — announce it.
+                        super::events::emit_created(
+                            &job_id,
+                            JobKind::Tool,
+                            name,
+                            JobStatus::Running.as_str(),
+                            ctx.session_id.as_deref(),
+                        );
                         app_info!(
                             "async_jobs",
                             "auto_bg",
@@ -844,7 +890,7 @@ async fn finalize_job(
     // Wake per-job `job_status(block=true)` waiters; the EventBus emit below
     // is retained for frontend subscribers only.
     super::wait::notify_completion(job_id);
-    emit_completion_event(job_id, tool_name, status.as_str());
+    emit_completion_event(job_id, tool_name, status.as_str(), session_id);
 
     // H4: fire the terminal PostToolUse / PostToolUseFailure hook so a
     // backgrounded job is visible to hooks (HOOKS-1) — including cancellation
@@ -960,17 +1006,16 @@ fn truncate_preview(output: &str, max_bytes: usize) -> String {
     format!("{head}\n\n[...{omitted} bytes omitted...]\n\n{tail}")
 }
 
-fn emit_completion_event(job_id: &str, tool_name: &str, status: &str) {
-    if let Some(bus) = crate::get_event_bus() {
-        bus.emit(
-            "async_tool_job:completed",
-            json!({
-                "job_id": job_id,
-                "tool": tool_name,
-                "status": status,
-            }),
-        );
-    }
+fn emit_completion_event(job_id: &str, tool_name: &str, status: &str, session_id: Option<&str>) {
+    // R3: unified `job:*` namespace. finalize_job is the Tool executor's terminal
+    // path, so `kind = Tool`.
+    super::events::emit_completed(
+        job_id,
+        super::types::JobKind::Tool,
+        tool_name,
+        status,
+        session_id,
+    );
 }
 
 fn preview_byte_budget() -> usize {

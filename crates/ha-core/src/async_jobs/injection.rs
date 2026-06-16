@@ -246,15 +246,7 @@ fn mark_injected_with_retry(job_id: &str) {
         BACKOFFS_MS.len(),
         &err
     );
-    if let Some(bus) = crate::globals::get_event_bus() {
-        bus.emit(
-            "async_tool_job:mark_injected_failed",
-            serde_json::json!({
-                "job_id": job_id,
-                "error": err,
-            }),
-        );
-    }
+    super::events::emit_mark_injected_failed(job_id, &err);
 }
 
 /// Format the user-visible message that gets injected back into the parent

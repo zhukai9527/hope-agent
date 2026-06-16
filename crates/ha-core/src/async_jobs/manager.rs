@@ -276,7 +276,17 @@ impl JobManager {
             cancel_requested: false,
         };
         match db.insert(&job) {
-            Ok(()) => Some(group_id),
+            Ok(()) => {
+                // R3: announce the new batch on the unified bus.
+                super::events::emit_created(
+                    &group_id,
+                    JobKind::Group,
+                    &job.tool_name,
+                    JobStatus::Running.as_str(),
+                    Some(parent_session_id),
+                );
+                Some(group_id)
+            }
             Err(e) => {
                 crate::app_warn!(
                     "async_jobs",
@@ -364,7 +374,21 @@ impl JobManager {
                 return;
             }
         };
-        if !children.iter().all(|c| c.status.is_terminal()) {
+        // R3: emit N-of-M progress on the unified bus on every settle (reusing
+        // the children load), so the R4 panel can render a live batch progress
+        // bar. Cheap and idempotent — the panel just overwrites the last value.
+        let total = children.len();
+        let terminal = children.iter().filter(|c| c.status.is_terminal()).count();
+        if total > 0 {
+            super::events::emit_progress(
+                group_id,
+                JobKind::Group,
+                group.session_id.as_deref(),
+                terminal,
+                total,
+            );
+        }
+        if terminal != total {
             return;
         }
         // Claim before any delivery work — exactly one caller proceeds.
@@ -384,6 +408,14 @@ impl JobManager {
         }
         // Wake any `job_status(action='wait')` parked on the group id.
         super::wait::notify_completion(group_id);
+        // R3: the batch finished — announce terminal on the unified bus.
+        super::events::emit_completed(
+            group_id,
+            JobKind::Group,
+            &group.tool_name,
+            JobStatus::Completed.as_str(),
+            group.session_id.as_deref(),
+        );
 
         // Empty group (every child failed to project) → nothing to inject.
         if children.is_empty() {
