@@ -263,6 +263,20 @@ pub struct AsyncToolsConfig {
     /// (only the global cap applies).
     #[serde(default = "default_async_max_concurrent_jobs_per_session")]
     pub max_concurrent_jobs_per_session: usize,
+    /// R7.4 retry: auto-retry a *backgrounded* job that fails or times out, with
+    /// exponential backoff. **Safe by default** — only side-effect-free, network-
+    /// transient tools (`web_search` / `web_fetch`) are ever retried; `exec`
+    /// (could repeat a half-applied side effect) and `image_generate` (re-bills,
+    /// non-deterministic) are NEVER retried regardless of this switch (eligibility
+    /// is a code-level safety decision, not a knob). User cancels are never
+    /// retried. Master on/off. Default: true.
+    #[serde(default = "crate::default_true")]
+    pub retry_enabled: bool,
+    /// R7.4: total attempts for a retry-eligible backgrounded job (1 = no retry;
+    /// the initial try counts). Backoff between attempts is exponential from a
+    /// fixed 500ms base. Default: 3.
+    #[serde(default = "default_async_max_retry_attempts")]
+    pub max_retry_attempts: u32,
     /// Completion-injection merge window (R4), in seconds. When multiple
     /// background jobs in the SAME session finish within this window, their
     /// completion notifications are merged into ONE injected turn (one
@@ -295,6 +309,12 @@ fn default_async_job_status_max_wait_secs() -> u64 {
     7200
 }
 fn default_async_completion_merge_window_secs() -> u64 {
+    3
+}
+fn default_async_max_retry_attempts() -> u32 {
+    // 3 total attempts (1 initial + 2 retries) for retry-eligible tools. A
+    // user-set 1 disables retry for everything; `retry_enabled = false` is the
+    // master kill-switch.
     3
 }
 fn default_async_max_concurrent_jobs_per_session() -> usize {
@@ -346,6 +366,8 @@ impl Default for AsyncToolsConfig {
             job_status_max_wait_secs: default_async_job_status_max_wait_secs(),
             max_concurrent_jobs: default_async_max_concurrent_jobs(),
             max_concurrent_jobs_per_session: default_async_max_concurrent_jobs_per_session(),
+            retry_enabled: true,
+            max_retry_attempts: default_async_max_retry_attempts(),
             completion_merge_window_secs: default_async_completion_merge_window_secs(),
         }
     }
@@ -1165,6 +1187,19 @@ mod async_tools_defaults_tests {
             AsyncToolsConfig::default().max_concurrent_jobs_per_session,
             default_async_max_concurrent_jobs_per_session()
         );
+        assert!(AsyncToolsConfig::default().retry_enabled);
+        assert_eq!(
+            AsyncToolsConfig::default().max_retry_attempts,
+            default_async_max_retry_attempts()
+        );
+        assert_eq!(default_async_max_retry_attempts(), 3);
+    }
+
+    #[test]
+    fn retry_fields_use_defaults_when_absent() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"providers":[]}"#).unwrap();
+        assert!(cfg.async_tools.retry_enabled);
+        assert_eq!(cfg.async_tools.max_retry_attempts, 3);
     }
 
     #[test]

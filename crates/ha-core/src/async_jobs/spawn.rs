@@ -524,33 +524,12 @@ pub(crate) async fn dispatch_with_auto_background(
                 super::output_tail::register(&job_id_w);
                 ctx_w.output_tail_job_id = Some(job_id_w.clone());
             }
-            let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
-                &name_w, &args_w, &ctx_w,
-            ));
-            let result: Result<String, JobError> = if max_secs == 0 {
-                tokio::select! {
-                    inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
-                    _ = cancel_w.cancelled() => {
-                        let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(JobError::Cancelled)
-                    },
-                }
-            } else {
-                let timer = tokio::time::sleep(std::time::Duration::from_secs(max_secs));
-                tokio::pin!(timer);
-                tokio::select! {
-                    inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
-                    _ = &mut timer => {
-                        cancel_w.cancel();
-                        let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(JobError::TimedOut { max_secs })
-                    },
-                    _ = cancel_w.cancelled() => {
-                        let _ = tokio::time::timeout(CANCEL_CLEANUP_GRACE, &mut dispatch).await;
-                        Err(JobError::Cancelled)
-                    },
-                }
-            };
+            // R7.4: same retry path as the explicit runner (Failed-only, eligible
+            // tools, cancellable backoff). A retrying auto-bg tool just takes
+            // longer, which may trip the main thread's detach budget — correct
+            // (it becomes a real background job and keeps retrying there).
+            let result: Result<String, JobError> =
+                run_tool_with_retry(&name_w, &args_w, &ctx_w, max_secs, &cancel_w).await;
 
             // Job settled — stop the cross-process cancel watcher.
             if let Some(h) = poll_handle {
@@ -795,30 +774,23 @@ fn spawn_cross_process_cancel_watcher(
     })
 }
 
-async fn run_job_to_completion(
-    db: Arc<JobsDB>,
-    job_id: String,
-    tool_name: String,
-    args: Value,
-    ctx: ToolExecContext,
+/// Run a backgrounded tool's dispatch exactly once, racing it against the job's
+/// cancel token (and the runtime budget when `max_secs > 0`). Shared by the
+/// explicit-background runner ([`run_job_to_completion`]) and the auto-background
+/// worker so both honor identical cancel/timeout semantics. A timeout cancels
+/// the job token (terminal — the job settles `TimedOut`); a normal dispatch
+/// error returns `Failed` WITHOUT touching the token, so a retry can re-run.
+async fn run_tool_once(
+    tool_name: &str,
+    args: &Value,
+    ctx: &ToolExecContext,
     max_secs: u64,
-    preview_bytes: usize,
-    cancel_token: CancellationToken,
-) {
-    let session_id = ctx.session_id.clone();
-    let agent_id = ctx.agent_id.clone();
-    let tool_call_id = ctx.tool_call_id.clone();
-    let incognito = ctx.incognito;
-
-    // I4: cross-process cancel watcher (shared with the auto-background worker).
-    // Aborted once the job settles below.
-    let poll_handle =
-        spawn_cross_process_cancel_watcher(db.clone(), job_id.clone(), cancel_token.clone());
-
+    cancel_token: &CancellationToken,
+) -> Result<String, JobError> {
     let mut dispatch = Box::pin(crate::tools::execute_tool_with_context(
-        &tool_name, &args, &ctx,
+        tool_name, args, ctx,
     ));
-    let result: Result<String, JobError> = if max_secs == 0 {
+    if max_secs == 0 {
         tokio::select! {
             inner = &mut dispatch => inner.map_err(JobError::from_dispatch_error),
             _ = cancel_token.cancelled() => {
@@ -841,7 +813,73 @@ async fn run_job_to_completion(
                 Err(JobError::Cancelled)
             },
         }
-    };
+    }
+}
+
+/// Run a backgrounded tool with R7.4 retry: re-attempt a retry-eligible tool on
+/// a transient `Failed` with exponential backoff (see [`super::retry`]). The
+/// backoff is cancellable — a job-level cancel (incl. the cross-process watcher
+/// tripping the token) during the wait stops retrying and settles `Cancelled`.
+/// Non-eligible tools and non-`Failed` terminals settle on the first attempt.
+async fn run_tool_with_retry(
+    tool_name: &str,
+    args: &Value,
+    ctx: &ToolExecContext,
+    max_secs: u64,
+    cancel_token: &CancellationToken,
+) -> Result<String, JobError> {
+    let retry_cfg = super::retry::RetryConfig::current();
+    let mut attempt: u32 = 1;
+    loop {
+        let err = match run_tool_once(tool_name, args, ctx, max_secs, cancel_token).await {
+            Ok(out) => return Ok(out),
+            Err(e) => e,
+        };
+        match super::retry::decide(tool_name, attempt, &err, &retry_cfg) {
+            super::retry::RetryDecision::Stop => return Err(err),
+            super::retry::RetryDecision::Retry { backoff_ms } => {
+                app_warn!(
+                    "async_jobs",
+                    "retry",
+                    "Background tool '{}' attempt {} failed transiently; retrying in {}ms",
+                    tool_name,
+                    attempt,
+                    backoff_ms
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)) => {}
+                    _ = cancel_token.cancelled() => return Err(JobError::Cancelled),
+                }
+                attempt += 1;
+            }
+        }
+    }
+}
+
+async fn run_job_to_completion(
+    db: Arc<JobsDB>,
+    job_id: String,
+    tool_name: String,
+    args: Value,
+    ctx: ToolExecContext,
+    max_secs: u64,
+    preview_bytes: usize,
+    cancel_token: CancellationToken,
+) {
+    let session_id = ctx.session_id.clone();
+    let agent_id = ctx.agent_id.clone();
+    let tool_call_id = ctx.tool_call_id.clone();
+    let incognito = ctx.incognito;
+
+    // I4: cross-process cancel watcher (shared with the auto-background worker).
+    // Aborted once the job settles below.
+    let poll_handle =
+        spawn_cross_process_cancel_watcher(db.clone(), job_id.clone(), cancel_token.clone());
+
+    // R7.4: dispatch with retry (re-attempts a retry-eligible tool on a transient
+    // `Failed`; a single attempt for everything else). The cross-process cancel
+    // watcher above stays live across attempts + backoffs.
+    let result = run_tool_with_retry(&tool_name, &args, &ctx, max_secs, &cancel_token).await;
 
     // The job has settled — stop the cross-process cancel watcher (no-op if it
     // already exited because the token was cancelled).

@@ -653,3 +653,69 @@ mod hook_label_tests {
         assert!(!is_hook_spawn(Some("subagent-tool")));
     }
 }
+
+/// R7.0/R7.4 acceptance: structural limits (`depth` / `batch` / `turn`) must
+/// REJECT when hit — never queue. Per R7.0's three-way taxonomy, a structural
+/// breach can't become legal by waiting (unlike a resource/cost limit, which
+/// the R7.1 background-job queue defers), so it fails fast with an error and is
+/// NOT routed through any [`crate::async_jobs::slots`] queue. This guards
+/// against R7.1's "reject → queue" change ever leaking into the structural path.
+#[cfg(test)]
+mod structural_limit_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn params_at_depth(depth: u32) -> SpawnParams {
+        SpawnParams {
+            task: "t".into(),
+            // Nonexistent agent → `max_depth_for_agent` falls back to the
+            // hardcoded DEFAULT_MAX_DEPTH (3), independent of on-disk config.
+            agent_id: "__nonexistent_for_test__".into(),
+            parent_session_id: "s".into(),
+            parent_agent_id: "__nonexistent_for_test__".into(),
+            depth,
+            timeout_secs: None,
+            model_override: None,
+            label: None,
+            attachments: Vec::new(),
+            plan_agent_mode: None,
+            plan_mode_allow_paths: Vec::new(),
+            lock_plan_agent_mode: false,
+            skip_parent_injection: false,
+            extra_system_context: None,
+            skill_allowed_tools: Vec::new(),
+            reasoning_effort: None,
+            skill_name: None,
+            origin_source: None,
+            origin_channel_kb_context: None,
+            group_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn subagent_depth_overflow_rejects_not_queues() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(SessionDB::open(&tmp.path().join("s.db")).unwrap());
+        let registry = Arc::new(SubagentCancelRegistry::new());
+        // Default cap is 3 (DEFAULT_MAX_DEPTH); depth 99 is structurally illegal.
+        let err = spawn_subagent(params_at_depth(99), db, registry)
+            .await
+            .expect_err("a depth past the structural cap must reject, not queue");
+        assert!(
+            err.to_string().contains("depth limit"),
+            "expected a depth-limit rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn batch_size_cap_is_a_fixed_structural_limit() {
+        // The `batch_spawn` fan-out cap is a fixed structural limit (default 10),
+        // enforced by a hard reject in `action_batch_spawn` (`tasks.len() >
+        // max_batch → Err`), NOT a resizable resource quota. Pin the default so a
+        // future edit can't silently turn it into a tunable queue depth.
+        assert_eq!(
+            super::super::max_batch_size_for_agent("__nonexistent_for_test__"),
+            10
+        );
+    }
+}

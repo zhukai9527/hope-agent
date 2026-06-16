@@ -28,6 +28,7 @@ pub(crate) mod injection;
 pub(crate) mod manager;
 pub(crate) mod output_tail;
 pub(crate) mod retention;
+pub(crate) mod retry;
 pub(crate) mod slots;
 pub(crate) mod spawn;
 pub(crate) mod types;

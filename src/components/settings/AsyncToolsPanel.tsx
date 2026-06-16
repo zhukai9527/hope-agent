@@ -12,6 +12,8 @@ interface AsyncToolsConfig {
   maxJobSecs: number
   maxConcurrentJobs: number
   maxConcurrentJobsPerSession: number
+  retryEnabled: boolean
+  maxRetryAttempts: number
   completionMergeWindowSecs: number
   inlineResultBytes: number
   retentionSecs: number
@@ -25,6 +27,8 @@ const DEFAULT_CONFIG: AsyncToolsConfig = {
   maxJobSecs: 0,
   maxConcurrentJobs: 8,
   maxConcurrentJobsPerSession: 6,
+  retryEnabled: true,
+  maxRetryAttempts: 3,
   completionMergeWindowSecs: 3,
   inlineResultBytes: 4096,
   retentionSecs: 30 * 86400,
@@ -82,11 +86,18 @@ export default function AsyncToolsPanel() {
     commitIfChanged(next)
   }
 
+  const handleRetryEnabledChange = (retryEnabled: boolean) => {
+    const next = { ...config, retryEnabled }
+    setConfig(next)
+    commitIfChanged(next)
+  }
+
   type NumericKey =
     | "autoBackgroundSecs"
     | "maxJobSecs"
     | "maxConcurrentJobs"
     | "maxConcurrentJobsPerSession"
+    | "maxRetryAttempts"
     | "completionMergeWindowSecs"
     | "inlineResultBytes"
     | "retentionSecs"
@@ -255,6 +266,53 @@ export default function AsyncToolsPanel() {
                   updateNumber("maxConcurrentJobsPerSession", 0)(Number(e.target.value))
                 }
                 onBlur={commitNumber("maxConcurrentJobsPerSession", 0)}
+                className="w-24 h-8 text-sm text-right"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between px-3 py-3 rounded-lg hover:bg-secondary/40 transition-colors">
+            <div className="space-y-0.5 pr-4">
+              <div className="text-sm font-medium">
+                {t("settings.asyncToolsRetryEnabled", "失败自动重试")}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  "settings.asyncToolsRetryEnabledDesc",
+                  "后台任务因网络抖动等瞬时错误失败时自动退避重试。仅对无副作用、可重入的工具（如联网搜索）生效；exec、图像生成等有副作用 / 计费的工具永不自动重试。",
+                )}
+              </div>
+            </div>
+            <Switch checked={config.retryEnabled} onCheckedChange={handleRetryEnabledChange} />
+          </div>
+
+          <div
+            className={cn(
+              "flex items-center justify-between px-3 py-3 rounded-lg hover:bg-secondary/40 transition-colors",
+              !config.retryEnabled && "opacity-50 pointer-events-none",
+            )}
+          >
+            <div className="space-y-0.5 pr-4">
+              <div className="text-sm font-medium">
+                {t("settings.asyncToolsMaxRetryAttempts", "最大尝试次数")}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  "settings.asyncToolsMaxRetryAttemptsDesc",
+                  "含首次执行的总尝试次数（1 = 不重试）。重试间隔按 500ms 起指数退避。",
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                value={config.maxRetryAttempts}
+                onChange={(e) =>
+                  updateNumber("maxRetryAttempts", 1)(Number(e.target.value))
+                }
+                onBlur={commitNumber("maxRetryAttempts", 1)}
                 className="w-24 h-8 text-sm text-right"
               />
             </div>
