@@ -77,6 +77,37 @@ pub fn spawn_session_cleanup_watcher() {
             // Purge (incognito burn-on-close) additionally scrubs on-disk
             // artifacts that a plain delete leaves to age-based GC.
             let is_purge = event.name == EVENT_SESSION_PURGED;
+            // G4 / SURFACE-2: pre-delete context the cascade already destroyed —
+            // transitive subagent child sessions (whose inner approvals key on
+            // the child, not this parent) + the IM attach coords (the
+            // `channel_conversations` row is gone, so a session-keyed lookup
+            // can't resolve them).
+            let descendant_session_ids: Vec<String> = event
+                .payload
+                .get(session_event_keys::DESCENDANT_SESSION_IDS)
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let im_chat: Option<(String, String)> = match (
+                event
+                    .payload
+                    .get(session_event_keys::IM_ACCOUNT_ID)
+                    .and_then(|v| v.as_str()),
+                event
+                    .payload
+                    .get(session_event_keys::IM_CHAT_ID)
+                    .and_then(|v| v.as_str()),
+            ) {
+                (Some(account_id), Some(chat_id)) => {
+                    Some((account_id.to_string(), chat_id.to_string()))
+                }
+                _ => None,
+            };
+
             // Run the fan-out OFF the receive loop: cleanup_session does several
             // DB queries + global-lock scans, and awaiting it inline would let a
             // burst of deletes back up the broadcast buffer and trigger Lagged
@@ -84,7 +115,7 @@ pub fn spawn_session_cleanup_watcher() {
             // per subsystem, so concurrent runs for distinct sessions are safe.
             let sid = session_id.to_string();
             tokio::spawn(async move {
-                cleanup_session(&sid, is_purge).await;
+                cleanup_session(&sid, is_purge, descendant_session_ids, im_chat).await;
             });
         }
     });
@@ -95,7 +126,12 @@ pub fn spawn_session_cleanup_watcher() {
 /// `is_purge` (incognito burn-on-close), also physically scrub on-disk
 /// artifacts (tool-result spills + async-job rows/spool) so the burned session
 /// leaves no trace — a plain delete leaves these to age-based GC. Epic E.
-async fn cleanup_session(session_id: &str, is_purge: bool) {
+async fn cleanup_session(
+    session_id: &str,
+    is_purge: bool,
+    descendant_session_ids: Vec<String>,
+    im_chat: Option<(String, String)>,
+) {
     // A-8: cancel active / awaiting-approval background jobs (DELETE-4).
     let cancelled_jobs = crate::async_jobs::JobManager::cancel_for_session(session_id);
 
@@ -107,8 +143,29 @@ async fn cleanup_session(session_id: &str, is_purge: bool) {
     )
     .await;
 
+    // G4: a background subagent's inner-tool approval is parked on its CHILD
+    // session, which `session_id` (the deleted parent) can't match — and the
+    // `subagent_runs` rows mapping parent→child are gone by now (captured
+    // pre-delete). Deny each descendant's approvals + cancel any background jobs
+    // it owns, so deleting the parent doesn't strand an orphan approval dialog
+    // (or a child-session job) with no way to resolve it.
+    for child_sid in &descendant_session_ids {
+        crate::async_jobs::JobManager::cancel_for_session(child_sid);
+        let _ = crate::tools::deny_pending_for_session(
+            child_sid,
+            crate::tools::ApprovalResolutionSource::SessionDeleted,
+        )
+        .await;
+    }
+
     // A-9: drop stale IM text-reply approval state for this session (SURFACE-2).
     crate::channel::worker::approval::drop_pending_for_session(session_id).await;
+    // SURFACE-2: the session-keyed drop above can't resolve the chat once the
+    // `channel_conversations` row is FK-cascade-deleted, so also drop by the IM
+    // coordinates captured pre-delete (no-op when the session wasn't IM-attached).
+    if let Some((account_id, chat_id)) = &im_chat {
+        crate::channel::worker::approval::drop_pending_for_chat(account_id, chat_id).await;
+    }
 
     // A-9: clear per-session allowlist rules so they don't linger (INCOG-7).
     crate::permission::allowlist::clear_session_rules(session_id);

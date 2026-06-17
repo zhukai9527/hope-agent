@@ -213,6 +213,7 @@ sequenceDiagram
         Inj->>Inj: 写入父会话 DB:<br/>user(push_message) + assistant(response)
         Inj->>Inj: 保存更新后的 conversation history
         Inj->>FE: emit ParentAgentStreamEvent(done)
+        Note over Inj: G1: 父会话若 attach IM → await finalize 注入镜像回投 IM<br/>G2: cron 会话 → 反查 delivery_targets fan-out
     else 被用户取消 (cancel flag = true)
         Inj->>Queue: 加入 PENDING_INJECTIONS 重试队列
         Inj->>FE: emit ParentAgentStreamEvent(error)<br/>Cancelled, will retry when idle
@@ -229,6 +230,8 @@ sequenceDiagram
 - **串行注入**：同一父会话同时只有一个注入在执行（`INJECTING_SESSIONS` 互斥），多个完成的子 Agent 排队
 - **用户优先**：`ChatSessionGuard::new()` 立即设置 `INJECTION_CANCELS` 取消正在进行的注入，用户消息永远优先
 - **重试保证**：被取消的注入进入 `PENDING_INJECTIONS`，`ChatSessionGuard::drop()` 时 `flush_pending_injections` 每次只取一个重试（串行），下一个在 `CleanupGuard::drop()` 时触发
+- **空闲门超时不丢弃（G3/G5）**：父会话忙到 `announce_timeout` 仍未空闲时，**不再 `Abandoned` 到重启 replay**，而是携 `on_injected` 重排队进 `PENDING_INJECTIONS`，在长前台 turn 结束（`ChatSessionGuard::drop`）时重试。对 subagent / Group 注入（`on_injected=None`，无 `injected=0` 重启兜底）尤其关键——Group 合并注入因此不再永久丢失。`Abandoned` 仅剩锁中毒兜底
+- **后台完成回投外部面（G1/G2）**：注入 turn 成功后，若父会话 attach 了 IM chat，经 `im_mirror::attach_im_injection_mirror` + **await** `finalize_im_live_mirror` 按 `imReplyMode` 回投 IM（必须 await：注入跑在短命 current-thread runtime 上，spawned finalize 会被腰斩）；cron 会话经 `cron::delivery::deliver_injection_for_session`（反查 `cron_run_logs` → job）下发 `delivery_targets`
 - **跳过已读**：`mark_run_fetched(run_id)` 在 check/result 工具中调用，注入前和等待中均检查 `FETCHED_RUN_IDS`
 
 ### 异步工具任务复用注入管道

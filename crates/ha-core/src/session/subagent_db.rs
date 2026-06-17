@@ -273,6 +273,45 @@ impl SessionDB {
         Ok(runs)
     }
 
+    /// Collect the transitive set of subagent CHILD session ids descended from
+    /// `root_session_id` (walking `subagent_runs.parent_session_id →
+    /// child_session_id`). Session delete/purge calls this BEFORE the cascade
+    /// drops `subagent_runs`, so the cleanup fan-out can deny inner-tool
+    /// approvals parked on those child sessions (G4): an inner approval keys on
+    /// the child session, which the deleted parent's id can't match. Bounded by a
+    /// visited set (no cycles in practice — a child can't be its own ancestor)
+    /// plus a hard cap as a defensive backstop.
+    pub fn collect_descendant_session_ids(&self, root_session_id: &str) -> Vec<String> {
+        use std::collections::HashSet;
+        const MAX_DESCENDANTS: usize = 4096;
+        let Ok(conn) = self.conn.lock() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) =
+            conn.prepare("SELECT child_session_id FROM subagent_runs WHERE parent_session_id = ?1")
+        else {
+            return Vec::new();
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut frontier = vec![root_session_id.to_string()];
+        let mut out = Vec::new();
+        while let Some(parent) = frontier.pop() {
+            if out.len() >= MAX_DESCENDANTS {
+                break;
+            }
+            let Ok(rows) = stmt.query_map(params![parent], |row| row.get::<_, String>(0)) else {
+                continue;
+            };
+            for child in rows.flatten() {
+                if seen.insert(child.clone()) {
+                    frontier.push(child.clone());
+                    out.push(child);
+                }
+            }
+        }
+        out
+    }
+
     /// Count active sub-agent runs for a parent session.
     pub fn count_active_subagent_runs(&self, parent_session_id: &str) -> Result<usize> {
         let conn = self
@@ -403,6 +442,47 @@ mod tests {
             .find_active_run_by_child_session("child-nope")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn collect_descendant_session_ids_walks_transitively() {
+        // G4: deleting a parent must reach inner-tool approvals parked on its
+        // transitive subagent child sessions. root → childA, root → childB;
+        // childA → grandchild.
+        let tmp = tempfile::tempdir().unwrap();
+        let db = SessionDB::open(&tmp.path().join("s.db")).unwrap();
+        let mk = |run_id: &str, parent: &str, child: &str| SubagentRun {
+            run_id: run_id.into(),
+            parent_session_id: parent.into(),
+            parent_agent_id: "ha-main".into(),
+            child_agent_id: "helper".into(),
+            child_session_id: child.into(),
+            task: "t".into(),
+            status: SubagentStatus::Running,
+            result: None,
+            error: None,
+            depth: 1,
+            model_used: None,
+            started_at: "2026-01-01T00:00:00Z".into(),
+            finished_at: None,
+            duration_ms: None,
+            label: None,
+            attachment_count: 0,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        db.insert_subagent_run(&mk("r1", "root", "childA")).unwrap();
+        db.insert_subagent_run(&mk("r2", "root", "childB")).unwrap();
+        db.insert_subagent_run(&mk("r3", "childA", "grandchild"))
+            .unwrap();
+
+        let mut got = db.collect_descendant_session_ids("root");
+        got.sort();
+        assert_eq!(got, vec!["childA", "childB", "grandchild"]);
+
+        // A leaf with no children → empty (and no infinite walk).
+        assert!(db.collect_descendant_session_ids("grandchild").is_empty());
+        assert!(db.collect_descendant_session_ids("unknown").is_empty());
     }
 
     #[test]

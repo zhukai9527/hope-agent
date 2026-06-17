@@ -29,10 +29,11 @@ pub(crate) enum InjectionOutcome {
     /// `on_injected`); the next flush owns the retry. Caller must NOT mark the
     /// source injected.
     Queued,
-    /// Gave up after waiting for the session to go idle (announce_timeout).
-    /// Nothing persisted, nothing re-queued, `on_injected` NOT fired — the
-    /// source row stays un-injected so `replay_pending_jobs()` retries it on
-    /// the next restart (MISC-15: abandoned must not look delivered).
+    /// Could not persist or re-queue the attempt (a poisoned `PENDING_INJECTIONS`
+    /// lock — the only remaining path here now that the idle-timeout re-queues as
+    /// `Queued`). Nothing persisted, `on_injected` NOT fired — the source row
+    /// stays un-injected so `replay_pending_jobs()` retries it on the next
+    /// restart (MISC-15: an abandoned injection must not look delivered).
     Abandoned,
 }
 
@@ -368,13 +369,42 @@ pub(crate) async fn inject_and_run_parent(
     {
         IdleWait::Idle => {}
         IdleWait::TimedOut => {
+            // G3/G5: the parent session stayed busy past `announce_timeout`.
+            // Re-queue (carrying `on_injected`) instead of abandoning to
+            // restart-replay — `PENDING_INJECTIONS` flushes when the long
+            // foreground turn ends (`ChatSessionGuard::drop`), so the completion
+            // surfaces this run instead of waiting for the next process start.
+            // Critical for subagent / Group injections (`on_injected = None`),
+            // which have no `injected=0` restart-replay backstop — a Group's
+            // merged injection (row `injected=true`, out of replay) would
+            // otherwise be lost permanently. `on_injected` is carried but NOT
+            // fired, so a tool job's row stays un-injected (MISC-15: an
+            // undelivered injection must not look delivered) and the restart
+            // backstop is preserved.
             app_warn!(
                 "subagent",
                 "inject",
-                "Timed out waiting for session {} to become idle, skipping",
-                &parent_session_id
+                "Session {} still busy after idle wait; re-queuing injection for run {}",
+                &parent_session_id,
+                &run_id
             );
-            return InjectionOutcome::Abandoned;
+            return match PENDING_INJECTIONS.lock() {
+                Ok(mut queue) => {
+                    queue.push(PendingInjection {
+                        parent_session_id,
+                        parent_agent_id,
+                        child_agent_id,
+                        run_id,
+                        push_message,
+                        session_db,
+                        on_injected,
+                    });
+                    InjectionOutcome::Queued
+                }
+                // Couldn't re-queue (poisoned): leave the source pending for
+                // restart replay rather than firing on_injected on a dropped task.
+                Err(_) => InjectionOutcome::Abandoned,
+            };
         }
         IdleWait::Aborted => {
             app_info!(
@@ -542,6 +572,16 @@ pub(crate) async fn inject_and_run_parent(
     } else {
         let parent_agent_def = crate::agent_loader::load_agent(&parent_agent_id).ok();
 
+        // G1: if the parent session is attached to an IM chat, mirror this
+        // injection turn into it so an IM-origin background task's completion
+        // reaches the IM user (per the account's `imReplyMode`). Reuses the
+        // GUI↔IM live mirror; the engine's own attach gates `ParentInjection`
+        // out, so we drive it here and AWAIT finalize/abort below — this runs on
+        // a short-lived current-thread runtime whose drop would cancel a spawned
+        // finalize. `None` when there's no IM attach (desktop-only / no channel).
+        let injection_mirror =
+            crate::chat_engine::im_mirror::attach_im_injection_mirror(&parent_session_id).await;
+
         match crate::chat_engine::run_chat_engine(crate::chat_engine::ChatEngineParams {
             session_id: parent_session_id.clone(),
             agent_id: parent_agent_id.clone(),
@@ -605,6 +645,21 @@ pub(crate) async fn inject_and_run_parent(
                     model_label
                 );
                 succeeded = true;
+                // G1: deliver the mirrored injection turn to IM (per imReplyMode).
+                // Awaited so it completes before this current-thread runtime drops.
+                if let Some(state) = injection_mirror {
+                    crate::chat_engine::im_mirror::finalize_im_live_mirror(state, &result.response)
+                        .await;
+                }
+                // G2: if this is a cron run session, fan the injected result out to
+                // the cron job's delivery_targets (the inline run delivered its own
+                // response; a background job spawned during the run completes later
+                // and would otherwise reach nobody). No-op for non-cron sessions.
+                crate::cron::delivery::deliver_injection_for_session(
+                    &parent_session_id,
+                    &result.response,
+                )
+                .await;
             }
             Err(e) => {
                 if cancel.load(Ordering::SeqCst) {
@@ -616,6 +671,12 @@ pub(crate) async fn inject_and_run_parent(
                     );
                 } else {
                     last_error = e;
+                }
+                // G1: drain + tear down the IM mirror (no follow-up notice — the
+                // injection sent no user-quote, so there's nothing orphaned; a
+                // cancel re-queues and re-delivers on the next idle attempt).
+                if let Some(state) = injection_mirror {
+                    crate::chat_engine::im_mirror::abort_im_live_mirror_with_body(state, None).await;
                 }
             }
         }
