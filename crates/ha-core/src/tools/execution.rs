@@ -1573,9 +1573,7 @@ pub async fn execute_tool_with_context(
             TOOL_RECALL_MEMORY => memory::tool_recall_memory(args).await,
             TOOL_UPDATE_MEMORY => memory::tool_update_memory(args).await,
             TOOL_DELETE_MEMORY => memory::tool_delete_memory(args).await,
-            TOOL_UPDATE_CORE_MEMORY => {
-                memory::tool_update_core_memory(args, dispatch_ctx).await
-            }
+            TOOL_UPDATE_CORE_MEMORY => memory::tool_update_core_memory(args, dispatch_ctx).await,
             TOOL_MANAGE_CRON => {
                 cron::tool_manage_cron(args, dispatch_ctx.session_id.as_deref()).await
             }
