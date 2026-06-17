@@ -599,6 +599,7 @@ impl AssistantAgent {
             system_prompt.clone(),
             tool_schemas.clone(),
             messages.clone(),
+            model,
         );
 
         let max_rounds_cfg = super::config::get_max_tool_rounds(&self.agent_id);
