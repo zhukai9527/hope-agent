@@ -90,13 +90,16 @@ impl JobManager {
             return Ok(Vec::new());
         };
         // Active-first ordering (see `list_for_session`) drops terminal rows
-        // first; only a session with >PANEL_LIMIT simultaneously-active jobs
-        // (running cap + the bounded wait queue) would lose an active row.
+        // first; only a session with >PANEL_LIMIT simultaneously-active TOP-LEVEL
+        // jobs (running cap + the bounded wait queue) would lose an active row.
         const PANEL_LIMIT: usize = 50;
         let jobs = db.list_for_session(session_id, PANEL_LIMIT)?;
         Ok(jobs
             .iter()
-            // Fold out Group children — the Group row represents them.
+            // Grouped Subagent children are already excluded at the query layer
+            // (so the limit budgets only top-level rows and a batch's Group row
+            // can't be cut — see `list_for_session`). This filter is a defensive
+            // backstop in case that query is ever changed.
             .filter(|j| !(j.kind == JobKind::Subagent && j.group_id.is_some()))
             .map(|j| Self::snapshot_from_job(j, false))
             .collect())

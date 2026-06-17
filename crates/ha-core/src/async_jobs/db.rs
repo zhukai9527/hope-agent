@@ -526,6 +526,16 @@ impl JobsDB {
     /// (`clamp(cores-2,4,16)`) plus the bounded wait queue (default 256), so only the
     /// pathological case of >`limit` simultaneously-active jobs in one session
     /// would drop an active row (and slightly under-count the header badge).
+    ///
+    /// **Grouped Subagent children are excluded at the query layer** — the panel
+    /// renders the parent `Group` row's N-of-M progress, not its N child rows
+    /// (see [`crate::async_jobs::JobManager::list_session_snapshots`]). Excluding
+    /// them HERE (rather than after `LIMIT`) is load-bearing: a max
+    /// `batch_spawn`(50) yields 1 `Group` row + 50 children, and the `Group` row
+    /// is the OLDEST of the batch — folding children out only after the limit
+    /// would let the 50 newer children fill the window and cut the group row,
+    /// hiding the whole batch from the panel. Budgeting the limit over displayable
+    /// (top-level) rows keeps the group row in.
     pub fn list_for_session(&self, session_id: &str, limit: usize) -> Result<Vec<BackgroundJob>> {
         let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = conn.prepare(
@@ -536,6 +546,7 @@ impl JobsDB {
                     subagent_run_id, group_id
              FROM background_jobs
              WHERE session_id=?1
+               AND NOT (kind = 'subagent' AND group_id IS NOT NULL)
              ORDER BY (completed_at IS NOT NULL), created_at DESC
              LIMIT ?2",
         )?;
@@ -834,6 +845,55 @@ mod tests {
         assert_eq!(capped.len(), 2);
         assert_eq!(capped[0].job_id, "a_new");
         assert_eq!(capped[1].job_id, "a_old");
+    }
+
+    #[test]
+    fn list_for_session_excludes_grouped_children_so_group_row_survives_limit() {
+        // Codex P2: a max batch_spawn = 1 Group row (oldest) + N Subagent
+        // children (newer). Grouped children must be excluded at the QUERY layer
+        // so the limit budgets only displayable rows — otherwise the newer
+        // children fill the window and cut the (oldest) group row, hiding the
+        // whole batch from the panel.
+        let dir = tempfile::tempdir().unwrap();
+        let db = JobsDB::open(&dir.path().join("async_jobs.db")).unwrap();
+        let mk = |id: &str, kind: JobKind, group_id: Option<&str>, created: i64| {
+            let mut j = sample_job(id);
+            j.session_id = Some("s1".to_string());
+            j.kind = kind;
+            j.group_id = group_id.map(|g| g.to_string());
+            j.created_at = created;
+            j
+        };
+        // Group created first (oldest), then 5 children newer.
+        db.insert(&mk("grp", JobKind::Group, None, 100)).unwrap();
+        for i in 0..5 {
+            db.insert(&mk(
+                &format!("child{i}"),
+                JobKind::Subagent,
+                Some("grp"),
+                200 + i,
+            ))
+            .unwrap();
+        }
+        // A non-grouped standalone subagent must still show.
+        db.insert(&mk("solo", JobKind::Subagent, None, 90)).unwrap();
+
+        // limit=2: without the exclusion the 2 newest children would fill the
+        // window and the group row (oldest of the batch) would be cut.
+        let ids: Vec<String> = db
+            .list_for_session("s1", 2)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.job_id)
+            .collect();
+        // Children excluded at query layer → only top-level rows compete for the
+        // limit: grp (created 100) + solo (created 90), newest-first.
+        assert_eq!(ids, vec!["grp", "solo"]);
+
+        // No grouped child ever appears, regardless of limit headroom.
+        let all = db.list_for_session("s1", 50).unwrap();
+        assert!(all.iter().all(|j| j.group_id.is_none()));
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
