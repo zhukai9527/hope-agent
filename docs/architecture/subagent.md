@@ -291,7 +291,7 @@ sequenceDiagram
 
 ## 并发排队（R7.2）
 
-命中**单会话并发上限**（`count_active_subagent_runs >= max_concurrent_for_agent`，默认 8、clamp 1–50）时，spawn **不再返回 `Err`**，而是把 run 落为 `Queued` 入队、由进程级调度器在槽位空出时提升——与 R7.1 的后台**工具** job reject→queue 行为对齐（一个**资源类**上限应该等待、而非拒绝）。**结构类**上限——深度、Agent 不存在、batch 大小、单会话 session 上限、capability——仍**硬拒**（等待也变不合法，由 `subagent::spawn::structural_limit_tests` 守）。
+命中**单会话并发上限**（`count_active_subagent_runs >= max_concurrent_for_agent`，默认 8、clamp 1–50）时，spawn **不再返回 `Err`**，而是把 run 落为 `Queued` 入队、由进程级调度器在槽位空出时提升——与 R7.1 的后台**工具** job reject→queue 行为对齐（这个并发上限是**资源类**,应该等待、而非拒绝）。**结构类**上限——深度（`structural_limit_tests` 守）、batch 大小（`action_batch_spawn` 的 `tasks.len() > max` 守）、Agent 不存在（spawn 入口 `load_agent`）、capability（`tools/subagent.rs` 的 `subagents.enabled` / 允许列表）——仍**硬拒**（等待也变不合法）。
 
 ### 为什么是独立队列，而非复用 R7.1 的 `SlotManager`
 

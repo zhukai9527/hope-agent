@@ -437,7 +437,7 @@ flowchart TD
 
 `tools/execution.rs:decide_async_path()` 在通过可见性 / 审批 / Plan-mode 路径门后立即决策。`bypass_async_dispatch=true` 的 ctx（递归再入路径）整段跳过，保证不会无限套娃。
 
-> **exec 例外（审批前移）**：`exec` 的命令级审批不走外层引擎门（`needs_permission_engine` 排除 `TOOL_EXEC`），其门在 `tool_exec` 内部。对 async-eligible 的 exec，`execute_tool_with_context` 在 detach 前先调 `exec::resolve_exec_command_approval`（命令门单一真相源）跑完审批，再 spawn——见下「exec 命令审批前移」。
+> **exec 例外（审批前移，仅 Auto-Background 档）**：`exec` 的命令级审批不走外层引擎门（`needs_permission_engine` 排除 `TOOL_EXEC`），其门在 `tool_exec` 内部。**仅对 auto-background 档（Tier 3，`AutoBackgroundEligible`）**，`execute_tool_with_context` 在 detach 前先调 `exec::resolve_exec_command_approval`（命令门单一真相源）跑完审批再 spawn（`should_run_exec_reorder_gate`）。**显式后台 exec（`run_in_background:true` / `always-background`，`ImmediateBackground`）R8 起被刻意排除**——命令门下放到后台 job 线程、命中审批时 park 为 `AwaitingApproval`；详见下「exec 命令审批：两条后台路径」+「后台审批 park」。
 
 ```mermaid
 flowchart TD
@@ -475,17 +475,30 @@ flowchart TD
 
 `job_timeout_secs` 是 async-capable 工具 schema 自动注入的可选单次参数，只控制外层 async job 的最长运行时长。`0` 或省略表示沿用用户配置；当 `asyncTools.maxJobSecs = 0` 时，正数 `job_timeout_secs` 可给本次 job 设置外层超时；当 `asyncTools.maxJobSecs > 0` 时，`job_timeout_secs` 只能比用户配置更短，不能放宽它。该字段在递归执行真实工具前会被剥离，不会传给 `exec` / `web_search` / `image_generate` 本体。
 
-### exec 命令审批前移
+### exec 命令审批：两条后台路径（R8）
 
-非 exec 的 async-capable 工具（`web_search` / `image_generate` / …）在到达 detach 分支前已经过外层引擎门审批，所以「先批准、后台化」天然成立。`exec` 不同：它被 `needs_permission_engine` 排除，命令级审批（危险命令 / 编辑命令 / AllowAlways 前缀 / 交互弹窗）历来只在 `tool_exec` 内部跑。若不处理，`run_in_background: true` 的 exec 会先 spawn、立刻回 synthetic `{status:"started"}`，**审批弹窗反而在后台 OS 线程上、"started" 之后才出现**——模型误以为命令已在跑（ASYNC-1），PreToolUse / 审批 hook 时序倒置（HOOKS-2）。
+非 exec 的 async-capable 工具（`web_search` / `image_generate` / …）在到达 detach 分支前已经过外层引擎门审批，所以「先批准、后台化」天然成立。`exec` 不同：它被 `needs_permission_engine` 排除，命令级审批（危险命令 / 编辑命令 / AllowAlways 前缀 / 交互弹窗）历来只在 `tool_exec` 内部跑。**R8 起 exec 的两条后台路径分开处理**：
 
-修复：`execute_tool_with_context` 在 detach 前，对 async-eligible 的 exec 调用命令门单一真相源 `exec::resolve_exec_command_approval`：
+**① Auto-Background 档（Tier 3，`AutoBackgroundEligible`）——审批前移、detach 前同步跑门**。plain exec 仅在超前台预算时才后台化；`execute_tool_with_context` 在 detach 前先调命令门单一真相源 `exec::resolve_exec_command_approval`，闸为 `should_run_exec_reorder_gate`（`name==exec && AutoBackgroundEligible && !already_approved && should_run_exec_command_gate()`）：
 
 - **Deny** → 直接返回 `ToolRejection`，**不 spawn**，模型得到 STOP，不会看到幽灵 job
 - **Allow** → 把 `exec_pre_approved = true` 带入 spawn 的 ctx，后台 re-dispatch 经 `should_run_exec_command_gate()`（`!auto_approve_tools && !exec_pre_approved`）跳过内层门——审批恰好一次。同时把授权来源 `ApprovalOrigin` 写进 ctx，落 job 的 `approval_origin` 审计列
-- **Auto-Background 档**：审批在 `dispatch_with_auto_background` 之前同步完成，所以审批等待**不**计入 `autoBackgroundSecs` / `maxJobSecs` 预算（消「审批慢→假转后台」，ASYNC-2）
+- 审批在 `dispatch_with_auto_background` 之前同步完成，所以审批等待**不**计入 `autoBackgroundSecs` / `maxJobSecs` 预算（消「审批慢→假转后台」，ASYNC-2）
 
-`exec_pre_approved` 与 `external_pre_approved` 物理分开：后者只压制引擎门、**绝不**压制命令门（async re-entry 安全红线）；前者仅在命令门已对本次调用跑过、用户已批准后才置位，故可安全压制内层门。
+**② 显式后台 exec（`run_in_background:true` / `always-background` 策略，`ImmediateBackground`）——R8 起不再 detach 前审批**（刻意 supersede ASYNC-1 的旧修复）。`should_run_exec_reorder_gate` 明确排除此档（单测 `exec_reorder_gate_excludes_immediate_background_for_r8_parking` 锁死）。模型**立刻拿到 job id**，命令门下放到后台 job 线程内跑（`exec.rs` 的 `should_run_exec_command_gate` 仍守，此处 `exec_pre_approved` 通常为 false）；命中 attended 审批时由 `async_jobs::approval_bridge` 把 job 行 `Running → AwaitingApproval`（见下「后台审批 park」），用户**异步**决定：批准→续跑、拒绝→job 落终态（`DeniedByUser → Failed`，STOP 语义随 `<task-notification>` 注入）。
+
+`exec_pre_approved` 与 `external_pre_approved` 物理分开：后者只压制引擎门、**绝不**压制命令门（async re-entry 安全红线）；前者仅在命令门已对本次调用跑过、用户已批准后才置位（**仅 Auto-Background 档会置**），故可安全压制内层门。
+
+### 后台审批 park（AwaitingApproval，R8 + b8702821）
+
+显式后台 job 在自己的 OS 线程上 dispatch；命中 attended 命令门时 dispatch future 阻塞在审批引擎的 oneshot——job 是**真的在等人**而非在跑。`async_jobs::approval_bridge` 在该 job 线程装一个 thread-local 桥（`on_park` / `on_resume`，桥结构体定义在 `tools::approval` 以保 `tools` 零依赖 `async_jobs`），把行在等待两侧翻转 `Running ⇄ AwaitingApproval` 并记下 pending `request_id`。**scope：只有显式 / policy 的 `ImmediateBackground` exec 路径在此 park**；auto-background 与同步 exec 都已 detach 前审批（不装桥）；后台 subagent 的内层审批走自己的 runtime（桥不在那装，见 R8-followup）。
+
+- **预算排除审批等待（ASYNC-2 机制）**：`run_tool_once` 的预算从一次性 timer 改 deadline-loop，每次到点把 deadline 后移 `parked_budget_extension()`（桥的 thread-local 累计 park 时长，**含在途 park** 故 parked 期间持续增长 → 审批中永不触发 `TimedOut`）；resume 后该值固定，post-approval 执行仍享完整 `max_job_secs`
+- **resume 仅 proceed 才回 Running（B 修复，防误发 spurious Running）**：`on_resume` 仅在 proceed 结果（approve / timeout-proceed，`origin=Some`）才 `awaiting_approval → running` 并 emit `job:updated{running}` + F6 用真实决议改正 spawn 期占位 `approval_origin`；deny / timeout-deny / 取消掉 future（`origin=None`）**不 revert、不 emit**，行留 `awaiting_approval` 由终态 settle（`update_terminal` 接受 `awaiting_approval`）直接收——避免对从未续跑的 job 广播假 running
+- **取消 parked job 的安全窗口（A 修复）**：`cancel_job` 经 `parked_request_id` 立即 `dismiss_parked_job_approval`——掉 pending sender 使命令门见取消即返回拒绝（永不批准）、所有 surface 弹窗即时消除、parked 的 `rx.await` 被唤醒使 dispatch 在 grace 内收尾；闭合「取消后 ~5s grace 内点 Allow 仍跑已取消命令」的安全窗口，并覆盖**跨进程取消**（仅设 DB flag 的取消也补 dismiss）
+- **非终态 + replay**：`awaiting_approval` 不入终态 SQL 列表；replay 把它同 `running` 标 `interrupted`（`list_running` 含 `awaiting_approval`）
+
+R8-followup 把后台 **subagent** 的内层审批也投影为 `AwaitingApproval`（经 `async_jobs::approval_projection_watcher` 订阅 EventBus 的 `approval_required` / `approval:resolved`，不走本桥），详见 [`subagent.md`](subagent.md#background-job-投影r6)。
 
 ### Auto-Background 的相位机
 
@@ -547,7 +560,7 @@ CREATE TABLE background_jobs (              -- R1 由 async_tool_jobs 改名
     injected        INTEGER NOT NULL DEFAULT 0,
     origin          TEXT NOT NULL DEFAULT 'explicit', -- explicit / policy_forced / auto_backgrounded
     -- 审批/资源治理列骨架（A-7 一次性引入，写入逻辑分散在后续子任务）：
-    approval_origin TEXT,                     -- 授权来源（B4 写：user / timeout_proceed / yolo / policy_allow / …）
+    approval_origin TEXT,                     -- 授权来源 ApprovalOrigin 全 7 值：user / timeout_proceed / unattended_proceed / yolo / auto_approve / external_pre_approved / policy_allow（见 permission-system.md）
     incognito       INTEGER NOT NULL DEFAULT 0, -- 无痕标记（E4）
     pid             INTEGER,                  -- 子进程 pid，重启孤儿探测用（I3）
     cancel_requested INTEGER NOT NULL DEFAULT 0, -- 跨进程取消 flag（I4）
@@ -563,7 +576,7 @@ CREATE TABLE background_jobs (              -- R1 由 async_tool_jobs 改名
 > **R5 Group fan-out**：`batch_spawn` 建一条 `kind=group` 协调行 + N 个 `kind=subagent` 子（共享 `group_id`=group 的 `job_id`）；子**抑制个体注入**，全部到终态时单赢 CAS（`claim_group_completion`，`Running→Completed`）发**一条**合并注入（join-all-settle）。group 行 `injected=1`（自发合并注入、不进工具 replay），`args_json={"sealed":bool}` 标记「子已全 spawn」。group 行**绝不持有 run 正文**（合并消息构建时才从 `subagent_runs` 读子结果）。详见 [`subagent.md`](subagent.md#group-fan-outr5)。
 > **R4 面板 + 完成合并窗口**：owner-plane（host-trusted）`JobManager::list_session_snapshots` / `get_job_snapshot` 出 `BackgroundJobSnapshot`（camelCase 展示向，与 model-facing `job_status` JSON 物理分离；**Group 子投影折叠进 Group 行**，exec 取命令首行为标签，running exec 带 `output_tail` 仅单查）；端点 Tauri `list_background_jobs` / `get_background_job` + HTTP `GET /api/sessions/{id}/background-jobs`、`/api/background-jobs/{id}`（Bearer，owner 平面看全部不经 agent-scope）；`db.list_for_session`（活跃优先 + 最近终态，cap 50）。取消复用 `cancel_runtime_task(kind=async_job)`。**完成注入合并窗口**：`async_tools.completionMergeWindowSecs`（默认 3，`0` 关）—— `finalize_job` 改走 `injection::enqueue_injection` 缓冲，同会话窗口内完成的多 tool job 合并一条 `<task-notification-batch count=… completed=… failed=…>`（内含 N 个标准 `<task-notification>`）一轮注入而非 N 轮计费。首个完成开窗 + 起定时器、窗口内入批、flush 原子取空（后到开新窗）；纯内存 live-path（崩溃则行 terminal-but-uninjected，重启 `replay_pending_jobs` 各自补投，不丢不合并）；Group 是预合并特例绕过；沿用 ghost-turn 闸 + 逐 job claim/release + `on_injected` 逐行恰好一次。前端 `src/types/background-jobs.ts` 镜像 + `useBackgroundJobs` 单订阅喂头部徽标 / 独立面板 / 工作台速览区块；完成桌面通知 `notification.notifyOnBackgroundJobComplete`（默认开，仅 completed/failed/timed_out + 仅后台）。
 
-> `status` 第八态 `awaiting_approval`（A-5）为**非终态**：后台 exec 在审批前移落地前理论上可短暂处于此态（不消耗墙钟预算、不入终态 SQL 列表）；replay 把它同 `running` 标 `interrupted`。
+> `status` 第八态 `awaiting_approval`（A-5）为**非终态**，且是 R8 后**显式后台 exec（`run_in_background` / `always-background`）命中 attended 审批门时的真实、设计内状态**（可长停直到用户答复 / 取消，面板与 `job_status` 据此显示「等待审批」）——非「审批前移落地前的过渡态」。不消耗墙钟预算（park 期间预算 timer 排除审批等待）、不入终态 SQL 列表；replay 把它同 `running` 标 `interrupted`。机制详见上「后台审批 park（AwaitingApproval）」节；后台 subagent 内层审批投影见 R8-followup。
 
 **大结果 spool**：超过 `asyncTools.inlineResultBytes`（默认 4096）的输出写到 `~/.hope-agent/background_jobs/{job_id}.txt`，DB 只存 head/tail 预览 + 路径。后续 `job_status` / 注入消息引用磁盘路径，模型可以用 `read` 工具拉全文。
 
@@ -609,6 +622,8 @@ sequenceDiagram
     LLM->>LLM: 模型读到结果, 按 task-id 关联回原 tool_call
 ```
 
+> 上图为**无需审批 / 已 auto-approve 的 happy path**。R8 后,显式后台 exec 若命中 attended 命令门,会在 `Job OS 线程` 内 `UPDATE status=awaiting_approval`（emit `approval_required`）park 住,待用户决定:批准→续跑回到 `running`、拒绝→落终态（`DeniedByUser→Failed`）经注入回流——详见上「后台审批 park（AwaitingApproval）」节。
+
 注入消息结构（XML 包裹便于模型解析）：
 
 ```xml
@@ -626,6 +641,19 @@ sequenceDiagram
 
 **注入终局（I7，MISC-15）**：`inject_and_run_parent` 返回 `InjectionOutcome{Injected, Queued, Abandoned}` 并接收一个 `on_injected` 回调（tool-job 传「标 `injected=1`」闭包，subagent 传 `None`）。回调仅在真正落地（父回合跑完 / 结果已被取走 / 全模型失败终局 = `Injected`）时触发，并随 `PendingInjection` 穿过重排队，使延迟注入最终落地时照样标记来源完成。父会话在 `announce_timeout` 内始终不空闲时返回 **`Abandoned`**——**不**触发回调、**不**重排队、行保持 `injected=0`，留待上面的「重启回放」补投。旧实现无论结果都在 `block_on` 后无条件 `mark_injected`，于是 `Abandoned` 被误标已注入、replay 不再补投、通知永久丢失。
 
+### 终态错误分类（JobError，MISC-7）
+
+job 结算的终态状态由**类型派生**而非字符串再解析。`async_jobs::error::JobError`（替代旧 `e.contains("was cancelled")` / `e.contains("exceeded max_job_secs")` 脆弱匹配）四变体 + `to_status()` 折叠映射：
+
+| `JobError` | `JobStatus` | 注入文案 |
+|------------|-------------|----------|
+| `Cancelled` | `Cancelled` | "Job was cancelled." |
+| `TimedOut { max_secs }` | `TimedOut` | "exceeded max_job_secs (Ns)" |
+| `DeniedByUser { rejection }` | `Failed` | `ToolRejection::to_tool_result()`（保「STOP and wait」语义，ASYNC-4） |
+| `Failed { message }` | `Failed` | 原始 message |
+
+`DeniedByUser` **刻意折进 `Failed`**——不设独立 `Denied` 终态,免在所有 status match 站点穷举 enum bump。`from_dispatch_error` 用 `downcast::<ToolRejection>()` 保留拒绝的 STOP 语义随 `<task-notification>` 注入;auto-background 内联返回路径用 `into_inline_error()` 折回 `anyhow`（`DeniedByUser` 还原 `ToolRejection` 让流式循环渲染 STOP 模板）。
+
 ### 重启回放
 
 `app_init::start_background_tasks` 启动时调用 `async_jobs::replay_pending_jobs()`：
@@ -637,7 +665,7 @@ sequenceDiagram
 
 后台 job 的取消有三条入口，覆盖「会话删除 / 跨进程 / 回合取消 grace 窗口」三种来源：
 
-- **会话删除（A-8，DELETE-4）**：`session:deleted` → `cancel_jobs_for_session(session_id)` 取消该会话全部活动 job，关掉「删会话后后台 job 失去取消入口、无限运行」的口子
+- **会话删除（A-8，DELETE-4）**：`session:deleted` → `JobManager::cancel_for_session(session_id)`（R1 单一入口；`cancel_jobs_for_session` 已降为 `pub(crate)` 内部实现）取消该会话全部**活跃** job——R8 后「活跃」含 `awaiting_approval`（park 态）job，关掉「删会话后后台 job 失去取消入口、无限运行」的口子。生产调用方是 `session::cleanup_watcher`（见 [`session.md`](session.md)）
 - **跨进程取消（I4，MISC-4）**：`cancel_job` 除了命中本进程内存 cancel token，还写 DB `cancel_requested=1`；`run_job_to_completion` 在运行期每 ~5s `poll` 一次本行的 `cancel_requested`，命中即 `cancel_token.cancel()` 并 abort——这样桌面 + 自托管 server **共用同一 `background_jobs.db`** 时，由另一进程实际执行的 job 也能被中止，而不是只把 DB 状态改成 `cancelled` 却任其在对方进程跑完、结果被 active-status guard 静默丢弃。（auto-background detach 出来的 worker 暂未接 poll 臂——它在 detach 决策前就 spawn，结构上不便旁路，记为已知限制）
 - **回合取消 grace 窗口（I5，MISC-2）**：`execute_tool_with_cancel` 的 cancel 臂给在途 dispatch 一个 5s 收尾窗口；若用户恰在窗口内批准了一个可后台化工具，dispatch 会返回合成 `{job_id,status:"started"}` 并已 detach 出带**全新** cancel token 的 runner（回合取消传导不到它）。cancel 臂现在捕获该结果、`extract_started_job_id` 解析出 job_id 后调 `cancel_job` 回收,使「已取消」名实相符。同步内联工具未及时收尾仍照旧 drop,其 `exec` 进程组由 `ProcessGroupGuard::drop` 回收
 

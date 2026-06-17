@@ -1436,7 +1436,13 @@ QQ Bot 有多种消息端点，`chat_id` 使用前缀区分：
 
 ### 文本渠道（supports_buttons = false）
 
-发送文本提示（"回复 1/2/3"），用户回复的数字消息在 `dispatcher.rs` 的消息处理最前端被 `try_handle_approval_reply()` 拦截。不匹配 "1"/"2"/"3" 的消息正常处理。
+发送文本提示，用户回复在 `dispatcher.rs` 消息处理最前端被 `try_handle_approval_reply()` 拦截。接受大量中英文别名（不止数字）：
+
+- **允许一次**：`1` / `y` / `yes` / `ok` / `okay` / `allow` / `approve` / `好` / `好的` / `同意` / `允许` / `可以` / `行`
+- **始终允许**：`2` / `always` / `总是` / `始终`（strict 原因——`forbids_allow_always`——隐藏此项）
+- **拒绝**：`3` / `n` / `no` / `deny` / `block` / `stop` / `cancel` / `不` / `不行` / `拒绝` / `否` / `取消`
+
+匹配做词边界，避免 `yesterday` 误命中 `yes`。同一 chat 多条待审批时提示带 `#<tag>` 短标签,用户可定向指定 pending（如 `yes#abc123`）；裸回复（`yes` / `1`）作用于最近一条。命中别名的消息被 `try_handle_approval_reply` **消费**（不进正常对话）；只有完全不匹配别名的消息才正常处理。提示文案显示与 `approval_timeout_secs` 一致的截止时间（`0` = 无时限）；用户在待审批期间发无关消息时,按 `permission.im_approval_hint_throttle_secs`（默认 60s,每 (account, chat)）节流 nudge「你有 N 条待审批」。
 
 适用渠道：WeChat、Signal、iMessage、IRC、WhatsApp
 
