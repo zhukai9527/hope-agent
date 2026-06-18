@@ -53,7 +53,7 @@ flowchart TD
    - **Anthropic**：content 数组中的 `tool_use` 块（`id` + `name`）
    - **OpenAI Chat**：`tool_calls` 数组（`id` + `function.name`）
    - **OpenAI Responses**：`type=function_call` 消息（`call_id` + `name`）
-2. 找到保护边界：从末尾跳过最近 `keep_last_assistants`（默认 4）个 assistant 消息
+2. 构建 `BoundarySnapshot` 并按 `ProtectRecent` 模式派生保护边界：保留最近 `preserve_recent_rounds`（默认 4）个消息 round；若不会吞掉同一 user turn 内更早的执行 round，则向前扩到所属 user turn 起点
 3. 清除边界之前所有 `tool_policies` 中策略为 `"eager"` 的工具结果内容（默认：`ls`, `grep`, `find`, `process`, `sessions_list`, `agents_list`, `session_status`, `get_weather`, `tool_search`）
 4. 替换为占位符（保留消息结构以维持 tool_use/tool_result 配对）
 
@@ -121,7 +121,7 @@ priority = age × 0.6 + size × 0.4
 - 跳过低于 `min_prunable_tool_chars`（默认 20000）总量的情况
 
 **保护机制**：
-- 最近 `keep_last_assistants`（默认 4）个 assistant 消息之后的内容不裁剪
+- `preserve_recent_rounds`（默认 4）给出的 `ProtectRecent` 边界之后的内容不裁剪；边界在普通短回合中扩到所属 user turn 起点，在长 tool loop 中回退到 round 边界以保留可裁剪前缀
 - `tool_policies` 中策略为 `"protect"` 的工具不裁剪（默认：`web_search`, `web_fetch`, `recall_memory`, `memory_get`）
 
 ### Tier 3：LLM 摘要（Summarization）
@@ -131,7 +131,7 @@ priority = age × 0.6 + size × 0.4
 **触发条件**：token 使用率达到 `summarization_threshold`（默认 0.85）
 
 **流程**：
-1. **split_for_summarization**：找到倒数第 `preserve_recent_turns`（默认 4，最大 12）个 user 消息作为分割点，再调整到 round-safe 边界
+1. **split_for_summarization**：从同一个 `BoundarySnapshot` 派生 `SummarizeUnderPressure` 边界作为分割点；普通短回合尽量扩到所属 user turn 起点，若普通边界 fail-closed 且已触发摘要压力，则保留最近 live round、摘要更早 prefix
 2. **build_summarization_prompt**：构建摘要指令，包含标识符保留策略
 3. LLM 调用（`summarization_timeout_secs` 默认 60s 超时，`summary_max_tokens` 默认 4096）
 4. **apply_summary**：用摘要消息替换旧历史，保留最近的消息
@@ -322,7 +322,7 @@ calibrated_estimate = raw_estimate × calibration_factor
 | `hardClearRatio` | `f64` | `0.70` | **Hard-clear 触发比率**。阶段一裁剪后使用率仍超过此值时，进入阶段二，直接清空工具结果内容 |
 | `hardClearEnabled` | `bool` | `true` | 是否启用 hard-clear 阶段。设为 `false` 则 Tier 2 只做 soft-trim，不会彻底清空 |
 | `hardClearPlaceholder` | `String` | `"[Old tool result content cleared]"` | Hard-clear 时替换工具结果的占位符文本 |
-| `keepLastAssistants` | `usize` | `4` | 保护最近 N 个 assistant 消息及其之后的内容，不参与 Tier 0 微压缩和 Tier 2 裁剪 |
+| `preserveRecentRounds` | `usize` | `4`（范围 1–12） | 保护最近 N 个消息 round；Tier 0/2 使用 `ProtectRecent` fail-closed 边界，Tier 3 使用 `SummarizeUnderPressure` 可前进边界，Tier 4 使用 `Emergency` 必须腾空间边界；三者共用同一个 `BoundarySnapshot` |
 | `minPrunableToolChars` | `usize` | `20000` | Hard-clear 跳过阈值。若所有可裁剪工具结果的总字符数低于此值，则跳过 hard-clear（清除收益太小） |
 
 ### Tier 3：LLM 摘要
@@ -331,7 +331,6 @@ calibrated_estimate = raw_estimate × calibration_factor
 |------------------------|------|--------|------|
 | `summarizationModel` | `Option<String>` | — | **摘要模型**。格式 `"providerId:modelId"`，指定用于摘要的模型。为空（默认）时使用对话模型并复用 prompt 缓存（约 90% 缓存命中，token 消耗极低）；指定后使用独立 API 调用（无缓存共享，但可使用更便宜的模型降低成本） |
 | `summarizationThreshold` | `f64` | `0.85` | **摘要触发比率**。Tier 2 裁剪后使用率仍超过此值时，调用 LLM 将旧对话历史压缩为结构化摘要 |
-| `preserveRecentTurns` | `usize` | `4`（上限 12） | 摘要时保留最近 N 轮 user 消息及其后续内容不参与摘要，确保最近的对话上下文完整 |
 | `identifierPolicy` | `String` | `"strict"` | 标识符保留策略。`"strict"`：摘要中严格保留所有不透明标识符（UUID/hash/ID/token/URL/文件名等）不缩短不重构；`"off"`：不做特殊保留；`"custom"`：使用 `identifierInstructions` 自定义指令 |
 | `identifierInstructions` | `Option<String>` | — | 自定义标识符保留指令，仅当 `identifierPolicy` 为 `"custom"` 时生效 |
 | `customInstructions` | `Option<String>` | — | 追加到摘要 prompt 的自定义指令。可用于指导 LLM 摘要时特别关注或保留某些信息 |
@@ -339,13 +338,14 @@ calibrated_estimate = raw_estimate × calibration_factor
 | `summaryMaxTokens` | `u32` | `4096` | 摘要 LLM 调用的最大输出 token 数 |
 | `maxHistoryShare` | `f64` | `0.5` | 裁剪时历史消息最大允许占用的上下文窗口比例 |
 | `maxCompactionSummaryChars` | `usize` | `16000` | 摘要文本的最大字符数，超出截断并追加 `[truncated]` 标记。范围 `4000–64000`：调高可保留更完整的摘要上下文（适合复杂长对话），但摘要本身也会占用更多上下文预算 |
+| `maxCompactionInjectedContextShare` | `f64` | `0.5` | Tier 3 后压缩产物联合预算：summary + deterministic ledger + recovered files 合计最多占上下文窗口比例；运行时钳到 `0.05..=maxHistoryShare`，按 summary > ledger > recovery 分配 |
 
 ### 后压缩文件恢复
 
 | 配置路径（`compact.*`） | 类型 | 默认值 | 说明 |
 |------------------------|------|--------|------|
 | `recoveryEnabled` | `bool` | `true` | 是否启用后压缩文件恢复。Tier 3 摘要后自动从磁盘读取最近编辑的文件内容注入对话，省去额外的 read 工具调用 |
-| `recoveryMaxFiles` | `usize` | `5` | 最多恢复的文件数量。按文件最近修改时间排序，取最新的 N 个 |
+| `recoveryMaxFiles` | `usize` | `5` | 最多恢复的文件数量。按会话历史中的最后一次 write/edit/apply_patch 出现位置排序，取最新的 N 个 |
 | `recoveryMaxFileBytes` | `usize` | `16384`（16KB） | 单个文件最大恢复字节数。超出部分截断并追加 `[truncated]` 标记 |
 
 ### Tier 1：工具结果截断

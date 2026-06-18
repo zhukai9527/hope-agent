@@ -1287,9 +1287,15 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     restore_agent_context(&db, &session_id, &compact_agent);
 
                     let mut history = compact_agent.get_conversation_history();
+                    let emergency_ledger =
+                        crate::agent::runtime_ledger::build_runtime_ledger_snapshot(&session_id);
+                    let emergency_ctx = crate::context_compact::EmergencyCompactionContext {
+                        config: &compact_config,
+                        runtime_ledger: Some(&emergency_ledger),
+                    };
                     let compact_result = compact_agent
                         .context_engine()
-                        .emergency_compact(&mut history, &compact_config);
+                        .emergency_compact(&mut history, &emergency_ctx);
                     compact_agent.set_conversation_history(history);
                     if let Some((status, interrupt, error)) =
                         terminal_turn_state(&db, turn_id.as_deref())
@@ -1318,6 +1324,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                             "tokens_after": compact_result.tokens_after,
                             "messages_affected": compact_result.messages_affected,
                             "description": compact_result.description,
+                            "manifest": compact_result.manifest,
                         },
                     })) {
                         if emit_stream_event(

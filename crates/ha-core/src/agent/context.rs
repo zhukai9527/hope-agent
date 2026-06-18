@@ -27,6 +27,39 @@ fn count_tool_uses(msg: &serde_json::Value) -> usize {
     0
 }
 
+fn message_content_chars(msg: &serde_json::Value) -> usize {
+    match msg.get("content") {
+        Some(serde_json::Value::String(s)) => s.len(),
+        Some(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .map(|block| {
+                block
+                    .get("text")
+                    .or_else(|| block.get("output"))
+                    .and_then(|v| v.as_str())
+                    .map(str::len)
+                    .unwrap_or_else(|| block.to_string().len())
+            })
+            .sum(),
+        Some(other) => other.to_string().len(),
+        None => msg.to_string().len(),
+    }
+}
+
+fn post_summary_ledger_reserve_chars(
+    injection_remaining_chars: usize,
+    has_live_runtime_state: bool,
+    has_file_touches: bool,
+) -> usize {
+    if has_live_runtime_state {
+        injection_remaining_chars.min(8_000)
+    } else if has_file_touches {
+        injection_remaining_chars.min(2_000)
+    } else {
+        0
+    }
+}
+
 impl AssistantAgent {
     /// Replace the conversation history (used to restore context from DB).
     pub fn set_conversation_history(&self, history: Vec<serde_json::Value>) {
@@ -248,7 +281,7 @@ impl AssistantAgent {
             cache_ttl_throttled,
             cache_ttl_emergency,
         };
-        let compact_result = self.context_engine.compact_sync(messages, &ctx);
+        let mut compact_result = self.context_engine.compact_sync(messages, &ctx);
 
         if compact_result.tier_applied == 0 {
             return;
@@ -305,6 +338,20 @@ impl AssistantAgent {
             if let Some(split) =
                 context_compact::split_for_summarization(messages, &self.compact_config)
             {
+                let runtime_ledger_snapshot = self
+                    .session_id
+                    .as_deref()
+                    .filter(|sid| !sid.is_empty())
+                    .map(crate::agent::runtime_ledger::build_runtime_ledger_snapshot)
+                    .unwrap_or_default();
+                if let Some(manifest) = compact_result.manifest.as_mut() {
+                    manifest
+                        .warnings
+                        .extend(runtime_ledger_snapshot.warnings.iter().cloned());
+                    manifest
+                        .warnings
+                        .extend(split.boundary_warnings.iter().cloned());
+                }
                 // Memory Flush: extract memories from messages about to be summarized
                 {
                     let flush_enabled = {
@@ -406,14 +453,30 @@ impl AssistantAgent {
                 .await
                 {
                     Ok(Ok(summary)) => {
+                        let injection_budget_chars = ((self.context_window as f64
+                            * self.compact_config.max_compaction_injected_context_share)
+                            .round()
+                            as usize)
+                            .saturating_mul(context_compact::CHARS_PER_TOKEN);
                         context_compact::apply_summary(
                             messages,
                             &summary,
                             split.preserved_start_index,
                             &self.compact_config,
+                            Some(injection_budget_chars),
                         );
                         // Update cache-TTL timer after successful Tier 3 summarization
                         self.touch_compaction_timer();
+                        // Record the summarized range in the manifest ONLY after the
+                        // summary actually applied — on failure/timeout (arms below)
+                        // the messages are untouched, so the manifest must not claim
+                        // a summary happened.
+                        if let Some(manifest) = compact_result.manifest.as_mut() {
+                            manifest.protected_start_index = Some(split.preserved_start_index);
+                            manifest.summarized_range = Some((0, split.preserved_start_index));
+                            manifest.rounds_summarized =
+                                context_compact::build_message_rounds(&split.summarizable).len();
+                        }
                         if let Some(logger) = crate::get_logger() {
                             logger.log(
                                 "info", "context", "compact",
@@ -436,20 +499,76 @@ impl AssistantAgent {
                         let tokens_freed = compact_result
                             .tokens_before
                             .saturating_sub(tokens_after_summary);
-                        if let Some(recovery_msg) = context_compact::build_recovery_message(
+                        let summary_chars = messages
+                            .first()
+                            .map(message_content_chars)
+                            .unwrap_or(summary.len());
+                        let injection_remaining_after_summary =
+                            injection_budget_chars.saturating_sub(summary_chars);
+                        let ledger_has_live_state =
+                            !runtime_ledger_snapshot.background_jobs.is_empty()
+                                || !runtime_ledger_snapshot.subagents.is_empty()
+                                || !runtime_ledger_snapshot.warnings.is_empty();
+                        let has_file_touches =
+                            !context_compact::extract_file_touches(&split.summarizable).is_empty();
+                        let ledger_reserve = post_summary_ledger_reserve_chars(
+                            injection_remaining_after_summary,
+                            ledger_has_live_state,
+                            has_file_touches,
+                        );
+                        let recovery_budget =
+                            injection_remaining_after_summary.saturating_sub(ledger_reserve);
+                        let recovery_cwd = crate::session::effective_session_working_dir(
+                            self.session_id.as_deref(),
+                        )
+                        .map(std::path::PathBuf::from);
+                        let recovery_ctx = context_compact::RecoveryContext {
+                            session_working_dir: recovery_cwd.as_deref(),
+                            tokens_freed,
+                            max_total_bytes: Some(recovery_budget),
+                            config: &self.compact_config,
+                        };
+                        let recovery = context_compact::build_recovery_message(
                             &split.summarizable,
                             &split.preserved,
-                            tokens_freed,
-                            &self.compact_config,
-                        ) {
-                            // Insert immediately after the summary message emitted by
-                            // `apply_summary`. The summary is always at index 0 (clear →
-                            // push summary → extend preserved), so index 1 is the first
-                            // preserved slot. Compute from `len()` so that if the summary
-                            // layout ever changes we fail loudly instead of silently
-                            // misplacing the recovery content.
-                            let insert_at =
-                                context_compact::POST_SUMMARY_INSERT_INDEX.min(messages.len());
+                            &recovery_ctx,
+                        );
+                        let recovery_chars = recovery
+                            .message
+                            .as_ref()
+                            .map(message_content_chars)
+                            .unwrap_or(0);
+                        let ledger_budget = injection_remaining_after_summary
+                            .saturating_sub(recovery_chars)
+                            .min(8_000);
+                        let ledger_msg = context_compact::build_runtime_ledger_message(
+                            &runtime_ledger_snapshot,
+                            &recovery.file_touches,
+                            ledger_budget,
+                        );
+                        if let Some(manifest) = compact_result.manifest.as_mut() {
+                            manifest.files_recovered = recovery.recovered_files.len();
+                            for skipped in &recovery.skipped_files {
+                                manifest.warnings.push(format!(
+                                    "recovery_skipped:{}:{}",
+                                    skipped.path, skipped.reason
+                                ));
+                            }
+                            if summary_chars >= injection_budget_chars {
+                                manifest
+                                    .warnings
+                                    .push("post_compaction_injection_budget_exhausted".to_string());
+                            }
+                        }
+                        let mut insert_at =
+                            context_compact::POST_SUMMARY_INSERT_INDEX.min(messages.len());
+                        if let Some(ledger_msg) = ledger_msg {
+                            messages.insert(insert_at, ledger_msg);
+                            insert_at += 1;
+                        }
+                        if let Some(recovery_msg) = recovery.message {
+                            // Insert after summary and optional runtime ledger.
+                            let insert_at = insert_at.min(messages.len());
                             messages.insert(insert_at, recovery_msg);
                             app_info!(
                                 "context",
@@ -494,6 +613,9 @@ impl AssistantAgent {
         // Emit compaction event to frontend
         let tokens_after =
             context_compact::estimate_request_tokens(system_prompt, messages, max_tokens);
+        if let Some(manifest) = compact_result.manifest.as_mut() {
+            manifest.tokens_after = tokens_after;
+        }
 
         // PostCompact + SessionStart(compact) hooks (observation): fire after a
         // real compaction (tier ≥ 2; tier 0 returned early above). Queues any
@@ -509,6 +631,7 @@ impl AssistantAgent {
                 "tokens_after": tokens_after,
                 "messages_affected": compact_result.messages_affected,
                 "description": compact_result.description,
+                "manifest": compact_result.manifest,
             }
         })) {
             on_delta(&event);
@@ -1243,6 +1366,29 @@ mod count_tool_uses_tests {
         // function_call side represents a model-emitted tool use.
         let msg = json!({"type": "function_call_output", "call_id": "c1", "output": "ok"});
         assert_eq!(count_tool_uses(&msg), 0);
+    }
+}
+
+#[cfg(test)]
+mod post_summary_budget_tests {
+    use super::post_summary_ledger_reserve_chars;
+
+    #[test]
+    fn reserves_small_ledger_budget_for_file_only_touches() {
+        assert_eq!(
+            post_summary_ledger_reserve_chars(10_000, false, true),
+            2_000
+        );
+    }
+
+    #[test]
+    fn reserves_larger_ledger_budget_for_live_runtime_state() {
+        assert_eq!(post_summary_ledger_reserve_chars(10_000, true, true), 8_000);
+    }
+
+    #[test]
+    fn reserves_nothing_without_live_state_or_file_touches() {
+        assert_eq!(post_summary_ledger_reserve_chars(10_000, false, false), 0);
     }
 }
 

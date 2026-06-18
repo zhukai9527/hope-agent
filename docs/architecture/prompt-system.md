@@ -476,14 +476,14 @@ including UUIDs, hashes, IDs, tokens, hostnames, IPs, ports, URLs, and file name
 | ---------------------------- | ------ | ---------------------------- |
 | `soft_trim_ratio`            | 0.50   | Tier 2 软截断触发比例        |
 | `hard_clear_ratio`           | 0.70   | Tier 2 硬清除触发比例        |
-| `keep_last_assistants`       | 4      | 保护最近 N 条 assistant 消息 |
+| `preserve_recent_rounds`     | 4      | 保护最近 N 个消息 round；普通短回合尽量扩到所属 user turn，长 tool loop 保持可裁剪前缀 |
 | `soft_trim_max_chars`        | 6,000  | 超过此值才软截断             |
 | `soft_trim_head_chars`       | 2,000  | 软截断保留头部               |
 | `soft_trim_tail_chars`       | 2,000  | 软截断保留尾部               |
 | `summarization_threshold`    | 0.85   | Tier 3 总结触发比例          |
-| `preserve_recent_turns`      | 4      | 总结时保留最近 N 轮对话      |
 | `summary_max_tokens`         | 4,096  | 总结输出最大 token           |
 | `summarization_timeout_secs` | 60     | 总结调用超时                 |
+| `max_compaction_injected_context_share` | 0.5 | Tier 3 摘要、ledger、recovery 的联合注入预算 |
 
 **代码位置**：`crates/ha-core/src/context_compact/config.rs`
 
