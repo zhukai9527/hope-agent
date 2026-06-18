@@ -1,11 +1,11 @@
 # 上下文压缩状态转移改造方案
 
-> 状态：设计草案 v5  
-> 目标架构文档：[`docs/architecture/context-compact.md`](../architecture/context-compact.md)  
-> 设计来源：现有 Hope Agent 上下文压缩实现、Claude Code compaction prompts、Claude Code review 反馈  
-> v2 修订重点：收窄 ledger scope、保持 `context_compact` 纯函数性、真 bug 优先、manifest 前置  
-> v3 修订重点：边界统一「保护量」而非仅 round-safety、snapshot 收窄到 jobs/subagents、files 段与 recovery 互补不重叠、boundary 与 round_grouping 分层、job ledger 标注 as-of、incognito 不新增持久化面、Tier 4 两处均构造 snapshot、借鉴 CC 的 user 消息逐条保真、明确排除 invoked-skills ledger  
-> v4 修订重点：明确 Tier 1 不因 recent boundary 跳过单结果截断、user 消息保真受摘要预算约束、manifest 覆盖手动 compact 路径、ledger terminal 状态仅收 pending-notification、配置同步确认已覆盖 GUI / ha-settings  
+> 状态：设计草案 v6
+> 目标架构文档：[`docs/architecture/context-compact.md`](../architecture/context-compact.md)
+> 设计来源：现有 Hope Agent 上下文压缩实现、Claude Code compaction prompts、Claude Code review 反馈
+> v2 修订重点：收窄 ledger scope、保持 `context_compact` 纯函数性、真 bug 优先、manifest 前置
+> v3 修订重点：边界统一「保护量」而非仅 round-safety、snapshot 收窄到 jobs/subagents、files 段与 recovery 互补不重叠、boundary 与 round_grouping 分层、job ledger 标注 as-of、incognito 不新增持久化面、Tier 4 两处均构造 snapshot、借鉴 CC 的 user 消息逐条保真、明确排除 invoked-skills ledger
+> v4 修订重点：明确 Tier 1 不因 recent boundary 跳过单结果截断、user 消息保真受摘要预算约束、manifest 覆盖手动 compact 路径、ledger terminal 状态仅收 pending-notification、配置同步确认已覆盖 GUI / ha-settings
 > v5 修订重点：`keepLastAssistants` 与 `preserveRecentTurns` 两个「最近保护」旋钮合并为单一 `preserveRecentRounds`（drop `preserveRecentTurns`，破坏性）、protected boundary 向前扩到所属 user turn 起点（受 `maxHistoryShare`/联合预算闸约束，超预算回退 round 边界 + 降级为 summary verbatim 兜底）、手动 `/compact` 明确为 sync-only（Tier 0–2，不走 Tier 3/ledger/recovery）、Tier 4 明确需要 `ContextEngine::emergency_compact` 接口承载 snapshot
 > v6 修订重点：`BoundarySnapshot` 一次构建，按 `ProtectRecent` / `SummarizeUnderPressure` / `Emergency` 三种模式派生边界；Tier 3 在摘要压力下不再沿用 fail-closed 语义，manifest 复用边界结果而非事后重算。
 
@@ -451,12 +451,24 @@ Tier 4 不能只做“清工具结果 + 保留最近 N 轮”。当 ContextOverf
 - `task_reminder_text()` 是进度单一真相源，每轮从 task store 重建。
 - Summary 可以描述“用户为何创建这些任务/决策脉络”，但不复制任务状态表。
 
-### Incognito
+### Incognito（以代码事实为准，不假设守卫已就位）
 
-- 不注入 Memory / Active Memory / KB。
-- **ledger 不引入新的持久化面**：summary / ledger / recovery 注入的合成消息随**既有 messages 持久化路径**落盘，而该路径已有 incognito 守卫；incognito 下随既有 tool-result/message 落盘守卫一并归零，**不需要为 ledger 单独发明 incognito 旁路**。
-- 文件恢复内容只留内存上下文，随会话焚毁。
+> ⚠️ 修订：早期草稿写「incognito 全链归零 / 文件恢复只留内存 / 该路径已有守卫」是**理想化断言，与当前代码不符**。核实结论如下，落地时按此契约补 gate。
+
+当前实现的真实状态：
+
+- **memory flush 已 gate**：`run_compaction` Tier 3 的 `flush_before_compact` 带 `&& !self.session_is_incognito()`（[`agent/context.rs`](../../crates/ha-core/src/agent/context.rs)）。✅
+- **recovery 未 gate**：`build_recovery_message` 构造处无 incognito 检查——**今天的 turn-start Tier 3 在无痕会话里照样读盘 + 注入文件正文**（[`context_compact/recovery.rs`](../../crates/ha-core/src/context_compact/recovery.rs)）。❌
+- **ledger snapshot 未 gate**：`build_runtime_ledger_snapshot` 按 session_id 直接查 JobManager / subagent，无 incognito 检查——无痕下 ledger 仍会被 job/subagent 填充（[`agent/runtime_ledger.rs`](../../crates/ha-core/src/agent/runtime_ledger.rs)）。❌
+- **context_json 未 gate 但有焚毁兜底**：`persist_round_context` → `save_context` 直接 `UPDATE sessions SET context_json`，无 incognito 检查；无痕会话同样写 context_json，靠 `session:purged` 关闭即焚（[`session/db.rs`](../../crates/ha-core/src/session/db.rs)）。这是既有 session-context 持久化语义，**不是新增落盘面**。
+
+因此本方案的 incognito 契约（需新增，勿假设已存在）：
+
+- **recovery / ledger 必须新增显式 incognito gate**：incognito 下 recovery 不读盘/不注入文件正文、ledger snapshot 归零或跳过。这是真实的待实现项，不是「复用既有守卫」。
+- summary 文本本身仍可注入（它是对话语义压缩，不引入外部数据），随 context_json 焚毁。
+- context_json 复用既有「写入 + `session:purged` 焚毁」语义，mid-loop 不新增落盘面。
 - `session:purged` 后不允许恢复出 ghost context。
+- 回归测试：incognito 会话触发 Tier 3 时，recovery 不读盘、ledger 为空。
 
 ## 测试计划
 
@@ -504,7 +516,7 @@ Tier 4 不能只做“清工具结果 + 保留最近 N 轮”。当 ContextOverf
 - snapshot 由调用方按 session_id 提供，`context_compact` 不读取 live store。
 - job/subagent 段带 as-of 标注。
 - terminal job/subagent 只在 pending-notification / not-yet-injected 状态下进入 ledger。
-- incognito 下随既有 message 持久化守卫归零，不新增独立持久化面。
+- incognito 下 ledger snapshot 归零 / 跳过、recovery 不读盘（**需新增显式 gate，当前不存在**，见 §Incognito 契约）；context_json 复用既有 `session:purged` 焚毁语义。
 
 ### Summary prompt tests
 

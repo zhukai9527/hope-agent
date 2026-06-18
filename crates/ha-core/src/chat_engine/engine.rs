@@ -242,6 +242,33 @@ fn emit_stream_event(
     true
 }
 
+fn emit_context_compaction_progress(
+    db: &session::SessionDB,
+    event_sink: &std::sync::Arc<dyn EventSink>,
+    session_id: &str,
+    source: stream_seq::ChatSource,
+    turn_id: Option<&str>,
+    phase: &str,
+    kind: &str,
+    extra: Option<serde_json::Map<String, serde_json::Value>>,
+) -> bool {
+    let mut data = serde_json::Map::new();
+    data.insert("phase".to_string(), serde_json::json!(phase));
+    data.insert("kind".to_string(), serde_json::json!(kind));
+    if let Some(extra) = extra {
+        for (key, value) in extra {
+            data.insert(key, value);
+        }
+    }
+    let Ok(event) = serde_json::to_string(&serde_json::json!({
+        "type": "context_compaction_progress",
+        "data": data,
+    })) else {
+        return false;
+    };
+    emit_stream_event(db, event_sink, session_id, source, turn_id, &event)
+}
+
 /// Emit a stream event when the caller has *already* confirmed the turn
 /// accepts events this tick. The per-token streaming hot loop calls this after
 /// its own `turn_accepts_stream_event` guard, avoiding a second registry lock
@@ -1220,26 +1247,33 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         model_ref.model_id
                     );
 
-                    if let Ok(event_str) = serde_json::to_string(&serde_json::json!({
-                        "type": "context_compacted",
-                        "data": {
-                            "tier_applied": 4,
-                            "description": "emergency_compacting",
-                            "attempt": compaction_attempts,
-                            "max_attempts": MAX_COMPACTION_RETRIES,
-                            "provider_id": model_ref.provider_id,
-                            "model_id": model_ref.model_id,
-                        },
-                    })) {
-                        let _ = emit_stream_event(
-                            &db,
-                            &event_sink,
-                            &session_id,
-                            source,
-                            turn_id.as_deref(),
-                            &event_str,
-                        );
-                    }
+                    let mut progress_extra = serde_json::Map::new();
+                    progress_extra.insert(
+                        "attempt".to_string(),
+                        serde_json::json!(compaction_attempts),
+                    );
+                    progress_extra.insert(
+                        "max_attempts".to_string(),
+                        serde_json::json!(MAX_COMPACTION_RETRIES),
+                    );
+                    progress_extra.insert(
+                        "provider_id".to_string(),
+                        serde_json::json!(model_ref.provider_id),
+                    );
+                    progress_extra.insert(
+                        "model_id".to_string(),
+                        serde_json::json!(model_ref.model_id),
+                    );
+                    let _ = emit_context_compaction_progress(
+                        &db,
+                        &event_sink,
+                        &session_id,
+                        source,
+                        turn_id.as_deref(),
+                        "preparing",
+                        "emergency",
+                        Some(progress_extra),
+                    );
 
                     // Build a temporary agent to run the compaction. Same
                     // profile that just hit overflow so the cache prefix is
@@ -1309,6 +1343,26 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         });
                     }
                     save_agent_context(&db, &session_id, &compact_agent);
+
+                    let mut progress_extra = serde_json::Map::new();
+                    progress_extra.insert(
+                        "attempt".to_string(),
+                        serde_json::json!(compaction_attempts),
+                    );
+                    progress_extra.insert(
+                        "max_attempts".to_string(),
+                        serde_json::json!(MAX_COMPACTION_RETRIES),
+                    );
+                    let _ = emit_context_compaction_progress(
+                        &db,
+                        &event_sink,
+                        &session_id,
+                        source,
+                        turn_id.as_deref(),
+                        "finalizing",
+                        "emergency",
+                        Some(progress_extra),
+                    );
 
                     // Manual snake_case shape — `CompactResult` itself is
                     // `rename_all="camelCase"`, but the frontend / IM

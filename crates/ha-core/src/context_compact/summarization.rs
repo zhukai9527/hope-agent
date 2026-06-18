@@ -10,6 +10,8 @@ use super::{
 };
 use serde_json::Value;
 
+const PREVIOUS_SUMMARY_PREFIX: &str = "[Previous conversation summary]\n\n";
+
 /// System prompt for context summarization (Tier 3)
 #[allow(dead_code)]
 pub(crate) const SUMMARIZATION_SYSTEM_PROMPT: &str = r#"You are a context compaction assistant.
@@ -228,6 +230,24 @@ pub fn build_summarization_prompt(
     prompt
 }
 
+/// If the summarizable prefix already starts with a previous compaction summary,
+/// carry it forward through the dedicated prompt slot instead of summarizing the
+/// summary again. Returns `(messages_to_summarize, previous_summary)`.
+pub fn peel_previous_summary(messages: &[Value]) -> (Vec<Value>, Option<String>) {
+    let Some(first) = messages.first() else {
+        return (Vec::new(), None);
+    };
+    let Some(content) = first.get("content").and_then(|v| v.as_str()) else {
+        return (messages.to_vec(), None);
+    };
+    let Some(summary) = content.strip_prefix(PREVIOUS_SUMMARY_PREFIX) else {
+        return (messages.to_vec(), None);
+    };
+
+    let rest = messages.get(1..).unwrap_or(&[]).to_vec();
+    (rest, Some(summary.to_string()))
+}
+
 /// Apply a summary: replace old messages with a summary message + preserved messages.
 pub fn apply_summary(
     messages: &mut Vec<Value>,
@@ -250,7 +270,7 @@ pub fn apply_summary(
     };
 
     // Build summary message
-    let prefix = "[Previous conversation summary]\n\n";
+    let prefix = PREVIOUS_SUMMARY_PREFIX;
     let mut summary_content = format!("{}{}", prefix, capped_summary);
     if let Some(budget) = summary_content_budget_chars {
         if summary_content.len() > budget {
@@ -376,6 +396,23 @@ mod tests {
         assert_eq!(
             messages[1].get("content").and_then(|v| v.as_str()),
             Some("preserved")
+        );
+    }
+
+    #[test]
+    fn peel_previous_summary_carries_summary_forward() {
+        let messages = vec![
+            json!({"role":"user","content":"[Previous conversation summary]\n\nold decision"}),
+            json!({"role":"user","content":"new work"}),
+        ];
+
+        let (remaining, previous) = peel_previous_summary(&messages);
+
+        assert_eq!(previous.as_deref(), Some("old decision"));
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].get("content").and_then(|v| v.as_str()),
+            Some("new work")
         );
     }
 

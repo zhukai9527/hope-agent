@@ -128,6 +128,8 @@ pub use round_grouping::{
     RECOVERED_ROUND_PREFIX,
 };
 pub(crate) use summarization::SUMMARIZATION_SYSTEM_PROMPT;
-pub use summarization::{apply_summary, build_summarization_prompt, split_for_summarization};
+pub use summarization::{
+    apply_summary, build_summarization_prompt, peel_previous_summary, split_for_summarization,
+};
 pub use truncation::truncate_tool_results;
 pub use types::{CompactResult, TokenEstimateCalibrator};
