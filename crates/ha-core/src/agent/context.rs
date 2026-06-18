@@ -1073,12 +1073,9 @@ impl AssistantAgent {
 
         let tier3_summarization_throttled = mid_loop_state.suppress_tier3_for_turn
             || mid_loop_state.summary_attempt_throttled(round);
-        let allow_summarization =
-            self.compaction_provider.is_none() && !tier3_summarization_throttled;
+        let allow_summarization = !tier3_summarization_throttled;
         // Only spend the per-turn attempt budget when a Tier 3 summary will
-        // actually be attempted. Recording on `!throttled` alone burned budget on
-        // rounds where a CompactionProvider disables mid-loop summarization
-        // (allow_summarization=false), prematurely suppressing later rounds.
+        // actually be attempted.
         if allow_summarization {
             mid_loop_state.record_summary_attempt(round);
         }
@@ -2010,6 +2007,47 @@ mod mid_loop_compaction_tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(outcome.tier_applied, 2);
         assert!(outcome.changed_history);
+        assert_eq!(state.summary_attempt_count, 1);
+    }
+
+    #[tokio::test]
+    async fn dedicated_provider_is_allowed_for_mid_loop_summary() {
+        let mut agent = AssistantAgent::new_anthropic("test-key");
+        agent.set_context_engine(Arc::new(ForceTier3Engine));
+        agent.set_compaction_provider(Some(Arc::new(StaticSummaryProvider)));
+        agent.set_compact_config(CompactConfig {
+            summarization_threshold: 0.0,
+            preserve_recent_rounds: 1,
+            ..Default::default()
+        });
+
+        let mut state = MidLoopCompactionState::default();
+        let mut messages = vec![
+            json!({"role": "user", "content": "inspect the project"}),
+            json!({"role": "assistant", "content": "found context worth preserving"}),
+            json!({"role": "user", "content": "continue"}),
+            json!({"role": "assistant", "content": "continuing"}),
+        ];
+        let on_delta = |_event: &str| {};
+        let outcome = agent
+            .maybe_compact_between_tool_rounds(
+                &mut messages,
+                "system",
+                "system",
+                &[],
+                "test-model",
+                1024,
+                Arc::new(AtomicBool::new(false)),
+                &mut state,
+                1,
+                &on_delta,
+            )
+            .await;
+
+        assert!(outcome.summary_applied);
+        assert!(serde_json::to_string(&messages)
+            .expect("serialize messages")
+            .contains("summary ok"));
         assert_eq!(state.summary_attempt_count, 1);
     }
 
