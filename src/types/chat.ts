@@ -277,7 +277,7 @@ export interface ContextCompactedEvent {
   tokens_after?: number
   messages_to_summarize?: number
   phase?: ContextCompactionPhase
-  kind?: "cleanup" | "summary" | "emergency"
+  kind?: "summary" | "emergency"
 }
 
 export type ContextCompactionPhase =
@@ -290,7 +290,7 @@ export type ContextCompactionPhase =
 
 export interface ContextCompactionProgressEvent {
   phase?: ContextCompactionPhase
-  kind?: "cleanup" | "summary" | "emergency"
+  kind?: "summary" | "emergency"
   messages_to_summarize?: number
   files_recovered?: number
   warning_count?: number

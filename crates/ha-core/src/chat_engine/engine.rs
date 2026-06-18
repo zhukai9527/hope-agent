@@ -1290,6 +1290,19 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     {
                         Ok(a) => a,
                         Err(e) => {
+                            // The "preparing"/emergency spinner was already emitted
+                            // above; emit a terminal "failed" so the GUI banner
+                            // resolves instead of spinning forever on this break.
+                            let _ = emit_context_compaction_progress(
+                                &db,
+                                &event_sink,
+                                &session_id,
+                                source,
+                                turn_id.as_deref(),
+                                "failed",
+                                "emergency",
+                                None,
+                            );
                             let msg = format!(
                                 "Cannot build agent for emergency compaction on {}::{}: {}",
                                 model_ref.provider_id, model_ref.model_id, e
@@ -1321,11 +1334,19 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     restore_agent_context(&db, &session_id, &compact_agent);
 
                     let mut history = compact_agent.get_conversation_history();
-                    let emergency_ledger =
-                        crate::agent::runtime_ledger::build_runtime_ledger_snapshot(&session_id);
+                    // Incognito parity with the Tier-3 path (agent/context.rs): an
+                    // incognito session must NOT have its runtime ledger (job /
+                    // subagent ids) built or injected into history — that history is
+                    // both sent to the model and persisted via save_agent_context
+                    // below. Fail-closed: a missing/burned session row counts as
+                    // incognito. Gating lives in `emergency_runtime_ledger` (unit-tested).
+                    let emergency_ledger = crate::agent::runtime_ledger::emergency_runtime_ledger(
+                        &session_id,
+                        crate::session::is_session_incognito(Some(&session_id)),
+                    );
                     let emergency_ctx = crate::context_compact::EmergencyCompactionContext {
                         config: &compact_config,
-                        runtime_ledger: Some(&emergency_ledger),
+                        runtime_ledger: emergency_ledger.as_ref(),
                     };
                     let compact_result = compact_agent
                         .context_engine()

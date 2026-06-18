@@ -64,10 +64,11 @@ pub(super) struct CompactionRunOutcome {
 }
 
 impl CompactionRunOutcome {
-    fn cancelled(tokens_after: u32) -> Self {
+    fn cancelled(tokens_after: u32, changed_history: bool) -> Self {
         Self {
             tokens_after,
             cancelled: true,
+            changed_history,
             ..Self::default()
         }
     }
@@ -633,7 +634,14 @@ impl AssistantAgent {
                                 None,
                                 None,
                             );
-                            return CompactionRunOutcome::cancelled(tokens_after);
+                            // compact_sync already mutated `messages` in place
+                            // (Tier 0/1/2) before the awaited summary; report it so
+                            // the caller refreshes the cache-safe snapshot instead
+                            // of leaving it on the pre-prune shape.
+                            return CompactionRunOutcome::cancelled(
+                                tokens_after,
+                                compact_result.messages_affected > 0,
+                            );
                         }
                     }
                 } else {
@@ -1067,7 +1075,11 @@ impl AssistantAgent {
             || mid_loop_state.summary_attempt_throttled(round);
         let allow_summarization =
             self.compaction_provider.is_none() && !tier3_summarization_throttled;
-        if !tier3_summarization_throttled {
+        // Only spend the per-turn attempt budget when a Tier 3 summary will
+        // actually be attempted. Recording on `!throttled` alone burned budget on
+        // rounds where a CompactionProvider disables mid-loop summarization
+        // (allow_summarization=false), prematurely suppressing later rounds.
+        if allow_summarization {
             mid_loop_state.record_summary_attempt(round);
         }
         let outcome = self
