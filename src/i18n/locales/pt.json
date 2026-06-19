@@ -4477,6 +4477,16 @@
     "claims": {
       "title": "Claims",
       "desc": "Memória estruturada de longo prazo com escopo, confiança e evidências.",
+      "explainer": {
+        "title": "Como esta camada funciona",
+        "intro": "Claims são pequenas afirmações de memória com evidências, extraídas de conversas e memórias existentes. Elas tornam a memória de longo prazo mais fácil de auditar, corrigir e manter no escopo certo.",
+        "affectsTitle": "O que afeta respostas",
+        "affectsDesc": "Só claims ativos, não expirados e compatíveis com o escopo atual podem alimentar a síntese de perfil, memória fixada ou recall ativo. Claims em revisão, arquivados ou expirados ficam fora do prompt.",
+        "reviewTitle": "Como revisar",
+        "reviewDesc": "Selecione um claim para ver suas evidências e então aprovar, editar, rejeitar, marcar como desatualizado, mover de escopo ou esquecer. Suas mudanças são registradas como correções do usuário.",
+        "backfillTitle": "O que o backfill faz",
+        "backfillDesc": "O backfill registra memórias antigas como claims sem alterar a injeção de memória atual. Memórias fixadas de perfil e preferências podem ser ativadas automaticamente; o restante aguarda revisão."
+      },
       "list": "Claims",
       "empty": "Ainda não há claims.",
       "selectClaim": "Selecione um claim para ver as evidências.",

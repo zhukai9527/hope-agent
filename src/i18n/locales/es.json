@@ -4477,6 +4477,16 @@
     "claims": {
       "title": "Claims",
       "desc": "Memoria estructurada a largo plazo con ámbito, confianza y evidencia.",
+      "explainer": {
+        "title": "Cómo funciona esta capa",
+        "intro": "Los claims son pequeñas afirmaciones de memoria con evidencia, destiladas desde chats y memorias existentes. Hacen que la memoria a largo plazo sea más fácil de auditar, corregir y mantener en su ámbito.",
+        "affectsTitle": "Qué afecta las respuestas",
+        "affectsDesc": "Solo los claims activos, no vencidos y que coinciden con el ámbito actual pueden alimentar la síntesis de perfil, la memoria fijada o el recuerdo activo. Los pendientes de revisión, archivados o vencidos no entran en el prompt.",
+        "reviewTitle": "Cómo revisar",
+        "reviewDesc": "Selecciona un claim para ver su evidencia y luego aprobarlo, editarlo, rechazarlo, marcarlo como obsoleto, moverlo de ámbito u olvidarlo. Tus cambios quedan registrados como correcciones del usuario.",
+        "backfillTitle": "Qué hace el backfill",
+        "backfillDesc": "El backfill registra memorias antiguas como claims sin cambiar la inyección de memoria actual. Las memorias fijadas de perfil y preferencias pueden activarse automáticamente; el resto espera revisión."
+      },
       "list": "Claims",
       "empty": "Aún no hay claims.",
       "selectClaim": "Selecciona un claim para ver su evidencia.",

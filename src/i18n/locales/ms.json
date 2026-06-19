@@ -4477,6 +4477,16 @@
     "claims": {
       "title": "Claims",
       "desc": "Ingatan jangka panjang berstruktur dengan skop, keyakinan dan bukti.",
+      "explainer": {
+        "title": "Cara lapisan ini berfungsi",
+        "intro": "Claims ialah pernyataan memori kecil yang disokong bukti, disuling daripada chat dan memori sedia ada. Ia memudahkan memori jangka panjang diaudit, dibetulkan dan dikekalkan mengikut skop.",
+        "affectsTitle": "Apa yang mempengaruhi jawapan",
+        "affectsDesc": "Hanya claims yang aktif, belum tamat tempoh dan sepadan dengan skop semasa boleh digunakan untuk sintesis profil, memori dipin atau active recall. Claims yang perlu disemak, diarkibkan atau tamat tempoh tidak masuk ke prompt.",
+        "reviewTitle": "Cara menyemak",
+        "reviewDesc": "Pilih claim untuk melihat buktinya, kemudian luluskan, sunting, tolak, tanda lapuk, pindahkan skop atau lupakan. Perubahan anda direkodkan sebagai pembetulan pengguna.",
+        "backfillTitle": "Apa itu backfill",
+        "backfillDesc": "Backfill mendaftarkan memori lama sebagai claims tanpa mengubah suntikan memori semasa. Memori profil dan pilihan yang dipin boleh menjadi aktif automatik; selebihnya menunggu semakan."
+      },
       "list": "Senarai claim",
       "empty": "Tiada claim lagi.",
       "selectClaim": "Pilih satu claim untuk melihat buktinya.",

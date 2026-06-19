@@ -237,8 +237,8 @@ export default function ClaimsBetaView() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
           <div className="text-sm font-medium flex items-center gap-1.5">
             {t("settings.claims.title")}
             <span className="text-[9px] uppercase tracking-wide rounded bg-primary/15 text-primary px-1 py-0.5">
@@ -272,6 +272,27 @@ export default function ClaimsBetaView() {
               </SelectItem>
             </SelectContent>
           </Select>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-3">
+        <div className="text-xs font-medium text-foreground">
+          {t("settings.claims.explainer.title")}
+        </div>
+        <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {t("settings.claims.explainer.intro")}
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {(["affects", "review", "backfill"] as const).map((item) => (
+            <div key={item} className="min-w-0">
+              <div className="text-[11px] font-medium text-foreground">
+                {t(`settings.claims.explainer.${item}Title`)}
+              </div>
+              <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {t(`settings.claims.explainer.${item}Desc`)}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
