@@ -39,20 +39,13 @@ impl Default for ImageToolConfig {
     }
 }
 
-/// Load image tool config from the cached config snapshot, clamped to hard caps.
-fn load_image_config() -> ImageToolConfig {
-    let mut cfg = crate::config::cached_config().image.clone();
-    cfg.max_images = cfg.max_images.min(CAP_MAX_IMAGES);
-    cfg
-}
-
 /// Effective per-call image cap: the configured value clamped to the hard cap.
 ///
 /// Single source of truth shared by the tool schema (advertised `maxItems` /
-/// "max N" text) and runtime enforcement (`normalize_sources`). Without this,
-/// the schema advertising `CAP_MAX_IMAGES` while `normalize_sources` enforces
-/// the (lower) configured default makes the model send more images than the
-/// tool will accept and hit a hard "Too many images" rejection.
+/// "max N" text) and runtime enforcement (`normalize_sources`). Routing both
+/// through one function prevents the schema from advertising a cap the tool
+/// won't accept — which would make the model send more images than allowed and
+/// hit a hard "Too many images" rejection.
 pub(crate) fn effective_max_images() -> usize {
     crate::config::cached_config()
         .image
@@ -392,8 +385,7 @@ fn with_label(source_label: String, label: Option<&str>) -> String {
 /// Tool: image / vision input: attach one or more images from files, URLs,
 /// clipboard, or screenshot to the next model round as visual input.
 pub(crate) async fn tool_image(args: &Value) -> Result<String> {
-    let config = load_image_config();
-    let sources = normalize_sources(args, config.max_images)?;
+    let sources = normalize_sources(args, effective_max_images())?;
     let task = vision_task(args);
     let total = sources.len();
     let mut result_parts: Vec<String> = Vec::new();

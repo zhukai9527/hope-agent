@@ -751,7 +751,7 @@ impl AssistantAgent {
             // the final usage event. The streaming assistant message is still
             // the latest message at this point, so the frontend (which only
             // applies usage onto a trailing assistant) picks it up.
-            emit_usage(on_delta, &total_usage, model, None);
+            emit_usage(on_delta, &total_usage, model, None, false);
 
             // Estimate current token usage for adaptive tool output sizing.
             let estimated_used = crate::context_compact::estimate_request_tokens(
@@ -1049,7 +1049,7 @@ impl AssistantAgent {
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = messages;
 
-        emit_usage(on_delta, &total_usage, model, first_ttft_ms);
+        emit_usage(on_delta, &total_usage, model, first_ttft_ms, true);
 
         // Log chat completion summary.
         if let Some(logger) = crate::get_logger() {
