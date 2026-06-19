@@ -3779,6 +3779,7 @@
       "emptyHint": "Dreaming sekmesinde profil sentezini etkinleştirin, ardından yenileyin.",
       "version": "v{{version}}"
     },
+    "profileSettings": "Profil",
     "profileAgeDisplay": "{{age}} yaşında",
     "profileAiExpBeginner": "Başlangıç — yeni başlıyor",
     "profileAiExpExpert": "Uzman — AI araçlarının yoğun kullanıcısı",
@@ -4480,6 +4481,16 @@
     "claims": {
       "title": "İddialar (Claims)",
       "desc": "Kapsam, güven ve kanıt içeren yapılandırılmış uzun süreli bellek.",
+      "explainer": {
+        "title": "Bu katman nasıl çalışır",
+        "intro": "Claims, sohbetlerden ve mevcut belleklerden damıtılmış, kanıt destekli küçük bellek ifadeleridir. Uzun süreli belleği denetlemeyi, düzeltmeyi ve kapsamda tutmayı kolaylaştırır.",
+        "affectsTitle": "Yanıtları ne etkiler",
+        "affectsDesc": "Yalnızca etkin, süresi dolmamış ve geçerli kapsamla eşleşen claims profil sentezi, sabitlenmiş bellek veya aktif hatırlama için kullanılabilir. İnceleme bekleyen, arşivlenen ve süresi dolanlar prompt'a girmez.",
+        "reviewTitle": "Nasıl gözden geçirilir",
+        "reviewDesc": "Kanıtlarını görmek için bir claim seçin; ardından onaylayın, düzenleyin, reddedin, eski olarak işaretleyin, kapsamını taşıyın veya unutun. Değişiklikleriniz kullanıcı düzeltmesi olarak kaydedilir.",
+        "backfillTitle": "Backfill ne yapar",
+        "backfillDesc": "Backfill eski bellekleri claims olarak kaydeder, ancak mevcut bellek enjeksiyonunu değiştirmez. Sabitlenmiş profil ve tercih bellekleri otomatik etkin olabilir; diğerleri incelemeyi bekler."
+      },
       "list": "İddialar",
       "empty": "Henüz iddia yok.",
       "selectClaim": "Kanıtını görmek için bir iddia seçin.",

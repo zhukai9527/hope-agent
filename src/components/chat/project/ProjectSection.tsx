@@ -24,6 +24,7 @@ import {
 } from "lucide-react"
 
 import { IconTip } from "@/components/ui/tooltip"
+import { AnimatedCollapse } from "@/components/ui/animated-presence"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -177,7 +178,7 @@ export default function ProjectSection(props: ProjectSectionProps) {
         }
       />
 
-      {expanded && (
+      <AnimatedCollapse open={expanded}>
         <div className="space-y-0.5 px-3 pb-1 pt-1">
           {visibleProjects.length === 0 && (
             <button
@@ -217,7 +218,7 @@ export default function ProjectSection(props: ProjectSectionProps) {
                   {archivedProjects.length}
                 </span>
               </button>
-              {archivedExpanded && (
+              <AnimatedCollapse open={archivedExpanded}>
                 <div className="mt-0.5 space-y-0.5">
                   {archivedProjects.map((project) => (
                     <ProjectGroup
@@ -231,11 +232,11 @@ export default function ProjectSection(props: ProjectSectionProps) {
                     />
                   ))}
                 </div>
-              )}
+              </AnimatedCollapse>
             </div>
           )}
         </div>
-      )}
+      </AnimatedCollapse>
     </div>
   )
 }
@@ -312,8 +313,9 @@ function ProjectGroup({
         <ContextMenuTrigger asChild>
           <div
             className={cn(
-              "group/project flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/40 transition-colors text-left cursor-pointer",
-              displayMode === "compact" && "gap-1.5 py-1",
+              "group/project relative flex min-h-10 items-center gap-2 overflow-hidden rounded-md bg-muted/20 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/35",
+              "cursor-pointer",
+              displayMode === "compact" && "min-h-8 gap-1.5 px-2 py-1",
             )}
             onClick={handleToggleExpanded}
             role="button"
@@ -344,61 +346,68 @@ function ProjectGroup({
               </div>
             )}
 
-            <div className="flex-1 min-w-0">
-              <div className={cn("truncate text-foreground/90", displayMode === "compact" ? "text-[12.5px]" : "text-sm")}>
+            <div className="min-w-0 flex-1 pr-12">
+              <div
+                title={project.name}
+                className={cn(
+                  "truncate font-semibold text-foreground",
+                  displayMode === "compact" ? "text-[12.5px]" : "text-sm",
+                )}
+              >
                 {project.name}
               </div>
             </div>
             {/* Hover-only action buttons. Match `AgentSection.tsx` styling so
                 the two sections feel consistent. */}
-            {!archivedView && (
-              <IconTip label={t("project.newChatInProject")}>
+            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100">
+              {!archivedView && (
+                <IconTip label={t("project.newChatInProject")}>
+                  <button
+                    className="rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-background/70 hover:text-primary"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onNewChatInProject(project.id)
+                    }}
+                  >
+                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                  </button>
+                </IconTip>
+              )}
+              <IconTip label={t("project.openProjectSettings")}>
                 <button
-                  className="shrink-0 p-0.5 rounded text-muted-foreground/0 group-hover/project:text-muted-foreground/60 hover:!text-primary transition-colors"
+                  className="rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-background/70 hover:text-primary"
                   onClick={(e) => {
                     e.stopPropagation()
-                    onNewChatInProject(project.id)
+                    onOpenProjectSettings(project)
                   }}
                 >
-                  <MessageSquarePlus className="h-3.5 w-3.5" />
+                  <Settings className="h-3.5 w-3.5" />
                 </button>
               </IconTip>
-            )}
-            <IconTip label={t("project.openProjectSettings")}>
-              <button
-                className="shrink-0 p-0.5 rounded text-muted-foreground/0 group-hover/project:text-muted-foreground/60 hover:!text-primary transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onOpenProjectSettings(project)
-                }}
-              >
-                <Settings className="h-3.5 w-3.5" />
-              </button>
-            </IconTip>
-            {archivedView && (
-              <IconTip label={t("project.unarchiveProject")}>
-                <button
-                  className="shrink-0 p-0.5 rounded text-muted-foreground/0 group-hover/project:text-muted-foreground/60 hover:!text-primary transition-colors"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onArchiveProject(project.id, false)
-                  }}
-                >
-                  <ArchiveRestore className="h-3.5 w-3.5" />
-                </button>
-              </IconTip>
-            )}
+              {archivedView && (
+                <IconTip label={t("project.unarchiveProject")}>
+                  <button
+                    className="rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-background/70 hover:text-primary"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onArchiveProject(project.id, false)
+                    }}
+                  >
+                    <ArchiveRestore className="h-3.5 w-3.5" />
+                  </button>
+                </IconTip>
+              )}
+            </div>
             {displayMode === "compact" && projectUnreadCount > 0 && (
-              <span className="inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold leading-none text-destructive-foreground tabular-nums">
+              <span className="absolute right-3 top-1/2 inline-flex h-[15px] min-w-[15px] -translate-y-1/2 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-semibold leading-none text-destructive-foreground tabular-nums transition-opacity group-hover/project:opacity-0 group-focus-within/project:opacity-0">
                 {projectUnreadCount > 99 ? "99+" : projectUnreadCount}
               </span>
             )}
-            {project.sessionCount > 0 && (
+            {project.sessionCount > 0 && !(displayMode === "compact" && projectUnreadCount > 0) && (
               <span
                 className={cn(
-                  "text-[10px] tabular-nums shrink-0",
-                  // Hide the badge while hover buttons are showing to avoid clutter.
-                  "text-muted-foreground/70 group-hover/project:hidden",
+                  "absolute right-3 top-1/2 -translate-y-1/2 text-[10px] tabular-nums transition-opacity",
+                  "text-muted-foreground/70 group-hover/project:opacity-0 group-focus-within/project:opacity-0",
                 )}
               >
                 {project.sessionCount}
@@ -438,7 +447,7 @@ function ProjectGroup({
         </ContextMenuContent>
       </ContextMenu>
 
-      {groupExpanded && (
+      <AnimatedCollapse open={groupExpanded}>
         <div
           className={cn(
             "pl-3 pr-1 mt-0.5",
@@ -487,7 +496,7 @@ function ProjectGroup({
             ))
           )}
         </div>
-      )}
+      </AnimatedCollapse>
     </div>
   )
 }

@@ -3779,6 +3779,7 @@
       "emptyHint": "ドリーミングタブでプロフィール合成を有効にしてから更新してください。",
       "version": "v{{version}}"
     },
+    "profileSettings": "プロフィール",
     "profileAgeDisplay": "{{age}} 歳",
     "profileAiExpBeginner": "初級 — AIを始めたばかり",
     "profileAiExpExpert": "上級 — AIツールの深い利用者",
@@ -4480,6 +4481,16 @@
     "claims": {
       "title": "構造化メモリ Claims",
       "desc": "スコープ・信頼度・出典を備えた構造化長期記憶。",
+      "explainer": {
+        "title": "このレイヤーの役割",
+        "intro": "Claims は、会話や既存メモリから抽出された、根拠付きの小さな事実や好みです。長期メモリを確認、修正、スコープ管理しやすくします。",
+        "affectsTitle": "回答への影響",
+        "affectsDesc": "現在のスコープに一致する active かつ未期限切れの claim だけが、プロフィール合成、Pinned Memory、Active Memory に使われます。レビュー待ち、アーカイブ済み、期限切れはプロンプトに入りません。",
+        "reviewTitle": "確認方法",
+        "reviewDesc": "claim を選ぶと根拠を確認し、承認、編集、却下、期限切れ、スコープ移動、忘却ができます。操作はユーザー修正として記録されます。",
+        "backfillTitle": "バックフィルとは",
+        "backfillDesc": "バックフィルは古い通常メモリを claim として登録しますが、現在のメモリ注入はすぐには変えません。固定されたプロフィールや好みは自動で active になり、それ以外はレビュー待ちになります。"
+      },
       "list": "クレーム一覧",
       "empty": "クレームはまだありません。",
       "selectClaim": "クレームを選択して出典を表示。",

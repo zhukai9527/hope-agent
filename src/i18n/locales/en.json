@@ -3779,6 +3779,7 @@
       "emptyHint": "Enable profile synthesis under the Dreaming tab, then refresh.",
       "version": "v{{version}}"
     },
+    "profileSettings": "Profile",
     "profileAgeDisplay": "{{age}} years old",
     "profileAiExpBeginner": "Beginner — just getting started",
     "profileAiExpExpert": "Expert — deep user of AI tools",
@@ -4480,6 +4481,16 @@
     "claims": {
       "title": "Claims",
       "desc": "Structured long-term memory with scope, confidence and evidence.",
+      "explainer": {
+        "title": "How this layer works",
+        "intro": "Claims are small, evidence-backed memory statements distilled from chats and existing memories. They make long-term memory easier to audit, correct and keep scoped.",
+        "affectsTitle": "What affects replies",
+        "affectsDesc": "Only active, unexpired claims that match the current scope can feed profile synthesis, pinned memory or active recall. Needs-review, archived and expired claims stay out of prompts.",
+        "reviewTitle": "How to review",
+        "reviewDesc": "Select a claim to inspect its evidence, then approve, edit, reject, mark outdated, move scope or forget it. Your changes are recorded as user corrections.",
+        "backfillTitle": "What backfill does",
+        "backfillDesc": "Backfill registers older memories as claims without changing current memory injection. Pinned profile and preference memories can become active automatically; the rest wait for review."
+      },
       "list": "Claims",
       "empty": "No claims yet.",
       "selectClaim": "Select a claim to see its evidence.",
