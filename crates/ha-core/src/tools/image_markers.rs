@@ -2,6 +2,7 @@ use base64::Engine as _;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::browser::IMAGE_BASE64_PREFIX;
 
@@ -146,6 +147,50 @@ pub(crate) fn build_image_base64_marker(mime: &str, b64: &str, text: &str) -> St
     format!("{IMAGE_BASE64_PREFIX}{mime}__{b64}__\n{text}")
 }
 
+pub(crate) fn materialize_base64_image_markers(
+    result: &str,
+    session_id: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let Some(parsed) = parse_image_markers(result) else {
+        return Ok(None);
+    };
+
+    let mut changed = false;
+    let mut rebuilt = Vec::with_capacity(parsed.markers.len() + 1);
+    if !parsed.leading_text.is_empty() {
+        rebuilt.push(parsed.leading_text);
+    }
+
+    for (idx, marker) in parsed.markers.iter().enumerate() {
+        let marker_text = match &marker.payload {
+            ImageMarkerPayload::Base64(b64) => {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+                let sniffed_mime =
+                    crate::attachments::sniff_mime_magic(&bytes).ok_or_else(|| {
+                        anyhow::anyhow!("base64 image marker MIME could not be verified")
+                    })?;
+                if !sniffed_mime.starts_with("image/") {
+                    anyhow::bail!("base64 image marker is not an image: {}", sniffed_mime);
+                }
+                let path =
+                    save_materialized_image_bytes(session_id, idx, sniffed_mime, bytes.as_slice())?;
+                changed = true;
+                build_image_file_marker(sniffed_mime, path.as_str(), &marker.text)
+            }
+            ImageMarkerPayload::FilePath(path) => {
+                build_image_file_marker(&marker.mime, path, &marker.text)
+            }
+        };
+        rebuilt.push(marker_text);
+    }
+
+    if changed {
+        Ok(Some(rebuilt.join("\n")))
+    } else {
+        Ok(None)
+    }
+}
+
 pub(crate) fn contains_image_marker(result: &str) -> bool {
     result.contains(IMAGE_BASE64_PREFIX) || result.contains(IMAGE_FILE_PREFIX)
 }
@@ -259,6 +304,66 @@ fn is_valid_standard_base64(data: &str) -> bool {
     base64::engine::general_purpose::STANDARD
         .decode(data)
         .is_ok()
+}
+
+fn save_materialized_image_bytes(
+    session_id: Option<&str>,
+    marker_index: usize,
+    mime: &str,
+    bytes: &[u8],
+) -> anyhow::Result<String> {
+    let session_segment = session_id
+        .map(sanitize_path_segment)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "_global".to_string());
+    let dir = crate::paths::root_dir()?
+        .join("tool_results")
+        .join(session_segment);
+    std::fs::create_dir_all(&dir)?;
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let ext = image_extension_for_mime(mime);
+    let path = dir.join(format!("recovered_image_{nanos}_{marker_index}.{ext}",));
+    std::fs::write(&path, bytes)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn sanitize_path_segment(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn image_extension_for_mime(mime: &str) -> String {
+    let raw_subtype = mime.strip_prefix("image/").unwrap_or("bin");
+    let subtype = raw_subtype
+        .split_once('+')
+        .map(|(base, _)| base)
+        .unwrap_or(raw_subtype);
+    let ext = match subtype {
+        "jpeg" | "pjpeg" => "jpg",
+        "svg" => "svg",
+        other => other,
+    };
+    let sanitized = ext
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "bin".to_string()
+    } else {
+        sanitized
+    }
 }
 
 #[cfg(test)]

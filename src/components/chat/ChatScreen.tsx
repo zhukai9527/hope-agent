@@ -64,7 +64,7 @@ import { useChatStreamReattach } from "./hooks/useChatStreamReattach"
 import { usePlanMode } from "./plan-mode/usePlanMode"
 import { useTaskProgressSnapshot } from "./tasks/useTaskProgressSnapshot"
 import { computeContextUsage } from "./chatUtils"
-import { resolveCurrentModel } from "./sessionStatus"
+import { compactContextNow, compactResultMessage, resolveCurrentModel } from "./sessionStatus"
 import { useDiffPanel } from "./diff-panel/useDiffPanel"
 import { DiffPanel } from "./diff-panel/DiffPanel"
 import { useFilePreview } from "./files/useFilePreview"
@@ -1303,11 +1303,11 @@ export default function ChatScreen({
           if (session.currentSessionId) {
             setCompacting(true)
             try {
-              await getTransport().call("compact_context_now", {
-                sessionId: session.currentSessionId,
-              })
+              const result = await compactContextNow(session.currentSessionId)
+              toast.success(compactResultMessage(t, result))
             } catch (e) {
               logger.error("ui", "ChatScreen::slashCompact", "Compact failed", e)
+              toast.error(t("chat.compactFailed"))
             } finally {
               setCompacting(false)
             }
