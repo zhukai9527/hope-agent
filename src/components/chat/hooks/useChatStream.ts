@@ -195,6 +195,13 @@ export interface UseChatStreamOptions {
    */
   draftWorkingDir?: string | null
   /**
+   * Project bound to a not-yet-materialized chat (lazy project session). Like
+   * draftWorkingDir, it rides on the `chat` command payload (`projectId`) as a
+   * send-time snapshot and the backend binds the auto-created session to it —
+   * sent only when no `sessionId` is set yet.
+   */
+  draftProjectId?: string | null
+  /**
    * KB attaches staged before the session existed (composer draft mode). Like
    * draftWorkingDir, they ride on the `chat` command payload (`kbAttachments`)
    * as a send-time snapshot and the backend applies them on the auto-create
@@ -285,6 +292,7 @@ export function useChatStream({
   reasoningEffort,
   incognitoEnabled = false,
   draftWorkingDir = null,
+  draftProjectId = null,
   draftKbAttachments = [],
   draftKbAnchorNote = null,
   toolScope,
@@ -294,6 +302,10 @@ export function useChatStream({
   // (mirrors how draftWorkingDir is baked into the create call) so a later
   // New Chat / session switch can't redirect them onto the wrong session.
   const draftKbAttachmentsRef = useRef(draftKbAttachments)
+  // Latest draft project binding, snapshotted at send time so a mid-send project
+  // switch can't materialize the session under the wrong project.
+  const draftProjectIdRef = useRef(draftProjectId)
+  draftProjectIdRef.current = draftProjectId
   draftKbAttachmentsRef.current = draftKbAttachments
   const { t } = useTranslation()
   const [input, setInputState] = useState("")
@@ -442,6 +454,13 @@ export function useChatStream({
   const [showCodexAuthExpired, setShowCodexAuthExpired] = useState(false)
   const [permissionMode, setPermissionModeState] = useState<SessionMode>("default")
   const permissionModeRef = useRef<SessionMode>("default")
+  // The agent default seeded into `permissionMode` for the current draft (null
+  // until seeding settles / on a fresh draft). For a new session we send
+  // `permissionMode` ONLY when it differs from this seed — i.e. the user really
+  // changed it. Otherwise we omit it so the backend's create-time agent default
+  // (create_session_full) stays authoritative and isn't clobbered by a value
+  // sent before seeding settled (which could be stale from the prior session).
+  const seededPermissionModeRef = useRef<SessionMode | null>(null)
   const [executionStateBySession, setExecutionStateBySession] = useState<
     Map<string, ChatTurnStatus>
   >(() => new Map())
@@ -571,6 +590,9 @@ export function useChatStream({
   // choice intact across navigation — only "new chat" or agent swap re-seeds.
   useEffect(() => {
     if (currentSessionId || messages.length > 0 || !currentAgentId) return
+    // Fresh draft (or agent swap): the seed is not settled yet. Until it is, a
+    // send omits permissionMode (backend agent default stands).
+    seededPermissionModeRef.current = null
     let cancelled = false
     void (async () => {
       try {
@@ -581,6 +603,7 @@ export function useChatStream({
         const fallback =
           (config?.capabilities?.defaultSessionPermissionMode as SessionMode | undefined) ??
           "default"
+        seededPermissionModeRef.current = fallback
         setPermissionModeState(fallback)
       } catch (e) {
         logger.error(
@@ -1020,7 +1043,15 @@ export function useChatStream({
           incognito: currentSessionId ? undefined : incognitoEnabled,
           modelOverride,
           agentId: currentAgentId,
-          permissionMode: permissionModeRef.current,
+          // Existing session: always send (the title-bar switcher persisted it).
+          // New session: only send when the user changed it from the seeded agent
+          // default — otherwise omit so the backend's create-time default wins.
+          permissionMode:
+            currentSessionId ||
+            (seededPermissionModeRef.current !== null &&
+              permissionModeRef.current !== seededPermissionModeRef.current)
+              ? permissionModeRef.current
+              : undefined,
           planMode: effectivePlanMode && effectivePlanMode !== "off" ? effectivePlanMode : undefined,
           temperatureOverride: temperatureOverride ?? undefined,
           reasoningEffort: reasoningEffort ?? undefined,
@@ -1028,6 +1059,8 @@ export function useChatStream({
           isPlanTrigger: options?.isPlanTrigger,
           planComment: options?.planComment,
           workingDir: currentSessionId ? undefined : draftWorkingDir ?? undefined,
+          // Lazy project binding — send-time snapshot, only on the auto-create send.
+          projectId: currentSessionId ? undefined : draftProjectIdRef.current ?? undefined,
           // Send-time snapshot: only on the auto-create send, never incognito.
           kbAttachments:
             currentSessionId || incognitoEnabled
