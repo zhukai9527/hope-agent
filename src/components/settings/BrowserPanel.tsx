@@ -533,7 +533,7 @@ export default function BrowserPanel() {
     const extensionId = extensionIdInput.trim()
     const hostPath = nativeHostPathInput.trim()
     if (!extensionId) {
-      toast.error("Chrome extension id is required")
+      toast.error(t("settings.browser.extension.toast.idRequired"))
       return
     }
     setBusy("install-native-host")
@@ -549,7 +549,7 @@ export default function BrowserPanel() {
           },
         },
       )
-      toast.success("Native host manifest installed", {
+      toast.success(t("settings.browser.extension.toast.hostInstalled"), {
         description: result.manifestPath,
       })
       await refresh()
@@ -557,7 +557,7 @@ export default function BrowserPanel() {
       const msg = e instanceof Error ? e.message : String(e)
       logger.error("settings", "BrowserPanel", `install-native-host failed: ${msg}`)
       setError(msg)
-      toast.error("Native host install failed", { description: msg })
+      toast.error(t("settings.browser.extension.toast.hostInstallFailed"), { description: msg })
     } finally {
       setBusy(null)
     }
@@ -570,7 +570,7 @@ export default function BrowserPanel() {
       const result = await getTransport().call<BrowserExtensionStopResult>(
         "browser_extension_stop_control",
       )
-      toast.success("Browser control stopped", {
+      toast.success(t("settings.browser.extension.toast.controlStopped"), {
         description: result.message,
       })
       await refresh()
@@ -578,7 +578,7 @@ export default function BrowserPanel() {
       const msg = e instanceof Error ? e.message : String(e)
       logger.error("settings", "BrowserPanel", `stop-extension-control failed: ${msg}`)
       setError(msg)
-      toast.error("Stop browser control failed", { description: msg })
+      toast.error(t("settings.browser.extension.toast.controlStopFailed"), { description: msg })
     } finally {
       setBusy(null)
     }
@@ -602,26 +602,32 @@ export default function BrowserPanel() {
     }
   }
 
-  const copyInstallValue = useCallback(async (label: string, value?: string | null) => {
-    if (!value) return
-    try {
-      await navigator.clipboard.writeText(value)
-      toast.success(`${label} copied`)
-    } catch (e) {
-      logger.error("settings", "BrowserPanel", `copy ${label} failed: ${e}`)
-      toast.error(`Copy ${label} failed`)
-    }
-  }, [])
+  const copyInstallValue = useCallback(
+    async (label: string, value?: string | null) => {
+      if (!value) return
+      try {
+        await navigator.clipboard.writeText(value)
+        toast.success(t("settings.browser.extension.toast.copied", { item: label }))
+      } catch (e) {
+        logger.error("settings", "BrowserPanel", `copy ${label} failed: ${e}`)
+        toast.error(t("settings.browser.extension.toast.copyFailed", { item: label }))
+      }
+    },
+    [t],
+  )
 
-  const revealInstallPath = useCallback(async (label: string, path?: string | null) => {
-    if (!path) return
-    try {
-      await getTransport().call("reveal_in_folder", { path })
-    } catch (e) {
-      logger.error("settings", "BrowserPanel", `reveal ${label} failed: ${e}`)
-      toast.error(`Reveal ${label} failed`)
-    }
-  }, [])
+  const revealInstallPath = useCallback(
+    async (label: string, path?: string | null) => {
+      if (!path) return
+      try {
+        await getTransport().call("reveal_in_folder", { path })
+      } catch (e) {
+        logger.error("settings", "BrowserPanel", `reveal ${label} failed: ${e}`)
+        toast.error(t("settings.browser.extension.toast.revealFailed", { item: label }))
+      }
+    },
+    [t],
+  )
 
   const connected = status?.connected ?? false
 
@@ -637,6 +643,22 @@ export default function BrowserPanel() {
     const prof = status.profile ? ` · ${status.profile}` : ""
     return `${mode}${prof}`
   }, [status, t])
+
+  // Localized display for the backend extension-status enum (`kind`); unknown
+  // variants fall back to the raw kind / English backend message.
+  const extKindLabel: Record<string, string> = {
+    ready: t("settings.browser.extension.kindReady"),
+    host_missing: t("settings.browser.extension.kindHostMissing"),
+    broker_unavailable: t("settings.browser.extension.kindBrokerUnavailable"),
+    version_mismatch: t("settings.browser.extension.kindVersionMismatch"),
+    not_connected: t("settings.browser.extension.kindNotConnected"),
+  }
+  const extKindMessage: Record<string, string> = {
+    ready: t("settings.browser.extension.statusReady"),
+    host_missing: t("settings.browser.extension.statusHostMissing"),
+    broker_unavailable: t("settings.browser.extension.statusBrokerUnavailable"),
+    not_connected: t("settings.browser.extension.statusNotConnected"),
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
@@ -704,23 +726,32 @@ export default function BrowserPanel() {
               )}
               <div className="flex-1 min-w-0 space-y-1">
                 <div className="text-sm font-medium">
-                  Chrome Extension · {extensionStatus.kind}
+                  {t("settings.browser.extension.title")} ·{" "}
+                  {extKindLabel[extensionStatus.kind] ?? extensionStatus.kind}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {extensionStatus.message}
+                  {extKindMessage[extensionStatus.kind] ?? extensionStatus.message}
                 </p>
                 <p className="text-[11px] text-muted-foreground font-mono truncate">
                   {extensionStatus.nativeHostManifestPath || extensionStatus.nativeHostName}
                 </p>
                 {extensionStatus.extensionConnected && (
                   <p className="text-[11px] text-muted-foreground">
-                    Extension {extensionStatus.extensionVersion || "unknown"} · protocol{" "}
-                    {extensionStatus.extensionProtocolVersion ?? "unknown"}
+                    {t("settings.browser.extension.versionLine", {
+                      version:
+                        extensionStatus.extensionVersion ||
+                        t("settings.browser.extension.unknown"),
+                      protocol:
+                        extensionStatus.extensionProtocolVersion ??
+                        t("settings.browser.extension.unknown"),
+                    })}
                   </p>
                 )}
                 {extensionStatus.unpackedExtensionPath && (
                   <p className="text-[11px] text-muted-foreground font-mono truncate">
-                    Load unpacked: {extensionStatus.unpackedExtensionPath}
+                    {t("settings.browser.extension.loadUnpackedPath", {
+                      path: extensionStatus.unpackedExtensionPath,
+                    })}
                   </p>
                 )}
                 <div className="pt-2 flex flex-wrap gap-2">
@@ -736,7 +767,7 @@ export default function BrowserPanel() {
                     ) : (
                       <Power className="h-3.5 w-3.5" />
                     )}
-                    <span className="ml-1.5">Stop browser control</span>
+                    <span className="ml-1.5">{t("settings.browser.extension.stopControl")}</span>
                   </Button>
                 </div>
                 {!extensionStatus.backendAvailable && (
@@ -750,10 +781,10 @@ export default function BrowserPanel() {
                             </span>
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="font-medium text-foreground">
-                                Install the Chrome extension
+                                {t("settings.browser.extension.stepInstallExtension")}
                               </div>
                               <div className="text-muted-foreground">
-                                Use the Chrome Web Store page, then return here and refresh.
+                                {t("settings.browser.extension.stepInstallExtensionHint")}
                               </div>
                               <Button
                                 size="sm"
@@ -763,7 +794,7 @@ export default function BrowserPanel() {
                                 className="h-7 px-2"
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
-                                <span className="ml-1.5">Open Chrome Web Store</span>
+                                <span className="ml-1.5">{t("settings.browser.extension.openWebStore")}</span>
                               </Button>
                             </div>
                           </div>
@@ -773,11 +804,11 @@ export default function BrowserPanel() {
                             </span>
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="font-medium text-foreground">
-                                Install the native host
+                                {t("settings.browser.extension.stepInstallHost")}
                               </div>
                               <div className="font-mono text-[11px] text-muted-foreground truncate">
                                 {extensionStatus.nativeHostBinaryHint ||
-                                  "Native host path unavailable"}
+                                  t("settings.browser.extension.hostPathUnavailable")}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <Button
@@ -785,7 +816,7 @@ export default function BrowserPanel() {
                                   variant="ghost"
                                   onClick={() =>
                                     void revealInstallPath(
-                                      "native host",
+                                      t("settings.browser.extension.nativeHostLabel"),
                                       extensionStatus.nativeHostBinaryHint,
                                     )
                                   }
@@ -793,14 +824,14 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <FolderOpen className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Show host</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.showHost")}</span>
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={() =>
                                     void copyInstallValue(
-                                      "Native host path",
+                                      t("settings.browser.extension.nativeHostPathLabel"),
                                       extensionStatus.nativeHostBinaryHint,
                                     )
                                   }
@@ -808,7 +839,7 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <Copy className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Copy host path</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.copyHostPath")}</span>
                                 </Button>
                               </div>
                             </div>
@@ -816,7 +847,7 @@ export default function BrowserPanel() {
                           {extensionStatus.unpackedExtensionPath && (
                             <div className="rounded-md border border-border/70 px-3 py-2 space-y-2">
                               <div className="font-medium text-foreground">
-                                Alpha fallback: load unpacked
+                                {t("settings.browser.extension.alphaFallback")}
                               </div>
                               <div className="font-mono text-[11px] text-muted-foreground truncate">
                                 {extensionStatus.unpackedExtensionPath}
@@ -830,14 +861,14 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Open chrome://extensions</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.openChromeExtensions")}</span>
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={() =>
                                     void revealInstallPath(
-                                      "extension folder",
+                                      t("settings.browser.extension.extensionFolderLabel"),
                                       extensionStatus.unpackedExtensionPath,
                                     )
                                   }
@@ -845,14 +876,14 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <FolderOpen className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Show folder</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.showFolder")}</span>
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={() =>
                                     void copyInstallValue(
-                                      "Extension path",
+                                      t("settings.browser.extension.extensionPathLabel"),
                                       extensionStatus.unpackedExtensionPath,
                                     )
                                   }
@@ -860,7 +891,7 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <Copy className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Copy path</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.copyPath")}</span>
                                 </Button>
                               </div>
                             </div>
@@ -874,10 +905,10 @@ export default function BrowserPanel() {
                             </span>
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="font-medium text-foreground">
-                                Open Chrome extensions
+                                {t("settings.browser.extension.stepOpenExtensions")}
                               </div>
                               <div className="text-muted-foreground">
-                                Enable Developer mode, then use Load unpacked.
+                                {t("settings.browser.extension.stepOpenExtensionsHint")}
                               </div>
                               <Button
                                 size="sm"
@@ -887,7 +918,7 @@ export default function BrowserPanel() {
                                 className="h-7 px-2"
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
-                                <span className="ml-1.5">Open chrome://extensions</span>
+                                <span className="ml-1.5">{t("settings.browser.extension.openChromeExtensions")}</span>
                               </Button>
                             </div>
                           </div>
@@ -897,11 +928,11 @@ export default function BrowserPanel() {
                             </span>
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="font-medium text-foreground">
-                                Load the unpacked extension
+                                {t("settings.browser.extension.stepLoadUnpacked")}
                               </div>
                               <div className="font-mono text-[11px] text-muted-foreground truncate">
                                 {extensionStatus.unpackedExtensionPath ||
-                                  "Extension path unavailable"}
+                                  t("settings.browser.extension.extensionPathUnavailable")}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <Button
@@ -909,7 +940,7 @@ export default function BrowserPanel() {
                                   variant="ghost"
                                   onClick={() =>
                                     void revealInstallPath(
-                                      "extension folder",
+                                      t("settings.browser.extension.extensionFolderLabel"),
                                       extensionStatus.unpackedExtensionPath,
                                     )
                                   }
@@ -917,14 +948,14 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <FolderOpen className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Show folder</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.showFolder")}</span>
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={() =>
                                     void copyInstallValue(
-                                      "Extension path",
+                                      t("settings.browser.extension.extensionPathLabel"),
                                       extensionStatus.unpackedExtensionPath,
                                     )
                                   }
@@ -932,7 +963,7 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <Copy className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Copy path</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.copyPath")}</span>
                                 </Button>
                               </div>
                             </div>
@@ -943,11 +974,11 @@ export default function BrowserPanel() {
                             </span>
                             <div className="min-w-0 flex-1 space-y-1">
                               <div className="font-medium text-foreground">
-                                Install the native host
+                                {t("settings.browser.extension.stepInstallHost")}
                               </div>
                               <div className="font-mono text-[11px] text-muted-foreground truncate">
                                 {extensionStatus.nativeHostBinaryHint ||
-                                  "Native host path unavailable"}
+                                  t("settings.browser.extension.hostPathUnavailable")}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <Button
@@ -955,7 +986,7 @@ export default function BrowserPanel() {
                                   variant="ghost"
                                   onClick={() =>
                                     void revealInstallPath(
-                                      "native host",
+                                      t("settings.browser.extension.nativeHostLabel"),
                                       extensionStatus.nativeHostBinaryHint,
                                     )
                                   }
@@ -963,14 +994,14 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <FolderOpen className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Show host</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.showHost")}</span>
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={() =>
                                     void copyInstallValue(
-                                      "Native host path",
+                                      t("settings.browser.extension.nativeHostPathLabel"),
                                       extensionStatus.nativeHostBinaryHint,
                                     )
                                   }
@@ -978,7 +1009,7 @@ export default function BrowserPanel() {
                                   className="h-7 px-2"
                                 >
                                   <Copy className="h-3.5 w-3.5" />
-                                  <span className="ml-1.5">Copy host path</span>
+                                  <span className="ml-1.5">{t("settings.browser.extension.copyHostPath")}</span>
                                 </Button>
                               </div>
                             </div>
@@ -989,12 +1020,12 @@ export default function BrowserPanel() {
                     <div className="grid gap-2 md:grid-cols-2">
                       <Input
                         value={extensionIdInput}
-                        placeholder="Chrome extension id"
+                        placeholder={t("settings.browser.extension.extensionIdPlaceholder")}
                         onChange={(e) => setExtensionIdInput(e.target.value)}
                       />
                       <Input
                         value={nativeHostPathInput}
-                        placeholder="ha-browser-host absolute path"
+                        placeholder={t("settings.browser.extension.hostPathPlaceholder")}
                         onChange={(e) => setNativeHostPathInput(e.target.value)}
                       />
                     </div>
@@ -1010,7 +1041,7 @@ export default function BrowserPanel() {
                         ) : (
                           <Plug className="h-3.5 w-3.5" />
                       )}
-                      <span className="ml-1.5">Install native host</span>
+                      <span className="ml-1.5">{t("settings.browser.extension.installHost")}</span>
                     </Button>
                     </div>
                   </div>
