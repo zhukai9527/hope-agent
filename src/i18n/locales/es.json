@@ -2788,6 +2788,7 @@
         "statusHostMissing": "El host de mensajería nativa de Chrome no está instalado.",
         "statusBrokerUnavailable": "El broker de la extensión de Chrome no está activo.",
         "statusExtensionMissing": "La extensión de Chrome de Hope Agent no está conectada.",
+        "statusVersionMismatch": "La versión del protocolo de la extensión no coincide con la del host. Vuelve a cargar la extensión para actualizarla.",
         "versionLine": "Extensión {{version}} · protocolo {{protocol}}",
         "unknown": "desconocido",
         "loadUnpackedPath": "Cargar descomprimida: {{path}}",

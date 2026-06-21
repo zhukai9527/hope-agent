@@ -2788,6 +2788,7 @@
         "statusHostMissing": "Chrome のネイティブメッセージングホストがインストールされていません。",
         "statusBrokerUnavailable": "Chrome 拡張機能のブローカーが起動していません。",
         "statusExtensionMissing": "Hope Agent の Chrome 拡張機能が接続されていません。",
+        "statusVersionMismatch": "拡張機能のプロトコルバージョンがホストと一致しません。拡張機能を再読み込みして更新してください。",
         "versionLine": "拡張機能 {{version}} · プロトコル {{protocol}}",
         "unknown": "不明",
         "loadUnpackedPath": "パッケージ化されていない拡張機能を読み込む：{{path}}",

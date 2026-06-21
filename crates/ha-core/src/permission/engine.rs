@@ -550,6 +550,19 @@ fn check_browser_raw_cdp(ctx: &ResolveContext<'_>) -> Option<AskReason> {
         .args
         .get("method")
         .and_then(|v| json_string_or_text(Some(v)))?;
+    // Honor the kill switch: when browser.extension.allowRawCdp = false, raw CDP
+    // is hard-disabled at the execution layer (`control_raw_cdp` rejects with a
+    // clear "disabled by configuration" error). Don't surface a strict approval
+    // prompt for a call that can never run — skip this gate and let the
+    // execution layer reject it. (Defaults to enabled when unset.)
+    let allow_raw_cdp = crate::config::cached_config()
+        .browser
+        .as_ref()
+        .and_then(|b| b.extension.as_ref())
+        .map_or(true, |ext| ext.allow_raw_cdp());
+    if !allow_raw_cdp {
+        return None;
+    }
     Some(AskReason::BrowserRawCdp {
         method: method.to_string(),
     })

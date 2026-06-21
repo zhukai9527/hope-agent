@@ -2788,6 +2788,7 @@
         "statusHostMissing": "Hos pemesejan asli Chrome belum dipasang.",
         "statusBrokerUnavailable": "Broker sambungan Chrome tidak berjalan.",
         "statusExtensionMissing": "Sambungan Chrome Hope Agent tidak disambungkan.",
+        "statusVersionMismatch": "Versi protokol sambungan tidak sepadan dengan hos. Muat semula sambungan untuk mengemas kininya.",
         "versionLine": "Sambungan {{version}} · protokol {{protocol}}",
         "unknown": "tidak diketahui",
         "loadUnpackedPath": "Muatkan tanpa pakej: {{path}}",

@@ -2788,6 +2788,7 @@
         "statusHostMissing": "Chrome 原生消息主机未安装。",
         "statusBrokerUnavailable": "Chrome 扩展代理未运行。",
         "statusExtensionMissing": "Hope Agent Chrome 扩展未连接。",
+        "statusVersionMismatch": "扩展的协议版本与主机不匹配。请重新加载扩展以更新。",
         "versionLine": "扩展 {{version}} · 协议 {{protocol}}",
         "unknown": "未知",
         "loadUnpackedPath": "加载已解压：{{path}}",

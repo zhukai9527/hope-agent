@@ -330,8 +330,12 @@ const BLOCKED_CDP_DOMAIN_PREFIXES: &[&str] = &[
 /// methods the curated path doesn't expose — but it must still honor the safety
 /// blocklist. The `Network.` domain is intentionally NOT in
 /// [`BLOCKED_CDP_DOMAIN_PREFIXES`] (because `Network.enable` is legitimate), so
-/// the cookie/credential-bearing `Network.*` methods are enumerated here.
+/// the dangerous `Network.*` methods are enumerated here: cookie/credential
+/// read-write, plus traffic tampering (header injection, request interception)
+/// against the user's real logged-in tabs. (`Fetch.*`, the modern request
+/// interception domain, is blocked wholesale via [`BLOCKED_CDP_DOMAIN_PREFIXES`].)
 const BLOCKED_RAW_CDP_METHODS: &[&str] = &[
+    // Cookie / credential read-write.
     "Network.getCookies",
     "Network.getAllCookies",
     "Network.setCookie",
@@ -339,6 +343,11 @@ const BLOCKED_RAW_CDP_METHODS: &[&str] = &[
     "Network.deleteCookies",
     "Network.clearBrowserCookies",
     "Page.getCookies",
+    // Traffic tampering / header & request forgery on real tabs.
+    "Network.setExtraHTTPHeaders",
+    "Network.setRequestInterception",
+    "Network.continueInterceptedRequest",
+    "Network.setBlockedURLs",
 ];
 
 pub struct ExtensionBackend {
@@ -1419,7 +1428,12 @@ impl BrowserBackend for ExtensionBackend {
 
     async fn status(&self) -> Result<BackendStatus> {
         let connected = self.is_connected().await;
-        let tabs = self.list_pages().await?;
+        // Status is a read-only inspection: use a plain tabs query, NOT
+        // `list_pages()` (which calls `reconcile_live_tabs` — pruning leases
+        // across every scope and emitting BrowserControlStopped). Reconciliation
+        // belongs on action paths, not on a status read, otherwise a `status`
+        // call could detach another session's browser control as a side effect.
+        let tabs = self.tabs_query(json!({})).await?;
         let active_override = registry::active_tab_id(&self.ctx);
         let active_target_id = tabs
             .iter()

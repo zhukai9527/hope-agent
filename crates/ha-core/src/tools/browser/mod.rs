@@ -133,7 +133,21 @@ async fn action_status(_args: &Value) -> Result<String> {
             extension_status.next_action.as_deref().unwrap_or("none")
         ));
     };
-    let status = backend.status().await?;
+    let status = match backend.status().await {
+        Ok(status) => status,
+        Err(e) => {
+            // The backend dropped between the readiness probe and the query
+            // (e.g. the native host disconnected in the race window). Report a
+            // friendly disconnected status instead of a hard tool error.
+            return Ok(format!(
+                "Browser disconnected.\nExtension: {:?} — {}\nNext action: {}\nDetail: {}",
+                extension_status.kind,
+                extension_status.message,
+                extension_status.next_action.as_deref().unwrap_or("none"),
+                e
+            ));
+        }
+    };
     let mut out = format!(
         "Backend: {}\nConnected: {}\n",
         status.backend, status.connected
@@ -1201,6 +1215,14 @@ async fn control_raw_cdp(args: &Value, session_id: Option<&str>) -> Result<Strin
             .and_then(Value::as_str)
         {
             evaluate_with_ssrf_scan(script).await?;
+        }
+    }
+    // Page.navigate drives the real Chrome to an arbitrary URL; run the same
+    // SSRF scan the curated `navigate` action enforces so raw_cdp can't reach
+    // internal / metadata endpoints (e.g. 169.254.169.254) unchecked.
+    if method == "Page.navigate" {
+        if let Some(url) = params.get("url").and_then(Value::as_str) {
+            check_url_via_ssrf(url).await?;
         }
     }
     let backend = require_extension_tabs("control.raw_cdp", session_id).await?;

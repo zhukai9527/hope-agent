@@ -2788,6 +2788,7 @@
         "statusHostMissing": "Chrome yerel mesajlaşma ana bilgisayarı kurulu değil.",
         "statusBrokerUnavailable": "Chrome uzantısı aracısı çalışmıyor.",
         "statusExtensionMissing": "Hope Agent Chrome uzantısı bağlı değil.",
+        "statusVersionMismatch": "Uzantının protokol sürümü ana bilgisayarla eşleşmiyor. Güncellemek için uzantıyı yeniden yükleyin.",
         "versionLine": "Uzantı {{version}} · protokol {{protocol}}",
         "unknown": "bilinmiyor",
         "loadUnpackedPath": "Paketlenmemişi yükle: {{path}}",

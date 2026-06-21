@@ -2788,6 +2788,7 @@
         "statusHostMissing": "مضيف المراسلة الأصلية لـ Chrome غير مثبَّت.",
         "statusBrokerUnavailable": "وسيط امتداد Chrome غير قيد التشغيل.",
         "statusExtensionMissing": "امتداد Chrome الخاص بـ Hope Agent غير متصل.",
+        "statusVersionMismatch": "إصدار بروتوكول الإضافة لا يطابق المضيف. أعد تحميل الإضافة لتحديثها.",
         "versionLine": "الامتداد {{version}} · البروتوكول {{protocol}}",
         "unknown": "غير معروف",
         "loadUnpackedPath": "تحميل غير مضغوط: {{path}}",

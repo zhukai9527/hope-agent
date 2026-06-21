@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { getTransport } from "@/lib/transport-provider"
@@ -227,6 +227,11 @@ export default function BrowserPanel() {
   const [advAllowRawCdp, setAdvAllowRawCdp] = useState<boolean>(true)
   const [advSaving, setAdvSaving] = useState<boolean>(false)
   const [advSaveStatus, setAdvSaveStatus] = useState<"idle" | "saved" | "failed">("idle")
+  // True once the user edits an advanced control before saving. Guards refresh()
+  // from silently reverting an unsaved draft — refresh runs on many unrelated
+  // actions (install host, stop control, profile select), and these are HIGH-risk
+  // knobs with explicit (non-optimistic) save, so an accidental revert is bad.
+  const advancedDirtyRef = useRef(false)
 
   const [doctor, setDoctor] = useState<BrowserDoctorReport | null>(null)
   // `null` when closed; carries the at-open snapshot of `chromeAlreadyRunning`
@@ -269,14 +274,17 @@ export default function BrowserPanel() {
         ...cfg.value,
         defaultMode: (cfg.value.defaultMode ?? "managed") as BrowserMode,
       })
-      // Re-seed the advanced draft from the server snapshot so the controls
-      // reflect persisted values after every refresh.
-      setAdvBackendPref(
-        (cfg.value.backendPreference ?? "extension_first") as BrowserBackendPreference,
-      )
-      const ext = (cfg.value.extension ?? {}) as Record<string, unknown>
-      setAdvExtEnabled(ext.enabled !== false)
-      setAdvAllowRawCdp(ext.allowRawCdp !== false)
+      // Re-seed the advanced draft from the server snapshot, but ONLY when the
+      // user has no unsaved edits — otherwise an unrelated refresh would silently
+      // discard their pending toggle before they click Save.
+      if (!advancedDirtyRef.current) {
+        setAdvBackendPref(
+          (cfg.value.backendPreference ?? "extension_first") as BrowserBackendPreference,
+        )
+        const ext = (cfg.value.extension ?? {}) as Record<string, unknown>
+        setAdvExtEnabled(ext.enabled !== false)
+        setAdvAllowRawCdp(ext.allowRawCdp !== false)
+      }
     }
     if (doc.status === "fulfilled") setDoctor(doc.value)
     if (pf.status === "fulfilled" && !selectedProfile && pf.value.length > 0) {
@@ -486,6 +494,7 @@ export default function BrowserPanel() {
     try {
       await getTransport().call("browser_set_config", { config: next })
       setBrowserCfg(next)
+      advancedDirtyRef.current = false
       setAdvSaveStatus("saved")
       setTimeout(() => setAdvSaveStatus("idle"), 2000)
     } catch (e) {
@@ -658,6 +667,7 @@ export default function BrowserPanel() {
     host_missing: t("settings.browser.extension.statusHostMissing"),
     broker_unavailable: t("settings.browser.extension.statusBrokerUnavailable"),
     extension_missing: t("settings.browser.extension.statusExtensionMissing"),
+    version_mismatch: t("settings.browser.extension.statusVersionMismatch"),
   }
 
   return (
@@ -1397,7 +1407,10 @@ export default function BrowserPanel() {
               </label>
               <Select
                 value={advBackendPref}
-                onValueChange={(v) => setAdvBackendPref(v as BrowserBackendPreference)}
+                onValueChange={(v) => {
+                  advancedDirtyRef.current = true
+                  setAdvBackendPref(v as BrowserBackendPreference)
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -1435,7 +1448,13 @@ export default function BrowserPanel() {
                   {t("settings.browser.advanced.enableHint")}
                 </p>
               </div>
-              <Switch checked={advExtEnabled} onCheckedChange={setAdvExtEnabled} />
+              <Switch
+                checked={advExtEnabled}
+                onCheckedChange={(v) => {
+                  advancedDirtyRef.current = true
+                  setAdvExtEnabled(v)
+                }}
+              />
             </div>
 
             {/* Allow raw CDP (HIGH risk) */}
@@ -1451,7 +1470,10 @@ export default function BrowserPanel() {
               </div>
               <Switch
                 checked={advAllowRawCdp}
-                onCheckedChange={setAdvAllowRawCdp}
+                onCheckedChange={(v) => {
+                  advancedDirtyRef.current = true
+                  setAdvAllowRawCdp(v)
+                }}
                 disabled={!advExtEnabled}
               />
             </div>

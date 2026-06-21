@@ -2788,6 +2788,7 @@
         "statusHostMissing": "Chrome native messaging host chưa được cài đặt.",
         "statusBrokerUnavailable": "Broker của tiện ích mở rộng Chrome chưa chạy.",
         "statusExtensionMissing": "Tiện ích mở rộng Chrome của Hope Agent chưa được kết nối.",
+        "statusVersionMismatch": "Phiên bản giao thức của tiện ích không khớp với host. Hãy tải lại tiện ích để cập nhật.",
         "versionLine": "Tiện ích {{version}} · giao thức {{protocol}}",
         "unknown": "không xác định",
         "loadUnpackedPath": "Tải tiện ích đã giải nén: {{path}}",

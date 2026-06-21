@@ -307,14 +307,27 @@ fn ensure_not_controlled_by_other(registry: &Registry, scope: &str, tab_id: i64)
     Ok(())
 }
 
-fn steal_from_other_scopes(registry: &mut Registry, scope: &str, tab_id: i64) -> Vec<String> {
+/// Remove `tab_id` from every scope except `scope`. Returns the scopes it was
+/// stolen from, plus the owner kind of the stolen lease if any was Agent-owned —
+/// so the claiming scope can preserve Agent ownership (an agent-created tab must
+/// stay Agent across a steal, or neither scope's finalize will `close` it and it
+/// leaks open).
+fn steal_from_other_scopes(
+    registry: &mut Registry,
+    scope: &str,
+    tab_id: i64,
+) -> (Vec<String>, Option<TabOwnerKind>) {
     let mut stolen = Vec::new();
+    let mut stolen_kind = None;
     for (other_scope, state) in registry.scopes.iter_mut() {
         if other_scope == scope {
             continue;
         }
-        if state.controlled_tabs.remove(&tab_id).is_some() {
+        if let Some(removed) = state.controlled_tabs.remove(&tab_id) {
             stolen.push(other_scope.clone());
+            if removed.owner_kind == TabOwnerKind::Agent {
+                stolen_kind = Some(TabOwnerKind::Agent);
+            }
             if state.active_tab_id == Some(tab_id) {
                 state.active_tab_id = None;
                 state.element_refs.clear();
@@ -322,7 +335,7 @@ fn steal_from_other_scopes(registry: &mut Registry, scope: &str, tab_id: i64) ->
             }
         }
     }
-    stolen
+    (stolen, stolen_kind)
 }
 
 pub(super) fn active_tab_id(ctx: &BrowserBackendContext) -> Option<i64> {
@@ -351,20 +364,26 @@ pub(super) fn claim_user_tab(
 ) -> Result<ClaimOutcome> {
     let scope = scope_key(ctx);
     let mut registry = lock_registry();
-    let stolen_from = if steal {
+    let (stolen_from, stolen_kind) = if steal {
         steal_from_other_scopes(&mut registry, &scope, tab_id)
     } else {
         ensure_not_controlled_by_other(&registry, &scope, tab_id)?;
-        Vec::new()
+        (Vec::new(), None)
     };
     let state = registry.scopes.entry(scope).or_default();
-    // Preserve existing Agent ownership: selecting/claiming a tab the agent
-    // already created (via tabs.new) must not downgrade it to User, or turn-end
-    // finalize would leave it open — `close` only fires for Agent-owned tabs —
-    // instead of closing the agent's own tab.
-    let owner_kind = match state.controlled_tabs.get(&tab_id) {
-        Some(existing) if existing.owner_kind == TabOwnerKind::Agent => TabOwnerKind::Agent,
-        _ => TabOwnerKind::User,
+    // Preserve Agent ownership: claiming/selecting a tab the agent already
+    // created (via tabs.new) must not downgrade it to User, or turn-end finalize
+    // would leave it open — `close` only fires for Agent-owned tabs — instead of
+    // closing the agent's own tab. This holds whether the existing Agent lease is
+    // in this scope (re-claim) or was just stolen from another scope (`steal`).
+    let existing_agent = state
+        .controlled_tabs
+        .get(&tab_id)
+        .is_some_and(|existing| existing.owner_kind == TabOwnerKind::Agent);
+    let owner_kind = if existing_agent || stolen_kind == Some(TabOwnerKind::Agent) {
+        TabOwnerKind::Agent
+    } else {
+        TabOwnerKind::User
     };
     state
         .controlled_tabs
@@ -671,6 +690,26 @@ mod tests {
         assert_eq!(active_tab_id(&a), None);
         assert_eq!(active_tab_id(&b), Some(42));
         assert!(selector_for_ref(&a, 1).is_err());
+    }
+
+    #[test]
+    fn claim_steal_preserves_agent_ownership() {
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
+        reset_for_tests();
+        let a = ctx("a");
+        let b = ctx("b");
+        // Agent-created tab in session a.
+        record_agent_tab(&a, 42, None, None).unwrap();
+        assert_eq!(controlled_kind(&a, 42), Some(TabOwnerKind::Agent));
+        // Session b steals it — it must stay Agent-owned so b's finalize closes
+        // it (close only fires for Agent-owned tabs); otherwise the agent-created
+        // tab would leak open in neither session.
+        let outcome = claim_user_tab(&b, 42, None, None, true).unwrap();
+        assert_eq!(outcome.stolen_from, vec!["session:a".to_string()]);
+        assert_eq!(controlled_kind(&b, 42), Some(TabOwnerKind::Agent));
+        assert_eq!(controlled_kind(&a, 42), None);
+        assert_eq!(active_tab_id(&a), None);
+        assert_eq!(active_tab_id(&b), Some(42));
     }
 
     #[test]
