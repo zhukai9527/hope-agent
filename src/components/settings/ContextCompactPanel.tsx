@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import { useTranslation } from "react-i18next"
 import { Switch } from "@/components/ui/switch"
-import { Input } from "@/components/ui/input"
+import { DeferredNumberInput } from "@/components/ui/deferred-number-input"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
@@ -107,51 +107,16 @@ function NumberField({
   max?: number
   onChange: (v: number) => void
 }) {
-  const [draft, setDraft] = useState(String(value))
-  const [editing, setEditing] = useState(false)
-
-  useEffect(() => {
-    if (!editing) {
-      setDraft(String(value))
-    }
-  }, [editing, value])
-
-  const commitDraft = () => {
-    const raw = draft.trim()
-    const parsed = Number(raw)
-
-    setEditing(false)
-    if (raw === "" || !Number.isFinite(parsed)) {
-      setDraft(String(value))
-      return
-    }
-
-    const upperBounded = max == null ? parsed : Math.min(max, parsed)
-    const next = Math.max(min, upperBounded)
-    setDraft(String(next))
-    if (next !== value) {
-      onChange(next)
-    }
-  }
-
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
         <label className="text-sm">{label}</label>
-        <Input
-          type="number"
+        <DeferredNumberInput
           min={min}
           max={max}
           className="h-7 w-24 text-sm text-right"
-          value={draft}
-          onFocus={() => setEditing(true)}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitDraft}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.currentTarget.blur()
-            }
-          }}
+          value={value}
+          onValueCommit={onChange}
         />
       </div>
       {desc && <p className="text-[10px] text-muted-foreground/60">{desc}</p>}
