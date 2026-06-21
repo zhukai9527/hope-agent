@@ -104,7 +104,7 @@ function NumberField({
   desc?: string
   value: number
   min: number
-  max: number
+  max?: number
   onChange: (v: number) => void
 }) {
   return (
@@ -119,7 +119,10 @@ function NumberField({
           value={value}
           onChange={(e) => {
             const v = Number(e.target.value)
-            if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)))
+            if (!isNaN(v)) {
+              const upperBounded = max == null ? v : Math.min(max, v)
+              onChange(Math.max(min, upperBounded))
+            }
           }}
         />
       </div>
@@ -451,7 +454,6 @@ export default function ContextCompactPanel() {
                   label={t("settings.contextCompactTimeout")}
                   value={config.summarizationTimeoutSecs}
                   min={10}
-                  max={300}
                   onChange={(v) => update({ summarizationTimeoutSecs: v })}
                 />
                 <NumberField
