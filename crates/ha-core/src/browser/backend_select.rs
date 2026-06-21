@@ -234,6 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn acquire_backend_returns_cdp_backend() {
+        let _guard = crate::browser::global_state_test_lock().lock().await;
         reset_backend().await;
         let b = acquire_backend().await.expect("acquire backend");
         assert_eq!(b.backend_name(), "cdp");
@@ -245,6 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn extension_required_does_not_fallback_to_cdp() {
+        let _guard = crate::browser::global_state_test_lock().lock().await;
         reset_backend().await;
         let res = acquire_backend_for(
             BrowserBackendContext::default(),

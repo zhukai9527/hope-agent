@@ -3098,13 +3098,10 @@ fn ax_value_to_string(value: &Value) -> Option<String> {
 mod tests {
     use super::*;
 
-    static TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
     async fn lock_tests() -> tokio::sync::MutexGuard<'static, ()> {
-        TEST_LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await
+        // Shared with the sync registry tests so neither races on the global
+        // REGISTRY when the suite runs in parallel.
+        crate::browser::global_state_test_lock().lock().await
     }
 
     #[test]

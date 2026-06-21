@@ -53,6 +53,18 @@ pub use cdp_backend::{
     activate_observe_subscribers_for_all_pages, activate_observe_subscribers_for_target,
 };
 
+/// Process-wide serialization lock for tests that mutate browser-module global
+/// state — the active-backend cache ([`backend_select`]) and the tab registry
+/// ([`extension::registry`]). Sync tests acquire it with `blocking_lock()`,
+/// async tests with `lock().await`; sharing a single lock keeps the browser
+/// test suite race-free under parallel execution (each global was previously
+/// guarded by its own — or no — lock, so cross-test runs flaked).
+#[cfg(test)]
+pub(crate) fn global_state_test_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// Resolve and authorise a path being handed to `act.upload`. Returns the
 /// canonical absolute path the backend should pass to Chrome, or `Err` if
 /// the file is missing or falls inside a user-configured protected path.

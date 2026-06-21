@@ -630,8 +630,6 @@ pub(super) fn reset_for_tests() {
 mod tests {
     use super::*;
 
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn ctx(session_id: &str) -> BrowserBackendContext {
         BrowserBackendContext {
             session_id: Some(session_id.to_string()),
@@ -641,7 +639,7 @@ mod tests {
 
     #[test]
     fn claim_is_mutually_exclusive_across_sessions() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         claim_user_tab(&ctx("a"), 42, None, None, false).unwrap();
         let err = claim_user_tab(&ctx("b"), 42, None, None, false).unwrap_err();
@@ -650,7 +648,7 @@ mod tests {
 
     #[test]
     fn claim_can_explicitly_steal_from_another_session() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let a = ctx("a");
         let b = ctx("b");
@@ -677,7 +675,7 @@ mod tests {
 
     #[test]
     fn finalize_closes_agent_tabs_and_releases_user_tabs() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let ctx = ctx("a");
         claim_user_tab(&ctx, 10, None, None, false).unwrap();
@@ -700,7 +698,7 @@ mod tests {
 
     #[test]
     fn remove_tab_from_all_scopes_clears_matching_leases() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let a = ctx("a");
         let b = ctx("b");
@@ -718,7 +716,7 @@ mod tests {
 
     #[test]
     fn find_ref_by_role_text_matches_exact_then_fuzzy() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let ctx = ctx("a");
         claim_user_tab(&ctx, 10, None, None, false).unwrap();
@@ -754,7 +752,7 @@ mod tests {
 
     #[test]
     fn persisted_snapshot_excludes_ephemeral_refs() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let ctx = ctx("persist");
         claim_user_tab(
@@ -827,7 +825,7 @@ mod tests {
 
     #[test]
     fn finalize_all_scopes_releases_every_registered_tab() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let a = ctx("a");
         let b = ctx("b");
@@ -850,7 +848,7 @@ mod tests {
 
     #[test]
     fn reconcile_live_tabs_prunes_stale_leases() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = crate::browser::global_state_test_lock().blocking_lock();
         reset_for_tests();
         let a = ctx("a");
         let b = ctx("b");
