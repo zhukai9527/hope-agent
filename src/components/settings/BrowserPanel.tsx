@@ -597,7 +597,9 @@ export default function BrowserPanel() {
     try {
       await getTransport().call("open_url", { url: "chrome://extensions/" })
     } catch {
-      window.open("chrome://extensions/", "_blank", "noopener,noreferrer")
+      // chrome:// can't be opened via a link/`window.open` (webview blocks it)
+      // nor when no Chrome is found — copy it so the user can paste it.
+      await copyInstallValue("chrome://extensions/", "chrome://extensions/")
     }
   }
 

@@ -493,9 +493,28 @@ pub fn default_native_host_manifest_path() -> Option<PathBuf> {
 }
 
 fn unpacked_extension_path() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let path = cwd.join("extensions").join("chrome");
-    path.join("manifest.json").exists().then_some(path)
+    // Look for the unpacked extension in the working directory and a few of its
+    // ancestors, plus the executable directory's ancestors. `pnpm tauri dev`
+    // runs the binary with cwd = `src-tauri/`, so a bare `cwd/extensions` lookup
+    // misses the repo-root `extensions/chrome`; walking up one level finds it.
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+        }
+    }
+    for root in &roots {
+        for base in root.ancestors().take(6) {
+            let path = base.join("extensions").join("chrome");
+            if path.join("manifest.json").exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn effective_extension_ids(configured: &[String]) -> Vec<String> {
