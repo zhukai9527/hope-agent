@@ -7,8 +7,9 @@
 ## 开发命令
 
 ```bash
-pnpm tauri dev         # 启动开发模式（前端 + Tauri 热重载）
+pnpm tauri dev         # 启动开发模式（前端 + Tauri 热重载；beforeDevCommand 会先 dev:browser-host 备好 host）
 pnpm dev               # 仅前端 Vite 开发服务器
+pnpm dev:browser-host  # 仅重建 debug 版 ha-browser-host 并落到 dev 路径（改了 ha-browser-host 后手动刷新用）
 pnpm tauri build       # 构建生产包
 pnpm sync:version      # 以 package.json 为单一来源，同步 src-tauri 版本号
 pnpm release:verify    # 校验 package.json / src-tauri 版本一致；可附 -- --tag vX.Y.Z
