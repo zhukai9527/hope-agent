@@ -24,7 +24,7 @@ Required to list Chrome tabs for explicit user selection, create controlled tabs
 
 ## `downloads`
 
-Required to observe Chrome download activity and cancel downloads by id after Hope Agent approval. Hope Agent surfaces these actions through its normal tool approval flow, including AllowAlways, Smart mode, and YOLO according to the user's active session policy.
+Required to observe Chrome download activity and cancel downloads by id after Hope Agent approval. Each action is surfaced through Hope Agent's user approval flow before any download is observed or cancelled.
 
 ## `webNavigation`
 
