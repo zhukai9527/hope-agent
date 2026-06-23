@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next"
-import IconChrome from "~icons/tabler/brand-chrome"
+import { Compass } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -88,9 +88,9 @@ export default function BrowserStatusIndicator({ onOpen, className }: BrowserSta
           )}
           aria-label={t("settings.browser.title")}
         >
-          {/* Tabler's chrome glyph is inset more than lucide's (~75% vs ~83% of
-              the viewBox), so bump it up a touch to match the rail's icon size. */}
-          <IconChrome className="h-[18px] w-[18px]" />
+          {/* Same icon as Settings → Browser nav (SettingsView) and the same
+              size as the other rail indicators (ServerStatusIndicator). */}
+          <Compass className="h-4 w-4" />
           <span
             className={cn(
               "absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-background",
