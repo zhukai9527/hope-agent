@@ -380,3 +380,28 @@ Ring 容量 `OBSERVE_RING_CAPACITY=500`/kind，满则 shift 最旧。Core 侧对
 ✅ tabs.open_user_tabs / claim / release / finalize + session lease cleanup
 ✅ DOM/AX snapshot、iframe bridge、annotated screenshot、PDF/dataBlob、downloads observe/cancel
 ✅ raw CDP 强能力出口 + 统一 tool 审批
+
+## 演进路线（Roadmap）
+
+> 下列为**未落地规划**，源自一次浏览器自动化竞品对照（社区开源扩展 vs 前沿 agent 框架）。按 ROI 排序，标注涉及层与红线，供后续 PR 取用。**不是承诺**——每条落地前需各自 spike 验证。
+
+**当前已知能力边界**（roadmap 针对的缺口）：网络层只读不改（`Fetch.*` / `Network.setRequestInterception` 在 `BLOCKED_CDP_DOMAIN_PREFIXES` / `BLOCKED_RAW_CDP_METHODS` 被主动封，[`extension/backend.rs`](../../crates/ha-core/src/browser/extension/backend.rs)）；无视觉 grounding（set-of-marks / 坐标点击）；无录制→重放缓存；无确定性 eval harness；跨域帧 grounding 降级为 DOM 启发式（root session 才走真 AX-tree）。
+
+| 优先级 | 能力 | 价值 | 涉及层 | 工作量 | 红线 / 注意 |
+|---|---|---|---|---|---|
+| **P0** | 录制 → 自愈确定性重放 | 重复任务从「每步 LLM」变「命中缓存零推理重放、失配回退 LLM」，成本/延迟 10-100× | `extension/backend.rs`（成功 `act` 序列按 AX 签名落盘 + 重放定位）、复用现有 stale-ref 自恢复、存 `~/.hope-agent/browser-extension/` | 中-大 | 重放仍须过统一审批 + SSRF（不因「缓存过」免审）；跨域帧 AX 签名稳定性需测 |
+| **P1** | AX-ref grounding 收口 + viewport 裁剪 | 跨域帧统一成稳定 ref（对齐 root session 真 AX）+ 只收视口内节点 → 降 token、提稳定 | `service_worker.js::collectHopeFrameSnapshot`（viewport 过滤）、`backend.rs`（子帧也走 `getPartialAXTree`）、snapshot ref 命名统一 | 中 | 低风险，纯 grounding 质量改进 |
+| **P2** | 网络拦截 / Mock / HAR（克制版） | `route.abort/observe` 级：离线回归、屏蔽遥测、注入测试桩；Google `chrome-devtools-mcp` 明确拒做，可差异化 | 解封 `Fetch.*` 黑名单 + 新增 observe/control 子动作；Core 侧规则白名单 + 每条过 SSRF + 审批 | 中-大 | **红线最高**：真实登录 tab 改流量 = strict 审批不可 AllowAlways；先只做「读 + abort」，`fulfill`/`continueWithHeaders` 暂缓 |
+| **P3** | 视觉 grounding（set-of-marks + 坐标点击）兜底 | canvas / 图表 / `<video>` 等 AX 不可见控件能操作；与现有 annotated screenshot + `clip` 组成 hybrid | `service_worker.js`：新增 `act{kind:click_at,x,y}`（走 `Input.dispatchMouseEvent`，drag 已有先例）+ set-of-marks 标注截图 | 中 | skill 明确「仅 AX 不可达时用」，坐标精度低于 ref |
+| **P4** | eval harness（WebVoyager / Online-Mind2Web 子集） | 改 grounding/重放有固定 judge 回归基线，防「Illusion of Progress」式自欺 | 不进 ha-core 主路径；`skills/ha-browser` 配套离线脚本 / 独立 crate，固定 judge，产 same-judge delta | 中 | 优先可复现沙盒（WebArena）做 gating，避免 live 站点漂移 |
+| **P5** | 抗检测姿态收紧（防御性） | 消除取证级注入残留（overlay 已用 closed shadow-DOM，优于同类） | 审 `manifest.json` 的 `web_accessible_resources` + SW overlay 注入（随机化 id / idle 后清痕迹） | 小 | 只做「不主动暴露」，**不**滑向 JS-patch stealth 军备竞赛 |
+
+### 明确非目标（Non-Goals）
+
+范围纪律——以下方向与「驱动用户现有 Chrome、零 debug-port、本地 daemon」的定位冲突或属负 ROI，**明确不做**：
+
+- **Chromium fork**：维护整条 Chromium 构建链 + 逼用户换浏览器，与核心卖点直接冲突
+- **JS-patch / stealth 指纹军备竞赛**：靠真实 profile 已有结构性优势；伪装指纹是移动靶、负 ROI
+- **CAPTCHA 自动破解**：保持遇 captcha / 2FA 一律 `ask_user_question` 人工接管——这是「真实浏览器 + 人在环」的信任优势，不为 benchmark 分数破坏
+- **hosted 云浏览器 / 大规模并发抓取基础设施**：框架公司的商业模式，与本地 daemon 定位正交，做了也打不过且稀释焦点
+- **把扩展做成独立 BYO-API-key 产品**：价值在「扩展是 Hope Agent daemon 的一只手」，与 memory / plan / cron 同生态，不复制独立扩展的天花板
