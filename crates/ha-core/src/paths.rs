@@ -354,6 +354,18 @@ pub fn browser_extension_registry_path() -> Result<PathBuf> {
     Ok(browser_extension_dir()?.join("registry.json"))
 }
 
+/// Stable copy of the unpacked browser extension for local ("Load unpacked")
+/// install: `~/.hope-agent/extension/browser/`. The app bundle's own copy lives
+/// inside the `.app` (or the platform resource dir) and its path changes when
+/// the app is updated or moved; loading that path in Chrome would break on
+/// update. This stable copy is what the user loads, so it survives app updates
+/// (refreshed in place). Built with `join`, so the separator is correct on
+/// Windows / Linux / macOS; the `extension/` parent leaves room for other
+/// browser engines later (e.g. `extension/firefox`).
+pub fn browser_extension_unpacked_dir() -> Result<PathBuf> {
+    Ok(root_dir()?.join("extension").join("browser"))
+}
+
 /// Per-revision Chromium runtime directory:
 /// `~/.hope-agent/browser/runtime/chromium-{revision}/`. Versioned so
 /// bumping the per-platform pinned revision doesn't collide with an

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -492,7 +492,106 @@ pub fn default_native_host_manifest_path() -> Option<PathBuf> {
     native_host_manifest_path(DEFAULT_NATIVE_HOST_NAME)
 }
 
+/// Stable local copy first, else the bundled/repo source. Prefer the stable
+/// copy (see [`ensure_local_unpacked_extension`]) because its path is invariant
+/// across app updates/moves — a user who loaded it once in Chrome stays
+/// connected. Falls back to the source if the copy hasn't been made yet (before
+/// first desktop startup, or in a headless server with no copy step).
 fn unpacked_extension_path() -> Option<PathBuf> {
+    if let Ok(stable) = crate::paths::browser_extension_unpacked_dir() {
+        if stable.join("manifest.json").exists() {
+            return Some(stable);
+        }
+    }
+    bundled_or_repo_extension_source()
+}
+
+/// Copy the bundled (or repo) unpacked extension into a STABLE location under
+/// `~/.hope-agent/extension/browser/` so the path the user loads in
+/// Chrome survives app updates/moves (the `.app` path changes on update; this
+/// one does not). Idempotent — only rewrites files whose bytes changed, so an
+/// unchanged extension never forces Chrome to reload it. Desktop startup calls
+/// this before registering the native host. Returns the stable dir on success.
+pub fn ensure_local_unpacked_extension() -> Option<PathBuf> {
+    let source = bundled_or_repo_extension_source()?;
+    let dest = crate::paths::browser_extension_unpacked_dir().ok()?;
+    // Defensive: never mirror a directory onto itself.
+    if source == dest {
+        return Some(dest);
+    }
+    match mirror_extension_dir(&source, &dest) {
+        Ok(()) => Some(dest),
+        Err(e) => {
+            app_warn!(
+                "browser",
+                "unpacked_copy",
+                "failed to sync unpacked extension to {}: {:#}",
+                dest.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
+/// Recursively mirror `src` into `dst`: write only files whose bytes differ
+/// (unchanged files keep their mtime so Chrome won't needlessly reload the
+/// loaded extension), and prune files in `dst` that no longer exist in `src`.
+fn mirror_extension_dir(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst).with_context(|| format!("creating {}", dst.display()))?;
+    copy_into_dir(src, dst)?;
+    prune_extra_entries(src, dst)?;
+    Ok(())
+}
+
+fn copy_into_dir(src_dir: &Path, dst_dir: &Path) -> Result<()> {
+    for entry in
+        std::fs::read_dir(src_dir).with_context(|| format!("reading {}", src_dir.display()))?
+    {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = dst_dir.join(entry.file_name());
+        if src.is_dir() {
+            std::fs::create_dir_all(&dst).with_context(|| format!("creating {}", dst.display()))?;
+            copy_into_dir(&src, &dst)?;
+        } else {
+            let bytes = std::fs::read(&src).with_context(|| format!("reading {}", src.display()))?;
+            let differs = std::fs::read(&dst).map(|cur| cur != bytes).unwrap_or(true);
+            if differs {
+                crate::platform::write_atomic(&dst, &bytes)
+                    .with_context(|| format!("writing {}", dst.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prune_extra_entries(src_dir: &Path, dst_dir: &Path) -> Result<()> {
+    for entry in
+        std::fs::read_dir(dst_dir).with_context(|| format!("reading {}", dst_dir.display()))?
+    {
+        let entry = entry?;
+        let dst = entry.path();
+        let src = src_dir.join(entry.file_name());
+        if dst.is_dir() {
+            if src.is_dir() {
+                prune_extra_entries(&src, &dst)?;
+            } else {
+                std::fs::remove_dir_all(&dst)
+                    .with_context(|| format!("removing {}", dst.display()))?;
+            }
+        } else if !src.exists() {
+            std::fs::remove_file(&dst).with_context(|| format!("removing {}", dst.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Locate the unpacked extension SOURCE — the bundled resource (packaged
+/// installs) or the repo checkout (dev). [`ensure_local_unpacked_extension`]
+/// copies this into a stable location; [`unpacked_extension_path`] prefers that
+/// copy and falls back here.
+fn bundled_or_repo_extension_source() -> Option<PathBuf> {
     // 1) Bundled resource (packaged / release installs). The extension's runtime
     //    files are staged into the Tauri resources tree by
     //    `scripts/prepare-chrome-extension.mjs` and shipped at a platform-
@@ -724,6 +823,42 @@ mod tests {
     fn default_manifest_path_uses_host_name() {
         let path = native_host_manifest_path("com.example.test").expect("manifest path");
         assert!(path.to_string_lossy().contains("com.example.test.json"));
+    }
+
+    #[test]
+    fn mirror_extension_dir_copies_prunes_and_skips_unchanged() {
+        use std::fs;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        let dst = tmp.path().join("dst");
+        fs::create_dir_all(src.join("icons")).unwrap();
+        fs::write(src.join("manifest.json"), b"{\"k\":1}").unwrap();
+        fs::write(src.join("icons/a.png"), b"AAAA").unwrap();
+
+        // First mirror: dst is a faithful copy, nested dirs included.
+        mirror_extension_dir(&src, &dst).expect("first mirror");
+        assert_eq!(fs::read(dst.join("manifest.json")).unwrap(), b"{\"k\":1}");
+        assert_eq!(fs::read(dst.join("icons/a.png")).unwrap(), b"AAAA");
+
+        // Unchanged file is NOT rewritten (mtime preserved → no needless Chrome
+        // reload); a stale file present only in dst is pruned.
+        let before = fs::metadata(dst.join("manifest.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fs::write(dst.join("stale.js"), b"old").unwrap();
+        mirror_extension_dir(&src, &dst).expect("second mirror");
+        let after = fs::metadata(dst.join("manifest.json"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(before, after, "unchanged file must not be rewritten");
+        assert!(!dst.join("stale.js").exists(), "stale file must be pruned");
+
+        // Changed source content propagates.
+        fs::write(src.join("manifest.json"), b"{\"k\":2}").unwrap();
+        mirror_extension_dir(&src, &dst).expect("third mirror");
+        assert_eq!(fs::read(dst.join("manifest.json")).unwrap(), b"{\"k\":2}");
     }
 
     #[test]

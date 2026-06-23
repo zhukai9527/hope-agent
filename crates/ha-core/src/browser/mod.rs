@@ -38,8 +38,9 @@ pub use backend_select::{
     acquire_backend, acquire_backend_for, peek_active, reset_backend, status_backend,
 };
 pub use extension::{
-    cleanup_extension_session, current_status, ensure_native_host_registered,
-    install_native_host_manifest, schedule_extension_turn_finalize, stop_all_extension_control,
+    cleanup_extension_session, current_status, ensure_local_unpacked_extension,
+    ensure_native_host_registered, install_native_host_manifest,
+    schedule_extension_turn_finalize, stop_all_extension_control,
     BrowserBackendContext, BrowserBackendRequirement, BrowserBrokerDiscovery,
     BrowserExtensionBroker, BrowserExtensionConfig, BrowserExtensionStatus,
     BrowserExtensionStatusKind, BrowserExtensionStopResult, ExtensionBackend,
