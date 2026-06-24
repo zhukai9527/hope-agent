@@ -141,7 +141,6 @@ pub fn start_scheduler(
                         app_error!("cron", "scheduler", "Failed to read scheduler heartbeat: {}", e)
                     }
                 }
-                let _ = cron_db.record_scheduler_heartbeat();
 
                 // Startup recovery
                 if let Err(e) = cron_db.recover_orphaned_runs() {
@@ -189,6 +188,14 @@ pub fn start_scheduler(
                         dispatch_due_jobs(&cron_db, &session_db, due_jobs);
                     }
                 }
+
+                // §9 (C6): record liveness only AFTER startup recovery completes.
+                // Writing it earlier would let a crash confined to the recovery
+                // phase refresh the heartbeat on every boot, masking the "scheduler
+                // was offline ~Ns" warning in a startup crash-loop. Recovery itself
+                // is idempotent and re-runs each boot regardless; the per-tick
+                // refresh below keeps it current once the loop is running.
+                let _ = cron_db.record_scheduler_heartbeat();
 
                 app_info!("cron", "scheduler", "Scheduler started");
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));

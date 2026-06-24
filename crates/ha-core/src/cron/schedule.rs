@@ -435,6 +435,46 @@ mod tests {
     }
 
     #[test]
+    fn cron_dst_preserves_wall_clock_fire_time() {
+        // Headline guarantee of timezone support: a daily wall-clock fire stays at
+        // the same LOCAL hour across a DST transition, so its UTC instant shifts by
+        // the offset change. America/New_York is EST (UTC-5) before 2026-03-08 and
+        // EDT (UTC-4) after (spring forward, 2nd Sunday of March). A 09:00 daily cron
+        // therefore fires at 14:00 UTC in winter and 13:00 UTC in summer — proving
+        // the conversion is DST-aware, not a fixed offset. The other DST tests only
+        // assert no-panic + progress; this locks the exact instant.
+        let expr = "0 0 9 * * * *";
+
+        // Winter: 09:00 EST == 14:00 UTC.
+        let winter = compute_next_run(
+            &CronSchedule::Cron {
+                expression: expr.into(),
+                timezone: Some("America/New_York".into()),
+            },
+            &parse_flexible_timestamp("2026-03-01T00:00:00Z").unwrap(),
+        )
+        .expect("winter next");
+        assert_eq!(
+            winter,
+            parse_flexible_timestamp("2026-03-01T14:00:00Z").unwrap()
+        );
+
+        // Summer (post spring-forward): 09:00 EDT == 13:00 UTC.
+        let summer = compute_next_run(
+            &CronSchedule::Cron {
+                expression: expr.into(),
+                timezone: Some("America/New_York".into()),
+            },
+            &parse_flexible_timestamp("2026-03-09T00:00:00Z").unwrap(),
+        )
+        .expect("summer next");
+        assert_eq!(
+            summer,
+            parse_flexible_timestamp("2026-03-09T13:00:00Z").unwrap()
+        );
+    }
+
+    #[test]
     fn cron_dst_fall_back_does_not_panic() {
         // America/New_York falls back 2026-11-01 02:00 → 01:00, so 01:30 occurs
         // twice. Iteration must not panic and must make progress.
