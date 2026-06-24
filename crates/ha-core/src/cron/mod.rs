@@ -17,7 +17,7 @@ pub use types::{
 pub use db::CronDB;
 
 // Re-export schedule functions
-pub use schedule::{validate_cron_expression, validate_timezone};
+pub use schedule::{validate_cron_expression, validate_schedule, validate_timezone};
 
 // Re-export scheduler
 pub use scheduler::start_scheduler;

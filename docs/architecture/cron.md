@@ -36,6 +36,17 @@ serde tag 区分，`rename_all = "camelCase"`：
 | `Every` | `interval_ms: u64`, `start_at: Option<String>` | 固定间隔触发，每 N 毫秒。`start_at` 表示**首个计划触发时间**；`compute_next_run` 返回“严格晚于 `after` 的下一个锚定时间点” |
 | `Cron` | `expression: String`, `timezone: Option<String>` | 标准 cron 表达式（`cron` crate `Schedule::from_str`）。**`timezone` 真正生效**（见下「时区语义」）：携带 IANA 名时按该时区墙钟解释、DST-aware；`None`/空回退 UTC |
 
+#### 排程校验单一真相源（§6）
+
+`schedule::validate_schedule(&CronSchedule)`（[`cron/schedule.rs`](../../crates/ha-core/src/cron/schedule.rs)）是「这条排程是否合法」的唯一裁决，三入口共用、绝不各自发散：
+
+- **规则**：`At` timestamp 可 RFC3339 解析；`Every` `interval_ms ≥ MIN_EVERY_INTERVAL_MS`（`60000`，1 分钟地板——太小是「误造全功能 agent turn 跑飞循环」的经典坑）；`Cron` 表达式合法 + 非空 `timezone` 是已知 IANA 名（空 / 空白 = UTC，不校验）。
+- **入口①持久化 chokepoint**：`CronDB::add_job` / `update_job` 入口即 `validate_schedule(&schedule)?`。这是红线——owner 平面 Tauri `cron_create_job`/`cron_update_job` + HTTP `create_job`/`update_job` 把**前端构造的 `CronSchedule` 直接喂** add/update，此前只校验 `Cron` expr+tz，于是 `At` 垃圾时间戳、`Every interval_ms=0`（永不触发的死任务）能从 owner 平面绕过持久化。现在全 variant 统一在 chokepoint 拒绝。
+- **入口②模型工具路径**：`parse_schedule`（[`tools/cron.rs`](../../crates/ha-core/src/tools/cron.rs)）提取 + 归一化 JSON 字段（字段缺失给 field-specific 错误）后委托 `validate_schedule`，不再内联各自的值校验。
+- `validate_cron_expression` / `validate_timezone` 仍是 expr / timezone 级原语，被 `validate_schedule` 复用（见下「时区语义」）。
+- **`At` 时间戳用 `parse_flexible_timestamp` 校验**（与运行时 `compute_next_run` / `compute_occurrences` 同一 parser），故 RFC3339 与紧凑偏移 `+0800` 都接受——绝不把运行时能执行的时间戳判非法、让任务无法编辑。
+- **遗留坏行的取舍**：`update_job` 校验的是**整条** schedule。若某行是 §6 之前经 owner 平面 API 绕过持久化的非法排程（`interval_ms=0` / 垃圾 `At`），则之后**仅改非排程字段（重命名 / 改 prompt / 改投递目标）也会因整条 schedule 重校验而被拒**。这是 chokepoint 红线的可接受代价——坏行本就从不正确触发，且恢复路径俱在：`toggle_job`（暂停 / 恢复）/ `delete_job` 刻意跳校验，GUI 重存会因前端 clamp 自动修复排程。**先修排程（或删任务）再改其它字段**。
+
 ### 时区语义（Cron）
 
 `Cron` 的 `timezone` 是 IANA 名（`Asia/Shanghai` 等），决定 cron 表达式的时/分字段按哪个时区的墙钟解释：

@@ -153,6 +153,65 @@ pub fn validate_cron_expression(expression: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Invalid cron expression: {}", e))
 }
 
+/// Minimum interval for an `Every` schedule: 1 minute. Sub-minute recurring jobs
+/// are below the scheduler's 15s tick cadence intent and a tiny interval is the
+/// classic way to accidentally spawn a runaway loop of full agent turns.
+pub const MIN_EVERY_INTERVAL_MS: u64 = 60_000;
+
+/// Validate a fully-constructed [`CronSchedule`]. **Single source of truth** for
+/// "is this schedule legal", shared by the agent `manage_cron` tool path
+/// ([`crate::tools`]'s `parse_schedule`) and the persistence chokepoint
+/// ([`super::db::CronDB::add_job`] / `update_job`). Centralizing it here means the
+/// owner-plane HTTP/Tauri create/update paths — which hand a frontend-built
+/// `CronSchedule` straight to `add_job`/`update_job` — can no longer persist a
+/// schedule the agent path would have rejected: an `At` with an unparseable
+/// timestamp, an `Every` that never fires (`interval_ms` below the floor), or an
+/// unknown cron expression / timezone (which would otherwise silently fall back
+/// to UTC at fire time).
+pub fn validate_schedule(schedule: &CronSchedule) -> Result<()> {
+    match schedule {
+        // Accept exactly what the runtime can execute: `compute_next_run` parses
+        // the `At` timestamp with `parse_flexible_timestamp` (RFC 3339 **and**
+        // compact `+0800` offset), so validate with the same parser — using the
+        // stricter `parse_from_rfc3339` here would reject a compact-offset
+        // timestamp the scheduler handles fine, making such a job un-editable.
+        CronSchedule::At { timestamp } => {
+            if parse_flexible_timestamp(timestamp).is_none() {
+                anyhow::bail!(
+                    "Invalid 'at' timestamp '{}': expected RFC 3339 (e.g. 2026-04-05T10:00:00+08:00)",
+                    timestamp
+                );
+            }
+            Ok(())
+        }
+        CronSchedule::Every { interval_ms, .. } => {
+            if *interval_ms < MIN_EVERY_INTERVAL_MS {
+                anyhow::bail!(
+                    "Interval must be at least {}ms (1 minute), got {}ms",
+                    MIN_EVERY_INTERVAL_MS,
+                    interval_ms
+                );
+            }
+            Ok(())
+        }
+        CronSchedule::Cron {
+            expression,
+            timezone,
+        } => {
+            validate_cron_expression(expression)?;
+            // An empty / whitespace zone is treated as UTC at fire time
+            // (`parse_timezone` returns `None`), so don't reject it here — only a
+            // non-empty, unknown name is an error.
+            if let Some(tz) = timezone {
+                if !tz.trim().is_empty() {
+                    validate_timezone(tz)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Compute exponential backoff delay for failed jobs.
 /// Returns milliseconds to add to next_run_at.
 pub fn backoff_delay_ms(consecutive_failures: u32) -> u64 {
@@ -166,7 +225,7 @@ pub fn backoff_delay_ms(consecutive_failures: u32) -> u64 {
 mod tests {
     use super::{
         compute_next_every_run, compute_next_run, parse_flexible_timestamp, parse_timezone,
-        validate_timezone,
+        validate_schedule, validate_timezone, MIN_EVERY_INTERVAL_MS,
     };
     use crate::cron::CronSchedule;
     use chrono::Utc;
@@ -276,6 +335,66 @@ mod tests {
         assert!(parse_timezone("Not/AZone").is_none());
         assert!(validate_timezone("Europe/London").is_ok());
         assert!(validate_timezone("Mars/Phobos").is_err());
+    }
+
+    #[test]
+    fn validate_schedule_covers_all_variants() {
+        // At: timestamp must parse — with the SAME flexible parser the scheduler
+        // uses, so a compact `+0800` offset (valid to the runtime) is accepted and
+        // not rejected into an un-editable job.
+        assert!(validate_schedule(&CronSchedule::At {
+            timestamp: "2026-01-01T00:00:00Z".into()
+        })
+        .is_ok());
+        assert!(validate_schedule(&CronSchedule::At {
+            timestamp: "2026-04-22T20:15:00+0800".into()
+        })
+        .is_ok());
+        assert!(validate_schedule(&CronSchedule::At {
+            timestamp: "not-a-date".into()
+        })
+        .is_err());
+
+        // Every: interval must clear the 1-minute floor (this is the gap the
+        // owner-plane path previously let through — interval_ms=0 = never fires).
+        assert!(validate_schedule(&CronSchedule::Every {
+            interval_ms: MIN_EVERY_INTERVAL_MS,
+            start_at: None
+        })
+        .is_ok());
+        assert!(validate_schedule(&CronSchedule::Every {
+            interval_ms: 0,
+            start_at: None
+        })
+        .is_err());
+        assert!(validate_schedule(&CronSchedule::Every {
+            interval_ms: 30_000,
+            start_at: None
+        })
+        .is_err());
+
+        // Cron: expression + (optional, non-empty) timezone.
+        assert!(validate_schedule(&CronSchedule::Cron {
+            expression: "0 0 9 * * * *".into(),
+            timezone: Some("Asia/Shanghai".into())
+        })
+        .is_ok());
+        assert!(validate_schedule(&CronSchedule::Cron {
+            expression: "not a cron".into(),
+            timezone: None
+        })
+        .is_err());
+        assert!(validate_schedule(&CronSchedule::Cron {
+            expression: "0 0 9 * * * *".into(),
+            timezone: Some("Mars/Phobos".into())
+        })
+        .is_err());
+        // Empty / whitespace timezone is accepted (treated as UTC at fire time).
+        assert!(validate_schedule(&CronSchedule::Cron {
+            expression: "0 0 9 * * * *".into(),
+            timezone: Some("   ".into())
+        })
+        .is_ok());
     }
 
     #[test]

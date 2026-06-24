@@ -5,9 +5,7 @@ use rusqlite::{params, Connection};
 use std::str::FromStr;
 use std::sync::Mutex;
 
-use super::schedule::{
-    backoff_delay_ms, compute_next_run, validate_cron_expression, validate_timezone,
-};
+use super::schedule::{backoff_delay_ms, compute_next_run, validate_schedule};
 use super::types::*;
 
 // ── CronDB (Persistence Layer) ──────────────────────────────────
@@ -120,21 +118,13 @@ impl CronDB {
 
     /// Create a new job from NewCronJob input. Returns the full CronJob.
     pub fn add_job(&self, input: &NewCronJob) -> Result<CronJob> {
-        // Validate cron expression + timezone if applicable. This is the
-        // persistence chokepoint — enforcing the IANA-timezone red line here
-        // (not only in the agent `manage_cron` tool path) closes the owner-plane
-        // HTTP / Tauri create path, so an invalid zone can never be persisted and
-        // silently fall back to UTC at fire time.
-        if let CronSchedule::Cron {
-            ref expression,
-            ref timezone,
-        } = input.schedule
-        {
-            validate_cron_expression(expression)?;
-            if let Some(tz) = timezone {
-                validate_timezone(tz)?;
-            }
-        }
+        // Persistence chokepoint: validate the whole schedule via the single
+        // source of truth (`schedule::validate_schedule`) so the owner-plane
+        // HTTP / Tauri create path enforces the SAME rules as the agent
+        // `manage_cron` tool path — no `At` with a bad timestamp, no `Every` that
+        // never fires, no unknown cron expression / timezone (which would silently
+        // fall back to UTC at fire time).
+        validate_schedule(&input.schedule)?;
 
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
@@ -196,18 +186,8 @@ impl CronDB {
 
     /// Update an existing job.
     pub fn update_job(&self, job: &CronJob) -> Result<()> {
-        // Validate cron expression + timezone if applicable (persistence
-        // chokepoint — see `add_job`).
-        if let CronSchedule::Cron {
-            ref expression,
-            ref timezone,
-        } = job.schedule
-        {
-            validate_cron_expression(expression)?;
-            if let Some(tz) = timezone {
-                validate_timezone(tz)?;
-            }
-        }
+        // Persistence chokepoint — validate the whole schedule (see `add_job`).
+        validate_schedule(&job.schedule)?;
 
         let now = Utc::now();
         let now_str = now.to_rfc3339();

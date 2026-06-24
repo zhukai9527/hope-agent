@@ -402,66 +402,60 @@ fn parse_schedule(args: &Value) -> Result<CronSchedule> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'schedule_type' parameter (at, every, or cron)"))?;
 
-    match schedule_type {
+    // Each arm extracts + normalizes the JSON fields (presence errors are
+    // field-specific here), then delegates *value* validation to the single
+    // source of truth `cron::validate_schedule` — the same check the persistence
+    // chokepoint (`add_job`/`update_job`) and the owner-plane paths run, so the
+    // three entry points can never diverge on what a legal schedule is.
+    let schedule = match schedule_type {
         "at" => {
             let timestamp = args
                 .get("timestamp")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing 'timestamp' for 'at' schedule"))?;
-            // Validate ISO8601
-            chrono::DateTime::parse_from_rfc3339(timestamp)
-                .map_err(|e| anyhow::anyhow!("Invalid timestamp: {}", e))?;
-            Ok(CronSchedule::At {
+            CronSchedule::At {
                 timestamp: timestamp.to_string(),
-            })
+            }
         }
         "every" => {
             let interval_ms = args
                 .get("interval_ms")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| anyhow::anyhow!("Missing 'interval_ms' for 'every' schedule"))?;
-            if interval_ms < 60_000 {
-                return Err(anyhow::anyhow!(
-                    "Interval must be at least 60000ms (1 minute)"
-                ));
-            }
             let start_at = args
                 .get("start_at")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            Ok(CronSchedule::Every {
+            CronSchedule::Every {
                 interval_ms,
                 start_at,
-            })
+            }
         }
         "cron" => {
             let expression = args
                 .get("cron_expression")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing 'cron_expression' for 'cron' schedule"))?;
-            cron::validate_cron_expression(expression)?;
-            // Trim + validate the timezone against the IANA database up front. An
-            // unknown zone is rejected here rather than silently falling back to
-            // UTC at fire time — that silent fallback is exactly what kept the
-            // dropped-timezone bug invisible.
+            // Trim the timezone here (normalization); validity is checked by
+            // validate_schedule below. An empty value normalizes to `None` (UTC).
             let timezone = match args.get("timezone").and_then(|v| v.as_str()) {
-                Some(raw) if !raw.trim().is_empty() => {
-                    let trimmed = raw.trim();
-                    cron::validate_timezone(trimmed)?;
-                    Some(trimmed.to_string())
-                }
+                Some(raw) if !raw.trim().is_empty() => Some(raw.trim().to_string()),
                 _ => None,
             };
-            Ok(CronSchedule::Cron {
+            CronSchedule::Cron {
                 expression: expression.to_string(),
                 timezone,
-            })
+            }
         }
-        _ => Err(anyhow::anyhow!(
-            "Invalid schedule_type: '{}'. Use 'at', 'every', or 'cron'",
-            schedule_type
-        )),
-    }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid schedule_type: '{}'. Use 'at', 'every', or 'cron'",
+                schedule_type
+            ))
+        }
+    };
+    cron::validate_schedule(&schedule)?;
+    Ok(schedule)
 }
 
 /// Human-readable schedule summary.
