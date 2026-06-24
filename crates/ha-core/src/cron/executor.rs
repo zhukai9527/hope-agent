@@ -322,7 +322,33 @@ pub(crate) async fn execute_claimed_job(
             let _ = cron_db.clear_running(&job.id);
 
             // Emit Tauri event
-            emit_cron_event(&job.id, &job.name, "success", job.notify_on_complete);
+            emit_cron_event(&job.id, &job.name, "success", job.notify_on_complete, None);
+        }
+        CronTerminal::Empty => {
+            // §10: the run completed but produced no text. Surface it (don't mask
+            // as success), skip delivery (no blank message), but treat it as a
+            // non-failure for scheduling (advance, don't bump the failure count).
+            app_warn!(
+                "cron",
+                "executor",
+                "Job '{}' ({}) completed with empty output ({}ms) — recorded 'empty', delivery skipped",
+                job.name,
+                job.id,
+                duration_ms
+            );
+            let _ = cron_db.update_after_run(&job.id, true, &job.schedule);
+            let _ = cron_db.finalize_run_log(
+                run_log_id,
+                "empty",
+                &finished_at,
+                Some(duration_ms),
+                None,
+                None,
+                None,
+            );
+            let _ = cron_db.clear_running(&job.id);
+            // Notify as a (content-less) success — the run didn't fail.
+            emit_cron_event(&job.id, &job.name, "success", job.notify_on_complete, None);
         }
         CronTerminal::Failure => {
             // Classifier returns Failure only for `Err`.
@@ -359,10 +385,15 @@ pub(crate) async fn execute_claimed_job(
     }
 }
 
-/// §9 (C4): the terminal disposition of a cron run.
+/// §9 (C4) / §10: the terminal disposition of a cron run.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CronTerminal {
     Success,
+    /// §10: ran fine but produced no (trimmed) text. Not a failure (schedule
+    /// advances, failure counter not bumped), but recorded distinctly so a
+    /// silently-zero-output job is visible rather than masked as "success", and
+    /// no blank message is delivered.
+    Empty,
     Cancelled,
     Failure,
 }
@@ -375,8 +406,10 @@ pub(crate) fn classify_cron_terminal(result: &Result<String>, was_cancelled: boo
     match result {
         // Interrupted run: the engine swallowed the cancel (abort_on_cancel=false)
         // and returned an empty Ok. Not a success — don't deliver a blank or
-        // advance the schedule.
+        // advance the schedule. (Checked before Empty: a cancel wins.)
         Ok(r) if was_cancelled && r.trim().is_empty() => CronTerminal::Cancelled,
+        // §10: a non-cancelled empty Ok = zero output, surfaced as Empty.
+        Ok(r) if r.trim().is_empty() => CronTerminal::Empty,
         // Genuine output (incl. a cancel that arrived only after real output).
         Ok(_) => CronTerminal::Success,
         // Defensive: only reached if a caller flips abort_on_cancel=true so a
@@ -708,7 +741,14 @@ pub(crate) fn record_failure(
         );
         emit_cron_disabled_event(&job.id, &job.name, consecutive, reason);
     } else {
-        emit_cron_event(&job.id, &job.name, "error", job.notify_on_complete);
+        let reason = super::failure::CronFailureClass::classify(error).key();
+        emit_cron_event(
+            &job.id,
+            &job.name,
+            "error",
+            job.notify_on_complete,
+            Some(reason),
+        );
     }
 }
 
@@ -732,17 +772,33 @@ fn record_cancelled(
         None,
     );
     let _ = cron_db.clear_running(&job.id);
-    emit_cron_event(&job.id, &job.name, "cancelled", job.notify_on_complete);
+    emit_cron_event(
+        &job.id,
+        &job.name,
+        "cancelled",
+        job.notify_on_complete,
+        None,
+    );
 }
 
 /// Emit an event to notify the frontend of a cron run result.
-pub(crate) fn emit_cron_event(job_id: &str, job_name: &str, status: &str, notify: bool) {
+pub(crate) fn emit_cron_event(
+    job_id: &str,
+    job_name: &str,
+    status: &str,
+    notify: bool,
+    // §10 (D4): failure reason class (timeout / configuration / transient) for
+    // an error run, so the desktop notification / panel can show *why* it failed
+    // — not just the job name. `None` for success / cancelled / empty.
+    failure_reason: Option<&str>,
+) {
     if let Some(bus) = crate::get_event_bus() {
         let payload = serde_json::json!({
             "job_id": job_id,
             "job_name": job_name,
             "status": status,
             "notify": notify,
+            "failure_reason": failure_reason,
         });
         bus.emit("cron:run_completed", payload);
     }
@@ -789,11 +845,15 @@ mod tests {
             classify_cron_terminal(&Ok("hi".into()), false),
             CronTerminal::Success
         );
-        // Empty Ok without a cancel = still success (the §10 empty-output case,
-        // intentionally unchanged here).
+        // §10: empty Ok without a cancel = Empty (surfaced distinctly, not masked
+        // as success; delivery skipped).
         assert_eq!(
             classify_cron_terminal(&Ok(String::new()), false),
-            CronTerminal::Success
+            CronTerminal::Empty
+        );
+        assert_eq!(
+            classify_cron_terminal(&Ok("  \n ".into()), false),
+            CronTerminal::Empty
         );
         // §9 (C4) core: cron's engine runs abort_on_cancel=false, so an
         // interrupting cancel returns Ok("") — must classify as Cancelled, not a

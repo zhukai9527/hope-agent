@@ -496,7 +496,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "schedule_type": {
                         "type": "string",
                         "enum": ["at", "every", "cron"],
-                        "description": "Schedule type (required on create; passing any schedule field on update replaces the schedule)"
+                        "description": "Schedule type. Required on create. On update: omit to keep the existing schedule unchanged; pass it to REPLACE the schedule — you must then also supply all of that type's required fields (at→timestamp, every→interval_ms, cron→cron_expression), or the update is rejected. Other schedule fields passed WITHOUT schedule_type are ignored (the schedule stays as-is)."
                     },
                     "timestamp": {
                         "type": "string",

@@ -789,7 +789,9 @@
       "partial": "Частично доставлено",
       "failed": "Доставка не удалась"
     },
-    "runStatusRunning": "Выполняется"
+    "runStatusRunning": "Выполняется",
+    "runStatusEmpty": "Нет вывода",
+    "unitSeconds": "сек."
   },
   "dangerousMode": {
     "bannerBoth": "Опасный режим активен (CLI + конфиг) — все подтверждения инструментов пропускаются",

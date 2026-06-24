@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Send,
   Loader2,
+  CircleSlash,
 } from "lucide-react"
 import type { CronJob, CronRunLog } from "./CronJobForm.types"
 import { statusColor, formatSchedule } from "./cronHelpers"
@@ -242,6 +243,8 @@ export default function CronJobDetail({
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                     ) : log.status === "running" ? (
                       <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin" />
+                    ) : log.status === "empty" ? (
+                      <CircleSlash className="h-3.5 w-3.5 text-muted-foreground" />
                     ) : log.status === "cancelled" ? (
                       <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
                     ) : (
@@ -252,9 +255,11 @@ export default function CronJobDetail({
                         ? t("cron.runStatusSuccess")
                         : log.status === "running"
                           ? t("cron.runStatusRunning")
-                          : log.status === "cancelled"
-                            ? t("common.cancel")
-                            : t("cron.runStatusError")}
+                          : log.status === "empty"
+                            ? t("cron.runStatusEmpty")
+                            : log.status === "cancelled"
+                              ? t("common.cancel")
+                              : t("cron.runStatusError")}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">

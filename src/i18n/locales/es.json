@@ -789,7 +789,9 @@
       "partial": "Entrega parcial",
       "failed": "Entrega fallida"
     },
-    "runStatusRunning": "En ejecución"
+    "runStatusRunning": "En ejecución",
+    "runStatusEmpty": "Sin salida",
+    "unitSeconds": "segundos"
   },
   "dangerousMode": {
     "bannerBoth": "Modo Peligroso activo (CLI + config) — todas las aprobaciones de herramientas se omiten",

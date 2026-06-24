@@ -789,7 +789,9 @@
       "partial": "Sebahagian dihantar",
       "failed": "Penghantaran gagal"
     },
-    "runStatusRunning": "Sedang berjalan"
+    "runStatusRunning": "Sedang berjalan",
+    "runStatusEmpty": "Tiada output",
+    "unitSeconds": "saat"
   },
   "dangerousMode": {
     "bannerBoth": "Mod Berbahaya aktif (CLI + konfig) — semua kelulusan alat dipintas",

@@ -202,7 +202,11 @@ pub fn start_scheduler(
                     // is alive, not that work happened.
                     let _ = cron_db.record_scheduler_heartbeat();
 
-                    // Scheduler-level guard: skip if previous tick is still processing
+                    // Scheduler-level guard: skip this tick only if the previous
+                    // tick's claim/dispatch pass hasn't returned yet. It guards
+                    // the dispatch loop against overlapping itself — NOT job
+                    // execution (jobs run on their own spawned tasks and the §4
+                    // slot cap bounds their concurrency, see dispatch_due_jobs).
                     if tick_running
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                         .is_err()

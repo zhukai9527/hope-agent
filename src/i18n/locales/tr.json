@@ -789,7 +789,9 @@
       "partial": "Kısmen teslim edildi",
       "failed": "Teslim başarısız"
     },
-    "runStatusRunning": "Çalışıyor"
+    "runStatusRunning": "Çalışıyor",
+    "runStatusEmpty": "Çıktı yok",
+    "unitSeconds": "saniye"
   },
   "dangerousMode": {
     "bannerBoth": "Tehlikeli Mod aktif (CLI + yapılandırma) — tüm araç onayları atlanıyor",

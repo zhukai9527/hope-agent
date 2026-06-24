@@ -118,7 +118,7 @@ serde tag 区分，目前仅一种类型：
 | `id` | `i64` | 自增主键 |
 | `job_id` | `String` | 关联的任务 ID（CASCADE 删除） |
 | `session_id` | `String` | 本次执行创建的隔离会话 ID |
-| `status` | `String` | `"running"`（§9 在途）/ `"success"` / `"error"` / `"timeout"` / `"cancelled"` |
+| `status` | `String` | `"running"`（§9 在途）/ `"success"` / `"empty"`（§10 零输出）/ `"error"` / `"timeout"` / `"cancelled"` |
 | `started_at` | `String` | 开始时间（RFC 3339） |
 | `finished_at` | `Option<String>` | 完成时间。§9：在途 run_log 为 NULL，终态由 `finalize_run_log` 写入；`recover_orphaned_runs` 据此判定崩溃留痕 |
 | `duration_ms` | `Option<u64>` | 执行耗时（毫秒） |
@@ -148,7 +148,7 @@ serde tag 区分，目前仅一种类型：
 | `project_id` | `Option<String>` | 可选 Project 关联；API 暴露为 `projectId`，与对应 CronJob 一致 |
 | `scheduled_at` | `String` | 计划执行时间 |
 | `status` | `CronJobStatus` | 任务状态 |
-| `run_log` | `Option<CronRunLog>` | 匹配的执行日志（+-2 分钟窗口匹配） |
+| `run_log` | `Option<CronRunLog>` | 匹配的执行日志（§10 自适应窗口：`min(±2 分钟, 相邻 occurrence 间隔/2)`，对高频任务收窄避免错配） |
 
 ### `manage_cron` 工具 Project 语义
 
@@ -200,7 +200,7 @@ sequenceDiagram
 
     RT->>DB: get_due_jobs(now)<br/>追赶执行过期循环任务
     loop 每个过期任务
-        RT->>DB: claim_job_for_execution(job)<br/>原子 UPDATE
+        RT->>DB: claim_scheduled_job_for_execution(job)<br/>原子 UPDATE
         DB-->>RT: true (claimed)
         RT->>Exec: tokio::spawn execute_job
     end
@@ -213,7 +213,7 @@ sequenceDiagram
         DB-->>RT: Vec<CronJob>
 
         loop 每个到期任务
-            RT->>DB: claim_job_for_execution(job)<br/>原子 UPDATE:<br/>SET running_at=now, next_run_at=下次<br/>WHERE id=? AND next_run_at=原值<br/>AND status='active'<br/>AND running_at IS NULL
+            RT->>DB: claim_scheduled_job_for_execution(job)<br/>原子 UPDATE:<br/>SET running_at=now, next_run_at=下次<br/>WHERE id=? AND next_run_at=原值<br/>AND status='active'<br/>AND running_at IS NULL
             alt claimed (rows > 0)
                 RT->>Exec: tokio::spawn execute_job
             else already claimed
@@ -246,7 +246,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[execute_job 开始] --> B[try_mark_running<br/>原子 claim: UPDATE running_at<br/>WHERE running_at IS NULL]
+    A[execute_job 开始] --> B[claim_scheduled / claim_immediate<br/>原子 claim: UPDATE running_at<br/>WHERE running_at IS NULL]
     B -->|already running| B1[跳过执行]
     B -->|claimed| C[提取 prompt + 显式 agent_id<br/>从 CronPayload]
     C --> C1[解析 Project + Agent<br/>显式 Agent > Project 默认 > 全局默认 > ha-main]
@@ -338,6 +338,19 @@ cron 执行通过 `run_chat_engine` 起一轮对话，其 `source` 是专属的 
 - **跨进程取消（C5，取舍）**：cancel 注册表是**进程本地** static map，cron 调度仅在 Primary 进程跑。另一实例（Secondary / 远端客户端）对 Primary 在跑的 run 发取消会查无 flag——此时**回落到 per-run job-timeout**（§5，默认 5min）兜底释放。本期不引入持久化 `cancel_requested` 列（cron 单 Primary、取消多为同进程，跨进程属边缘场景）。
 - **崩溃留痕 + 实时「运行中」（D2）**：run 起跑（session 创建后）即 `add_running_run_log` 插入 `status='running'` / `finished_at=NULL` 的**在途** run_log，终态经 `finalize_run_log` 单次 UPDATE 收尾（success/error/cancelled + 时长 + 投递结果）。这让 `recover_orphaned_runs`（启动期，`WHERE finished_at IS NULL`）**真正生效**——崩溃中途的 run 在下次启动被收为 `error`（此前 run_log 只在执行后落库，该函数对 cron 是死代码）。同进程 panic 由 `RunningMarkerGuard` 兜底 finalize 为 error。前端 run-log 列表渲染 `running` 态（蓝色 spinner）。no-session 早退因尚未开 run_log，仍 INSERT 一条完整失败行（`record_failure` 的 `run_log_id=None` 分支）。
 - **Primary 崩溃可观测（C6）**：调度器每 tick UPSERT `cron_meta.scheduler_heartbeat`；启动时若上次心跳距今 ≥ `HEARTBEAT_STALE_WARN_SECS`（300s）则 `app_warn` 提示「调度器曾离线 ~Ns」。纯日志可观测——Primary 崩溃**非丢任务**（重启 catch-up 按 grace 补跑），故不做 Secondary 竞选接管。
+
+### 可观测性 + 日历精度（§10）
+
+low 债集中清理：
+
+- **零输出不再掩盖（empty 终态）**：终态分类 `classify_cron_terminal` 新增 `Empty`——非取消的空 `Ok`（trim 后为空）记 run_log `status='empty'`、**跳过投递（不发空消息）**、`app_warn`，但仍按非失败推进排程（不 bump 失败计数）。`deliver_results` 另加空 Success 文本守卫覆盖 G2 注入路径。前端 run-log 渲染 `empty`（灰 `CircleSlash`）。
+- **失败原因纳入通知（D4）**：`emit_cron_event` 增 `failure_reason`（timeout/configuration/transient 分类），error run 的 `cron:run_completed` 携带之；前端 `useChatSession` 普通错误通知体附原因（与 auto-disabled 通知同款 `cronReason` 文案）。
+- **日历匹配自适应窗口**：`match_run_logs_to_occurrences` 的窗口由固定 ±2min 改为 `min(±2min, 最小相邻 occurrence 间隔/2)`，<4min 间隔任务不再因窗口跨两 occurrence 错配 / 丢日志。
+- **`find_job_by_session` 确定性排序**：`ORDER BY id DESC`（自增主键 tiebreak）替代 `ORDER BY started_at DESC`，同秒多 run_log 时 G2 注入路由不再不确定。
+- **`mark_missed_at_jobs` serde 假设加测试锁**：`schedule_json LIKE '%"type":"at"%'` 的 SQL 过滤保留（高效、startup-only），加单测 `at_schedule_serializes_with_type_at_tag` 锁定 serde tag 格式，防 rename 静默破坏「un-missing 所有逾期 At」。
+- **`schedule_summary` <60s 显示真实秒数**；**`manage_cron` schema** update 语义精确化（传 `schedule_type` 才替换排程、须补齐该类型必填字段，否则保持原排程）。
+
+**本期未做（延后）**：周期任务宕机错过槽位的 `skipped` run_log 记录——§9 的调度器心跳已覆盖「宕机多久」这一可观测信号，且 no-compensation 策略（catch-up 只跑一次、推进到下个未来 slot）已是现行为；逐 Cron-occurrence 计数错过槽数成本高、收益边际，故不在本期落地。
 
 ## 调度计算：compute_next_run
 
@@ -465,7 +478,7 @@ stateDiagram-v2
 - **启用**（`enabled=true`）：`status='active'`，`consecutive_failures=0` 重置，`compute_next_run` 重算下次执行时间
 - **禁用**（`enabled=false`）：`status='paused'`，保留当前 `next_run_at` 和 `consecutive_failures`
 
-**日历查询**：`get_calendar_events(start, end)` 展开所有任务在时间范围内的执行时间点。`Every` 任务从自己的 `start_at`（或旧任务回填出的锚点）开始展开，不再从月份查询起点硬铺。为避免高频任务日历错位，执行日志改为按 job 一次性批量读取，并按“离哪个计划时间最近”在 ±2 分钟窗口内唯一匹配；Every/Cron 单任务最多展开 10,000 个事件。
+**日历查询**：`get_calendar_events(start, end)` 展开所有任务在时间范围内的执行时间点。`Every` 任务从自己的 `start_at`（或旧任务回填出的锚点）开始展开，不再从月份查询起点硬铺。为避免高频任务日历错位，执行日志改为按 job 一次性批量读取，并按“离哪个计划时间最近”在**自适应窗口**内唯一匹配（§10：窗口 = `min(±2 分钟, 相邻 occurrence 间隔/2)`，故 <4min 间隔的任务不会因固定 ±2min 窗口跨两个 occurrence 而错配 / 丢日志）；Every/Cron 单任务最多展开 10,000 个事件。
 
 ## 关键源文件索引
 
@@ -476,4 +489,4 @@ stateDiagram-v2
 | `crates/ha-core/src/cron/schedule.rs` | `compute_next_run`（三种类型）/ `validate_cron_expression` / `backoff_delay_ms`（指数退避）/ `parse_flexible_timestamp`（RFC 3339 + 紧凑偏移） |
 | `crates/ha-core/src/cron/scheduler.rs` | `start_scheduler`：独立 OS 线程 + tokio runtime / 启动恢复（orphaned runs + stale markers + missed At + 追赶执行）/ 15s tick 循环 + tick_running 防重入 |
 | `crates/ha-core/src/cron/executor.rs` | `execute_job`：创建隔离 session + 5min timeout + 成功/失败分支处理 / `build_and_run_agent`：模型链遍历 + failover 重试 / `record_failure` / `emit_cron_event` |
-| `crates/ha-core/src/cron/db.rs` | `CronDB`：SQLite schema 初始化 + 迁移 / CRUD（add/update/delete/get/list）/ `get_due_jobs`（到期查询）/ `claim_job_for_execution`（原子 claim）/ `try_mark_running` / `clear_running` / `toggle_job`（启用/禁用）/ `update_after_run`（成功重置/失败退避/自动禁用）/ `get_calendar_events`（日历展开）/ `recover_orphaned_runs` + `clear_all_running` + `mark_missed_at_jobs`（启动恢复） |
+| `crates/ha-core/src/cron/db.rs` | `CronDB`：SQLite schema 初始化 + 迁移 / CRUD（add/update/delete/get/list）/ `get_due_jobs`（到期查询）/ `claim_scheduled_job_for_execution` + `claim_immediate_job_for_execution`（原子 claim 双路径：定时 / 手动 run-now）/ `clear_running` + `clear_running_if_owner`（owner-checked 释放）/ `add_running_run_log` + `finalize_run_log`（§9 在途 run_log 生命周期）/ `toggle_job`（启用/禁用）/ `update_after_run`（成功重置/失败退避/自动禁用）/ `get_calendar_events`（日历展开）/ `recover_orphaned_runs` + `clear_all_running` + `mark_missed_at_jobs` + `record_scheduler_heartbeat`（启动恢复 + §9 心跳） |

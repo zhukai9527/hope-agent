@@ -789,7 +789,9 @@
       "partial": "Partially delivered",
       "failed": "Delivery failed"
     },
-    "runStatusRunning": "Running"
+    "runStatusRunning": "Running",
+    "runStatusEmpty": "No output",
+    "unitSeconds": "seconds"
   },
   "dangerousMode": {
     "bannerBoth": "Dangerous Mode active (CLI + config) — all tool approvals bypassed",

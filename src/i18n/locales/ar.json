@@ -789,7 +789,9 @@
       "partial": "تم التسليم جزئيًا",
       "failed": "فشل التسليم"
     },
-    "runStatusRunning": "قيد التشغيل"
+    "runStatusRunning": "قيد التشغيل",
+    "runStatusEmpty": "لا مُخرَج",
+    "unitSeconds": "ثانية"
   },
   "dangerousMode": {
     "bannerBoth": "الوضع الخطير مفعّل (CLI + التكوين) — تم تجاوز جميع موافقات الأدوات",

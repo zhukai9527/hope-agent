@@ -521,9 +521,16 @@ export function useChatSession({
           }),
         )
       } else if (payload.notify) {
-        const title =
-          payload.status === "success" ? t("notification.cronSuccess") : t("notification.cronError")
-        notify(title, payload.job_name)
+        if (payload.status === "success") {
+          notify(t("notification.cronSuccess"), payload.job_name)
+        } else {
+          // §10 (D4): surface *why* it failed (timeout / config / transient), not
+          // just the job name, when the backend classified a reason.
+          const body = payload.failure_reason
+            ? `${payload.job_name} — ${t(`notification.cronReason.${payload.failure_reason}`, payload.failure_reason)}`
+            : payload.job_name
+          notify(t("notification.cronError"), body)
+        }
       }
     })
   }, [reloadSessions, t])

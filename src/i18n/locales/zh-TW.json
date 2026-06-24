@@ -789,7 +789,9 @@
       "partial": "部分投遞",
       "failed": "投遞失敗"
     },
-    "runStatusRunning": "執行中"
+    "runStatusRunning": "執行中",
+    "runStatusEmpty": "無輸出",
+    "unitSeconds": "秒"
   },
   "dangerousMode": {
     "bannerBoth": "危險模式已啟用（CLI + 設定）—— 所有工具呼叫跳過審批",

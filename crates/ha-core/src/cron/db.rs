@@ -440,7 +440,10 @@ impl CronDB {
                 .lock()
                 .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
             match conn.query_row(
-                "SELECT job_id FROM cron_run_logs WHERE session_id = ?1 ORDER BY started_at DESC LIMIT 1",
+                // §10: order by the autoincrement id (not started_at) so the
+                // "most recent run log" is deterministic even when two logs share
+                // the same started_at second — avoids G2 misrouting the injection.
+                "SELECT job_id FROM cron_run_logs WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
                 params![session_id],
                 |row| row.get::<_, String>(0),
             ) {
@@ -1182,11 +1185,22 @@ fn match_run_logs_to_occurrences(
     occurrences: &[DateTime<Utc>],
     run_logs: &[CronRunLog],
 ) -> Result<Vec<Option<CronRunLog>>> {
-    let window_ms = Duration::minutes(CALENDAR_EVENT_WINDOW_MINUTES).num_milliseconds();
     let occurrence_ms: Vec<i64> = occurrences
         .iter()
         .map(|occ| occ.timestamp_millis())
         .collect();
+    // §10: adapt the match window to the schedule density. The fixed ±2min
+    // window can overlap two occurrences for sub-4min intervals, mis-assigning a
+    // run log (or dropping it). Cap it at half the smallest gap between adjacent
+    // occurrences so a log can match at most one occurrence. (occurrences are
+    // produced in ascending order by compute_occurrences.)
+    let fixed_window_ms = Duration::minutes(CALENDAR_EVENT_WINDOW_MINUTES).num_milliseconds();
+    let window_ms = occurrence_ms
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .min()
+        .map(|min_gap| fixed_window_ms.min(min_gap / 2))
+        .unwrap_or(fixed_window_ms);
     let mut assignments: Vec<Option<(CronRunLog, i64)>> = vec![None; occurrences.len()];
 
     for log in run_logs {
@@ -1696,6 +1710,21 @@ mod tests {
             "heartbeat persists and parses back"
         );
         cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn at_schedule_serializes_with_type_at_tag() {
+        // §10: mark_missed_at_jobs filters with `schedule_json LIKE '%"type":"at"%'`.
+        // Lock the serde tag so a future rename can't silently break that query
+        // (un-missing every overdue one-shot At job).
+        let json = serde_json::to_string(&CronSchedule::At {
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        })
+        .expect("serialize");
+        assert!(
+            json.contains(r#""type":"at""#),
+            "At must serialize with the `type:at` tag mark_missed_at_jobs greps for — got {json}"
+        );
     }
 
     #[test]

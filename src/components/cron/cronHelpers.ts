@@ -140,6 +140,10 @@ export function formatSchedule(schedule: CronSchedule, t: (key: string) => strin
     case "every": {
       const ms = schedule.intervalMs ?? schedule.interval_ms ?? 0
       const secs = ms / 1000
+      // §10: sub-minute intervals (legacy rows from before the 1-min floor) show
+      // real seconds instead of rounding to "0 minutes".
+      if (secs < 60)
+        return `${t("cron.scheduleEvery")} ${Math.round(secs)} ${t("cron.unitSeconds")}`
       if (secs < 3600)
         return `${t("cron.scheduleEvery")} ${Math.round(secs / 60)} ${t("cron.unitMinutes")}`
       if (secs < 86400)

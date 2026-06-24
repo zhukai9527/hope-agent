@@ -125,6 +125,16 @@ pub async fn deliver_results(job: &CronJob, outcome: DeliveryOutcome<'_>) -> Del
     if job.delivery_targets.is_empty() {
         return report;
     }
+    // §10: never fan out a blank success message (a zero-output run, or an
+    // injection turn with no text). The executor's main path already routes
+    // empty success to the `Empty` terminal and skips delivery; this guards the
+    // injection (G2) path too. Failure text always carries the error, so it's
+    // never empty.
+    if let DeliveryOutcome::Success { text } = outcome {
+        if text.trim().is_empty() {
+            return report;
+        }
+    }
     let Some(registry) = crate::get_channel_registry() else {
         return report;
     };

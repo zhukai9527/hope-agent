@@ -789,7 +789,9 @@
       "partial": "一部配信",
       "failed": "配信失敗"
     },
-    "runStatusRunning": "実行中"
+    "runStatusRunning": "実行中",
+    "runStatusEmpty": "出力なし",
+    "unitSeconds": "秒"
   },
   "dangerousMode": {
     "bannerBoth": "危険モード有効（CLI + 設定）— すべてのツール承認をバイパス中",
