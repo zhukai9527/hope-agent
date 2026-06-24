@@ -6,6 +6,12 @@ use super::db::CronDB;
 use super::executor::execute_claimed_job;
 use super::types::CronJob;
 
+/// §9 (C6): if the previous scheduler's last heartbeat is older than this at
+/// startup, warn that the (Primary-only) scheduler was offline for a stretch —
+/// a multi-minute silent gap usually means the Primary process died while the
+/// host stayed up. Catch-up still recovers due runs; this is pure observability.
+const HEARTBEAT_STALE_WARN_SECS: i64 = 300;
+
 // ── Concurrency gate (§4) ───────────────────────────────────────
 
 /// How many more cron jobs may be dispatched this pass, given the configured
@@ -115,6 +121,28 @@ pub fn start_scheduler(
                 .expect("Failed to create cron tokio runtime");
 
             rt.block_on(async move {
+                // §9 (C6): scheduler liveness. Surface a long offline gap from the
+                // previous (Primary) scheduler before recording our own heartbeat.
+                match cron_db.last_scheduler_heartbeat() {
+                    Ok(Some(prev)) => {
+                        let gap_secs = Utc::now().signed_duration_since(prev).num_seconds();
+                        if gap_secs >= HEARTBEAT_STALE_WARN_SECS {
+                            app_warn!(
+                                "cron",
+                                "scheduler",
+                                "Scheduler was offline ~{}s (last heartbeat {}); due runs are caught up per grace below",
+                                gap_secs,
+                                prev.to_rfc3339()
+                            );
+                        }
+                    }
+                    Ok(None) => {} // fresh DB / first ever run
+                    Err(e) => {
+                        app_error!("cron", "scheduler", "Failed to read scheduler heartbeat: {}", e)
+                    }
+                }
+                let _ = cron_db.record_scheduler_heartbeat();
+
                 // Startup recovery
                 if let Err(e) = cron_db.recover_orphaned_runs() {
                     app_error!(
@@ -168,6 +196,11 @@ pub fn start_scheduler(
 
                 loop {
                     interval.tick().await;
+
+                    // §9 (C6): refresh liveness heartbeat every tick (cheap UPSERT),
+                    // even when the tick is skipped below — it records the scheduler
+                    // is alive, not that work happened.
+                    let _ = cron_db.record_scheduler_heartbeat();
 
                     // Scheduler-level guard: skip if previous tick is still processing
                     if tick_running

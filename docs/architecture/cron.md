@@ -21,7 +21,7 @@ Cron 系统提供定时调度能力，支持一次性（At）、固定间隔（E
 | `cron/scheduler.rs` | `start_scheduler` 后台调度循环 + 启动恢复 + 追赶执行 |
 | `cron/executor.rs` | `execute_job` 任务执行 + `build_and_run_agent` 含 failover + `record_failure` + 事件发射 |
 | `cron/delivery.rs` | `deliver_results` 把执行结果文本 fan-out 到 IM 渠道会话（每 target 10s 超时保护 + **投递前白名单校验**，详见「投递白名单与 delete 审批门控」）；`deliver_injection_for_session`（G2）按会话反查 `cron_run_logs → job` 后,把**后台 job/subagent 完成的注入 turn** 同样下发到 `delivery_targets`——cron turn 里 spawn 的后台任务稍后完成时不再投递给无人 |
-| `cron/cancel.rs` | 任务级 cancel token 注册 / 触发 / 清理，供 `stop_running_job` 等取消路径使用 |
+| `cron/cancel.rs` | 任务级 cancel token 注册 / 触发 / 清理 + §9 claim↔register 窗口的 `PENDING_CANCELS` 占位，供 `cancel_running_job` 取消路径使用 |
 | `cron/db.rs` | `CronDB` SQLite 持久化（CRUD、claim、running 标记、calendar 查询、启动恢复） |
 
 ## 数据模型
@@ -118,9 +118,9 @@ serde tag 区分，目前仅一种类型：
 | `id` | `i64` | 自增主键 |
 | `job_id` | `String` | 关联的任务 ID（CASCADE 删除） |
 | `session_id` | `String` | 本次执行创建的隔离会话 ID |
-| `status` | `String` | `"success"` / `"error"` / `"timeout"` |
+| `status` | `String` | `"running"`（§9 在途）/ `"success"` / `"error"` / `"timeout"` / `"cancelled"` |
 | `started_at` | `String` | 开始时间（RFC 3339） |
-| `finished_at` | `Option<String>` | 完成时间 |
+| `finished_at` | `Option<String>` | 完成时间。§9：在途 run_log 为 NULL，终态由 `finalize_run_log` 写入；`recover_orphaned_runs` 据此判定崩溃留痕 |
 | `duration_ms` | `Option<u64>` | 执行耗时（毫秒） |
 | `result_preview` | `Option<String>` | 结果预览（截断至 500 字节） |
 | `error` | `Option<String>` | 错误信息 |
@@ -329,6 +329,16 @@ cron 执行通过 `run_chat_engine` 起一轮对话，其 `source` 是专属的 
 - **僵尸终态**：同一 `mark_missed_at_jobs` 把 `next_run_at IS NULL` 的 active `At` 行一并标 `missed`——覆盖「claim 后崩溃」与「以过去时间戳创建」（`compute_next_run` 返 `None`）两种。**一次性任务可能崩溃前已产生副作用，故标 missed 不重跑**（side-effect 安全；用户决策）。
 - **顺序红线**：调度器启动 `mark_missed_at_jobs` 必须在 catch-up **之前**——先把超 grace / 僵尸剔除，catch-up 才只补跑 grace 内的 `At`。
 
+### 崩溃 / 取消 / 接管一致性（§9）
+
+一组并发 / 恢复锐边：
+
+- **取消不丢 / 取消不误判（C4）**：终态判定收敛到纯函数 `classify_cron_terminal(result, was_cancelled)`（可穷举单测）。关键 quirk——cron 跑引擎用 `abort_on_cancel=false`，**取消中断不抛 `Err` 而是返回 `Ok("")`**（引擎吞掉取消、收尾返回空串，见 `engine.rs` 的 `!abort_on_cancel && cancel` 两条收敛路径）。故决策表：`Ok` 空串 + `was_cancelled` → **Cancelled**（中断、不投空消息、不推进排程 / 不清失败计数）；非空 `Ok` → **Success**（含「取消在产出真实结果之后才到」——尊重已完成的工作，C4 本意）；`Err` + `was_cancelled` → Cancelled（防御，仅当未来有调用方翻 `abort_on_cancel=true`）；其它 `Err` → Failure。修正了旧版「`was_cancelled` 先判 → 成功瞬间被取消则结果被当 cancelled 丢弃」与「naïve result-first → 取消中断被当 success 投空消息」两个反向坑。
+- **claim↔register 窗口（C7）**：`cancel::register` 提前到 claim 成功后、session 创建 / 任何 await **之前**（job.id 已知即注册），并由 RAII `CancelRegistrationGuard` 在所有退出路径（含 no-session 早退、panic）清理。`cancel.rs` 增 `PENDING_CANCELS`：`cancel()` 在 flag 未注册时（窗口内）落一个 pending 占位（`cancel_running_job` 已先验 `running_at.is_some()`，故占位只对真在飞的 run 成立、绝不误伤未来运行），`register()` drain 占位使 run 起跑即取消，`remove()` 清未消费占位防泄漏到下次运行。
+- **跨进程取消（C5，取舍）**：cancel 注册表是**进程本地** static map，cron 调度仅在 Primary 进程跑。另一实例（Secondary / 远端客户端）对 Primary 在跑的 run 发取消会查无 flag——此时**回落到 per-run job-timeout**（§5，默认 5min）兜底释放。本期不引入持久化 `cancel_requested` 列（cron 单 Primary、取消多为同进程，跨进程属边缘场景）。
+- **崩溃留痕 + 实时「运行中」（D2）**：run 起跑（session 创建后）即 `add_running_run_log` 插入 `status='running'` / `finished_at=NULL` 的**在途** run_log，终态经 `finalize_run_log` 单次 UPDATE 收尾（success/error/cancelled + 时长 + 投递结果）。这让 `recover_orphaned_runs`（启动期，`WHERE finished_at IS NULL`）**真正生效**——崩溃中途的 run 在下次启动被收为 `error`（此前 run_log 只在执行后落库，该函数对 cron 是死代码）。同进程 panic 由 `RunningMarkerGuard` 兜底 finalize 为 error。前端 run-log 列表渲染 `running` 态（蓝色 spinner）。no-session 早退因尚未开 run_log，仍 INSERT 一条完整失败行（`record_failure` 的 `run_log_id=None` 分支）。
+- **Primary 崩溃可观测（C6）**：调度器每 tick UPSERT `cron_meta.scheduler_heartbeat`；启动时若上次心跳距今 ≥ `HEARTBEAT_STALE_WARN_SECS`（300s）则 `app_warn` 提示「调度器曾离线 ~Ns」。纯日志可观测——Primary 崩溃**非丢任务**（重启 catch-up 按 grace 补跑），故不做 Secondary 竞选接管。
+
 ## 调度计算：compute_next_run
 
 三种 `CronSchedule` 类型的下次执行时间计算：
@@ -412,7 +422,7 @@ CREATE INDEX idx_cron_runs_job
     ON cron_run_logs(job_id, started_at DESC);
 ```
 
-**Schema 迁移**：`CronDB::open` 中检测 `running_at`、`notify_on_complete` 和 `delivery_targets_json` 列是否存在，不存在则 `ALTER TABLE ADD COLUMN`，兼容旧数据库。另有一条 JSON 级兼容迁移：对老版本 `schedule_json = {"type":"every","interval_ms":...}` 的任务，启动时自动写回 `start_at = created_at + interval_ms`。
+**Schema 迁移**：`CronDB::open` 中检测 `running_at`、`notify_on_complete`、`delivery_targets_json`、`prefix_delivery_with_name`（§8）列与 `cron_run_logs.delivery_status`（§8）列是否存在，不存在则 `ALTER TABLE ADD COLUMN`；并 `CREATE TABLE IF NOT EXISTS cron_meta`（§9 心跳 KV），兼容旧数据库。另有一条 JSON 级兼容迁移：对老版本 `schedule_json = {"type":"every","interval_ms":...}` 的任务，启动时自动写回 `start_at = created_at + interval_ms`。
 
 ## 前端事件
 

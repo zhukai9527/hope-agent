@@ -120,6 +120,15 @@ impl CronDB {
         if !has_delivery_status {
             conn.execute_batch("ALTER TABLE cron_run_logs ADD COLUMN delivery_status TEXT;")?;
         }
+
+        // §9 (C6): tiny key/value table for the scheduler liveness heartbeat, so
+        // a startup can tell how long the (Primary-only) scheduler was offline.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cron_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )?;
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_cron_jobs_project
                 ON cron_jobs(project_id);",
@@ -631,17 +640,60 @@ impl CronDB {
         Ok(conn.last_insert_rowid())
     }
 
-    /// §8: stamp a run log's delivery outcome after fan-out completes (the run
-    /// log is inserted before delivery so its id is known). No-op-safe — a
-    /// missing row simply updates nothing.
-    pub fn update_run_log_delivery_status(&self, run_log_id: i64, status: &str) -> Result<()> {
+    /// §9 (D2): insert an **in-progress** run log at run start — status
+    /// `"running"`, `finished_at` NULL. This gives a crashed mid-run a durable
+    /// trace: [`recover_orphaned_runs`](Self::recover_orphaned_runs) marks any
+    /// such row `error` on the next startup, and the live row drives a real-time
+    /// "running" indicator in the UI. Returns the row id to [`finalize_run_log`].
+    pub fn add_running_run_log(
+        &self,
+        job_id: &str,
+        session_id: &str,
+        started_at: &str,
+    ) -> Result<i64> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
         conn.execute(
-            "UPDATE cron_run_logs SET delivery_status=?1 WHERE id=?2",
-            params![status, run_log_id],
+            "INSERT INTO cron_run_logs (job_id, session_id, status, started_at, finished_at)
+             VALUES (?1, ?2, 'running', ?3, NULL)",
+            params![job_id, session_id, started_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// §9 (D2): finalize an in-progress run log to its terminal state (status +
+    /// timing + result/error + delivery outcome) in one UPDATE. No-op-safe — a
+    /// missing / already-finalized id simply matches no rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finalize_run_log(
+        &self,
+        run_log_id: i64,
+        status: &str,
+        finished_at: &str,
+        duration_ms: Option<u64>,
+        result_preview: Option<&str>,
+        error: Option<&str>,
+        delivery_status: Option<&str>,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
+        conn.execute(
+            "UPDATE cron_run_logs
+             SET status=?1, finished_at=?2, duration_ms=?3, result_preview=?4, error=?5, delivery_status=?6
+             WHERE id=?7",
+            params![
+                status,
+                finished_at,
+                duration_ms.map(|v| v as i64),
+                result_preview,
+                error,
+                delivery_status,
+                run_log_id
+            ],
         )?;
         Ok(())
     }
@@ -880,7 +932,11 @@ impl CronDB {
 
     // ── Startup Recovery ────────────────────────────────────────
 
-    /// Mark orphaned runs (started but never finished) as error.
+    /// Mark orphaned runs (started but never finished) as error. §9 (D2): now
+    /// load-bearing — `add_running_run_log` leaves a `finished_at IS NULL` row
+    /// for the duration of every run, so a process that died mid-run is detected
+    /// and its run log closed out as `error` on the next startup (runs only at
+    /// startup, when nothing is legitimately in flight).
     pub fn recover_orphaned_runs(&self) -> Result<usize> {
         let conn = self
             .conn
@@ -892,6 +948,44 @@ impl CronDB {
             [],
         )?;
         Ok(count)
+    }
+
+    /// §9 (C6): record the (Primary-only) scheduler's liveness heartbeat. Called
+    /// each scheduler tick; persisted so a later startup can tell how long the
+    /// scheduler was offline (see [`last_scheduler_heartbeat`](Self::last_scheduler_heartbeat)).
+    pub fn record_scheduler_heartbeat(&self) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
+        conn.execute(
+            "INSERT INTO cron_meta (key, value) VALUES ('scheduler_heartbeat', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            params![now],
+        )?;
+        Ok(())
+    }
+
+    /// §9 (C6): the last recorded scheduler heartbeat, or `None` if never set
+    /// (fresh DB / first run).
+    pub fn last_scheduler_heartbeat(&self) -> Result<Option<DateTime<Utc>>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
+        let raw: Option<String> = match conn.query_row(
+            "SELECT value FROM cron_meta WHERE key='scheduler_heartbeat'",
+            [],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(anyhow::anyhow!("CronDB query error: {e}")),
+        };
+        Ok(raw
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc)))
     }
 
     /// Atomically claim a scheduled due job: set running_at and advance next_run_at.
@@ -1534,33 +1628,73 @@ mod tests {
     }
 
     #[test]
-    fn delivery_status_persists_on_run_log() {
+    fn in_progress_run_log_finalizes_with_delivery_status() {
+        // §9 (D2) lifecycle: open an in-progress row at run start, finalize it on
+        // terminal carrying status + timing + delivery outcome (§8) in one update.
         let path = temp_db_path("delivery-status");
         let db = CronDB::open(&path).expect("open db");
         let job = db.add_job(&every_job("job", vec![], None)).expect("add");
 
-        // Inserted with no status, then stamped after fan-out (the executor path).
         let id = db
-            .add_run_log(&crate::cron::CronRunLog {
-                id: 0,
-                job_id: job.id.clone(),
-                session_id: "s1".into(),
-                status: "success".into(),
-                started_at: "2026-01-01T00:00:00Z".into(),
-                finished_at: Some("2026-01-01T00:00:01Z".into()),
-                duration_ms: Some(1000),
-                result_preview: None,
-                error: None,
-                delivery_status: None,
-            })
-            .expect("add run log");
-        db.update_run_log_delivery_status(id, "partial")
-            .expect("stamp status");
+            .add_running_run_log(&job.id, "s1", "2026-01-01T00:00:00Z")
+            .expect("open in-progress run log");
+        // Mid-run the row reads as "running" with no finish.
+        let running = db.get_run_logs(&job.id, 10).expect("logs");
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].status, "running");
+        assert!(running[0].finished_at.is_none());
+
+        db.finalize_run_log(
+            id,
+            "success",
+            "2026-01-01T00:00:01Z",
+            Some(1000),
+            Some("ok"),
+            None,
+            Some("partial"),
+        )
+        .expect("finalize");
 
         let logs = db.get_run_logs(&job.id, 10).expect("logs");
-        assert_eq!(logs.len(), 1);
+        assert_eq!(logs.len(), 1, "finalize updates the same row, no duplicate");
+        assert_eq!(logs[0].status, "success");
         assert_eq!(logs[0].delivery_status.as_deref(), Some("partial"));
+        assert_eq!(logs[0].result_preview.as_deref(), Some("ok"));
+        assert!(logs[0].finished_at.is_some());
 
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn recover_orphaned_closes_in_progress_run_log_as_error() {
+        // §9 (D2): a run that crashed mid-flight leaves a finished_at-NULL row;
+        // the next startup's recover_orphaned_runs closes it out as error.
+        let path = temp_db_path("recover-orphaned");
+        let db = CronDB::open(&path).expect("open db");
+        let job = db.add_job(&every_job("job", vec![], None)).expect("add");
+        db.add_running_run_log(&job.id, "s1", "2026-01-01T00:00:00Z")
+            .expect("open in-progress");
+
+        let recovered = db.recover_orphaned_runs().expect("recover");
+        assert_eq!(recovered, 1);
+        let logs = db.get_run_logs(&job.id, 10).expect("logs");
+        assert_eq!(logs[0].status, "error");
+        assert!(logs[0].finished_at.is_some());
+
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn scheduler_heartbeat_round_trips() {
+        // §9 (C6): heartbeat starts unset, then records + reads back.
+        let path = temp_db_path("heartbeat");
+        let db = CronDB::open(&path).expect("open db");
+        assert!(db.last_scheduler_heartbeat().expect("read").is_none());
+        db.record_scheduler_heartbeat().expect("record");
+        assert!(
+            db.last_scheduler_heartbeat().expect("read").is_some(),
+            "heartbeat persists and parses back"
+        );
         cleanup_db_files(&path);
     }
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use super::db::CronDB;
@@ -49,17 +49,41 @@ struct RunningMarkerGuard {
     cron_db: Arc<CronDB>,
     job_id: String,
     claimed_at: String,
+    /// §9 (D2): id of the in-progress run log, set once it's inserted (0 until
+    /// then). On an abnormal unwind the Drop finalizes it to `error` so a
+    /// same-process panic doesn't leave a perpetual `running` row; the
+    /// cross-restart backstop is `recover_orphaned_runs`.
+    run_log_id: AtomicI64,
 }
 
 impl Drop for RunningMarkerGuard {
     fn drop(&mut self) {
-        match self.cron_db.clear_running_if_owner(&self.job_id, &self.claimed_at) {
-            Ok(true) => app_warn!(
-                "cron",
-                "executor",
-                "Released leaked running marker for job {} (run did not reach a normal terminal path — likely panicked)",
-                self.job_id
-            ),
+        match self
+            .cron_db
+            .clear_running_if_owner(&self.job_id, &self.claimed_at)
+        {
+            Ok(true) => {
+                app_warn!(
+                    "cron",
+                    "executor",
+                    "Released leaked running marker for job {} (run did not reach a normal terminal path — likely panicked)",
+                    self.job_id
+                );
+                // The run never reached a terminal path, so its in-progress run
+                // log is still open — close it out as error.
+                let run_log_id = self.run_log_id.load(Ordering::SeqCst);
+                if run_log_id > 0 {
+                    let _ = self.cron_db.finalize_run_log(
+                        run_log_id,
+                        "error",
+                        &Utc::now().to_rfc3339(),
+                        None,
+                        None,
+                        Some("Interrupted (run did not reach a terminal path)"),
+                        None,
+                    );
+                }
+            }
             Ok(false) => {} // normal path already cleared, or re-claimed since
             Err(e) => app_error!(
                 "cron",
@@ -69,6 +93,19 @@ impl Drop for RunningMarkerGuard {
                 e
             ),
         }
+    }
+}
+
+/// §9 (C7): RAII cleanup of a run's cancel registration. Held for the whole run
+/// so every exit path (including the early no-session return and panics) clears
+/// the live flag + any unconsumed pending placeholder.
+struct CancelRegistrationGuard {
+    job_id: String,
+}
+
+impl Drop for CancelRegistrationGuard {
+    fn drop(&mut self) {
+        super::cancel::remove(&self.job_id);
     }
 }
 
@@ -84,10 +121,21 @@ pub(crate) async fn execute_claimed_job(
 
     // Panic-safe slot release: held for the whole run, fires only if an abnormal
     // unwind skips the explicit `clear_running` on the terminal paths below.
-    let _running_guard = RunningMarkerGuard {
+    let running_guard = RunningMarkerGuard {
         cron_db: cron_db.clone(),
         job_id: job.id.clone(),
         claimed_at: started_at.clone(),
+        run_log_id: AtomicI64::new(0),
+    };
+
+    // §9 (C7): register the cancel flag immediately after claim — before any
+    // session creation / await — so a cancel arriving in the claim→register
+    // window isn't silently dropped. Keyed by `started_at` (this run's
+    // claimed_at) so `register` only honors a placeholder targeting THIS run;
+    // the guard clears it on every exit path.
+    let cancel_flag = super::cancel::register(&job.id, &started_at);
+    let _cancel_guard = CancelRegistrationGuard {
+        job_id: job.id.clone(),
     };
 
     app_info!(
@@ -155,10 +203,20 @@ pub(crate) async fn execute_claimed_job(
                     &e.to_string(),
                     "",
                     None,
+                    None,
                 );
                 return;
             }
         };
+
+    // §9 (D2): open an in-progress run log now that the session exists. A crash
+    // mid-run leaves this row open → recover_orphaned_runs closes it as error on
+    // the next startup; the running guard finalizes it on a same-process panic;
+    // the terminal paths below finalize it to success/error/cancelled.
+    let run_log_id = cron_db
+        .add_running_run_log(&job.id, &session_id, &started_at)
+        .unwrap_or(0);
+    running_guard.run_log_id.store(run_log_id, Ordering::SeqCst);
 
     // Persist the cron prompt before execution so `run_chat_engine` can reuse
     // the same DB contract as interactive chat without duplicating user rows.
@@ -180,7 +238,6 @@ pub(crate) async fn execute_claimed_job(
     let timeout_secs = crate::config::cached_config()
         .cron
         .effective_job_timeout_secs();
-    let cancel_flag = super::cancel::register(&job.id);
     let result = match tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
         build_and_run_agent_with_cancel(
@@ -212,23 +269,28 @@ pub(crate) async fn execute_claimed_job(
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let finished_at = Utc::now().to_rfc3339();
     let was_cancelled = cancel_flag.load(Ordering::SeqCst);
-    super::cancel::remove(&job.id);
 
-    if was_cancelled {
-        app_warn!(
-            "cron",
-            "executor",
-            "Job '{}' ({}) cancelled after {}ms",
-            job.name,
-            job.id,
-            duration_ms
-        );
-        record_cancelled(cron_db, &job, &started_at, duration_ms, &session_id);
-        return;
-    }
-
-    match result {
-        Ok(response) => {
+    // §9 (C4): classify the terminal outcome (pure, unit-tested — see
+    // `classify_cron_terminal`). The subtlety: cron runs with
+    // `abort_on_cancel = false`, so an interrupting cancel does NOT surface as
+    // `Err` — the engine swallows it and returns `Ok("")`. So an empty `Ok` with
+    // the cancel flag set is a cancellation, while a non-empty `Ok` (including a
+    // cancel that landed only after real output) is a genuine success.
+    match classify_cron_terminal(&result, was_cancelled) {
+        CronTerminal::Cancelled => {
+            app_warn!(
+                "cron",
+                "executor",
+                "Job '{}' ({}) cancelled after {}ms",
+                job.name,
+                job.id,
+                duration_ms
+            );
+            record_cancelled(cron_db, &job, &finished_at, duration_ms, run_log_id);
+        }
+        CronTerminal::Success => {
+            // Classifier returns Success only for `Ok`.
+            let response = result.unwrap_or_default();
             app_info!(
                 "cron",
                 "executor",
@@ -237,41 +299,37 @@ pub(crate) async fn execute_claimed_job(
                 duration_ms
             );
 
-            // Record success run log
             let preview = if response.len() > 500 {
                 Some(crate::truncate_utf8(&response, 500).to_string())
             } else {
                 Some(response.clone())
             };
-            let run_log = CronRunLog {
-                id: 0,
-                job_id: job.id.clone(),
-                session_id: session_id.clone(),
-                status: "success".to_string(),
-                started_at,
-                finished_at: Some(finished_at),
-                duration_ms: Some(duration_ms),
-                result_preview: preview,
-                error: None,
-                delivery_status: None,
-            };
-            // Insert before delivery so the row id is known, then stamp the
-            // delivery outcome once fan-out completes (§8).
-            let run_log_id = cron_db.add_run_log(&run_log).unwrap_or(0);
             let _ = cron_db.update_after_run(&job.id, true, &job.schedule);
 
+            // Deliver first so the run log records the delivery outcome (§8) in
+            // the same terminal finalize (§9 D2 — the row was opened at start).
             let report = deliver_results(&job, DeliveryOutcome::Success { text: &response }).await;
-            if let Some(status) = report.run_log_status() {
-                let _ = cron_db.update_run_log_delivery_status(run_log_id, status);
-            }
+            let _ = cron_db.finalize_run_log(
+                run_log_id,
+                "success",
+                &finished_at,
+                Some(duration_ms),
+                preview.as_deref(),
+                None,
+                report.run_log_status(),
+            );
 
             let _ = cron_db.clear_running(&job.id);
 
             // Emit Tauri event
             emit_cron_event(&job.id, &job.name, "success", job.notify_on_complete);
         }
-        Err(e) => {
-            let err_text = e.to_string();
+        CronTerminal::Failure => {
+            // Classifier returns Failure only for `Err`.
+            let err_text = result
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown error".to_string());
             let class = super::failure::CronFailureClass::classify(&err_text);
             app_error!(
                 "cron",
@@ -279,7 +337,7 @@ pub(crate) async fn execute_claimed_job(
                 "Job '{}' failed ({}): {}",
                 job.name,
                 class.key(),
-                e
+                err_text
             );
             persist_failure_message_if_missing(session_db, &session_id, &err_text);
 
@@ -295,8 +353,36 @@ pub(crate) async fn execute_claimed_job(
                 &err_text,
                 &session_id,
                 report.run_log_status(),
+                Some(run_log_id),
             );
         }
+    }
+}
+
+/// §9 (C4): the terminal disposition of a cron run.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CronTerminal {
+    Success,
+    Cancelled,
+    Failure,
+}
+
+/// Classify a cron run's `(result, was_cancelled)` into its terminal action.
+/// Pure so the decision table — including the `abort_on_cancel = false` quirk
+/// where an interrupting cancel returns `Ok("")` rather than `Err` — is
+/// unit-testable without standing up the engine.
+pub(crate) fn classify_cron_terminal(result: &Result<String>, was_cancelled: bool) -> CronTerminal {
+    match result {
+        // Interrupted run: the engine swallowed the cancel (abort_on_cancel=false)
+        // and returned an empty Ok. Not a success — don't deliver a blank or
+        // advance the schedule.
+        Ok(r) if was_cancelled && r.trim().is_empty() => CronTerminal::Cancelled,
+        // Genuine output (incl. a cancel that arrived only after real output).
+        Ok(_) => CronTerminal::Success,
+        // Defensive: only reached if a caller flips abort_on_cancel=true so a
+        // cancel surfaces as Err.
+        Err(_) if was_cancelled => CronTerminal::Cancelled,
+        Err(_) => CronTerminal::Failure,
     }
 }
 
@@ -522,10 +608,13 @@ pub fn cancel_running_job(job_id: &str) -> Result<Option<bool>> {
     let Some(job) = cron_db.get_job(job_id)? else {
         return Ok(None);
     };
-    if job.running_at.is_none() {
+    let Some(running_at) = job.running_at.as_deref() else {
         return Ok(Some(false));
-    }
-    Ok(Some(super::cancel::cancel(job_id)))
+    };
+    // §9 (C7): key the cancel to this run's claim timestamp so a placeholder
+    // left in the claim→register window can't leak onto a later run (see
+    // `cancel.rs`). `running_at` IS the in-flight run's `claimed_at`.
+    Ok(Some(super::cancel::cancel(job_id, running_at)))
 }
 
 fn persist_failure_message_if_missing(
@@ -550,7 +639,10 @@ fn persist_failure_message_if_missing(
     let _ = session_db.append_message(session_id, &err_msg);
 }
 
-/// Record a failure run log and update job state.
+/// Record a failure run log and update job state. §9 (D2): when `run_log_id` is
+/// `Some` (the normal path, where an in-progress row was opened at run start),
+/// finalize that row; when `None` (the no-session early failure, which never
+/// opened one) insert a complete row.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_failure(
     cron_db: &Arc<CronDB>,
@@ -561,23 +653,39 @@ pub(crate) fn record_failure(
     error: &str,
     session_id: &str,
     delivery_status: Option<&str>,
+    run_log_id: Option<i64>,
 ) {
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let finished_at = Utc::now().to_rfc3339();
 
-    let run_log = CronRunLog {
-        id: 0,
-        job_id: job.id.clone(),
-        session_id: session_id.to_string(),
-        status: status.to_string(),
-        started_at: started_at.to_string(),
-        finished_at: Some(finished_at),
-        duration_ms: Some(duration_ms),
-        result_preview: None,
-        error: Some(error.to_string()),
-        delivery_status: delivery_status.map(|s| s.to_string()),
-    };
-    let _ = cron_db.add_run_log(&run_log);
+    match run_log_id {
+        Some(id) => {
+            let _ = cron_db.finalize_run_log(
+                id,
+                status,
+                &finished_at,
+                Some(duration_ms),
+                None,
+                Some(error),
+                delivery_status,
+            );
+        }
+        None => {
+            let run_log = CronRunLog {
+                id: 0,
+                job_id: job.id.clone(),
+                session_id: session_id.to_string(),
+                status: status.to_string(),
+                started_at: started_at.to_string(),
+                finished_at: Some(finished_at),
+                duration_ms: Some(duration_ms),
+                result_preview: None,
+                error: Some(error.to_string()),
+                delivery_status: delivery_status.map(|s| s.to_string()),
+            };
+            let _ = cron_db.add_run_log(&run_log);
+        }
+    }
     let auto_disabled = cron_db
         .update_after_run(&job.id, false, &job.schedule)
         .unwrap_or(false);
@@ -604,27 +712,25 @@ pub(crate) fn record_failure(
     }
 }
 
+/// §9 (D2): finalize the in-progress run log as cancelled. Always has a
+/// `run_log_id` — cancellation only reaches here after the run started (the row
+/// was opened right after session creation).
 fn record_cancelled(
     cron_db: &Arc<CronDB>,
     job: &CronJob,
-    started_at: &str,
+    finished_at: &str,
     duration_ms: u64,
-    session_id: &str,
+    run_log_id: i64,
 ) {
-    let finished_at = Utc::now().to_rfc3339();
-    let run_log = CronRunLog {
-        id: 0,
-        job_id: job.id.clone(),
-        session_id: session_id.to_string(),
-        status: "cancelled".to_string(),
-        started_at: started_at.to_string(),
-        finished_at: Some(finished_at),
-        duration_ms: Some(duration_ms),
-        result_preview: None,
-        error: Some("Cancelled by user".to_string()),
-        delivery_status: None,
-    };
-    let _ = cron_db.add_run_log(&run_log);
+    let _ = cron_db.finalize_run_log(
+        run_log_id,
+        "cancelled",
+        finished_at,
+        Some(duration_ms),
+        None,
+        Some("Cancelled by user"),
+        None,
+    );
     let _ = cron_db.clear_running(&job.id);
     emit_cron_event(&job.id, &job.name, "cancelled", job.notify_on_complete);
 }
@@ -675,6 +781,46 @@ mod tests {
     use rusqlite::params;
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
+
+    #[test]
+    fn classify_cron_terminal_decision_table() {
+        // Genuine success.
+        assert_eq!(
+            classify_cron_terminal(&Ok("hi".into()), false),
+            CronTerminal::Success
+        );
+        // Empty Ok without a cancel = still success (the §10 empty-output case,
+        // intentionally unchanged here).
+        assert_eq!(
+            classify_cron_terminal(&Ok(String::new()), false),
+            CronTerminal::Success
+        );
+        // §9 (C4) core: cron's engine runs abort_on_cancel=false, so an
+        // interrupting cancel returns Ok("") — must classify as Cancelled, not a
+        // blank "success".
+        assert_eq!(
+            classify_cron_terminal(&Ok(String::new()), true),
+            CronTerminal::Cancelled
+        );
+        assert_eq!(
+            classify_cron_terminal(&Ok("   \n".into()), true),
+            CronTerminal::Cancelled
+        );
+        // A cancel that landed only AFTER real output → honor the completed work.
+        assert_eq!(
+            classify_cron_terminal(&Ok("done".into()), true),
+            CronTerminal::Success
+        );
+        // Genuine failure vs. a cancel surfacing as Err (defensive path).
+        assert_eq!(
+            classify_cron_terminal(&Err(anyhow::anyhow!("boom")), false),
+            CronTerminal::Failure
+        );
+        assert_eq!(
+            classify_cron_terminal(&Err(anyhow::anyhow!("interrupted")), true),
+            CronTerminal::Cancelled
+        );
+    }
 
     fn temp_db_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -764,13 +910,21 @@ mod tests {
             .expect("claim")
             .expect("claimed job");
 
-        record_cancelled(&db, &claimed.job, &claimed.claimed_at, 42, "session-cancel");
+        // §9 (D2): cancellation finalizes an already-open in-progress run log.
+        let run_log_id = db
+            .add_running_run_log(&job.id, "session-cancel", &claimed.claimed_at)
+            .expect("open in-progress run log");
+        record_cancelled(&db, &claimed.job, "2026-01-01T00:00:42Z", 42, run_log_id);
 
         let stored = db.get_job(&job.id).expect("load").expect("job exists");
         assert!(stored.running_at.is_none());
         assert_eq!(stored.consecutive_failures, 2);
         let logs = db.get_run_logs(&job.id, 10).expect("logs");
-        assert_eq!(logs.len(), 1);
+        assert_eq!(
+            logs.len(),
+            1,
+            "in-progress row finalized in place, no duplicate"
+        );
         assert_eq!(logs[0].status, "cancelled");
         assert_eq!(logs[0].session_id, "session-cancel");
         assert_eq!(logs[0].duration_ms, Some(42));

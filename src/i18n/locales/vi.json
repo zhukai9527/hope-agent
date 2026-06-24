@@ -788,7 +788,8 @@
       "delivered": "Đã gửi",
       "partial": "Gửi một phần",
       "failed": "Gửi thất bại"
-    }
+    },
+    "runStatusRunning": "Đang chạy"
   },
   "dangerousMode": {
     "bannerBoth": "Chế độ Nguy hiểm đang bật (CLI + config) — mọi phê duyệt công cụ bị bỏ qua",

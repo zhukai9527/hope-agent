@@ -788,7 +788,8 @@
       "delivered": "Entregue",
       "partial": "Entrega parcial",
       "failed": "Falha na entrega"
-    }
+    },
+    "runStatusRunning": "Em execução"
   },
   "dangerousMode": {
     "bannerBoth": "Modo Perigoso ativo (CLI + config) — todas as aprovações de ferramentas são ignoradas",

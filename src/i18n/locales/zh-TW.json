@@ -788,7 +788,8 @@
       "delivered": "已投遞",
       "partial": "部分投遞",
       "failed": "投遞失敗"
-    }
+    },
+    "runStatusRunning": "執行中"
   },
   "dangerousMode": {
     "bannerBoth": "危險模式已啟用（CLI + 設定）—— 所有工具呼叫跳過審批",

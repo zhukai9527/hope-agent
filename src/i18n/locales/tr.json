@@ -788,7 +788,8 @@
       "delivered": "Teslim edildi",
       "partial": "Kısmen teslim edildi",
       "failed": "Teslim başarısız"
-    }
+    },
+    "runStatusRunning": "Çalışıyor"
   },
   "dangerousMode": {
     "bannerBoth": "Tehlikeli Mod aktif (CLI + yapılandırma) — tüm araç onayları atlanıyor",

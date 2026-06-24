@@ -788,7 +788,8 @@
       "delivered": "Dihantar",
       "partial": "Sebahagian dihantar",
       "failed": "Penghantaran gagal"
-    }
+    },
+    "runStatusRunning": "Sedang berjalan"
   },
   "dangerousMode": {
     "bannerBoth": "Mod Berbahaya aktif (CLI + konfig) — semua kelulusan alat dipintas",

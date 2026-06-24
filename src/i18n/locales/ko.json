@@ -788,7 +788,8 @@
       "delivered": "전달됨",
       "partial": "일부 전달",
       "failed": "전달 실패"
-    }
+    },
+    "runStatusRunning": "실행 중"
   },
   "dangerousMode": {
     "bannerBoth": "위험 모드 활성 (CLI + 설정) — 모든 도구 승인을 건너뜀",
