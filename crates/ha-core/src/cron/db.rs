@@ -402,6 +402,20 @@ impl CronDB {
 
     /// Delete a job by ID.
     pub fn delete_job(&self, id: &str) -> Result<()> {
+        // C15: if the job is mid-run, request cancellation first so the in-flight
+        // turn stops promptly (cron's `abort_on_cancel=false` → it returns `Ok("")`
+        // → classified Cancelled → no wasted completion, no IM delivery to a
+        // now-deleted job) instead of running to the end against a row that's about
+        // to vanish. Read-then-cancel is run-keyed by `running_at` (the run's
+        // claimed_at), so a stale read can't cancel a later run of a recurring job.
+        // The cancelled run's own terminal writes then no-op against the deleted row
+        // (its in-progress run_log is CASCADE-removed — an accepted loss for a
+        // user-initiated delete). Done before taking the lock since `get_job` locks.
+        if let Ok(Some(job)) = self.get_job(id) {
+            if let Some(running_at) = job.running_at.as_deref() {
+                super::cancel::cancel(id, running_at);
+            }
+        }
         let conn = self
             .conn
             .lock()
@@ -530,9 +544,19 @@ impl CronDB {
             )?;
             let schedule: CronSchedule = serde_json::from_str(&schedule_json)?;
             let next_run = compute_next_run(&schedule, &Utc::now()).map(|dt| dt.to_rfc3339());
+            // C24: re-enabling a one-shot `At` whose time is already past yields no
+            // next run — terminalize it as `missed` rather than persisting an
+            // active/never-fires zombie (mirrors the §7 handling in add_job /
+            // update_job; toggle_job was the one resume path missing it).
+            let resumed_status =
+                if matches!(schedule, CronSchedule::At { .. }) && next_run.is_none() {
+                    "missed"
+                } else {
+                    new_status
+                };
             conn.execute(
                 "UPDATE cron_jobs SET status=?1, next_run_at=?2, consecutive_failures=0, updated_at=?3 WHERE id=?4",
-                params![new_status, next_run, now, id],
+                params![resumed_status, next_run, now, id],
             )?;
         } else {
             conn.execute(
@@ -608,7 +632,12 @@ impl CronDB {
                 return Ok(false);
             }
 
-            if new_failures >= max_failures {
+            // C26: `max_failures == 0` means "never auto-disable" (unlimited
+            // failures), aligning with the `0 = unlimited` convention `max_concurrent`
+            // uses. Without this guard `new_failures >= 0` is always true, so a job
+            // created via the model tool / HTTP with maxFailures=0 (the GUI's `|| 5`
+            // hides this path) would auto-disable on its very first failure.
+            if max_failures > 0 && new_failures >= max_failures {
                 // Auto-disable. Gate on `status != 'disabled'` so ONLY the
                 // active→disabled transition returns true (fires the one-shot
                 // notification): the manual run-now path bypasses the status
@@ -2577,6 +2606,182 @@ mod tests {
             "no future retry scheduled for a failed one-shot At"
         );
 
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn reschedule_without_failure_preserves_failure_count() {
+        // C07 building block: a recurring Empty run advances its schedule via
+        // reschedule_without_failure, which must NOT touch consecutive_failures — so
+        // an intermittent empty output can't reset a failing job's counter and dodge
+        // auto-disable.
+        let path = temp_db_path("reschedule-keeps-failures");
+        let db = CronDB::open(&path).expect("open db");
+        let job = db
+            .add_job(&NewCronJob {
+                name: "j".into(),
+                description: None,
+                project_id: None,
+                schedule: CronSchedule::Every {
+                    interval_ms: 300_000,
+                    start_at: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    prompt: "p".into(),
+                    agent_id: None,
+                },
+                max_failures: Some(5),
+                notify_on_complete: None,
+                delivery_targets: None,
+                prefix_delivery_with_name: None,
+            })
+            .expect("add job");
+        {
+            let conn = db.conn.lock().expect("lock");
+            conn.execute(
+                "UPDATE cron_jobs SET consecutive_failures=3 WHERE id=?1",
+                params![job.id],
+            )
+            .expect("seed failures");
+        }
+        db.reschedule_without_failure(&job.id, &job.schedule)
+            .expect("reschedule");
+        let stored = db.get_job(&job.id).expect("get").expect("exists");
+        assert_eq!(
+            stored.consecutive_failures, 3,
+            "empty/infra reschedule must not reset the failure counter"
+        );
+        assert_eq!(stored.status, CronJobStatus::Active);
+        assert!(stored.next_run_at.is_some(), "schedule advanced");
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn toggle_resume_past_at_terminalizes_missed() {
+        // C24: re-enabling a one-shot `At` whose time is now past must terminalize
+        // as `missed`, not resurrect as active+next_run=NULL (an un-fireable zombie).
+        let path = temp_db_path("toggle-past-at");
+        let db = CronDB::open(&path).expect("open db");
+        let job = db
+            .add_job(&NewCronJob {
+                name: "elapsed".into(),
+                description: None,
+                project_id: None,
+                schedule: CronSchedule::At {
+                    timestamp: "2999-01-01T00:00:00Z".into(),
+                },
+                payload: CronPayload::AgentTurn {
+                    prompt: "p".into(),
+                    agent_id: None,
+                },
+                max_failures: Some(5),
+                notify_on_complete: None,
+                delivery_targets: None,
+                prefix_delivery_with_name: None,
+            })
+            .expect("add job");
+        // Rewrite to a PAST timestamp + paused, simulating a one-shot that elapsed
+        // while paused, then re-enable it.
+        {
+            let conn = db.conn.lock().expect("lock");
+            let past = serde_json::to_string(&CronSchedule::At {
+                timestamp: "2000-01-01T00:00:00Z".into(),
+            })
+            .unwrap();
+            conn.execute(
+                "UPDATE cron_jobs SET schedule_json=?1, status='paused', next_run_at=NULL WHERE id=?2",
+                params![past, job.id],
+            )
+            .expect("rewrite to past");
+        }
+        db.toggle_job(&job.id, true).expect("enable");
+        let stored = db.get_job(&job.id).expect("get").expect("exists");
+        assert_eq!(
+            stored.status,
+            CronJobStatus::Missed,
+            "resuming a past one-shot At terminalizes missed, not active zombie"
+        );
+        assert!(stored.next_run_at.is_none());
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn max_failures_zero_never_auto_disables() {
+        // C26: max_failures=0 = unlimited (never auto-disable). A recurring job that
+        // keeps failing stays active with a growing failure count.
+        let path = temp_db_path("max-failures-zero");
+        let db = CronDB::open(&path).expect("open db");
+        let job = db
+            .add_job(&NewCronJob {
+                name: "unlimited".into(),
+                description: None,
+                project_id: None,
+                schedule: CronSchedule::Every {
+                    interval_ms: 300_000,
+                    start_at: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    prompt: "p".into(),
+                    agent_id: None,
+                },
+                max_failures: Some(0),
+                notify_on_complete: None,
+                delivery_targets: None,
+                prefix_delivery_with_name: None,
+            })
+            .expect("add job");
+        for _ in 0..10 {
+            assert!(
+                !db.update_after_run(&job.id, false, &job.schedule)
+                    .expect("upd"),
+                "max_failures=0 never reports auto-disable"
+            );
+        }
+        let stored = db.get_job(&job.id).expect("get").expect("exists");
+        assert_eq!(stored.status, CronJobStatus::Active);
+        assert_eq!(stored.consecutive_failures, 10);
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn delete_running_job_requests_cancel() {
+        // C15: deleting a mid-run job requests cancellation (run-keyed) so the
+        // in-flight turn stops instead of running to completion + delivering against
+        // a row that's about to be deleted.
+        let path = temp_db_path("delete-cancel");
+        let db = CronDB::open(&path).expect("open db");
+        let job = db
+            .add_job(&NewCronJob {
+                name: "running".into(),
+                description: None,
+                project_id: None,
+                schedule: CronSchedule::Every {
+                    interval_ms: 300_000,
+                    start_at: None,
+                },
+                payload: CronPayload::AgentTurn {
+                    prompt: "p".into(),
+                    agent_id: None,
+                },
+                max_failures: Some(5),
+                notify_on_complete: None,
+                delivery_targets: None,
+                prefix_delivery_with_name: None,
+            })
+            .expect("add job");
+        let claimed = db
+            .claim_immediate_job_for_execution(&job)
+            .expect("claim")
+            .expect("claimed");
+        // Register the run's cancel flag exactly as execute_claimed_job would.
+        let flag = super::super::cancel::register(&job.id, &claimed.claimed_at);
+        assert!(!flag.load(std::sync::atomic::Ordering::SeqCst));
+        db.delete_job(&job.id).expect("delete");
+        assert!(
+            flag.load(std::sync::atomic::Ordering::SeqCst),
+            "delete requested cancellation of the in-flight run"
+        );
+        super::super::cancel::remove(&job.id, &claimed.claimed_at);
         cleanup_db_files(&path);
     }
 

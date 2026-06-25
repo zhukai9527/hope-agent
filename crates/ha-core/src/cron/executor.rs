@@ -404,7 +404,17 @@ pub(crate) async fn execute_claimed_job(
                 job.id,
                 duration_ms
             );
-            let _ = cron_db.update_after_run(&job.id, true, &job.schedule);
+            // C07: don't route Empty through update_after_run(true) for recurring
+            // jobs — that resets consecutive_failures to 0, letting intermittent
+            // empty runs mask a failing job and dodge auto-disable. A one-shot `At`
+            // that ran empty terminalizes (it ran, no output → Completed); a
+            // recurring job advances its schedule but keeps its failure counter
+            // untouched (same as an infra reschedule).
+            if matches!(job.schedule, CronSchedule::At { .. }) {
+                let _ = cron_db.update_after_run(&job.id, true, &job.schedule);
+            } else {
+                let _ = cron_db.reschedule_without_failure(&job.id, &job.schedule);
+            }
             let _ = cron_db.finalize_or_insert_run_log(
                 run_log_id,
                 &job.id,
