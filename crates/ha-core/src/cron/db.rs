@@ -1610,18 +1610,30 @@ fn backfill_cron_schedule_timezone(conn: &Connection) -> Result<()> {
                 .as_deref()
                 .and_then(super::schedule::parse_timezone)
                 .is_some();
-            if already_set {
-                continue;
+            // Only assign the host zone to rows that lack a valid one. A row that
+            // already carries a valid zone keeps it.
+            if !already_set {
+                *timezone = Some(host_tz.clone());
             }
-            *timezone = Some(host_tz.clone());
-            // Only rewrite next_run_at for a clean active row — never clobber a
-            // backoff offset or touch a paused/disabled row's stamp.
+            // Recompute next_run_at for a clean active row REGARDLESS of whether
+            // the timezone was just assigned or already valid (Codex review P1):
+            // pre-fix, the scheduler computed next_run_at in UTC even when a valid
+            // zone was stored (the field was silently dropped at fire time), so an
+            // already-zoned job's next_run_at is just as stale as a zone-less one.
+            // Skipping it would leave one wrong-time fire before the run loop
+            // self-corrects. Only the timezone ASSIGNMENT is gated on !already_set;
+            // the recompute is not. Never clobber a backoff offset or touch a
+            // paused/disabled row's stamp.
             let next_run = if status == "active" && consecutive_failures == 0 {
                 compute_next_run(&schedule, &now).map(|dt| dt.to_rfc3339())
             } else {
                 None
             };
-            updates.push((id, serde_json::to_string(&schedule)?, next_run));
+            // For an already-zoned row that isn't clean-active there's nothing to
+            // write (zone unchanged + next_run None) — skip the no-op UPDATE.
+            if !already_set || next_run.is_some() {
+                updates.push((id, serde_json::to_string(&schedule)?, next_run));
+            }
         }
     }
     drop(stmt);
@@ -1645,7 +1657,7 @@ fn backfill_cron_schedule_timezone(conn: &Connection) -> Result<()> {
         app_info!(
             "cron",
             "db",
-            "Backfilled timezone ({}) for {} existing cron job(s)",
+            "Backfilled timezone ({}) / recomputed next_run_at for {} existing cron job(s)",
             host_tz,
             updates.len()
         );
@@ -2372,6 +2384,86 @@ mod tests {
         assert_eq!(first.job_id, "legacy-water");
         assert_eq!(parse(&first.scheduled_at), parse("2026-04-22T12:15:11Z"));
 
+        cleanup_db_files(&path);
+    }
+
+    #[test]
+    fn tz_backfill_recomputes_next_run_for_already_zoned_clean_active_rows() {
+        // Codex review P1: a cron job that already stored a valid (non-UTC) zone
+        // BEFORE the timezone was honored still had its next_run_at computed in
+        // UTC. The backfill must recompute next_run_at for such clean-active rows
+        // (only the timezone ASSIGNMENT is skipped when a valid zone is present),
+        // and must NOT touch an in-backoff / paused row's stamp.
+        let path = temp_db_path("tz-backfill-recompute");
+        let db = CronDB::open(&path).expect("open db");
+        {
+            let conn = db.conn.lock().expect("lock");
+            // First open set the one-time sentinel; clear it so the backfill re-runs.
+            conn.execute("DELETE FROM cron_meta WHERE key='tz_backfill_done'", [])
+                .expect("clear sentinel");
+            let insert = |id: &str, status: &str, failures: i64| {
+                conn.execute(
+                    "INSERT INTO cron_jobs (
+                        id, name, description, schedule_json, payload_json, status,
+                        next_run_at, last_run_at, running_at, consecutive_failures, max_failures,
+                        notify_on_complete, delivery_targets_json, created_at, updated_at
+                    ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, NULL, ?7, 5, 1, '[]', ?8, ?8)",
+                    params![
+                        id,
+                        id,
+                        r#"{"type":"cron","expression":"0 0 9 * * *","timezone":"Asia/Shanghai"}"#,
+                        r#"{"type":"agentTurn","prompt":"p","agentId":null}"#,
+                        status,
+                        "2020-01-01T00:00:00Z", // deliberately stale UTC-era next_run_at
+                        failures,
+                        "2026-01-01T00:00:00Z",
+                    ],
+                )
+                .expect("insert");
+            };
+            insert("zoned-clean", "active", 0); // clean active → must recompute
+            insert("zoned-backoff", "active", 2); // mid-backoff → must NOT touch
+            insert("zoned-paused", "paused", 0); // paused → must NOT touch
+
+            super::backfill_cron_schedule_timezone(&conn).expect("backfill");
+
+            // Only assert when the pass actually ran (host zone detectable → sentinel
+            // re-written). On a host whose zone can't be detected the pass is a no-op
+            // by design; don't false-fail there.
+            let ran: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM cron_meta WHERE key='tz_backfill_done'",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("sentinel count");
+            if ran > 0 {
+                let next_of = |id: &str| -> Option<String> {
+                    conn.query_row(
+                        "SELECT next_run_at FROM cron_jobs WHERE id=?1",
+                        params![id],
+                        |r| r.get(0),
+                    )
+                    .expect("read next_run_at")
+                };
+                assert_ne!(
+                    next_of("zoned-clean").as_deref(),
+                    Some("2020-01-01T00:00:00Z"),
+                    "clean active already-zoned row must have next_run_at recomputed (P1)"
+                );
+                assert_eq!(
+                    next_of("zoned-backoff").as_deref(),
+                    Some("2020-01-01T00:00:00Z"),
+                    "in-backoff row's next_run_at must be preserved"
+                );
+                assert_eq!(
+                    next_of("zoned-paused").as_deref(),
+                    Some("2020-01-01T00:00:00Z"),
+                    "paused row's next_run_at must be preserved"
+                );
+            }
+        }
+        drop(db);
         cleanup_db_files(&path);
     }
 

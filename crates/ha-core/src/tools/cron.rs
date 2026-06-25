@@ -277,6 +277,17 @@ pub(crate) fn tool_manage_cron<'a>(
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'id' parameter"))?;
+                // Cron only runs on the Primary instance — `execute_job_public`
+                // no-ops on a Secondary (C10). This is the third run-now entry
+                // point (alongside the Tauri command + HTTP route); without this
+                // preflight, spawning on a Secondary would return "Triggered
+                // immediate execution" to the model while nothing claims, runs,
+                // logs, or delivers. Fail loudly instead of reporting a fake success.
+                if !crate::runtime_lock::is_primary() {
+                    anyhow::bail!(
+                        "run_now is unavailable on this instance: scheduled jobs only run on the primary"
+                    );
+                }
                 let job = cron_db
                     .get_job(id)?
                     .ok_or_else(|| anyhow::anyhow!("Job '{}' not found", id))?;
