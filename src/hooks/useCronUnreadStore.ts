@@ -38,20 +38,27 @@ async function reload() {
 /** Initialize the store. Idempotent — extra calls are no-ops (no extra IPC). */
 export function initCronUnreadStore() {
   if (_initialized) return
-  _initialized = true
-  void reload()
   try {
     _unlisten.push(getTransport().listen("cron:run_completed", () => void reload()))
     _unlisten.push(getTransport().listen("cron:unread_changed", () => void reload()))
+    // Only latch initialized once the subscriptions are actually attached, so a
+    // throwing listen() leaves the store re-initializable on the next call
+    // rather than permanently wedged with no listeners.
+    _initialized = true
   } catch (e) {
     logger.error("cron", "CronUnreadStore::subscribe", "Failed to subscribe to cron events", e)
+    _unlisten.forEach((fn) => fn())
+    _unlisten.length = 0
   }
+  void reload()
 }
 
-/** Tear down subscriptions. Used in tests. */
+/** Tear down subscriptions and reset state. Used in tests. */
 export function disposeCronUnreadStore() {
   _unlisten.forEach((fn) => fn())
   _unlisten.length = 0
+  _listeners.clear()
+  _count = 0
   _initialized = false
 }
 

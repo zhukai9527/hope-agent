@@ -111,7 +111,7 @@ pub async fn get_run_logs(
 ) -> Result<Json<Vec<cron::CronRunLog>>, AppError> {
     Ok(Json(db()?.get_run_logs(
         &id,
-        q.limit.unwrap_or(50),
+        q.limit.unwrap_or(50).min(200),
         q.offset.unwrap_or(0),
     )?))
 }

@@ -30,7 +30,8 @@ import SearchResultItem from "./SearchResultItem"
 // results fold into `session` — IM-driven conversations are still user
 // conversations, just sourced from a different surface.
 function classifyResult(r: SessionSearchResult): SessionFilterType {
-  if (r.isCron) return "cron"
+  // Cron results are filtered out before this runs (see nonCronResults); they
+  // live in the cron panel's history view, not the sidebar.
   if (r.parentSessionId) return "subagent"
   return "session"
 }

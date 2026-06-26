@@ -88,7 +88,7 @@ pub async fn cron_get_run_logs(
     offset: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<Vec<cron::CronRunLog>, CmdError> {
-    let limit = limit.unwrap_or(50);
+    let limit = limit.unwrap_or(50).min(200);
     let offset = offset.unwrap_or(0);
     state
         .cron_db

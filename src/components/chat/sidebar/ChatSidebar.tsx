@@ -219,8 +219,6 @@ export default function ChatSidebar({
         // are surfaced inline (the row already shows a channel icon)
         // since the dedicated "channel" tab was retired in Phase B3.
         return list.filter((s) => !s.isCron && !s.parentSessionId && !s.projectId)
-      case "cron":
-        return list.filter((s) => s.isCron)
       case "subagent":
         return list.filter((s) => !!s.parentSessionId)
       default:

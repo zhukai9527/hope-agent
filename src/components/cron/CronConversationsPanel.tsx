@@ -90,6 +90,24 @@ export default function CronConversationsPanel() {
     }
   }, [fetchPage])
 
+  // Keep the timeline live while open: when a cron run completes, refresh the
+  // first page so the new run shows up at the top (mirrors CronCalendarView,
+  // which also listens to cron:run_completed). Resetting to page 0 is fine —
+  // new runs sort newest-first; the selected conversation on the right is keyed
+  // by sessionId and is unaffected.
+  useEffect(() => {
+    const unlisten = getTransport().listen("cron:run_completed", () => {
+      fetchPage(0)
+        .then((page) => {
+          setRows(page)
+          setOffset(page.length)
+          setHasMore(page.length === PAGE_SIZE)
+        })
+        .catch(() => {})
+    })
+    return unlisten
+  }, [fetchPage])
+
   useEffect(() => {
     return () => {
       if (markResetRef.current) clearTimeout(markResetRef.current)
