@@ -40,3 +40,31 @@ pub fn cron_run_timeline(
     }
     Ok(rows)
 }
+
+/// Delete a cron job AND its run conversations. Cron run sessions live in
+/// `sessions.db` but are hidden from the main sidebar / search, so once the job
+/// (and its CASCADE-deleted `cron_run_logs`) is gone they'd be both unreachable
+/// AND a permanent orphan leak. Collect the session ids first (before the
+/// cascade), delete the job, then purge those sessions. Session deletes are
+/// best-effort so a single failure can't block removing the job.
+pub fn delete_job_and_sessions(
+    cron_db: &Arc<CronDB>,
+    session_db: &Arc<SessionDB>,
+    id: &str,
+) -> anyhow::Result<()> {
+    let session_ids = cron_db.session_ids_for_job(id).unwrap_or_default();
+    cron_db.delete_job(id)?;
+    for sid in session_ids {
+        if let Err(e) = session_db.delete_session(&sid) {
+            crate::app_warn!(
+                "cron",
+                "delete",
+                "failed to delete cron run session {} of job {}: {:#}",
+                sid,
+                id,
+                e
+            );
+        }
+    }
+    Ok(())
+}

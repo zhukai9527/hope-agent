@@ -197,6 +197,11 @@ export default function ChatSidebar({
         const results = await getTransport().call<SessionSearchResult[]>("search_sessions_cmd", {
           query: q,
           limit: SEARCH_LIMIT,
+          // Exclude cron at the backend so the fixed SEARCH_LIMIT isn't consumed
+          // by hidden cron hits (they live in the cron panel's history view, not
+          // the sidebar) — otherwise a regular match ranked just below a burst of
+          // cron matches could fall outside the limit and never render.
+          types: ["regular", "subagent", "channel"],
         })
         setSearchResults(sortSessionSearchResults(results ?? []))
       } catch (err) {

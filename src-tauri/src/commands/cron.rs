@@ -35,7 +35,7 @@ pub async fn cron_update_job(
 
 #[tauri::command]
 pub async fn cron_delete_job(id: String, state: State<'_, AppState>) -> Result<(), CmdError> {
-    state.cron_db.delete_job(&id).map_err(Into::into)
+    cron::delete_job_and_sessions(&state.cron_db, &state.session_db, &id).map_err(Into::into)
 }
 
 #[tauri::command]

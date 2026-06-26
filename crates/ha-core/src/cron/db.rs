@@ -471,6 +471,24 @@ impl CronDB {
         Ok(())
     }
 
+    /// Distinct run-session ids produced by a job. Must be read BEFORE
+    /// `delete_job` (which CASCADE-removes `cron_run_logs`), so the caller can
+    /// clean up the now-orphaned cron sessions in `sessions.db`.
+    pub fn session_ids_for_job(&self, job_id: &str) -> Result<Vec<String>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("CronDB lock poisoned: {e}"))?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT session_id FROM cron_run_logs WHERE job_id=?1")?;
+        let rows = stmt.query_map(params![job_id], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for r in rows {
+            ids.push(r?);
+        }
+        Ok(ids)
+    }
+
     /// Get a single job by ID.
     pub fn get_job(&self, id: &str) -> Result<Option<CronJob>> {
         let conn = self

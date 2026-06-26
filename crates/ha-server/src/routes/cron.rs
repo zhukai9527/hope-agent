@@ -48,7 +48,7 @@ pub async fn update_job(
 
 /// `DELETE /api/cron/jobs/{id}`
 pub async fn delete_job(Path(id): Path<String>) -> Result<Json<Value>, AppError> {
-    db()?.delete_job(&id)?;
+    cron::delete_job_and_sessions(db()?, session_db()?, &id)?;
     Ok(Json(json!({ "deleted": true })))
 }
 
