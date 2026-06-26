@@ -85,14 +85,16 @@ function latestAssistantNotificationPreview(messages: Message[]): string | null 
   return null
 }
 
-function chatCompletionNotificationBody(
+function chatCompletionNotificationPayload(
   sessionTitle: string,
   messages: Message[],
   showChatContent: boolean,
-): string {
-  if (!showChatContent) return sessionTitle
+  genericTitle: string,
+  genericBody: string,
+): { title: string; body: string } {
+  if (!showChatContent) return { title: genericTitle, body: genericBody }
   const preview = latestAssistantNotificationPreview(messages)
-  return preview ? `${sessionTitle}\n${preview}` : sessionTitle
+  return { title: sessionTitle, body: preview || genericBody }
 }
 
 function optimisticAttachmentForFile(file: File): MessageAttachment {
@@ -1352,16 +1354,18 @@ export function useChatStream({
             status !== "interrupted" &&
             status !== "cancelling"
           const sessionTitle = sessions.find((s) => s.id === targetSessionId)?.title || agentName
-          const notificationBody = chatCompletionNotificationBody(
+          const notification = chatCompletionNotificationPayload(
             sessionTitle,
             sessionCacheRef.current.get(targetSessionId) ??
               (currentSessionIdRef.current === targetSessionId ? messages : []),
-            getCachedConfig()?.showChatContent === true,
+            getCachedConfig()?.showChatContent !== false,
+            t("notification.chatCompletedGenericTitle"),
+            t("notification.chatCompletedGenericBody"),
           )
           if (completed && currentSessionIdRef.current !== targetSessionId) {
-            void notify(t("notification.chatCompleted"), notificationBody)
+            void notify(notification.title, notification.body)
           } else if (completed) {
-            void notifyIfBackground(t("notification.chatCompleted"), notificationBody)
+            void notifyIfBackground(notification.title, notification.body)
           }
         }
       }
