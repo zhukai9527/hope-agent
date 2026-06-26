@@ -16,7 +16,7 @@
 use serde_json::Value;
 
 use super::judge::{self, JudgeVerdict};
-use super::mode::{SessionMode, SmartFallback, SmartModeConfig, SmartStrategy};
+use super::mode::{SandboxMode, SessionMode, SmartFallback, SmartModeConfig, SmartStrategy};
 use super::rules::extract_path_arg;
 use super::{AskReason, Decision};
 
@@ -30,6 +30,9 @@ pub struct ResolveContext<'a> {
     pub args: &'a Value,
     /// Per-session permission mode.
     pub session_mode: SessionMode,
+    /// Per-session sandbox mode. Used only for soft approval relaxation after
+    /// strict gates and AllowAlways have already been evaluated.
+    pub sandbox_mode: SandboxMode,
     /// `true` if global YOLO is enabled in `AppConfig.permission.global_yolo`.
     pub global_yolo: bool,
     /// `true` if the session is currently in Plan Mode.
@@ -198,6 +201,10 @@ pub fn resolve(ctx: &ResolveContext<'_>) -> Decision {
         return Decision::Ask { reason };
     }
 
+    if sandbox_relaxed_allow(ctx) {
+        return Decision::Allow;
+    }
+
     match ctx.session_mode {
         SessionMode::Default => resolve_default_mode(ctx),
         SessionMode::Smart => resolve_smart_mode(ctx),
@@ -215,6 +222,37 @@ pub fn resolve(ctx: &ResolveContext<'_>) -> Decision {
             Decision::Allow
         }
     }
+}
+
+fn sandbox_relaxed_allow(ctx: &ResolveContext<'_>) -> bool {
+    if !ctx.sandbox_mode.relaxes_soft_approvals() {
+        return false;
+    }
+    if ctx.tool_name == "exec" {
+        return check_edit_command(ctx).is_some() && sandbox_exec_cwd_in_workspace(ctx);
+    }
+    false
+}
+
+fn sandbox_exec_cwd_in_workspace(ctx: &ResolveContext<'_>) -> bool {
+    let Some(default_path) = ctx.default_path.map(std::path::Path::new) else {
+        return false;
+    };
+    let Ok(workspace) = default_path.canonicalize() else {
+        return false;
+    };
+    let cwd = ctx
+        .args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .map(|raw| {
+            let expanded = super::rules::expand_tilde(raw);
+            super::rules::resolve_path_with_default(&expanded, Some(default_path))
+        })
+        .unwrap_or_else(|| default_path.to_path_buf());
+    cwd.canonicalize()
+        .map(|path| path.starts_with(&workspace))
+        .unwrap_or(false)
 }
 
 fn resolve_default_mode(ctx: &ResolveContext<'_>) -> Decision {
@@ -883,6 +921,7 @@ mod tests {
             tool_name: tool,
             args,
             session_mode: mode,
+            sandbox_mode: SandboxMode::Off,
             global_yolo: false,
             plan_mode: false,
             plan_mode_allowed_tools: plan_tools,
@@ -1869,6 +1908,116 @@ mod tests {
         let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
         c.is_internal_tool = true;
         assert_eq!(resolve(&c), Decision::Allow);
+    }
+
+    #[test]
+    fn sandbox_standard_does_not_relax_edit_prompt() {
+        let args = json!({"path": "/tmp/foo"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
+        c.sandbox_mode = SandboxMode::Standard;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditTool
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_workspace_does_not_relax_host_file_tool_prompt() {
+        let tmp = tempfile::tempdir().expect("temp workspace");
+        let args = json!({"path": "note.txt"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(tmp.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditTool
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_isolated_does_not_relax_host_file_tool_prompt() {
+        let args = json!({"path": "/tmp/foo"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
+        c.sandbox_mode = SandboxMode::Isolated;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditTool
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_isolated_does_not_relax_exec_edit_command_prompt() {
+        let args = json!({"command": "touch note.txt"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.sandbox_mode = SandboxMode::Isolated;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_workspace_relaxes_workspace_exec_edit_command_prompt() {
+        let tmp = tempfile::tempdir().expect("temp workspace");
+        let args = json!({"command": "touch note.txt"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(tmp.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert_eq!(resolve(&c), Decision::Allow);
+    }
+
+    #[test]
+    fn sandbox_workspace_does_not_relax_exec_edit_command_outside_workspace() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let outside = tempfile::tempdir().expect("outside dir");
+        let args = json!({
+            "command": "touch note.txt",
+            "cwd": outside.path().to_str().unwrap(),
+        });
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(workspace.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_trusted_does_not_bypass_protected_path() {
+        let args = json!({"path": "~/.ssh/id_rsa"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("write", &args, SessionMode::Default, &plan, &custom);
+        c.sandbox_mode = SandboxMode::Trusted;
+        match resolve(&c) {
+            Decision::Ask {
+                reason: AskReason::ProtectedPath { .. },
+            } => {}
+            other => panic!("expected ProtectedPath ask, got {:?}", other),
+        }
     }
 
     // ── Priority matrix: Plan > YOLO > strict > AllowAlways > preset ─────
