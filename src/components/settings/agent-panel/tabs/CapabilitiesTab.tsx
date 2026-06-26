@@ -21,7 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { OpenClawHintBanner } from "./CustomTab"
-import { DockerSetupHint, type DockerStatus } from "../../DockerSetupHint"
+import { DockerSetupHint } from "../../DockerSetupHint"
+import type { DockerStatus } from "../../dockerSetup"
 import type { AgentConfig, AsyncToolPolicy, SkillSummary } from "../types"
 import type { SandboxMode } from "@/types/chat"
 import { getTransport } from "@/lib/transport-provider"

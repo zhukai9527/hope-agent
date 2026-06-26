@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { Check, Loader2, CircleCheck, CircleX } from "lucide-react"
-import { DockerSetupHint, type DockerStatus } from "./DockerSetupHint"
+import { DockerSetupHint } from "./DockerSetupHint"
+import type { DockerStatus } from "./dockerSetup"
 
 // ── Types ────────────────────────────────────────────────────────
 
