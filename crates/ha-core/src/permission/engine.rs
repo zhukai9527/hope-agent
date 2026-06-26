@@ -13,6 +13,8 @@
 //!    - Smart  → `_confidence` self-tag or `judge_model`
 //! 6. Default fallback — Allow.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 
 use super::judge::{self, JudgeVerdict};
@@ -229,18 +231,27 @@ fn sandbox_relaxed_allow(ctx: &ResolveContext<'_>) -> bool {
         return false;
     }
     if ctx.tool_name == "exec" {
-        return check_edit_command(ctx).is_some() && sandbox_exec_cwd_in_workspace(ctx);
+        return check_edit_command(ctx).is_some() && sandbox_exec_edit_targets_in_workspace(ctx);
     }
     false
 }
 
-fn sandbox_exec_cwd_in_workspace(ctx: &ResolveContext<'_>) -> bool {
-    let Some(default_path) = ctx.default_path.map(std::path::Path::new) else {
+fn sandbox_exec_edit_targets_in_workspace(ctx: &ResolveContext<'_>) -> bool {
+    let Some(command) = ctx.args.get("command").and_then(|v| v.as_str()) else {
         return false;
     };
-    let Ok(workspace) = default_path.canonicalize() else {
+    let Some((workspace, cwd)) = sandbox_exec_workspace_scope(ctx) else {
         return false;
     };
+    let tokens = shell_like_tokens(command);
+    sandbox_exec_target_candidates(&tokens)
+        .into_iter()
+        .all(|target| sandbox_target_path_in_workspace(&target, &workspace, &cwd))
+}
+
+fn sandbox_exec_workspace_scope(ctx: &ResolveContext<'_>) -> Option<(PathBuf, PathBuf)> {
+    let default_path = ctx.default_path.map(Path::new)?;
+    let workspace = default_path.canonicalize().ok()?;
     let cwd = ctx
         .args
         .get("cwd")
@@ -250,9 +261,234 @@ fn sandbox_exec_cwd_in_workspace(ctx: &ResolveContext<'_>) -> bool {
             super::rules::resolve_path_with_default(&expanded, Some(default_path))
         })
         .unwrap_or_else(|| default_path.to_path_buf());
-    cwd.canonicalize()
-        .map(|path| path.starts_with(&workspace))
-        .unwrap_or(false)
+    let cwd = cwd.canonicalize().ok()?;
+    if cwd.starts_with(&workspace) {
+        Some((workspace, cwd))
+    } else {
+        None
+    }
+}
+
+fn sandbox_target_path_in_workspace(
+    target: &SandboxExecTarget,
+    workspace: &Path,
+    cwd: &Path,
+) -> bool {
+    match target {
+        SandboxExecTarget::Dynamic => false,
+        SandboxExecTarget::Path(path) => {
+            let normalized = super::rules::normalize_lexical(path);
+            let resolved = if let Some(rel) = container_workspace_relative(&normalized) {
+                super::rules::normalize_lexical(&cwd.join(rel))
+            } else {
+                super::rules::resolve_path_with_default(&normalized, Some(cwd))
+            };
+            super::rules::path_starts_with(&resolved, workspace)
+        }
+    }
+}
+
+fn container_workspace_relative(path: &Path) -> Option<PathBuf> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized == "/workspace" {
+        return Some(PathBuf::new());
+    }
+    normalized.strip_prefix("/workspace/").map(PathBuf::from)
+}
+
+#[derive(Debug)]
+enum SandboxExecTarget {
+    Path(PathBuf),
+    Dynamic,
+}
+
+fn sandbox_exec_target_candidates(tokens: &[String]) -> Vec<SandboxExecTarget> {
+    let mut out = Vec::new();
+    for (idx, token) in tokens.iter().enumerate() {
+        for raw in path_candidate_strings_from_token(token) {
+            push_sandbox_target(&mut out, raw);
+        }
+        if is_redirection_operator(token) {
+            if let Some(next) = tokens.get(idx + 1) {
+                push_sandbox_target(&mut out, next);
+            }
+        }
+    }
+    collect_bare_edit_operands(tokens, &mut out);
+    out
+}
+
+fn push_sandbox_target(out: &mut Vec<SandboxExecTarget>, raw: &str) {
+    let cleaned = clean_shell_path_token(raw);
+    if cleaned.is_empty() || is_shell_operator(cleaned) {
+        return;
+    }
+    if has_dynamic_shell_expansion(cleaned) {
+        out.push(SandboxExecTarget::Dynamic);
+    } else {
+        out.push(SandboxExecTarget::Path(super::rules::normalize_lexical(
+            &super::rules::expand_tilde(cleaned),
+        )));
+    }
+}
+
+fn path_candidate_strings_from_token(token: &str) -> Vec<&str> {
+    let cleaned = clean_shell_path_token(token);
+    if cleaned.is_empty() || is_shell_operator(cleaned) {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    if looks_like_path_token(cleaned) {
+        candidates.push(cleaned);
+    }
+    if let Some((_, value)) = cleaned.split_once('=') {
+        let value = clean_shell_path_token(value);
+        if looks_like_path_token(value) {
+            candidates.push(value);
+        }
+    }
+    if let Some(idx) = cleaned.find(['>', '<']) {
+        let value = clean_shell_path_token(&cleaned[idx + 1..]);
+        if !value.is_empty() {
+            candidates.push(value);
+        }
+    }
+    candidates
+}
+
+fn collect_bare_edit_operands(tokens: &[String], out: &mut Vec<SandboxExecTarget>) {
+    for (idx, token) in tokens.iter().enumerate() {
+        let command = clean_shell_command_token(token);
+        if FILE_TARGET_COMMANDS.contains(&command) {
+            collect_operands_until_separator(tokens, idx + 1, out);
+        } else if command == "git" {
+            if let Some(subcommand) = tokens.get(idx + 1).map(|s| clean_shell_command_token(s)) {
+                if GIT_TARGET_SUBCOMMANDS.contains(&subcommand) {
+                    collect_operands_until_separator(tokens, idx + 2, out);
+                }
+            }
+        }
+    }
+}
+
+fn collect_operands_until_separator(
+    tokens: &[String],
+    start: usize,
+    out: &mut Vec<SandboxExecTarget>,
+) {
+    let mut idx = start;
+    while let Some(token) = tokens.get(idx) {
+        let cleaned = clean_shell_path_token(token);
+        if is_command_separator(cleaned) {
+            break;
+        }
+        if is_redirection_operator(cleaned) {
+            if let Some(next) = tokens.get(idx + 1) {
+                push_sandbox_target(out, next);
+            }
+            idx += 2;
+            continue;
+        }
+        if !cleaned.is_empty() && !cleaned.starts_with('-') && !is_shell_operator(cleaned) {
+            push_sandbox_target(out, cleaned);
+        }
+        idx += 1;
+    }
+}
+
+const FILE_TARGET_COMMANDS: &[&str] = &[
+    "touch", "mkdir", "rm", "rmdir", "mv", "cp", "ln", "truncate", "chmod", "chown", "chgrp",
+    "vim", "vi", "nano", "emacs", "code", "tee",
+];
+
+const GIT_TARGET_SUBCOMMANDS: &[&str] = &["add", "rm", "mv"];
+
+fn shell_like_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else if ch == '\\' && q != '\'' && !cfg!(windows) {
+                    escaped = true;
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => {
+                if ch == '\\' && !cfg!(windows) {
+                    escaped = true;
+                } else if ch == '\'' || ch == '"' {
+                    quote = Some(ch);
+                } else if ch.is_whitespace() {
+                    push_shell_token(&mut tokens, &mut current);
+                } else if matches!(ch, ';' | '|' | '&' | '>' | '<') {
+                    push_shell_token(&mut tokens, &mut current);
+                    tokens.push(ch.to_string());
+                } else {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+    push_shell_token(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_shell_token(tokens: &mut Vec<String>, current: &mut String) {
+    if !current.is_empty() {
+        tokens.push(std::mem::take(current));
+    }
+}
+
+fn clean_shell_command_token(token: &str) -> &str {
+    clean_shell_path_token(token)
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+}
+
+fn clean_shell_path_token(token: &str) -> &str {
+    token.trim_matches(|c: char| matches!(c, '(' | ')' | '{' | '}' | '[' | ']' | ',' | ';'))
+}
+
+fn looks_like_path_token(token: &str) -> bool {
+    token.contains('/')
+        || token.starts_with('~')
+        || token.starts_with('.')
+        || (cfg!(windows) && token.contains('\\'))
+}
+
+fn has_dynamic_shell_expansion(token: &str) -> bool {
+    token.contains('$')
+        || token.contains('`')
+        || token.contains('*')
+        || token.contains('?')
+        || token.contains('[')
+        || token.contains(']')
+}
+
+fn is_redirection_operator(token: &str) -> bool {
+    matches!(token, ">" | "<")
+}
+
+fn is_command_separator(token: &str) -> bool {
+    matches!(token, ";" | "|" | "&")
+}
+
+fn is_shell_operator(token: &str) -> bool {
+    is_command_separator(token) || is_redirection_operator(token)
 }
 
 fn resolve_default_mode(ctx: &ResolveContext<'_>) -> Decision {
@@ -1982,6 +2218,90 @@ mod tests {
         c.default_path = Some(tmp.path().to_str().unwrap());
         c.sandbox_mode = SandboxMode::Workspace;
         assert_eq!(resolve(&c), Decision::Allow);
+    }
+
+    #[test]
+    fn sandbox_workspace_relaxes_container_workspace_exec_edit_target() {
+        let tmp = tempfile::tempdir().expect("temp workspace");
+        let args = json!({"command": "touch /workspace/note.txt"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(tmp.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert_eq!(resolve(&c), Decision::Allow);
+    }
+
+    #[test]
+    fn sandbox_workspace_does_not_relax_absolute_exec_edit_target_outside_workspace() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let outside = tempfile::tempdir().expect("outside dir");
+        let target = outside.path().join("note.txt");
+        let args = json!({"command": format!("touch {}", target.display())});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(workspace.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_workspace_does_not_relax_parent_traversal_exec_edit_target() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let args = json!({"command": "mkdir ../outside"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(workspace.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_workspace_does_not_relax_dynamic_exec_edit_target() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let args = json!({"command": "touch $TMPDIR/note.txt"});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(workspace.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Workspace;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn sandbox_trusted_does_not_relax_absolute_exec_edit_target_outside_workspace() {
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let outside = tempfile::tempdir().expect("outside dir");
+        let target = outside.path().join("note.txt");
+        let args = json!({"command": format!("touch {}", target.display())});
+        let plan: Vec<String> = vec![];
+        let custom: Vec<String> = vec![];
+        let mut c = ctx("exec", &args, SessionMode::Default, &plan, &custom);
+        c.default_path = Some(workspace.path().to_str().unwrap());
+        c.sandbox_mode = SandboxMode::Trusted;
+        assert!(matches!(
+            resolve(&c),
+            Decision::Ask {
+                reason: AskReason::EditCommand { .. }
+            }
+        ));
     }
 
     #[test]

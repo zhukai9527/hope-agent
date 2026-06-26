@@ -165,7 +165,7 @@ Session 读写 API：
 - `isolated` 当前没有自动写回流程。它用于在临时副本中试跑命令；若要把结果应用回真实工作区，仍要通过后续文件工具 / patch 流程并经过相应审批。
 - 因为临时副本会在执行结束后删除，`isolated` v1 不放松 `exec` 编辑命令审批，避免命令显示成功但文件变更被静默丢弃。
 - `write` / `edit` / `apply_patch` 本身仍在宿主机文件系统执行，不会因为 sandbox mode 自动改写到容器或临时副本。因此 v1 不放松这些直接宿主文件工具的编辑审批。
-- `workspace` / `trusted` 放松 `exec` 编辑命令审批时，必须解析有效 `cwd` 并确认它在 `default_path` canonical workspace 内。
+- `workspace` / `trusted` 放松 `exec` 编辑命令审批时，必须解析有效 `cwd` 并确认它在 `default_path` canonical workspace 内；命令中可识别的目标路径也必须解析到 workspace 内，动态路径或无法证明安全的越界目标继续走审批。
 - `standard` 是旧「Docker 沙箱」语义，执行位置变成 Docker，但审批完全不放松。
 
 ## 权限引擎集成
@@ -206,7 +206,7 @@ Plan Mode
 | 条件 | 结果 |
 |------|------|
 | `sandbox_mode` 不在 `workspace/trusted` | false |
-| `tool_name == "exec"`、命中编辑命令、有效 `cwd` 在 workspace 内 | true |
+| `tool_name == "exec"`、命中编辑命令、有效 `cwd` 在 workspace 内、可识别目标路径均在 workspace 内 | true |
 | 其它情况 | false |
 
 不会被沙箱放松的场景：
@@ -653,7 +653,7 @@ outgoing:
 1. 非 `off` 的执行沙箱不得静默回落宿主机。
 2. `standard` 不得放松审批，只改变执行位置。
 3. `isolated` 不得放松 `exec` 编辑命令或宿主文件工具审批，除非隔离 diff 写回 / 文件工具隔离 backend 已落地。
-4. `workspace/trusted` 放松 `exec` 编辑命令前必须 canonicalize 并确认有效 `cwd` 在 workspace 内。
+4. `workspace/trusted` 放松 `exec` 编辑命令前必须 canonicalize 并确认有效 `cwd` 在 workspace 内；可识别的绝对路径、相对路径、`/workspace/...` 容器路径、重定向目标、常见文件命令裸操作数都要过 workspace 边界检查，动态展开目标 fail-closed 继续审批。
 5. `workspace/trusted` 不得放松直接宿主文件工具审批，除非文件工具有真正的 sandbox backend 或执行前 fail-closed Docker guard。
 6. protected path / dangerous command / raw CDP / macOS dangerous action 等 strict 项必须在 sandbox soft allow 之前判定。
 7. Docker socket、根目录、系统目录不得 bind mount。
@@ -676,8 +676,9 @@ outgoing:
 | `workspace` + workspace file edit | 仍 Ask |
 | `isolated` + direct file tool | 仍 Ask |
 | `isolated` + exec edit command | 仍 Ask |
-| `workspace` + exec edit command + cwd 在 workspace 内 | Allow |
+| `workspace` + exec edit command + cwd 在 workspace 内 + 目标路径在 workspace 内 | Allow |
 | `workspace` + exec edit command + cwd 越界 | 仍 Ask |
+| `workspace/trusted` + exec edit command + 目标路径越界或动态展开 | 仍 Ask |
 | `trusted` + protected path | 仍 Ask strict |
 | Docker unavailable + sandbox exec | `SandboxUnavailable`，不进入宿主执行 |
 
