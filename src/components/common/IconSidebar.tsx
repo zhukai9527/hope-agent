@@ -37,6 +37,7 @@ import {
   Monitor,
   User,
   CheckCheck,
+  ScrollText,
 } from "lucide-react"
 import { useTheme } from "@/hooks/useTheme"
 import { SUPPORTED_LANGUAGES, isFollowingSystem, setFollowSystemLanguage, setLanguage } from "@/i18n/i18n"
@@ -214,6 +215,24 @@ export default function IconSidebar({
               </ContextMenuContent>
             </ContextMenu>
           </div>
+          {/* Dashboard / Analytics entry, grouped under Scheduled Tasks. */}
+          <div className="w-full flex justify-center">
+            <IconTip label={t("dashboard.title")} side="right">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "rounded-xl h-8 w-8",
+                  view === "dashboard"
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={onOpenDashboard}
+              >
+                <BarChart3 className="h-4 w-4" />
+              </Button>
+            </IconTip>
+          </div>
         </div>
 
         <div className="my-1 h-px w-6 bg-border-soft/80" />
@@ -339,31 +358,26 @@ export default function IconSidebar({
           </IconTip>
         </div>
 
-        {/* Dashboard / Analytics entry */}
-        <div className="w-full flex justify-center mt-1">
-          <IconTip label={t("dashboard.title")} side="right">
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                "rounded-xl h-8 w-8",
-                view === "dashboard"
-                  ? "bg-primary/10 text-primary hover:bg-primary/20"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-              onClick={onOpenDashboard}
-            >
-              <BarChart3 className="h-4 w-4" />
-            </Button>
-          </IconTip>
-        </div>
-
         <div className="my-1 h-px w-6 bg-border-soft/60" />
 
         {/* Browser backend — status indicator + entry to Settings → Browser.
             Green dot when a backend is live; hover shows details. */}
         <div className="w-full flex justify-center mt-1">
           <BrowserStatusIndicator onOpen={() => onOpenSettings("browser")} />
+        </div>
+
+        {/* Logs entry, quick jump to Settings -> Logs near runtime status. */}
+        <div className="w-full flex justify-center mt-1">
+          <IconTip label={t("settings.logs")} side="right">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-xl h-8 w-8 text-muted-foreground hover:text-foreground"
+              onClick={() => onOpenSettings("logs")}
+            >
+              <ScrollText className="h-4 w-4" />
+            </Button>
+          </IconTip>
         </div>
 
         <div className="flex-1" />
