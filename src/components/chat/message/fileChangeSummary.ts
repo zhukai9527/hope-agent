@@ -152,5 +152,12 @@ function estimateFromArguments(tool: ToolCall): FileChangeSummary | null {
 }
 
 export function getFileChangeSummary(tool: ToolCall): FileChangeSummary | null {
-  return fromMetadata(tool) ?? estimateFromArguments(tool)
+  const metadataSummary = fromMetadata(tool)
+  if (metadataSummary) return metadataSummary
+
+  // Argument-based deltas are only in-flight previews. Completed tools without
+  // backend metadata may have failed or no-op'd, so do not render them as edits.
+  if (tool.result !== undefined) return null
+
+  return estimateFromArguments(tool)
 }
