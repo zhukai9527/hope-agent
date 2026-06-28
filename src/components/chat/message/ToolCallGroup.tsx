@@ -285,7 +285,7 @@ function GroupItem({
       {/* Full result */}
       <AnimatedCollapse
         open={showResult && (tool.name === "exec" || !!tool.result || showInlineDiff)}
-        unmountOnExit={false}
+        unmountOnExit={showInlineDiff}
       >
         <div className="ml-4 mt-0.5 mb-1">
           {showInlineDiff ? (

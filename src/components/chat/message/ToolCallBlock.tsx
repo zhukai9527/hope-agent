@@ -560,7 +560,7 @@ export default function ToolCallBlock({ tool, shimmer, onOpenDiff }: ToolCallBlo
       </AnimatedCollapse>
       <AnimatedCollapse
         open={expanded && (tool.name === "exec" || !!tool.result || showInlineDiff)}
-        unmountOnExit={false}
+        unmountOnExit={showInlineDiff}
       >
         <div className="ml-5 mt-0.5 mb-1">
           {showInlineDiff ? (
