@@ -1,9 +1,15 @@
+import { useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { FilePen } from "lucide-react"
 
 import type { FileChangeMetadata, FileChangesMetadata } from "@/types/chat"
 import { cn } from "@/lib/utils"
 import { UnifiedDiffView } from "@/components/chat/diff-panel/UnifiedDiffView"
+import {
+  buildUnifiedRows,
+  type DiffViewItem,
+  type UnifiedRow,
+} from "@/components/chat/diff-panel/diffLayout"
 import { PANEL_SCROLL_FADE } from "@/components/chat/right-panel/panelFade"
 
 interface InlineToolDiffPreviewProps {
@@ -28,6 +34,15 @@ function actionLabel(action: FileChangeMetadata["action"]): string {
 
 function ChangeSection({ change }: { change: FileChangeMetadata }) {
   const { t } = useTranslation()
+  const diffItems = useMemo<DiffViewItem<UnifiedRow>[]>(
+    () =>
+      buildUnifiedRows(change.before ?? "", change.after ?? "").map((row, rowIndex) => ({
+        kind: "row",
+        row,
+        rowIndex,
+      })),
+    [change.after, change.before],
+  )
 
   return (
     <section className="min-w-0 border-b border-border/50 last:border-b-0">
@@ -54,7 +69,14 @@ function ChangeSection({ change }: { change: FileChangeMetadata }) {
           {t("diffPanel.fileTooLarge", "文件过大，仅渲染前 256KB")}
         </div>
       )}
-      <UnifiedDiffView change={change} />
+      <UnifiedDiffView
+        items={diffItems}
+        omittedItemCount={0}
+        onToggleFold={() => undefined}
+        onRenderAll={() => undefined}
+        onCopyLocation={() => undefined}
+        onOpenLocation={() => undefined}
+      />
     </section>
   )
 }
