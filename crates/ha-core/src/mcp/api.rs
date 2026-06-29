@@ -233,13 +233,7 @@ fn preserve_existing_sensitive_fields(cfg: &mut McpServerConfig, existing: &McpS
     preserve_redacted_map_values(&mut cfg.headers, &existing.headers);
 
     match (&mut cfg.oauth, &existing.oauth) {
-        (None, Some(old)) => {
-            cfg.oauth = Some(old.clone());
-        }
-        (Some(new), Some(old))
-            if new.client_secret.as_deref() == Some(REDACTED)
-                || (new.client_secret.is_none() && old.client_secret.is_some()) =>
-        {
+        (Some(new), Some(old)) if new.client_secret.as_deref() == Some(REDACTED) => {
             new.client_secret = old.client_secret.clone();
         }
         _ => {}
@@ -972,13 +966,10 @@ mod tests {
         let cfg = draft.into_config(200, Some(&existing));
         assert_eq!(cfg.env["API_KEY"], "old-env-secret");
         assert_eq!(cfg.headers["Authorization"], "Bearer old-token");
-        assert_eq!(
-            cfg.oauth.as_ref().and_then(|o| o.client_secret.as_deref()),
-            Some("old-client-secret")
-        );
+        assert!(cfg.oauth.is_none());
 
         existing.oauth.as_mut().unwrap().client_secret = Some("rotated".into());
-        let mut draft_with_oauth = cfg.clone();
+        let mut draft_with_oauth = existing.clone();
         draft_with_oauth.oauth.as_mut().unwrap().client_secret = Some(REDACTED.into());
         preserve_existing_sensitive_fields(&mut draft_with_oauth, &existing);
         assert_eq!(
@@ -987,6 +978,17 @@ mod tests {
                 .as_ref()
                 .and_then(|o| o.client_secret.as_deref()),
             Some("rotated")
+        );
+
+        let mut draft_clearing_secret = existing.clone();
+        draft_clearing_secret.oauth.as_mut().unwrap().client_secret = None;
+        preserve_existing_sensitive_fields(&mut draft_clearing_secret, &existing);
+        assert_eq!(
+            draft_clearing_secret
+                .oauth
+                .as_ref()
+                .and_then(|o| o.client_secret.as_deref()),
+            None
         );
     }
 }

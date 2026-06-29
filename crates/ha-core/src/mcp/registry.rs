@@ -451,7 +451,6 @@ impl McpManager {
         };
 
         for handle in removed {
-            let _connect_guard = handle.connect_lock.lock().await;
             let _ = super::client::disconnect(&handle).await;
         }
 
@@ -714,6 +713,25 @@ mod tests {
         assert_eq!(handle.config.read().await.env["TOKEN"], "new-token");
         assert!(manager.mcp_tool_definitions().is_empty());
         assert!(manager.lookup_tool("mcp__alpha__read").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn reconcile_does_not_wait_for_retired_connect_lock() {
+        let cfg = sample_stdio_cfg("id-alpha", "alpha");
+        let manager = test_manager(vec![cfg.clone()]);
+        let old_handle = manager.get_by_id("id-alpha").await.unwrap();
+        let _connect_guard = old_handle.connect_lock.lock().await;
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            manager.reconcile(McpGlobalSettings::default(), vec![]),
+        )
+        .await
+        .expect("reconcile should not wait for a retired handle's connect lock")
+        .unwrap();
+
+        assert!(old_handle.is_retired());
+        assert!(manager.get_by_id("id-alpha").await.is_none());
     }
 
     #[tokio::test]

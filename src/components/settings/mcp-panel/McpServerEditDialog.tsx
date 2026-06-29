@@ -43,6 +43,7 @@ import {
 import {
   addServer,
   updateServer,
+  type McpOAuthConfig,
   type McpServerDraft,
   type McpServerSummary,
   type McpTransportKind,
@@ -122,7 +123,26 @@ function initialFromSummary(s: McpServerSummary | null): FormState {
   }
 }
 
-function formToDraft(form: FormState): McpServerDraft {
+function preservedOauth(
+  form: FormState,
+  initial: McpServerSummary | null,
+): McpOAuthConfig | null {
+  if (!initial?.oauth || form.kind === "stdio") return null
+  const original = initial.transport
+  if (
+    original.kind === "stdio" ||
+    original.kind !== form.kind ||
+    original.url !== form.url.trim()
+  ) {
+    return null
+  }
+  return initial.oauth
+}
+
+function formToDraft(
+  form: FormState,
+  initial: McpServerSummary | null,
+): McpServerDraft {
   // stdio has its own payload shape; http / sse / ws all carry just a
   // url, so one branch covers the three URL-only kinds.
   const transport: McpServerDraft["transport"] =
@@ -183,7 +203,7 @@ function formToDraft(form: FormState): McpServerDraft {
     deferredTools: form.deferredTools,
     deniedTools: splitList(form.deniedTools),
     allowedTools: splitList(form.allowedTools),
-    oauth: null,
+    oauth: preservedOauth(form, initial),
     projectPaths: [],
     icon: null,
   } as McpServerDraft
@@ -238,7 +258,7 @@ export default function McpServerEditDialog({
       toast.error(t("settings.mcp.autoApproveNeedsTrust"))
       return
     }
-    const draft = formToDraft(form)
+    const draft = formToDraft(form, initial)
     setSaving(true)
     try {
       if (isEditing && initial) {
