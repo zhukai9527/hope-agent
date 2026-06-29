@@ -27,6 +27,7 @@
 | [Chat Engine](architecture/chat-engine.md)     | 对话编排入口、流式事件协议、Failover 集成、记忆提取门控                    | `chat_engine/`                                 |
 | [Provider 系统](architecture/provider-system.md) | 4 种 API 类型、Provider 模板、Failover 策略、Thinking 系统、Provider Write Contract、Local Backend Catalog | `provider/`, `failover/`, `agent/providers/` |
 | [本地模型加载](architecture/local-model-loading.md) | Ollama 本地模型搜索/下载/加载/删除、后台任务、Provider 注册、Embedding 配置与记忆向量重建 | `local_llm/`, `local_model_jobs.rs`, `local_embedding.rs`, `memory/embedding/` |
+| [语音转写（STT）](architecture/stt.md)             | 独立配置语音转写引擎：8 wire 协议（OpenAI multipart / chat-completions ASR / 5 种 WebSocket）、桌面 batch + 流式会话、IM 自动转写、4 本地后端一键接入、Failover 链与 size/SSRF 红线 | `stt/`, `commands/stt.rs`, `routes/stt.rs` |
 | [提示词系统](architecture/prompt-system.md)         | System Prompt 多段组装、工具描述、行为指导                        | `system_prompt/`                               |
 | [工具系统](architecture/tool-system.md)            | 工具定义、Tool Loop 并发/串行执行、结果持久化、四维权限控制                 | `tools/`                                       |
 | [文件操作统一](architecture/file-operations.md)     | 三处文件（Markdown 链接 / 下挂文件 / 工作台产物）统一操作策略、本机 vs 远端行为矩阵、右侧内置预览面板、preview-by-path 双壳后端与会话鉴权 | `lib/fileActions.ts`, `lib/fileKind.ts`, `components/chat/files/`, `filesystem/ops.rs` |
@@ -126,7 +127,6 @@
 | 首次启动向导 | `crates/ha-core/src/onboarding/` | [前后端分离架构](architecture/backend-separation.md)、[进程与并发模型](architecture/process-model.md) |
 | Agent 配置/解析链 | `crates/ha-core/src/agent_config.rs`、`agent_loader.rs`、`agent/resolver.rs` | [Project 系统](architecture/project.md#agent-解析链5-级)、[提示词系统](architecture/prompt-system.md) |
 | Backup / Autosave | `crates/ha-core/src/backup.rs` | [配置系统](architecture/config-system.md)、[可靠性与崩溃自愈](architecture/reliability.md) |
-| 语音转写（STT） | `crates/ha-core/src/stt/` | [Provider 系统](architecture/provider-system.md)（独立 config bucket / provider 列表 / engine trait，与主 LLM provider 列表隔离） |
 | 主 LLM OAuth | `crates/ha-core/src/oauth.rs` | [Provider 系统](architecture/provider-system.md)（与 [MCP 客户端](architecture/mcp.md) 的 OAuth 实现互不共用） |
 | 系统权限（macOS） | `crates/ha-core/src/permissions.rs` | [跨平台抽象层](architecture/platform.md) |
 | OpenClaw 导入 | `crates/ha-core/src/openclaw_import/` | [API 参考](architecture/api-reference.md) |
