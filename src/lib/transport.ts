@@ -379,7 +379,7 @@ export interface FileMatch {
   /** Path relative to the search root, with `/` separator. */
   relPath: string;
   isDir: boolean;
-  /** Subsequence-match score; higher = better. Server-sorted. */
+  /** Path-aware fuzzy score; higher = better. Server-sorted. */
   score: number;
 }
 

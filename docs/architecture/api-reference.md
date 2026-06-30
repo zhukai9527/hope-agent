@@ -1044,7 +1044,7 @@ Context / Cache 共用单 SQL `get_session_last_assistant_token_row`，避免渲
 | Tauri Command | HTTP | 状态 |
 |---|---|---|
 | `fs_list_dir` | `GET /api/filesystem/list-dir?path=<abs>` | ✅ |
-| `fs_search_files` | `GET /api/filesystem/search-files?root=<abs>&q=<query>&limit=50` | ✅ |
+| `fs_search_files` | `GET /api/filesystem/search-files?root=<abs>&q=<query>&limit=50` | ✅；path-aware fuzzy v2（精确 / 前缀 / 多 token / 路径分段 / 驼峰词感知，subsequence 兜底） |
 
 `list-dir` 列出服务器本地目录单层条目，供 HTTP 模式目录浏览器驱动 `set_session_working_dir`，以及聊天输入框 `@` mention popper 的"路径模式"。参数要求绝对路径，后端会 canonicalize 并校验 `is_dir`；无 `path` 参数时返回平台默认根（Unix: `/`，Windows: `USERPROFILE`）。响应 `{ path, parent, entries: [{ name, isDir, isSymlink, size, modifiedMs }], truncated }`，按目录优先 + 名字升序排序，单次最多 5000 条（超出 `truncated=true`）。
 
