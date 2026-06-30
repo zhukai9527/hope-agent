@@ -224,18 +224,14 @@ fn started_non_idempotent_recovery_action_blocks_run() {
     let (_session_id, run_id) = create_run(&db);
     db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
         .expect("run");
-    let op_key = "main/op#1(tool:exec)".to_string();
+    let op_key = "main/op#1(customSideEffect)".to_string();
 
     db.upsert_workflow_op_started(UpsertWorkflowOpInput {
         run_id: run_id.clone(),
         op_key: op_key.clone(),
-        op_type: "tool:exec".to_string(),
+        op_type: "customSideEffect".to_string(),
         effect_class: WorkflowEffectClass::NonIdempotent,
-        input: json!({
-            "name": "exec",
-            "args": { "cmd": "echo should_not_attach" },
-            "label": null
-        }),
+        input: json!({ "sideEffect": true }),
         child_handle: Some("job_123".to_string()),
     })
     .expect("start op");
@@ -251,7 +247,7 @@ fn started_non_idempotent_recovery_action_blocks_run() {
     assert_eq!(run.state, WorkflowRunState::Blocked);
     assert_eq!(
         run.blocked_reason.as_deref(),
-        Some("started_non_idempotent_op:main/op#1(tool:exec)")
+        Some("started_non_idempotent_op:main/op#1(customSideEffect)")
     );
 }
 
@@ -1419,6 +1415,64 @@ export default async function main(workflow) {
         .expect("get run")
         .expect("run exists");
     assert_ne!(run.state, WorkflowRunState::Blocked);
+}
+
+#[test]
+fn runtime_attaches_started_async_tool_child_job_without_blocking() {
+    ensure_async_jobs_db();
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Async tool recovery" });
+  const started = await workflow.tool({
+    name: "exec",
+    args: { command: "echo recovered", run_in_background: true }
+  });
+  const job = JSON.parse(started);
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ jobId: job.job_id, status: job.status });
+}
+"#;
+    let (session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let job_id = format!("job_{}", uuid::Uuid::new_v4().simple());
+    insert_completed_async_job(&job_id, &session_id, "recovered\n[exit code: 0]");
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: "main/op#1(tool:exec)".to_string(),
+        op_type: "tool:exec".to_string(),
+        effect_class: WorkflowEffectClass::NonIdempotent,
+        input: json!({
+            "name": "exec",
+            "args": {
+                "command": "echo recovered",
+                "run_in_background": true
+            },
+            "label": null
+        }),
+        child_handle: Some(job_id.clone()),
+    })
+    .expect("start async tool op");
+
+    let result = run_workflow_script(db.clone(), &run_id).expect("recover workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+    assert_eq!(
+        result.output,
+        Some(json!({
+            "jobId": job_id,
+            "status": "started"
+        }))
+    );
+
+    let tool_op = db
+        .get_workflow_op(&run_id, "main/op#1(tool:exec)")
+        .expect("get async tool op")
+        .expect("async tool op exists");
+    assert_eq!(tool_op.state, WorkflowOpState::Completed);
+    assert_eq!(tool_op.child_handle.as_deref(), Some(job_id.as_str()));
 }
 
 #[test]

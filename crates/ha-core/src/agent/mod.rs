@@ -1786,6 +1786,7 @@ impl AssistantAgent {
             agent_custom_approval_tools: caps.custom_approval_tools.clone(),
             project_id,
             async_tool_policy: caps.async_tool_policy,
+            async_job_id_override: None,
             bypass_async_dispatch: false,
             suppress_global_tool_timeout: false,
             suppress_result_disk_persistence: false,

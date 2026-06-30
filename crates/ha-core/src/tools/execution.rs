@@ -304,6 +304,11 @@ pub struct ToolExecContext {
     pub channel_kb_context: Option<crate::knowledge::ChannelKbContext>,
     /// Per-agent async tool backgrounding policy (mirrors AgentConfig.capabilities.async_tool_policy).
     pub async_tool_policy: AsyncToolPolicy,
+    /// Optional caller-preallocated async job id. Durable parent runtimes set
+    /// this before dispatching an explicit `run_in_background` tool so they can
+    /// persist the child handle before the side effect starts. Ignored unless
+    /// this dispatch actually takes the immediate async-job path.
+    pub async_job_id_override: Option<String>,
     /// Internal flag set by the async-job spawner when re-dispatching an
     /// async-capable tool inside a background runtime. Prevents infinite
     /// recursion: even if the tool is async-capable and the policy is
@@ -1646,7 +1651,18 @@ pub async fn execute_tool_with_context(
         // gate is deferred); the bridge corrects it to the real decision on resume.
         spawn_ctx.exec_pre_approved = exec_pre_approved;
         spawn_ctx.approval_origin = tool_approval_origin;
-        let raw = async_jobs::JobManager::spawn_tool(name, args.clone(), spawn_ctx, origin)?;
+        let job_id_override = spawn_ctx.async_job_id_override.take();
+        let raw = if let Some(job_id) = job_id_override {
+            async_jobs::JobManager::spawn_tool_with_id(
+                name,
+                args.clone(),
+                spawn_ctx,
+                origin,
+                job_id,
+            )?
+        } else {
+            async_jobs::JobManager::spawn_tool(name, args.clone(), spawn_ctx, origin)?
+        };
         // Skip the disk-persist tail since the synthetic JSON is small and
         // mirrors the same shape `job_status` returns later.
         return Ok(raw);

@@ -775,9 +775,61 @@ impl WorkflowRuntimeHost {
             "args": tool_args.clone(),
             "label": label,
         });
+        if workflow_tool_uses_async_child(&name, &tool_args) {
+            let child_handle = JobManager::new_job_id();
+            let recover_name = name.clone();
+            let run_name = name.clone();
+            let run_tool_args = tool_args.clone();
+            return self.execute_op_with_child_handle(
+                &op_type,
+                effect_class,
+                input,
+                child_handle,
+                move |host, child_handle| {
+                    host.recover_async_tool_child(&recover_name, child_handle)
+                },
+                move |host, child_handle| {
+                    host.dispatch_async_tool_with_child(&run_name, &run_tool_args, child_handle)
+                },
+            );
+        }
         self.execute_op(&op_type, effect_class, input, |host| {
             host.dispatch_tool(&name, &tool_args).map(Value::String)
         })
+    }
+
+    fn recover_async_tool_child(&self, name: &str, child_handle: &str) -> Result<Option<Value>> {
+        if JobManager::get(child_handle)?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Value::String(async_tool_started_output(
+            name,
+            child_handle,
+        ))))
+    }
+
+    fn dispatch_async_tool_with_child(
+        &self,
+        name: &str,
+        args: &Value,
+        child_handle: &str,
+    ) -> Result<Value> {
+        let mut ctx = self.tool_exec_context();
+        ctx.async_job_id_override = Some(child_handle.to_string());
+        let output = self.dispatch_tool_with_context(name, args, ctx)?;
+        let parsed = parse_tool_json_output(&output, "workflow.tool async child")?;
+        let job_id = parsed
+            .get("job_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("workflow.tool async child output missing job_id"))?;
+        if job_id != child_handle {
+            return Err(anyhow!(
+                "workflow.tool({name}) returned job_id {} but expected preallocated child handle {}",
+                job_id,
+                child_handle
+            ));
+        }
+        Ok(Value::String(output))
     }
 
     fn spawn_agent(&mut self, args: Value) -> Result<Value> {
@@ -1268,6 +1320,15 @@ impl WorkflowRuntimeHost {
 
     fn dispatch_tool(&self, name: &str, args: &Value) -> Result<String> {
         let ctx = self.tool_exec_context();
+        self.dispatch_tool_with_context(name, args, ctx)
+    }
+
+    fn dispatch_tool_with_context(
+        &self,
+        name: &str,
+        args: &Value,
+        ctx: ToolExecContext,
+    ) -> Result<String> {
         let default_path = ctx.default_path().to_string();
         let session_id = self.session_id.clone();
         self.tokio_handle
@@ -1676,6 +1737,19 @@ fn normalize_ask_user_options(value: &Value) -> Result<Value> {
     }
 
     Ok(Value::Array(normalized))
+}
+
+fn workflow_tool_uses_async_child(name: &str, args: &Value) -> bool {
+    tools::is_async_capable(name)
+        && crate::config::cached_config().async_tools.enabled
+        && args
+            .get("run_in_background")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn async_tool_started_output(name: &str, job_id: &str) -> String {
+    crate::async_jobs::synthetic_started_result(job_id, name, JobOrigin::Explicit)
 }
 
 fn parse_ask_user_output(raw: String) -> Result<Value> {
