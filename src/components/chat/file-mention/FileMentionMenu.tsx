@@ -3,9 +3,11 @@ import { useTranslation } from "react-i18next"
 import { File, FileText, Folder, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { FloatingMenu } from "@/components/ui/floating-menu"
+import { AgentSelectDisplay } from "@/components/common/AgentSelectDisplay"
 import { SkillMentionIcon } from "../skill-mention/SkillMentionIcon"
 import { skillMentionMeta, type MentionableSkill } from "../skill-mention/skillTokens"
 import type { MentionEntry, MentionMode } from "./types"
+import type { AgentSummaryForSidebar } from "@/types/chat"
 import type { ReferenceableNote } from "@/types/knowledge"
 
 interface FileMentionMenuProps {
@@ -21,7 +23,11 @@ interface FileMentionMenuProps {
   skillEntries: MentionableSkill[]
   /** Whether the skill section is enabled (drives its header). */
   skillCapable: boolean
-  /** Flat cursor over `[...entries, ...noteEntries, ...skillEntries]`. */
+  /** Agent section rows (already filtered). */
+  agentEntries: AgentSummaryForSidebar[]
+  /** Whether the agent section is enabled (drives its header). */
+  agentCapable: boolean
+  /** Flat cursor over `[...entries, ...noteEntries, ...skillEntries, ...agentEntries]`. */
   selectedIndex: number
   mode: MentionMode
   /** Absolute path of the directory being shown (list mode) — surfaced as breadcrumb. */
@@ -35,6 +41,7 @@ interface FileMentionMenuProps {
   onSelect: (entry: MentionEntry) => void
   onSelectNote: (note: ReferenceableNote) => void
   onSelectSkill: (skill: MentionableSkill) => void
+  onSelectAgent: (agent: AgentSummaryForSidebar) => void
   /** Hover handler; receives the FLAT index across all sections. */
   onHover: (index: number) => void
 }
@@ -47,6 +54,8 @@ export default function FileMentionMenu({
   noteCapable,
   skillEntries,
   skillCapable,
+  agentEntries,
+  agentCapable,
   selectedIndex,
   mode,
   dirPath,
@@ -58,6 +67,7 @@ export default function FileMentionMenu({
   onSelect,
   onSelectNote,
   onSelectSkill,
+  onSelectAgent,
   onHover,
 }: FileMentionMenuProps) {
   const { t } = useTranslation()
@@ -71,17 +81,21 @@ export default function FileMentionMenu({
 
   const hasFiles = entries.length > 0
   const hasNotes = noteEntries.length > 0
+  const hasAgents = agentEntries.length > 0
   const hasSkills = skillEntries.length > 0
   const showFileSection = !!workingDir && hasFileQuery
   // Nothing to paint: no file section (working dir / its loading+empty/error),
   // no note rows or in-flight note load, and no skill rows. Avoids an empty
   // floating box when `@` opens with nothing to show.
-  if (!showFileSection && !error && !hasNotes && !notesLoading && !hasSkills) return null
+  if (!showFileSection && !error && !hasNotes && !notesLoading && !hasAgents && !hasSkills) {
+    return null
+  }
 
   // Compute breadcrumb relative to workingDir for list mode; search mode shows
   // the working dir basename.
   const breadcrumb = computeBreadcrumb(workingDir, dirPath, mode)
   const showNoteSection = hasNotes || (noteCapable && notesLoading)
+  const showAgentSection = agentCapable && hasAgents
   const showSkillSection = skillCapable && hasSkills
   const sectionHeaderClass =
     "flex items-center gap-2 px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider"
@@ -237,6 +251,44 @@ export default function FileMentionMenu({
             <span className="text-[13px] truncate">{label}</span>
             <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground/50">
               @skill
+            </span>
+          </button>
+        )
+      })}
+
+      {/* ── Agent section (`@agent:<id>`) ── */}
+      {showAgentSection && (
+        <div
+          className={cn(
+            sectionHeaderClass,
+            ((showFileSection && hasFiles) || showNoteSection || showSkillSection) &&
+              "mt-1 border-t border-border/40 pt-1.5",
+          )}
+        >
+          <span className="truncate normal-case tracking-normal">
+            {t("settings.agents", "Agents")}
+          </span>
+        </div>
+      )}
+
+      {agentEntries.map((agent, a) => {
+        const flatIdx = entries.length + noteEntries.length + skillEntries.length + a
+        const isSelected = flatIdx === selectedIndex
+        return (
+          <button
+            key={`agent-${agent.id}`}
+            ref={isSelected ? selectedRef : undefined}
+            type="button"
+            role="option"
+            aria-selected={isSelected}
+            className={rowClass(isSelected)}
+            onClick={() => onSelectAgent(agent)}
+            onMouseEnter={() => onHover(flatIdx)}
+            title={agent.description ?? agent.id}
+          >
+            <AgentSelectDisplay agent={agent} size="sm" className="min-w-0 text-[13px]" />
+            <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground/50">
+              @agent
             </span>
           </button>
         )

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **输入框支持 @Agent 委派子智能体**：在对话输入框输入 `@` 时，Agent 候选会展示在文件 / 知识笔记 / 技能之后；选中后插入可视化 Agent 芯片，并在发送时把用户主动要求某个 Agent 执行任务的意图注入给模型，便于模型通过既有子智能体工具发起委派。
+
 ### Fixed
 
 - **MCP 配置编辑与热更新更可靠**：编辑 MCP server 时不再把界面中的 `<redacted>` 占位值写回覆盖真实 env / header / OAuth secret；服务名保持不可变，更新请求也不能改写已有 server id。禁用 / 重排 / 全局开关变更会即时同步到运行时，应用以 `mcpGlobal.enabled=false` 启动后再打开 MCP 也无需重启即可生效。

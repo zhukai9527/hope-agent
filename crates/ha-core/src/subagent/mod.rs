@@ -2,6 +2,7 @@ mod cancel;
 mod helpers;
 pub(crate) mod injection;
 mod mailbox;
+mod mention;
 pub(crate) mod queue;
 mod spawn;
 mod types;
@@ -198,6 +199,7 @@ fn stamp_run_killed(run_id: &str) {
 pub use cancel::SubagentCancelRegistry;
 pub use helpers::{cleanup_orphan_runs, mark_run_fetched, take_runs_fetched};
 pub use mailbox::{ChatSessionGuard, SUBAGENT_MAILBOX};
+pub(crate) use mention::resolve_inline_agent_mentions;
 pub use spawn::{spawn_subagent, HOOK_SPAWN_LABEL};
 pub use types::{SpawnParams, SubagentRun, SubagentStatus};
 
