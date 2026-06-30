@@ -2195,7 +2195,7 @@
     "inheritGlobal": "グローバルを継承",
     "memoriesInProject": "{{count}} 件のメモリ",
     "moveToProject": "プロジェクトへ移動",
-    "newChatInProject": "プロジェクトで新規セッション",
+    "newChatInProject": "新規セッション",
     "newProject": "新規プロジェクト",
     "noProjects": "プロジェクトはまだありません",
     "noSessionsHint": "クリックして最初のセッションを作成",

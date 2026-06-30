@@ -2195,7 +2195,7 @@
     "inheritGlobal": "Наследовать глобальные",
     "memoriesInProject": "{{count}} записей",
     "moveToProject": "Переместить в проект",
-    "newChatInProject": "Новая сессия в проекте",
+    "newChatInProject": "Новая сессия",
     "newProject": "Новый проект",
     "noProjects": "Проектов пока нет",
     "noSessionsHint": "Нажмите, чтобы создать первую сессию",

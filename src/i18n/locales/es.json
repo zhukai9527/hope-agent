@@ -2195,7 +2195,7 @@
     "inheritGlobal": "Heredar del global",
     "memoriesInProject": "{{count}} memoria",
     "moveToProject": "Mover a proyecto",
-    "newChatInProject": "Nueva sesión en el proyecto",
+    "newChatInProject": "Nueva sesión",
     "newProject": "Nuevo proyecto",
     "noProjects": "Aún no hay proyectos",
     "noSessionsHint": "Haz clic para crear la primera sesión",
