@@ -792,6 +792,9 @@ pub fn run() {
             commands::plan::get_plan_checkpoint,
             commands::plan::get_plan_file_path,
             commands::plan::cancel_plan_subagent,
+            // Coding loop policy
+            commands::coding_loop::get_coding_loop_mode,
+            commands::coding_loop::set_coding_loop_mode,
             // Workflow runs (Phase 2 durable coding workflows)
             commands::workflow::list_workflow_runs,
             commands::workflow::get_workflow_run,

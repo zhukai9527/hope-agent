@@ -8,6 +8,7 @@ pub mod background_jobs;
 pub mod browser;
 pub mod channel;
 pub mod chat;
+pub mod coding_loop;
 pub mod config;
 pub mod crash;
 pub mod cron;

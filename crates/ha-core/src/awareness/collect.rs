@@ -245,6 +245,7 @@ mod tests {
             is_cron: false,
             parent_session_id: None,
             plan_mode: crate::plan::PlanModeState::Off,
+            coding_loop_mode: crate::coding_loop::CodingLoopMode::Off,
             permission_mode: crate::permission::SessionMode::Default,
             sandbox_mode: crate::permission::SandboxMode::Off,
             channel_info: None,

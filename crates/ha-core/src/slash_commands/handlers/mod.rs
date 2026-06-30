@@ -123,7 +123,7 @@ pub async fn dispatch(
         "prompts" => Ok(utility::handle_prompts()),
         "context" => context::handle_context(session_id, agent_id, args).await,
         "workflow" => workflow::handle_workflow(session_db()?, session_id, args),
-        "loop" => workflow::handle_loop(args),
+        "loop" => workflow::handle_loop(session_db()?, session_id, args),
         "awareness" => awareness::handle_awareness(args),
         "imreply" => utility::handle_imreply(session_id, args).await,
         // `reasoning` is a silent alias for `reason` (only `reason` is in the

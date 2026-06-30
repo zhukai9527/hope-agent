@@ -77,7 +77,7 @@ const SESSION_META_SELECT: &str = "SELECT s.id, s.title, s.agent_id, s.provider_
            cc.channel_id, cc.account_id, cc.chat_id, cc.chat_type, cc.sender_name,
            s.working_dir, s.title_source, s.reasoning_effort, s.pinned_at, s.kind,
            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND s.is_cron = 0 AND s.parent_session_id IS NULL AND m.id > COALESCE(s.last_read_message_id, 0) AND m.role = 'assistant' AND COALESCE(m.source, 'desktop') = 'channel') as channel_unread_count,
-           s.sandbox_mode
+           s.sandbox_mode, s.coding_loop_mode
      FROM sessions s
      LEFT JOIN channel_conversations cc ON cc.session_id = s.id";
 
@@ -119,7 +119,8 @@ impl SessionDB {
                 incognito INTEGER NOT NULL DEFAULT 0,
                 title_source TEXT NOT NULL DEFAULT 'manual',
                 pinned_at TEXT,
-                kind TEXT NOT NULL DEFAULT 'regular'
+                kind TEXT NOT NULL DEFAULT 'regular',
+                coding_loop_mode TEXT NOT NULL DEFAULT 'off'
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -595,6 +596,18 @@ impl SessionDB {
                     )?;
                 }
             }
+        }
+
+        // Migration: persistent per-session coding loop policy
+        // (off | guarded | deep | autonomous). `/loop` writes this value and
+        // the system prompt reads it on every chat entry point.
+        let has_coding_loop_mode = conn
+            .prepare("SELECT coding_loop_mode FROM sessions LIMIT 1")
+            .is_ok();
+        if !has_coding_loop_mode {
+            conn.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN coding_loop_mode TEXT NOT NULL DEFAULT 'off';",
+            )?;
         }
 
         // Migration: optional sidebar pin timestamp. NULL means unpinned;
@@ -1207,6 +1220,7 @@ impl SessionDB {
             is_cron: false,
             parent_session_id: parent_session_id.map(|s| s.to_string()),
             plan_mode: crate::plan::PlanModeState::Off,
+            coding_loop_mode: crate::coding_loop::CodingLoopMode::Off,
             permission_mode: initial_permission_mode,
             sandbox_mode: initial_sandbox_mode,
             project_id: project_id.map(|s| s.to_string()),
@@ -1863,6 +1877,12 @@ impl SessionDB {
             plan_mode: row
                 .get::<_, String>(13)
                 .map(|s| crate::plan::PlanModeState::from_str(&s))
+                .unwrap_or_default(),
+            // Appended after sandbox_mode to keep existing locked positions
+            // stable.
+            coding_loop_mode: row
+                .get::<_, String>(29)
+                .map(|s| crate::coding_loop::CodingLoopMode::parse_or_default(&s))
                 .unwrap_or_default(),
             project_id: row.get(14)?,
             permission_mode: row
@@ -2694,6 +2714,44 @@ impl SessionDB {
             Err(e) => return Err(anyhow::anyhow!("DB error: {}", e)),
         };
         Ok(row.map(|s| crate::permission::SandboxMode::parse_or_default(&s)))
+    }
+
+    /// Persist the session coding loop policy (`off` / `guarded` / `deep` /
+    /// `autonomous`) so `/loop` survives refreshes and all chat entry points
+    /// inject the same behavior contract.
+    pub fn update_session_coding_loop_mode(
+        &self,
+        session_id: &str,
+        mode: crate::coding_loop::CodingLoopMode,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE sessions SET coding_loop_mode = ?1, updated_at = ?2 WHERE id = ?3",
+            params![mode.as_str(), now, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Narrow read of just `sessions.coding_loop_mode`.
+    pub fn get_session_coding_loop_mode(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::coding_loop::CodingLoopMode>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare("SELECT coding_loop_mode FROM sessions WHERE id = ?1")?;
+        let row = match stmt.query_row(params![session_id], |row| row.get::<_, String>(0)) {
+            Ok(s) => Some(s),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(anyhow::anyhow!("DB error: {}", e)),
+        };
+        Ok(row.map(|s| crate::coding_loop::CodingLoopMode::parse_or_default(&s)))
     }
 
     /// Persist the session-scoped incognito mode flag.
@@ -4292,6 +4350,40 @@ mod tests {
     }
 
     #[test]
+    fn session_coding_loop_mode_round_trips() {
+        let db_path = temp_db_path("session-coding-loop-mode");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+        let session = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .expect("create session");
+
+        assert_eq!(
+            db.get_session_coding_loop_mode(&session.id)
+                .expect("read default loop mode"),
+            Some(crate::coding_loop::CodingLoopMode::Off)
+        );
+
+        db.update_session_coding_loop_mode(&session.id, crate::coding_loop::CodingLoopMode::Deep)
+            .expect("update coding loop mode");
+
+        assert_eq!(
+            db.get_session_coding_loop_mode(&session.id)
+                .expect("read updated loop mode"),
+            Some(crate::coding_loop::CodingLoopMode::Deep)
+        );
+        assert_eq!(
+            db.get_session(&session.id)
+                .expect("get session")
+                .expect("session exists")
+                .coding_loop_mode,
+            crate::coding_loop::CodingLoopMode::Deep
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn sessions_table_includes_incognito_column() {
         let db_path = temp_db_path("session-incognito-schema");
         let db = SessionDB::open(&db_path).expect("open session db");
@@ -4719,6 +4811,11 @@ mod tests {
             conn.prepare("SELECT sandbox_mode FROM sessions LIMIT 1")
                 .is_ok(),
             "expected sandbox_mode column to be added during migration"
+        );
+        assert!(
+            conn.prepare("SELECT coding_loop_mode FROM sessions LIMIT 1")
+                .is_ok(),
+            "expected coding_loop_mode column to be added during migration"
         );
 
         let mut stmt = conn

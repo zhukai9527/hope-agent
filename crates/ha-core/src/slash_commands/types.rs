@@ -232,7 +232,7 @@ impl SlashCommandDef {
             "recap" => "Generate a deep analysis recap report",
             "context" => "Show context window breakdown",
             "workflow" => "Inspect and control workflow runs",
-            "loop" => "Set the coding loop mode for the next turn",
+            "loop" => "Set the persistent coding loop mode",
             "awareness" => "Toggle behavior awareness",
             "imreply" => "Set IM reply mode (split|final|preview)",
             "reason" => "Toggle whether the model's thinking is shown in IM messages",

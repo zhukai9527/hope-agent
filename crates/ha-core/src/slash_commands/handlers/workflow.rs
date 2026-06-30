@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::coding_loop::CodingLoopMode;
 use crate::session::SessionDB;
 use crate::slash_commands::types::{CommandAction, CommandResult};
 use crate::workflow::{WorkflowOp, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState};
@@ -35,25 +36,36 @@ pub fn handle_workflow(
     }
 }
 
-pub fn handle_loop(args: &str) -> Result<CommandResult, String> {
+pub fn handle_loop(
+    session_db: &Arc<SessionDB>,
+    session_id: Option<&str>,
+    args: &str,
+) -> Result<CommandResult, String> {
+    let sid = session_id.ok_or("No active session")?;
     let mode = args.split_whitespace().next().unwrap_or("status");
     match mode {
-        "" | "status" => Ok(display_only(
-            "Loop modes: `off`, `guarded`, `deep`, `autonomous`.\n\
-             Use `/loop guarded` to ask the agent to use a guarded coding loop for subsequent work.",
-        )),
+        "" | "status" => {
+            let current = session_db
+                .get_session_coding_loop_mode(sid)
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default();
+            Ok(display_only(format!(
+                "Current coding loop mode: **{}** (`{}`).\n\nModes: `off`, `guarded`, `deep`, `autonomous`.\nUse `/loop guarded` to persist a guarded coding loop policy for this session.",
+                current.label(),
+                current.as_str()
+            )))
+        }
         "off" | "guarded" | "deep" | "autonomous" => {
-            let message = format!(
-                "Set coding loop mode to `{}` for this session. Apply it to subsequent coding work: choose workflow/script execution only when it improves stability, keep approvals and validation visible, and report any mode-specific limits before acting.",
-                mode
-            );
-            Ok(CommandResult {
-                content: format!(
-                    "Loop mode request sent to the agent: `{}`.\n\nThis is a session instruction for the next turn; persistent loop-policy storage is not enabled yet.",
-                    mode
-                ),
-                action: Some(CommandAction::PassThrough { message }),
-            })
+            let parsed = CodingLoopMode::from_str(mode)
+                .ok_or_else(|| "Usage: /loop [off|guarded|deep|autonomous|status]".to_string())?;
+            session_db
+                .update_session_coding_loop_mode(sid, parsed)
+                .map_err(|e| e.to_string())?;
+            Ok(display_only(format!(
+                "Coding loop mode for this session is now **{}** (`{}`).\n\nThe policy is persisted and will be injected into subsequent system prompts.",
+                parsed.label(),
+                parsed.as_str()
+            )))
         }
         _ => Err("Usage: /loop [off|guarded|deep|autonomous|status]".into()),
     }
