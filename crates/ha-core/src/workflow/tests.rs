@@ -4,11 +4,12 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use crate::async_jobs::{BackgroundJob, JobKind, JobOrigin, JobStatus, JobsDB};
 use crate::permission::SessionMode;
+use crate::provider::{ActiveModel, ApiType, ModelConfig, ProviderConfig};
 use crate::session::SessionDB;
 use crate::subagent::{SubagentRun, SubagentStatus};
 
 use super::{
-    recover_pending_workflow_runs, run_workflow_script,
+    recover_pending_workflow_runs, run_workflow_script, run_workflow_script_async,
     runtime::{
         ask_user_tool_args, spawn_agent_tool_args, validation_exit_code, wait_all_tool_args,
     },
@@ -106,6 +107,54 @@ fn write_workflow_spawn_agent(
         serde_json::to_string(&cfg).expect("serialize agent config"),
     )
     .expect("write agent config");
+}
+
+fn phase2_mock_model_config(id: &str) -> ModelConfig {
+    ModelConfig {
+        id: id.to_string(),
+        name: id.to_string(),
+        input_types: vec!["text".to_string()],
+        context_window: 128_000,
+        max_tokens: 8192,
+        reasoning: false,
+        thinking_style: None,
+        cost_input: 0.0,
+        cost_output: 0.0,
+    }
+}
+
+fn phase2_openai_chat_sse(text: &str) -> String {
+    format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "choices": [{
+                "delta": { "content": text }
+            }]
+        }),
+        json!({
+            "choices": [{
+                "delta": {}
+            }],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 5
+            }
+        })
+    )
+}
+
+struct ConfigCacheRestore(crate::config::AppConfig);
+
+impl Drop for ConfigCacheRestore {
+    fn drop(&mut self) {
+        crate::config::replace_cache_for_test(self.0.clone());
+    }
+}
+
+fn replace_config_cache_for_test(config: crate::config::AppConfig) -> ConfigCacheRestore {
+    let previous = (*crate::config::cached_config()).clone();
+    crate::config::replace_cache_for_test(config);
+    ConfigCacheRestore(previous)
 }
 
 fn insert_completed_async_job(job_id: &str, session_id: &str, output: &str) {
@@ -1136,7 +1185,14 @@ export default async function main(workflow) {
         .collect();
     assert_eq!(
         op_types,
-        vec!["task.create", "tool:write", "diff", "validate", "task.update", "finish"]
+        vec![
+            "task.create",
+            "tool:write",
+            "diff",
+            "validate",
+            "task.update",
+            "finish"
+        ]
     );
     assert!(result
         .snapshot
@@ -1363,7 +1419,10 @@ export default async function main(workflow) {
 
     let result = run_workflow_script(db.clone(), &run.id).expect("run workflow script");
     assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
-    assert_eq!(result.output, Some(json!({ "first": false, "second": false })));
+    assert_eq!(
+        result.output,
+        Some(json!({ "first": false, "second": false }))
+    );
 
     let events = db
         .list_workflow_events(&run.id, 20)
@@ -1918,6 +1977,166 @@ export default async function main(workflow) {
             registry.remove(child_run_id);
         }
     });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn phase2_eval_parallel_spawn_agents_complete_with_mock_model_response() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let _guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let (root, db) = workflow_spawn_global_env();
+
+    crate::test_support::with_env_vars_async(&[("HA_DATA_DIR", root.path())], || async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(phase2_openai_chat_sse("mock reviewer completed")),
+            )
+            .mount(&server)
+            .await;
+
+        let unique = uuid::Uuid::new_v4().simple().to_string();
+        let parent_agent = format!("ha-phase2-main-{unique}");
+        let child_agent = format!("ha-phase2-review-{unique}");
+        let provider_id = format!("phase2-openai-chat-{unique}");
+        let model_id = "phase2-mock-review";
+        let model_ref = format!("{provider_id}::{model_id}");
+
+        write_workflow_spawn_agent(&parent_agent, |cfg| {
+            cfg.subagents.max_concurrent = 2;
+            cfg.subagents.allowed_agents = vec![child_agent.clone()];
+        });
+        write_workflow_spawn_agent(&child_agent, |cfg| {
+            cfg.model.primary = Some(model_ref.clone());
+            cfg.subagents.denied_agents = vec![child_agent.clone()];
+        });
+
+        let mut provider = ProviderConfig::new(
+            "Phase2 Mock OpenAI Chat".to_string(),
+            ApiType::OpenaiChat,
+            server.uri(),
+            "test-key".to_string(),
+        );
+        provider.id = provider_id.clone();
+        provider.models.push(phase2_mock_model_config(model_id));
+
+        let mut config = crate::config::AppConfig::default();
+        config.providers = vec![provider];
+        config.active_model = Some(ActiveModel {
+            provider_id,
+            model_id: model_id.to_string(),
+        });
+        let _config_restore = replace_config_cache_for_test(config);
+
+        let parent = db
+            .create_session(&parent_agent)
+            .expect("create parent workflow session");
+        let _busy_parent_guard = crate::subagent::ChatSessionGuard::new(&parent.id);
+        let script = format!(
+            r#"
+export default async function main(workflow) {{
+  const task = await workflow.task.create({{ title: "Parallel mock review" }});
+  const first = await workflow.spawnAgent({{
+    task: "Review API surface A",
+    agent: "{child_agent}",
+    label: "review-a"
+  }});
+  const second = await workflow.spawnAgent({{
+    task: "Review API surface B",
+    agent: "{child_agent}",
+    label: "review-b"
+  }});
+  const waited = await workflow.waitAll([first, second], {{ waitTimeout: 8 }});
+  await workflow.task.update({{ task, status: "completed" }});
+  await workflow.finish({{
+    allCompleted: waited.allCompleted,
+    statuses: waited.runs.map((run) => run.status),
+    results: waited.runs.map((run) => run.result_preview),
+    runIds: waited.runs.map((run) => run.runId)
+  }});
+}}
+"#,
+        );
+        let run = db
+            .create_workflow_run(CreateWorkflowRunInput {
+                session_id: parent.id.clone(),
+                kind: "coding.workflow".to_string(),
+                loop_mode: "guarded".to_string(),
+                script_source: script,
+                budget: json!({ "max_script_secs": 15, "max_ops": 10 }),
+            })
+            .expect("create workflow run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+            .expect("start workflow run");
+
+        let result = run_workflow_script_async(db.clone(), &run.id)
+            .await
+            .expect("run workflow script");
+        assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+
+        let output = result.output.as_ref().expect("workflow output");
+        assert_eq!(output.get("allCompleted"), Some(&json!(true)));
+        assert_eq!(
+            output.get("statuses"),
+            Some(&json!(["completed", "completed"]))
+        );
+        assert_eq!(
+            output.get("results"),
+            Some(&json!([
+                "mock reviewer completed",
+                "mock reviewer completed"
+            ]))
+        );
+
+        let run_ids = output
+            .get("runIds")
+            .and_then(Value::as_array)
+            .expect("run ids");
+        assert_eq!(run_ids.len(), 2);
+        for run_id in run_ids {
+            let run_id = run_id.as_str().expect("run id string");
+            let child = db
+                .get_subagent_run(run_id)
+                .expect("read child run")
+                .expect("child run exists");
+            assert_eq!(child.status, SubagentStatus::Completed);
+            assert_eq!(child.result.as_deref(), Some("mock reviewer completed"));
+            assert_eq!(child.model_used.as_deref(), Some(model_ref.as_str()));
+        }
+
+        let spawn_ops = result
+            .snapshot
+            .ops
+            .iter()
+            .filter(|op| op.op_type == "spawnAgent")
+            .count();
+        assert_eq!(spawn_ops, 2);
+        let wait_op = result
+            .snapshot
+            .ops
+            .iter()
+            .find(|op| op.op_type == "waitAll")
+            .expect("waitAll op");
+        assert_eq!(wait_op.state, WorkflowOpState::Completed);
+
+        drop(_busy_parent_guard);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let requests = server
+            .received_requests()
+            .await
+            .expect("received mock provider requests");
+        assert_eq!(
+            requests.len(),
+            2,
+            "only the two child model calls should reach the mock provider"
+        );
+    })
+    .await;
 }
 
 #[test]

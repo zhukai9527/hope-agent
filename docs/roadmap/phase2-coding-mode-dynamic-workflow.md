@@ -843,7 +843,7 @@ stop reason if any
 
 ### Phase 2.1：Hope-native coding skills MVP
 
-状态：2026-06-30 已新增首批 5 个 `ha-*` native coding skills；Phase 2 无 LLM 回归验收已覆盖 5 个核心场景，详见 [Phase 2 Eval 验收报告](phase2-eval-report.md)。真实 provider 回复型 fan-out 仍作为人工 smoke gate。
+状态：2026-06-30 已新增首批 5 个 `ha-*` native coding skills；Phase 2 无外部 LLM 回归验收已覆盖 6 个核心场景，详见 [Phase 2 Eval 验收报告](phase2-eval-report.md)。真实模型回复型 fan-out 已用本地 mock provider 自动覆盖，外部真实 provider smoke 只作为体验抽检。
 
 先写：
 
@@ -912,7 +912,7 @@ stop reason if any
 
 ### Phase 2.5：Embedded script runtime MVP
 
-状态：2026-06-30 已落 QuickJS/rquickjs runtime foundation：`workflow.js` 受控执行、`export default main(workflow)` 入口、无 raw fs/network/process/env host binding、memory/stack/timeout guard、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 `main/op#N(api)`、`task.create/update`（handle 定位）/ `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent` / `waitAll` / `validate`（async exec job attach）/ `askUser` / `diff` / `trace` / `finish` 首批 host API、Completed op replay、Started non-idempotent op fail-closed Blocked、Primary-only startup recovery runner。无 LLM 单测覆盖脚本执行、Script Gate 执行前阻断、动态 `Math.random` 访问被 runtime 阻断、已完成 `task.create` replay 不重复建 task、`workflow.map` 已物化 fan-out 列表并生成 `map/item#i/op#N` 嵌套位置键，`read/grep/tool` 经 `execute_tool_with_context` 桥接、`workflow.spawnAgent` / `workflow.waitAll` 经现有 `subagent` 工具桥接且 completed replay 不重复调度、`spawnAgent` 预分配 child_handle 并可在 started replay 时 attach / 缺 row 则同 handle 重试，新增真实工具路径 E2E 覆盖 `workflow.spawnAgent -> subagent tool -> spawn_subagent_with_run_id -> subagent_runs/background_jobs`（通过并发上限稳定停在 Queued，避免真实 LLM 调用）、`workflow.validate` 预分配 async job child_handle、可在 started replay 时 attach / 缺 row 同 job id 重试，并返回结构化 validation 结果、显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle、started replay 可 attach 既有 job / 缺 row 同 job id 重试、`workflow.askUser` 复用既有 ask-user 工具且无人值守 surface 先 fail-closed / 按配置 proceed、`workflow.diff` 返回 session workspace 的 git diff snapshot、`Started` 的 `tool:exec` 不盲目重跑、recovery runner CAS claim 后 replay 且不抢已 claim run，startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；执行前 permission preview 第一版已落：创建 run 记录 `script_permission_preview`，Draft 执行前对静态 workflow host call 复用 permission engine 预览，动态工具调用先转 `awaiting_approval`，owner `approve_workflow_run` 后继续；Workspace Panel 已接入 workflow run 列表 / trace 摘要 / approve / pause / resume / cancel，并补 Trace / Validation / Agents 三视图；slash command 已接 `/workflow status|trace|approve|pause|resume|cancel`；`/loop off|guarded|deep|autonomous` 已升级为持久化 session policy（`sessions.coding_loop_mode` + Tauri/HTTP owner API + system prompt 注入）；guarded repair stop guard 已落地（validation failure repair event、重复 fingerprint / 无有效 diff 进展 → Blocked）。真实模型回复型子代理 fan-out 不进普通单测，作为人工 smoke/eval gate 记录。
+状态：2026-06-30 已落 QuickJS/rquickjs runtime foundation：`workflow.js` 受控执行、`export default main(workflow)` 入口、无 raw fs/network/process/env host binding、memory/stack/timeout guard、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 `main/op#N(api)`、`task.create/update`（handle 定位）/ `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent` / `waitAll` / `validate`（async exec job attach）/ `askUser` / `diff` / `trace` / `finish` 首批 host API、Completed op replay、Started non-idempotent op fail-closed Blocked、Primary-only startup recovery runner。无外部 LLM 单测覆盖脚本执行、Script Gate 执行前阻断、动态 `Math.random` 访问被 runtime 阻断、已完成 `task.create` replay 不重复建 task、`workflow.map` 已物化 fan-out 列表并生成 `map/item#i/op#N` 嵌套位置键，`read/grep/tool` 经 `execute_tool_with_context` 桥接、`workflow.spawnAgent` / `workflow.waitAll` 经现有 `subagent` 工具桥接且 completed replay 不重复调度、`spawnAgent` 预分配 child_handle 并可在 started replay 时 attach / 缺 row 则同 handle 重试，新增真实工具路径 E2E 覆盖 `workflow.spawnAgent -> subagent tool -> spawn_subagent_with_run_id -> subagent_runs/background_jobs`（通过并发上限稳定停在 Queued，证明 durable spawn / projection），并新增 mock-provider 回复型 fan-out E2E 覆盖 `workflow.spawnAgent -> child run_chat_engine -> OpenAI Chat provider adapter -> waitAll`（两个子 Agent 均完成并汇总结果）、`workflow.validate` 预分配 async job child_handle、可在 started replay 时 attach / 缺 row 同 job id 重试，并返回结构化 validation 结果、显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle、started replay 可 attach 既有 job / 缺 row 同 job id 重试、`workflow.askUser` 复用既有 ask-user 工具且无人值守 surface 先 fail-closed / 按配置 proceed、`workflow.diff` 返回 session workspace 的 git diff snapshot、`Started` 的 `tool:exec` 不盲目重跑、recovery runner CAS claim 后 replay 且不抢已 claim run，startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；执行前 permission preview 第一版已落：创建 run 记录 `script_permission_preview`，Draft 执行前对静态 workflow host call 复用 permission engine 预览，动态工具调用先转 `awaiting_approval`，owner `approve_workflow_run` 后继续；Workspace Panel 已接入 workflow run 列表 / trace 摘要 / approve / pause / resume / cancel，并补 Trace / Validation / Agents 三视图；slash command 已接 `/workflow status|trace|approve|pause|resume|cancel`；`/loop off|guarded|deep|autonomous` 已升级为持久化 session policy（`sessions.coding_loop_mode` + Tauri/HTTP owner API + system prompt 注入）；guarded repair stop guard 已落地（validation failure repair event、重复 fingerprint / 无有效 diff 进展 → Blocked）。外部真实 provider smoke 只作为体验抽检，不再是实现完成的唯一证据。
 
 实现：
 
@@ -1072,7 +1072,7 @@ Phase 2 完成时，应满足：
 5. 长任务 UI 能展示当前状态、任务、子代理、验证、失败原因。
 6. guarded repair loop 有停止条件。
 7. 不绕过 permission / hooks / async jobs / subagent / task。
-8. 通过至少 5 个 coding eval 场景，并接 [Phase 0 baseline](coding-eval.md) 不回归：
+8. 通过至少 6 个 coding eval 场景，并接 [Phase 0 baseline](coding-eval.md) 不回归：
    - parallel review
    - debug with failing test
    - feature implementation
@@ -1089,5 +1089,5 @@ Phase 2 完成时，应满足：
 4. ~~实现 Plan Gate / Script Gate 的纯函数和 fixture~~ → 已接入 Plan Gate，Script Gate 等 runtime 入口落地后执行。
 5. ~~实现 durable store + 状态机（无 JS，纯函数 + fixture，[runtime §14](workflow-script-runtime.md)）~~ → 已新增 durable store、owner API、状态机与无 LLM 单测。
 6. ~~进入 embedded runtime 代码实现~~ → 已落 QuickJS runtime foundation 与同步首批 host API。
-7. ~~接剩余 async host bridge 的真实工具路径证据~~ → 已补 `workflow.spawnAgent` 经真实 subagent tool 的 E2E 单测；真实模型回复型 fan-out 进入人工 smoke/eval gate。
+7. ~~接剩余 async host bridge 的真实工具路径证据~~ → 已补 `workflow.spawnAgent` 经真实 subagent tool 的 E2E 单测，并补 mock-provider 回复型 fan-out E2E（两个子 Agent 真实跑过 `run_chat_engine` + OpenAI Chat adapter 后由 `waitAll` 汇总）。
 8. ~~补 Workflow Panel / `/workflow trace` / `/loop` 前端控制面~~ → 已接 Workspace Panel + `/workflow` slash + 持久化 `/loop` policy，并补 Trace / Validation / Agents tabs。

@@ -1202,19 +1202,11 @@ impl WorkflowRuntimeHost {
             (event.event_type == REPAIR_VALIDATION_FAILED_EVENT).then_some(event)
         });
         let same_validation = previous_failed.is_some_and(|event| {
-            event
-                .payload
-                .get("fingerprint")
-                .and_then(Value::as_str)
-                == Some(fingerprint.as_str())
+            event.payload.get("fingerprint").and_then(Value::as_str) == Some(fingerprint.as_str())
         });
         let no_effective_diff = diff_hash.as_ref().is_some_and(|hash| {
             previous_failed.is_some_and(|event| {
-                event
-                    .payload
-                    .get("diffHash")
-                    .and_then(Value::as_str)
-                    == Some(hash.as_str())
+                event.payload.get("diffHash").and_then(Value::as_str) == Some(hash.as_str())
             })
         });
         let stop_reason = if same_validation {
@@ -1241,9 +1233,11 @@ impl WorkflowRuntimeHost {
         )?;
 
         if let Some(reason) = stop_reason {
-            let _ = self
-                .db
-                .transition_workflow_run(&self.run_id, WorkflowRunState::Blocked, Some(reason))?;
+            let _ = self.db.transition_workflow_run(
+                &self.run_id,
+                WorkflowRunState::Blocked,
+                Some(reason),
+            )?;
             return Err(anyhow!(
                 "workflow guarded repair stopped after validation failure: {reason}"
             ));
@@ -1265,11 +1259,7 @@ impl WorkflowRuntimeHost {
                 matches!(
                     event.event_type.as_str(),
                     REPAIR_VALIDATION_FAILED_EVENT | REPAIR_VALIDATION_PASSED_EVENT
-                ) && event
-                    .payload
-                    .get("opKey")
-                    .and_then(Value::as_str)
-                    == Some(op_key)
+                ) && event.payload.get("opKey").and_then(Value::as_str) == Some(op_key)
             }))
     }
 
@@ -1286,11 +1276,7 @@ impl WorkflowRuntimeHost {
                 matches!(
                     event.event_type.as_str(),
                     REPAIR_VALIDATION_FAILED_EVENT | REPAIR_VALIDATION_PASSED_EVENT
-                ) && event
-                    .payload
-                    .get("opKey")
-                    .and_then(Value::as_str)
-                    != Some(op_key)
+                ) && event.payload.get("opKey").and_then(Value::as_str) != Some(op_key)
             }))
     }
 
