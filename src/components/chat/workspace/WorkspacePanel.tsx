@@ -17,6 +17,7 @@ import {
   Copy,
   Cpu,
   Database,
+  Eye,
   EyeOff,
   FileText,
   Files,
@@ -49,6 +50,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { AnimatedCollapse } from "@/components/ui/animated-presence"
 import { IconTip } from "@/components/ui/tooltip"
 import { basename } from "@/lib/path"
@@ -1244,6 +1246,32 @@ function compactJson(value: unknown, fallback: string): string {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function stringField(record: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = record?.[key]
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function numberField(record: Record<string, unknown> | null | undefined, key: string): number | null {
+  const value = record?.[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function boolField(record: Record<string, unknown> | null | undefined, key: string): boolean | null {
+  const value = record?.[key]
+  return typeof value === "boolean" ? value : null
+}
+
+function arrayField(record: Record<string, unknown> | null | undefined, key: string): unknown[] {
+  const value = record?.[key]
+  return Array.isArray(value) ? value : []
+}
+
 function truncateMiddle(value: string, max = 96): string {
   if (value.length <= max) return value
   const head = Math.max(8, Math.floor((max - 1) * 0.58))
@@ -1275,10 +1303,12 @@ function WorkflowRunsSection({
   sessionId,
   incognito,
   turnActive,
+  onViewSubagentSession,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
+  onViewSubagentSession?: (sessionId: string) => void
 }) {
   const { t } = useTranslation()
   const { runs, activeCount, loading, error, refresh } = useWorkflowRuns(sessionId, {
@@ -1289,6 +1319,7 @@ function WorkflowRunsSection({
   const [snapshot, setSnapshot] = useState<WorkflowRunSnapshot | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [actionKey, setActionKey] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<"trace" | "validation" | "agents">("trace")
   const snapshotReqRef = useRef(0)
 
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null
@@ -1464,6 +1495,8 @@ function WorkflowRunsSection({
 
   const latestEvent = snapshot?.events.at(-1)
   const detailRun = snapshot?.run ?? selectedRun
+  const validationCount = snapshot?.ops.filter((op) => op.opType === "validate").length ?? 0
+  const agentCount = snapshot?.ops.filter((op) => op.opType === "spawnAgent").length ?? 0
 
   return (
     <WorkspaceSection
@@ -1551,21 +1584,55 @@ function WorkflowRunsSection({
                     ) : null}
                   </div>
 
-                  {snapshot.ops.length > 0 ? (
-                    <div className="space-y-0.5">
-                      {snapshot.ops.slice(0, WORKFLOW_OP_PREVIEW).map((op) => (
-                        <WorkflowOpRow key={op.id} op={op} />
-                      ))}
-                    </div>
-                  ) : null}
+                  <Tabs
+                    value={detailTab}
+                    onValueChange={(value) => setDetailTab(value as "trace" | "validation" | "agents")}
+                    className="space-y-1.5"
+                  >
+                    <TabsList className="grid h-8 w-full grid-cols-3">
+                      <TabsTrigger value="trace" className="text-[11px]">
+                        {t("workspace.workflow.tabTrace", "Trace")}
+                      </TabsTrigger>
+                      <TabsTrigger value="validation" className="text-[11px]">
+                        {t("workspace.workflow.tabValidation", "Validation")}
+                        {validationCount > 0 ? (
+                          <span className="ml-1 text-[10px] text-muted-foreground">{validationCount}</span>
+                        ) : null}
+                      </TabsTrigger>
+                      <TabsTrigger value="agents" className="text-[11px]">
+                        {t("workspace.workflow.tabAgents", "Agents")}
+                        {agentCount > 0 ? (
+                          <span className="ml-1 text-[10px] text-muted-foreground">{agentCount}</span>
+                        ) : null}
+                      </TabsTrigger>
+                    </TabsList>
 
-                  {snapshot.events.length > 0 ? (
-                    <div className="space-y-0.5">
-                      {snapshot.events.slice(-WORKFLOW_EVENT_PREVIEW).map((event) => (
-                        <WorkflowEventRow key={event.id} event={event} />
-                      ))}
-                    </div>
-                  ) : null}
+                    <TabsContent value="trace" className="mt-0 space-y-1.5">
+                      {snapshot.ops.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {snapshot.ops.slice(0, WORKFLOW_OP_PREVIEW).map((op) => (
+                            <WorkflowOpRow key={op.id} op={op} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {snapshot.events.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {snapshot.events.slice(-WORKFLOW_EVENT_PREVIEW).map((event) => (
+                            <WorkflowEventRow key={event.id} event={event} />
+                          ))}
+                        </div>
+                      ) : null}
+                    </TabsContent>
+
+                    <TabsContent value="validation" className="mt-0">
+                      <WorkflowValidationTab snapshot={snapshot} />
+                    </TabsContent>
+
+                    <TabsContent value="agents" className="mt-0">
+                      <WorkflowAgentsTab snapshot={snapshot} onViewSubagentSession={onViewSubagentSession} />
+                    </TabsContent>
+                  </Tabs>
                 </div>
               ) : (
                 <EmptyHint>{t("workspace.workflow.emptyTrace", "暂无 trace")}</EmptyHint>
@@ -1605,6 +1672,170 @@ function WorkflowEventRow({ event }: { event: WorkflowEvent }) {
         <span className="max-w-[38%] shrink-0 truncate">{formatMessageTime(event.createdAt)}</span>
       </div>
     </IconTip>
+  )
+}
+
+function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) {
+  const { t } = useTranslation()
+  const validationOps = snapshot.ops.filter((op) => op.opType === "validate")
+  if (validationOps.length === 0) {
+    return <EmptyHint>{t("workspace.workflow.noValidation", "暂无验证记录")}</EmptyHint>
+  }
+
+  const repairEventsByOp = new Map<string, WorkflowEvent>()
+  for (const event of snapshot.events) {
+    if (
+      event.eventType !== "guarded_repair_validation_failed" &&
+      event.eventType !== "guarded_repair_validation_passed"
+    ) {
+      continue
+    }
+    const payload = asRecord(event.payload)
+    const opKey = stringField(payload, "opKey")
+    if (opKey) repairEventsByOp.set(opKey, event)
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {validationOps.map((op) => {
+        const output = asRecord(op.output)
+        const error = asRecord(op.error)
+        const repairEvent = repairEventsByOp.get(op.opKey)
+        const repairPayload = asRecord(repairEvent?.payload)
+        const ok = boolField(output, "ok")
+        const results = arrayField(output, "results")
+        const firstResult = asRecord(results[0])
+        const command = stringField(firstResult, "command")
+        const exitCode = numberField(firstResult, "exitCode")
+        const stopReason = stringField(repairPayload, "stopReason")
+        const summary =
+          stringField(output, "summary") ??
+          stringField(repairPayload, "summary") ??
+          stringField(error, "message") ??
+          op.state
+        const failed = numberField(repairPayload, "failed")
+        const total = numberField(repairPayload, "total") ?? results.length
+        const tone =
+          stopReason || ok === false || op.state === "failed" ? "danger" : ok === true ? "good" : "info"
+
+        return (
+          <IconTip key={op.id} label={compactJson(op.output ?? op.error ?? op.input, op.opKey)}>
+            <div className="rounded-md px-2 py-1.5 text-xs hover:bg-secondary/35">
+              <div className="flex min-w-0 items-center gap-2">
+                {tone === "good" ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                ) : tone === "danger" ? (
+                  <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                ) : (
+                  <Radio className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                )}
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/85">
+                  {op.opKey}
+                </span>
+                <StatusPill
+                  label={ok === true ? t("workspace.workflow.validationPassed", "通过") : ok === false ? t("workspace.workflow.validationFailed", "失败") : op.state}
+                  tone={tone}
+                  loading={op.state === "started"}
+                />
+              </div>
+              <div className="mt-1 min-w-0 space-y-0.5 pl-5 text-[11px] text-muted-foreground">
+                <div className="truncate">{summary}</div>
+                {typeof failed === "number" || total > 0 ? (
+                  <div className="tabular-nums">
+                    {t("workspace.workflow.validationCount", "{{failed}}/{{total}} failed", {
+                      failed: failed ?? (ok === false ? 1 : 0),
+                      total,
+                    })}
+                  </div>
+                ) : null}
+                {command ? (
+                  <div className="truncate font-mono">
+                    {command}
+                    {typeof exitCode === "number" ? ` · exit ${exitCode}` : ""}
+                  </div>
+                ) : null}
+                {stopReason ? (
+                  <div className="truncate text-destructive">
+                    {t("workspace.workflow.stopReason", "停止")} · {stopReason}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </IconTip>
+        )
+      })}
+    </div>
+  )
+}
+
+function WorkflowAgentsTab({
+  snapshot,
+  onViewSubagentSession,
+}: {
+  snapshot: WorkflowRunSnapshot
+  onViewSubagentSession?: (sessionId: string) => void
+}) {
+  const { t } = useTranslation()
+  const agentOps = snapshot.ops.filter((op) => op.opType === "spawnAgent")
+  if (agentOps.length === 0) {
+    return <EmptyHint>{t("workspace.workflow.noAgents", "暂无子 Agent 记录")}</EmptyHint>
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {agentOps.map((op) => {
+        const output = asRecord(op.output)
+        const input = asRecord(op.input)
+        const runId = stringField(output, "runId") ?? stringField(output, "run_id") ?? op.childHandle ?? null
+        const sessionId = stringField(output, "sessionId")
+        const label = stringField(output, "label") ?? stringField(input, "label")
+        const task = stringField(output, "task")
+        const status = stringField(output, "status") ?? op.state
+        const tone =
+          status === "completed" || status === "success"
+            ? "good"
+            : status === "failed" || status === "cancelled" || op.state === "failed"
+              ? "danger"
+              : status === "queued" || status === "running" || status === "spawned"
+                ? "info"
+                : "muted"
+
+        return (
+          <IconTip key={op.id} label={compactJson(op.output ?? op.input, op.opKey)}>
+            <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-secondary/35">
+              <Bot className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 truncate font-mono text-[11px] text-foreground/85">
+                    {label ?? runId ?? op.opKey}
+                  </span>
+                  <StatusPill label={status} tone={tone} loading={status === "running" || op.state === "started"} />
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {task ? `${task} · ` : ""}
+                  {runId ? truncateMiddle(runId, 72) : op.opKey}
+                </div>
+              </div>
+              {sessionId && onViewSubagentSession ? (
+                <IconTip label={t("workspace.workflow.openAgentSession", "打开子会话")}>
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground transition-colors hover:bg-secondary/65 hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onViewSubagentSession(sessionId)
+                    }}
+                    aria-label={t("workspace.workflow.openAgentSession", "打开子会话")}
+                  >
+                    <Eye className="h-3 w-3" />
+                  </button>
+                </IconTip>
+              ) : null}
+            </div>
+          </IconTip>
+        )
+      })}
+    </div>
   )
 }
 
@@ -1725,7 +1956,12 @@ export default function WorkspacePanel({
         )}
 
         {/* Workflow — 动态脚本 / loop run 的可观察、可暂停、可批准控制面。 */}
-        <WorkflowRunsSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
+        <WorkflowRunsSection
+          sessionId={sessionId}
+          incognito={incognito}
+          turnActive={turnActive}
+          onViewSubagentSession={onViewSubagentSession}
+        />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
         <BackgroundJobsSection

@@ -1059,6 +1059,169 @@ export default async function main(workflow) {
 }
 
 #[test]
+fn runtime_guarded_repair_blocks_repeated_validation_failure() {
+    let _async_guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let session = db.create_session("ha-main").expect("create session");
+    db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+        .expect("set working dir");
+    db.update_session_permission_mode(&session.id, SessionMode::Yolo)
+        .expect("set yolo mode");
+
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Repeated validation failure" });
+  await workflow.validate({ commands: ["printf repeated; exit 1"] });
+  await workflow.validate({ commands: ["printf repeated; exit 1"] });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ reached: true });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10 }),
+        })
+        .expect("create workflow run");
+    db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let _err = run_workflow_script(db.clone(), &run.id).expect_err("guarded repair must stop");
+
+    let run = db
+        .get_workflow_run(&run.id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Blocked);
+    assert_eq!(
+        run.blocked_reason.as_deref(),
+        Some("guarded_repair_same_validation_fingerprint")
+    );
+
+    let events = db
+        .list_workflow_events(&run.id, 20)
+        .expect("list workflow events");
+    let repair_events: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "guarded_repair_validation_failed")
+        .collect();
+    assert_eq!(repair_events.len(), 2);
+    assert_eq!(
+        repair_events[1]
+            .payload
+            .get("stopReason")
+            .and_then(Value::as_str),
+        Some("guarded_repair_same_validation_fingerprint")
+    );
+}
+
+#[test]
+fn runtime_guarded_repair_blocks_no_effective_diff_progress() {
+    let _async_guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    git(&workspace, &["init"]);
+
+    let session = db.create_session("ha-main").expect("create session");
+    db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+        .expect("set working dir");
+    db.update_session_permission_mode(&session.id, SessionMode::Yolo)
+        .expect("set yolo mode");
+
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "No diff progress" });
+  await workflow.validate({ commands: ["printf alpha; exit 1"] });
+  await workflow.validate({ commands: ["printf beta; exit 1"] });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ reached: true });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10 }),
+        })
+        .expect("create workflow run");
+    db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let _err = run_workflow_script(db.clone(), &run.id).expect_err("guarded repair must stop");
+
+    let run = db
+        .get_workflow_run(&run.id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Blocked);
+    assert_eq!(
+        run.blocked_reason.as_deref(),
+        Some("guarded_repair_no_effective_diff")
+    );
+}
+
+#[test]
+fn runtime_loop_mode_off_does_not_apply_repair_guard() {
+    let _async_guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let session = db.create_session("ha-main").expect("create session");
+    db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+        .expect("set working dir");
+    db.update_session_permission_mode(&session.id, SessionMode::Yolo)
+        .expect("set yolo mode");
+
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Loop off validation" });
+  const first = await workflow.validate({ commands: ["printf repeated; exit 1"] });
+  const second = await workflow.validate({ commands: ["printf repeated; exit 1"] });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ first: first.ok, second: second.ok });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "off".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10 }),
+        })
+        .expect("create workflow run");
+    db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let result = run_workflow_script(db.clone(), &run.id).expect("run workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+    assert_eq!(result.output, Some(json!({ "first": false, "second": false })));
+
+    let events = db
+        .list_workflow_events(&run.id, 20)
+        .expect("list workflow events");
+    assert!(!events
+        .iter()
+        .any(|event| event.event_type.starts_with("guarded_repair_")));
+}
+
+#[test]
 fn runtime_ask_user_fails_closed_on_unattended_surface() {
     let (_dir, db_raw) = temp_db();
     let db = Arc::new(db_raw);

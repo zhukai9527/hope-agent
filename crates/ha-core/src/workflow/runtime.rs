@@ -28,6 +28,11 @@ const DEFAULT_SCRIPT_TIMEOUT_SECS: u64 = 30;
 const MAX_SCRIPT_TIMEOUT_SECS: u64 = 300;
 const SCRIPT_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 const SCRIPT_STACK_LIMIT_BYTES: usize = 1024 * 1024;
+const REPAIR_VALIDATION_FAILED_EVENT: &str = "guarded_repair_validation_failed";
+const REPAIR_VALIDATION_PASSED_EVENT: &str = "guarded_repair_validation_passed";
+const REPAIR_SAME_VALIDATION_REASON: &str = "guarded_repair_same_validation_fingerprint";
+const REPAIR_NO_EFFECTIVE_DIFF_REASON: &str = "guarded_repair_no_effective_diff";
+const VALIDATION_FINGERPRINT_OUTPUT_BYTES: usize = 2048;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -276,6 +281,7 @@ fn execute_script(
             db.clone(),
             run.id.clone(),
             run.session_id.clone(),
+            run.loop_mode.clone(),
             session_context.clone(),
             tokio_handle.clone(),
         )));
@@ -679,6 +685,7 @@ struct WorkflowRuntimeHost {
     db: Arc<SessionDB>,
     run_id: String,
     session_id: String,
+    loop_mode: String,
     session_context: WorkflowSessionContext,
     tokio_handle: TokioHandle,
     op_scopes: Vec<WorkflowOpScope>,
@@ -690,11 +697,17 @@ struct WorkflowOpScope {
     next_op_index: usize,
 }
 
+struct ExecutedWorkflowOp {
+    op_key: String,
+    output: Value,
+}
+
 impl WorkflowRuntimeHost {
     fn new(
         db: Arc<SessionDB>,
         run_id: String,
         session_id: String,
+        loop_mode: String,
         session_context: WorkflowSessionContext,
         tokio_handle: TokioHandle,
     ) -> Self {
@@ -702,6 +715,7 @@ impl WorkflowRuntimeHost {
             db,
             run_id,
             session_id,
+            loop_mode,
             session_context,
             tokio_handle,
             op_scopes: vec![WorkflowOpScope {
@@ -1030,7 +1044,7 @@ impl WorkflowRuntimeHost {
         let child_handle = validation_child_handle_for_commands(&commands)?;
         let recover_reason = reason.clone();
         let run_reason = reason.clone();
-        self.execute_op_with_child_handle(
+        let executed = self.execute_op_with_child_handle_tracked(
             "validate",
             WorkflowEffectClass::NonIdempotent,
             input,
@@ -1039,7 +1053,9 @@ impl WorkflowRuntimeHost {
                 host.recover_validate_child(child_handle, recover_reason.as_deref())
             },
             move |host, child_handle| host.run_validate_child(child_handle, run_reason.as_deref()),
-        )
+        )?;
+        self.record_guarded_repair_validation(&executed.op_key, &executed.output)?;
+        Ok(executed.output)
     }
 
     fn recover_validate_child(
@@ -1144,6 +1160,150 @@ impl WorkflowRuntimeHost {
                 .context("workflow.diff failed")?;
             serde_json::to_value(diff).context("serialize workflow.diff response")
         })
+    }
+
+    fn record_guarded_repair_validation(&self, op_key: &str, output: &Value) -> Result<()> {
+        if !self.repair_guard_enabled() || self.repair_event_exists_for_op(op_key)? {
+            return Ok(());
+        }
+
+        let ok = output.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let summary = output
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let results = output
+            .get("results")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let failed = results
+            .iter()
+            .filter(|result| !result.get("ok").and_then(Value::as_bool).unwrap_or(false))
+            .count();
+
+        if ok {
+            let _ = self.db.append_workflow_event(
+                &self.run_id,
+                REPAIR_VALIDATION_PASSED_EVENT,
+                json!({
+                    "opKey": op_key,
+                    "summary": summary,
+                    "total": results.len(),
+                }),
+            )?;
+            return Ok(());
+        }
+
+        let fingerprint = validation_failure_fingerprint(&results)?;
+        let (diff_hash, diff_error) = self.current_diff_hash();
+        let previous = self.previous_repair_validation_event(op_key)?;
+        let previous_failed = previous.as_ref().and_then(|event| {
+            (event.event_type == REPAIR_VALIDATION_FAILED_EVENT).then_some(event)
+        });
+        let same_validation = previous_failed.is_some_and(|event| {
+            event
+                .payload
+                .get("fingerprint")
+                .and_then(Value::as_str)
+                == Some(fingerprint.as_str())
+        });
+        let no_effective_diff = diff_hash.as_ref().is_some_and(|hash| {
+            previous_failed.is_some_and(|event| {
+                event
+                    .payload
+                    .get("diffHash")
+                    .and_then(Value::as_str)
+                    == Some(hash.as_str())
+            })
+        });
+        let stop_reason = if same_validation {
+            Some(REPAIR_SAME_VALIDATION_REASON)
+        } else if no_effective_diff {
+            Some(REPAIR_NO_EFFECTIVE_DIFF_REASON)
+        } else {
+            None
+        };
+
+        let _ = self.db.append_workflow_event(
+            &self.run_id,
+            REPAIR_VALIDATION_FAILED_EVENT,
+            json!({
+                "opKey": op_key,
+                "summary": summary,
+                "failed": failed,
+                "total": results.len(),
+                "fingerprint": fingerprint,
+                "diffHash": diff_hash,
+                "diffError": diff_error,
+                "stopReason": stop_reason,
+            }),
+        )?;
+
+        if let Some(reason) = stop_reason {
+            let _ = self
+                .db
+                .transition_workflow_run(&self.run_id, WorkflowRunState::Blocked, Some(reason))?;
+            return Err(anyhow!(
+                "workflow guarded repair stopped after validation failure: {reason}"
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn repair_guard_enabled(&self) -> bool {
+        !matches!(self.loop_mode.as_str(), "off")
+    }
+
+    fn repair_event_exists_for_op(&self, op_key: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .list_workflow_events(&self.run_id, 500)?
+            .iter()
+            .any(|event| {
+                matches!(
+                    event.event_type.as_str(),
+                    REPAIR_VALIDATION_FAILED_EVENT | REPAIR_VALIDATION_PASSED_EVENT
+                ) && event
+                    .payload
+                    .get("opKey")
+                    .and_then(Value::as_str)
+                    == Some(op_key)
+            }))
+    }
+
+    fn previous_repair_validation_event(
+        &self,
+        op_key: &str,
+    ) -> Result<Option<super::types::WorkflowEvent>> {
+        Ok(self
+            .db
+            .list_workflow_events(&self.run_id, 500)?
+            .into_iter()
+            .rev()
+            .find(|event| {
+                matches!(
+                    event.event_type.as_str(),
+                    REPAIR_VALIDATION_FAILED_EVENT | REPAIR_VALIDATION_PASSED_EVENT
+                ) && event
+                    .payload
+                    .get("opKey")
+                    .and_then(Value::as_str)
+                    != Some(op_key)
+            }))
+    }
+
+    fn current_diff_hash(&self) -> (Option<String>, Option<String>) {
+        let Some(root) = self.session_context.working_dir.as_deref() else {
+            return (None, Some("session has no working directory".to_string()));
+        };
+        match crate::session::load_git_diff_for_root(std::path::Path::new(root))
+            .and_then(|diff| stable_value_hash(&serde_json::to_value(diff)?))
+        {
+            Ok(hash) => (Some(hash), None),
+            Err(err) => (None, Some(err.to_string())),
+        }
     }
 
     fn trace(&mut self, args: Value) -> Result<Value> {
@@ -1273,6 +1433,30 @@ impl WorkflowRuntimeHost {
         F: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Value>,
         R: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Option<Value>>,
     {
+        self.execute_op_with_child_handle_tracked(
+            op_type,
+            effect_class,
+            input,
+            child_handle,
+            recover_started_child,
+            f,
+        )
+        .map(|executed| executed.output)
+    }
+
+    fn execute_op_with_child_handle_tracked<F, R>(
+        &mut self,
+        op_type: &str,
+        effect_class: WorkflowEffectClass,
+        input: Value,
+        child_handle: String,
+        recover_started_child: R,
+        f: F,
+    ) -> Result<ExecutedWorkflowOp>
+    where
+        F: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Value>,
+        R: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Option<Value>>,
+    {
         let op_key = self.next_op_key(op_type);
         let existing = self.db.get_workflow_op(&self.run_id, &op_key)?;
         let existing_started_without_child = existing
@@ -1296,7 +1480,12 @@ impl WorkflowRuntimeHost {
         })?;
 
         match op.state {
-            WorkflowOpState::Completed => return Ok(op.output.unwrap_or(Value::Null)),
+            WorkflowOpState::Completed => {
+                return Ok(ExecutedWorkflowOp {
+                    op_key,
+                    output: op.output.unwrap_or(Value::Null),
+                })
+            }
             WorkflowOpState::Failed => {
                 return Err(anyhow!(
                     "workflow op {} previously failed: {}",
@@ -1316,7 +1505,7 @@ impl WorkflowRuntimeHost {
                     if let Some(output) = recover_started_child(self, &handle)? {
                         self.db
                             .complete_workflow_op(&self.run_id, &op_key, output.clone())?;
-                        return Ok(output);
+                        return Ok(ExecutedWorkflowOp { op_key, output });
                     }
                 }
                 Some(super::types::StartedOpRecoveryAction::BlockNonIdempotent) => {
@@ -1347,7 +1536,7 @@ impl WorkflowRuntimeHost {
         };
         self.db
             .complete_workflow_op(&self.run_id, &op_key, output.clone())?;
-        Ok(output)
+        Ok(ExecutedWorkflowOp { op_key, output })
     }
 
     fn next_op_key(&mut self, op_type: &str) -> String {
@@ -1942,6 +2131,38 @@ fn validation_result_from_job(job_ref: ValidationJobRef, job: &BackgroundJob) ->
         "exitCode": exit_code,
         "output": output,
     }))
+}
+
+fn validation_failure_fingerprint(results: &[Value]) -> Result<String> {
+    let failed: Vec<Value> = results
+        .iter()
+        .filter(|result| !result.get("ok").and_then(Value::as_bool).unwrap_or(false))
+        .map(|result| {
+            json!({
+                "command": result.get("command").cloned().unwrap_or(Value::Null),
+                "cwd": result.get("cwd").cloned().unwrap_or(Value::Null),
+                "timeout": result.get("timeout").cloned().unwrap_or(Value::Null),
+                "jobStatus": result.get("jobStatus").cloned().unwrap_or(Value::Null),
+                "exitCode": result.get("exitCode").cloned().unwrap_or(Value::Null),
+                "output": normalized_validation_output(result),
+            })
+        })
+        .collect();
+    stable_value_hash(&Value::Array(failed))
+}
+
+fn normalized_validation_output(result: &Value) -> String {
+    let raw = result
+        .get("output")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+    crate::truncate_utf8(normalized.trim(), VALIDATION_FINGERPRINT_OUTPUT_BYTES).to_string()
+}
+
+fn stable_value_hash(value: &Value) -> Result<String> {
+    let serialized = serde_json::to_string(value)?;
+    Ok(blake3::hash(serialized.as_bytes()).to_hex().to_string())
 }
 
 fn validation_job_output(job: &BackgroundJob) -> Result<String> {
