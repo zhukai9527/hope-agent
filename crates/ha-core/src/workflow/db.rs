@@ -124,6 +124,8 @@ impl SessionDB {
             "run_created",
             json!({ "sessionId": run.session_id, "kind": run.kind, "state": run.state }),
         )?;
+        let preview = super::preview::preview_workflow_run(self, &run);
+        let _ = self.append_workflow_event(&run.id, "script_permission_preview", json!(preview))?;
         events::emit_run_changed("workflow:created", &run);
         Ok(run)
     }
@@ -235,6 +237,20 @@ impl SessionDB {
 
     pub fn resume_workflow_run(&self, run_id: &str) -> Result<WorkflowRun> {
         self.transition_workflow_run(run_id, WorkflowRunState::Running, Some("resume_requested"))
+    }
+
+    pub fn approve_workflow_run(&self, run_id: &str) -> Result<WorkflowRun> {
+        let Some(run) = self.get_workflow_run(run_id)? else {
+            return Err(anyhow!("workflow run {} not found", run_id));
+        };
+        if run.state != WorkflowRunState::AwaitingApproval {
+            return Err(anyhow!(
+                "workflow run {} is {}; only awaiting_approval runs can be approved",
+                run_id,
+                run.state.as_str()
+            ));
+        }
+        self.transition_workflow_run(run_id, WorkflowRunState::Running, Some("approval_granted"))
     }
 
     pub fn cancel_workflow_run(&self, run_id: &str) -> Result<WorkflowRun> {

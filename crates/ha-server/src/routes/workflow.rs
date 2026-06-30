@@ -36,6 +36,15 @@ pub async fn resume_workflow_run(
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
 
+pub async fn approve_workflow_run(
+    Path(run_id): Path<String>,
+) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {
+    session_db()?
+        .approve_workflow_run(&run_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
 pub async fn cancel_workflow_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {

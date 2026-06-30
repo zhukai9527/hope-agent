@@ -1335,6 +1335,10 @@ fn build_router_with_cors(
             post(routes::workflow::resume_workflow_run),
         )
         .route(
+            "/workflow-runs/{id}/approve",
+            post(routes::workflow::approve_workflow_run),
+        )
+        .route(
             "/workflow-runs/{id}/cancel",
             post(routes::workflow::cancel_workflow_run),
         )

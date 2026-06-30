@@ -174,6 +174,12 @@ pub async fn run_workflow_script_async(
             run.state.as_str()
         ));
     }
+    if run.state == WorkflowRunState::AwaitingApproval {
+        return Err(anyhow!(
+            "workflow run {} is awaiting user approval; approve it before execution",
+            run_id
+        ));
+    }
     if run.state == WorkflowRunState::Paused {
         return Err(anyhow!("workflow run {} is paused", run_id));
     }
@@ -181,6 +187,42 @@ pub async fn run_workflow_script_async(
     let gate = check_workflow_script_draft(&run.script_source, ScriptGateOptions::default());
     if !gate.passed() {
         return Err(anyhow!(gate.render_feedback("Workflow Script Gate")));
+    }
+
+    if run.state == WorkflowRunState::Draft {
+        let preview = super::preview::preview_workflow_run(&db, &run);
+        if preview.has_denials() {
+            let _ = db.append_workflow_event(
+                run_id,
+                "script_permission_preview_blocked",
+                json!({ "summary": preview.summary, "reason": "permission_preview_denied" }),
+            );
+            let _ = db.transition_workflow_run(
+                run_id,
+                WorkflowRunState::Blocked,
+                Some("permission_preview_denied"),
+            );
+            return Err(anyhow!(
+                "workflow run {} blocked by permission preview; inspect workflow trace",
+                run_id
+            ));
+        }
+        if preview.requires_user_approval() {
+            let _ = db.append_workflow_event(
+                run_id,
+                "script_permission_approval_required",
+                json!({ "summary": preview.summary }),
+            );
+            let _ = db.transition_workflow_run(
+                run_id,
+                WorkflowRunState::AwaitingApproval,
+                Some("permission_preview"),
+            );
+            return Err(anyhow!(
+                "workflow run {} requires user approval after permission preview",
+                run_id
+            ));
+        }
     }
 
     if run.state != WorkflowRunState::Running {
@@ -2080,15 +2122,16 @@ fn compact_input(value: Value) -> Value {
 }
 
 #[derive(Debug, Clone, Default)]
-struct WorkflowSessionContext {
-    working_dir: Option<String>,
-    agent_id: Option<String>,
-    session_mode: crate::permission::SessionMode,
-    project_id: Option<String>,
-    incognito: bool,
+pub(crate) struct WorkflowSessionContext {
+    pub(crate) session_id: String,
+    pub(crate) working_dir: Option<String>,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) session_mode: crate::permission::SessionMode,
+    pub(crate) project_id: Option<String>,
+    pub(crate) incognito: bool,
 }
 
-fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSessionContext {
+pub(crate) fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSessionContext {
     let row = {
         let conn = match db.conn.lock() {
             Ok(conn) => conn,
@@ -2101,6 +2144,7 @@ fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSession
                     err
                 );
                 return WorkflowSessionContext {
+                    session_id: session_id.to_string(),
                     working_dir: current_dir_string(),
                     ..Default::default()
                 };
@@ -2129,6 +2173,7 @@ fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSession
                 .or_else(|| project_id.as_deref().and_then(workflow_root_for_project))
                 .or_else(current_dir_string);
             WorkflowSessionContext {
+                session_id: session_id.to_string(),
                 working_dir: resolved_working_dir,
                 agent_id: agent_id.filter(|s| !s.trim().is_empty()),
                 session_mode: permission_mode
@@ -2140,6 +2185,7 @@ fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSession
             }
         }
         Ok(None) => WorkflowSessionContext {
+            session_id: session_id.to_string(),
             working_dir: current_dir_string(),
             ..Default::default()
         },
@@ -2152,6 +2198,7 @@ fn workflow_session_context(db: &SessionDB, session_id: &str) -> WorkflowSession
                 err
             );
             WorkflowSessionContext {
+                session_id: session_id.to_string(),
                 working_dir: current_dir_string(),
                 ..Default::default()
             }

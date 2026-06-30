@@ -67,7 +67,10 @@ impl WorkflowRunState {
             return true;
         }
         match (self, next) {
-            (Self::Draft, Self::AwaitingApproval | Self::Running | Self::Cancelled) => true,
+            (
+                Self::Draft,
+                Self::AwaitingApproval | Self::Running | Self::Cancelled | Self::Blocked,
+            ) => true,
             (Self::AwaitingApproval, Self::Running | Self::Cancelled | Self::Blocked) => true,
             (
                 Self::Running,

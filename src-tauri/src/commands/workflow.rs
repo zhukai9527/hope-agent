@@ -46,6 +46,17 @@ pub async fn resume_workflow_run(
 }
 
 #[tauri::command]
+pub async fn approve_workflow_run(
+    run_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<WorkflowRun, CmdError> {
+    app_state
+        .session_db
+        .approve_workflow_run(&run_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn cancel_workflow_run(
     run_id: String,
     app_state: tauri::State<'_, crate::AppState>,

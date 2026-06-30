@@ -315,7 +315,7 @@ bundled 模板就是"被 release 信任的脚本"，与通用引擎共用同一 
 
 ## 14. 实现里程碑与可测性
 
-状态：2026-06-30 已完成第 1 项 durable store/state machine、第 3 项 Primary-only startup recovery runner，并完成第 4 项的 runtime foundation 子集：QuickJS/rquickjs 受控执行、Script Gate 执行前阻断、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 op-key、`task.create/update` / `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent/waitAll` / async job backed `validate` / `askUser` / `diff` / `trace` / `finish`、Completed op replay 无重复副作用、Started non-idempotent op fail-closed Blocked。第 2 项 fan-out 物化已落地：`workflow.map` 冻结输入列表并给 callback 内 host call 生成 `map/item#i/op#N` 嵌套位置键；`spawnAgent` child_handle attach 与 replay 单测已覆盖；`workflow.validate` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task。真实 LLM 子代理 E2E 仍待实现。
+状态：2026-06-30 已完成第 1 项 durable store/state machine、第 3 项 Primary-only startup recovery runner，并完成第 4 项的 runtime foundation 子集：QuickJS/rquickjs 受控执行、Script Gate 执行前阻断、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 op-key、`task.create/update` / `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent/waitAll` / async job backed `validate` / `askUser` / `diff` / `trace` / `finish`、Completed op replay 无重复副作用、Started non-idempotent op fail-closed Blocked。第 2 项 fan-out 物化已落地：`workflow.map` 冻结输入列表并给 callback 内 host call 生成 `map/item#i/op#N` 嵌套位置键；`spawnAgent` child_handle attach 与 replay 单测已覆盖；`workflow.validate` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；permission preview / user approval 第一版已落：创建 run 写 `script_permission_preview`，Draft 执行前静态 host call 复用 permission engine，动态工具调用进入 `awaiting_approval`，owner approve 后继续。真实 LLM 子代理 E2E 仍待实现。
 
 对齐上层方案 Phase 2.4 / 2.5，补可测断言：
 
@@ -323,7 +323,8 @@ bundled 模板就是"被 release 信任的脚本"，与通用引擎共用同一 
 2. **位置化 op-key + fan-out 物化**：fixture 断言"上游换序不破坏已物化扇出的重放"。
 3. **恢复算法**：构造 `Started/non_idempotent` 崩溃 fixture，断言进入 Blocked 而非重跑。
 4. **embedded runtime MVP**：脚本 spawn 2 个只读 subagent 并汇总 / 跑一次 targeted validate / 重启后不重复已完成 op / startup-like recovery 顺序。
-5. **eval 回归闸**：接 Phase 0 coding-eval baseline，每个里程碑跑一遍要求不回归（见上层方案验收）。
+5. **permission preview / approval**：fixture 断言 run 创建写 preview event；动态工具调用在 Draft 执行前进入 `awaiting_approval`，owner approve 后可转 `running`。
+6. **eval 回归闸**：接 Phase 0 coding-eval baseline，每个里程碑跑一遍要求不回归（见上层方案验收）。
 
 确定性恢复测试必须**无 LLM**（仿 `dreaming_eval` 模式），只测安全红线：副作用恰好一次边界、Primary-only、incognito 拒绝、无人值守 askUser fail-closed、预算硬上限。
 

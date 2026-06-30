@@ -912,20 +912,21 @@ stop reason if any
 
 ### Phase 2.5：Embedded script runtime MVP
 
-状态：2026-06-30 已落 QuickJS/rquickjs runtime foundation：`workflow.js` 受控执行、`export default main(workflow)` 入口、无 raw fs/network/process/env host binding、memory/stack/timeout guard、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 `main/op#N(api)`、`task.create/update`（handle 定位）/ `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent` / `waitAll` / `validate`（async exec job attach）/ `askUser` / `diff` / `trace` / `finish` 首批 host API、Completed op replay、Started non-idempotent op fail-closed Blocked、Primary-only startup recovery runner。无 LLM 单测覆盖脚本执行、Script Gate 执行前阻断、动态 `Math.random` 访问被 runtime 阻断、已完成 `task.create` replay 不重复建 task、`workflow.map` 已物化 fan-out 列表并生成 `map/item#i/op#N` 嵌套位置键，`read/grep/tool` 经 `execute_tool_with_context` 桥接、`workflow.spawnAgent` / `workflow.waitAll` 经现有 `subagent` 工具桥接且 completed replay 不重复调度、`spawnAgent` 预分配 child_handle 并可在 started replay 时 attach / 缺 row 则同 handle 重试、`workflow.validate` 预分配 async job child_handle、可在 started replay 时 attach / 缺 row 则同 job id 重试，并返回结构化 validation 结果、显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle、started replay 可 attach 既有 job / 缺 row 同 job id 重试、`workflow.askUser` 复用既有 ask-user 工具且无人值守 surface 先 fail-closed / 按配置 proceed、`workflow.diff` 返回 session workspace 的 git diff snapshot、`Started` 的 `tool:exec` 不盲目重跑、recovery runner CAS claim 后 replay 且不抢已 claim run，startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task。尚未完成：真实 LLM 子代理 fan-out E2E、审批预览。
+状态：2026-06-30 已落 QuickJS/rquickjs runtime foundation：`workflow.js` 受控执行、`export default main(workflow)` 入口、无 raw fs/network/process/env host binding、memory/stack/timeout guard、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 `main/op#N(api)`、`task.create/update`（handle 定位）/ `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent` / `waitAll` / `validate`（async exec job attach）/ `askUser` / `diff` / `trace` / `finish` 首批 host API、Completed op replay、Started non-idempotent op fail-closed Blocked、Primary-only startup recovery runner。无 LLM 单测覆盖脚本执行、Script Gate 执行前阻断、动态 `Math.random` 访问被 runtime 阻断、已完成 `task.create` replay 不重复建 task、`workflow.map` 已物化 fan-out 列表并生成 `map/item#i/op#N` 嵌套位置键，`read/grep/tool` 经 `execute_tool_with_context` 桥接、`workflow.spawnAgent` / `workflow.waitAll` 经现有 `subagent` 工具桥接且 completed replay 不重复调度、`spawnAgent` 预分配 child_handle 并可在 started replay 时 attach / 缺 row 则同 handle 重试、`workflow.validate` 预分配 async job child_handle、可在 started replay 时 attach / 缺 row 同 job id 重试，并返回结构化 validation 结果、显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle、started replay 可 attach 既有 job / 缺 row 同 job id 重试、`workflow.askUser` 复用既有 ask-user 工具且无人值守 surface 先 fail-closed / 按配置 proceed、`workflow.diff` 返回 session workspace 的 git diff snapshot、`Started` 的 `tool:exec` 不盲目重跑、recovery runner CAS claim 后 replay 且不抢已 claim run，startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；执行前 permission preview 第一版已落：创建 run 记录 `script_permission_preview`，Draft 执行前对静态 workflow host call 复用 permission engine 预览，动态工具调用先转 `awaiting_approval`，owner `approve_workflow_run` 后继续。尚未完成：真实 LLM 子代理 fan-out E2E、Workflow Panel / `/loop` UI 控制面。
 
 实现：
 
 - `workflow.js` 执行（已完成 foundation）。
 - host API MVP（已完成同步首批、`tool/read/grep` dispatch bridge、`workflow.map` fan-out 物化、`spawnAgent/waitAll` subagent bridge、`validate` async job attach、`askUser`、`diff`）。
 - durable replay（Completed op replay、Started non-idempotent Blocked、`spawnAgent` / `validate` / 显式 async `workflow.tool` child_handle attach、Primary-only startup recovery runner 已完成）。
-- user approval（待接 permission preview / approval surface）。
+- user approval（已完成第一版 permission preview / approval surface：静态对象参数可预览，动态工具调用需 owner approve；运行时工具审批仍是兜底）。
 
 验收：
 
 - 一个 script 能 spawn 2 个 read-only subagents 并汇总。
 - 一个 script 能运行 targeted validation。
 - 重启后 replay 不重复已完成 host call（Completed op 单测已覆盖；startup-like async job replay → workflow recovery 顺序单测已覆盖）。
+- Draft script 执行前能产出 permission preview；动态工具调用先进入 `awaiting_approval`，owner approve 后才可继续。
 
 ### Phase 2.6：Workflow Panel
 
@@ -1085,3 +1086,4 @@ Phase 2 完成时，应满足：
 5. ~~实现 durable store + 状态机（无 JS，纯函数 + fixture，[runtime §14](workflow-script-runtime.md)）~~ → 已新增 durable store、owner API、状态机与无 LLM 单测。
 6. ~~进入 embedded runtime 代码实现~~ → 已落 QuickJS runtime foundation 与同步首批 host API。
 7. 接剩余 async host bridge：把 `spawnAgent/waitAll` 补真实 LLM fan-out E2E。
+8. 补 Workflow Panel / `/workflow trace` / `/loop` 前端控制面，把 preview、approve、pause/resume/cancel 变成完整用户体验。

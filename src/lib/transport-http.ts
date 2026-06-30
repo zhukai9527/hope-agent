@@ -367,6 +367,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_workflow_run:                { method: "GET",    path: "/api/workflow-runs/{runId}" },
   pause_workflow_run:              { method: "POST",   path: "/api/workflow-runs/{runId}/pause" },
   resume_workflow_run:             { method: "POST",   path: "/api/workflow-runs/{runId}/resume" },
+  approve_workflow_run:            { method: "POST",   path: "/api/workflow-runs/{runId}/approve" },
   cancel_workflow_run:             { method: "POST",   path: "/api/workflow-runs/{runId}/cancel" },
 
   // -- Cron --

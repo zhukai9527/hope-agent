@@ -188,6 +188,73 @@ fn workflow_run_rejects_incognito_sessions() {
 }
 
 #[test]
+fn workflow_create_records_permission_preview_event() {
+    let (_dir, db) = temp_db();
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 6 };
+  const task = await workflow.task.create({ title: "Inspect" });
+  const files = await workflow.fileSearch({ query: "workflow", limit: 3 });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ files, budget });
+}
+"#;
+    let (_session_id, run_id) = create_run_with_script(&db, script);
+
+    let events = db
+        .list_workflow_events(&run_id, 20)
+        .expect("list workflow events");
+    let preview = events
+        .iter()
+        .find(|event| event.event_type == "script_permission_preview")
+        .expect("preview event");
+    assert_eq!(preview.payload["summary"]["total"], json!(3));
+    assert_eq!(preview.payload["summary"]["ask"], json!(0));
+}
+
+#[test]
+fn draft_workflow_requires_approval_before_dynamic_tool_call() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 8 };
+  const task = await workflow.task.create({ title: "Write" });
+  const call = {
+    name: "write",
+    args: { path: "a.txt", content: "hello" },
+    label: "write-file"
+  };
+  await workflow.tool(call);
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+    let (_session_id, run_id) = create_run_with_script(&db, script);
+
+    let err = run_workflow_script(db.clone(), &run_id).expect_err("preview asks first");
+    assert!(
+        err.to_string().contains("requires user approval"),
+        "{err:#}"
+    );
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::AwaitingApproval);
+
+    let events = db
+        .list_workflow_events(&run_id, 20)
+        .expect("list workflow events");
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "script_permission_approval_required"));
+
+    let approved = db.approve_workflow_run(&run_id).expect("approve workflow");
+    assert_eq!(approved.state, WorkflowRunState::Running);
+}
+
+#[test]
 fn completed_op_replay_returns_recorded_output_without_regressing_state() {
     let (_dir, db) = temp_db();
     let (_session_id, run_id) = create_run(&db);

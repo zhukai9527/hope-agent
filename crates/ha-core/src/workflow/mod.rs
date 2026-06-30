@@ -5,10 +5,15 @@
 
 pub(crate) mod db;
 pub(crate) mod events;
+pub mod preview;
 pub mod runtime;
 pub mod types;
 
 pub(crate) use db::ensure_tables;
+pub use preview::{
+    preview_workflow_run, WorkflowPermissionPreview, WorkflowPermissionPreviewCall,
+    WorkflowPermissionPreviewSummary,
+};
 pub use runtime::{
     recover_pending_workflow_runs, run_workflow_script, run_workflow_script_async,
     spawn_startup_recovery_if_primary, WorkflowRecoveryReport, WorkflowRuntimeResult,

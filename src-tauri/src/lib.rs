@@ -797,6 +797,7 @@ pub fn run() {
             commands::workflow::get_workflow_run,
             commands::workflow::pause_workflow_run,
             commands::workflow::resume_workflow_run,
+            commands::workflow::approve_workflow_run,
             commands::workflow::cancel_workflow_run,
             // Cross-session plan index (read-only)
             commands::plan_index::list_plans,

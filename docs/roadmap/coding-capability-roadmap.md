@@ -347,7 +347,7 @@ LoopPolicy
 
 ### Phase 2：Coding Mode 与原生 Skills
 
-状态：详细方案见 [Phase 2 Coding Mode 与 Script-first Dynamic Workflow 方案](phase2-coding-mode-dynamic-workflow.md)。2026-06-30 已完成 durable store/state machine 与 QuickJS runtime foundation；首批 host API（`task.create/update`、`fileSearch`、`tool/read/grep`、`workflow.map`、`spawnAgent/waitAll`、async job backed `validate`、`askUser`、`diff`、`trace`、`finish`）已可通过 Script Gate 后执行并 durable replay，`workflow.map` 已物化 fan-out 列表并生成嵌套位置 op-key，`spawnAgent` / `validate` / 显式 async `workflow.tool` 已具备 child_handle attach，`askUser` 已复用无人值守 fail-closed 判定。真实 LLM 子代理 fan-out E2E、控制面仍待接入。
+状态：详细方案见 [Phase 2 Coding Mode 与 Script-first Dynamic Workflow 方案](phase2-coding-mode-dynamic-workflow.md)。2026-06-30 已完成 durable store/state machine 与 QuickJS runtime foundation；首批 host API（`task.create/update`、`fileSearch`、`tool/read/grep`、`workflow.map`、`spawnAgent/waitAll`、async job backed `validate`、`askUser`、`diff`、`trace`、`finish`）已可通过 Script Gate 后执行并 durable replay，`workflow.map` 已物化 fan-out 列表并生成嵌套位置 op-key，`spawnAgent` / `validate` / 显式 async `workflow.tool` 已具备 child_handle attach，`askUser` 已复用无人值守 fail-closed 判定；permission preview / user approval 第一版已落，Draft script 会在执行前产出 preview，动态工具调用先进入 `awaiting_approval`，owner approve 后才继续。真实 LLM 子代理 fan-out E2E、Workflow Panel / `/loop` UI 控制面仍待接入。
 
 目标：把已有 Plan、Task、Subagent、Async Jobs、Hooks、Permission 组合成 coding-first 体验，同时不把第三方移植 skills 直接作为核心策略。
 
@@ -382,7 +382,7 @@ LoopPolicy
 - 新增受控 `workflow.js` runtime；脚本只能调用 host API，不能直接访问 raw fs/network/process/env。
 - MVP 先支持 `coding.fix_bug`、`coding.feature`、`coding.review`、`coding.debug`。
 - host API 先覆盖 `tool`、`fileSearch`、`read`、`grep`、`spawnAgent`、`waitAll`、`task.create/update`、`validate`、`askUser`、`trace`、`diff`、`finish`。
-- 脚本执行前做 lint / budget / permission preview / user approval。
+- 脚本执行前做 lint / budget / permission preview / user approval（第一版已落，后续补前端体验）。
 - `task_create/update` 与 workflow op 自动绑定。
 - validation 失败自动生成 structured feedback，作为下一轮 repair 输入。
 - 增加 `/workflow`、`/workflow trace`、`/workflow pause|resume|cancel`、`/loop` 控制面。
