@@ -9,7 +9,10 @@ pub mod runtime;
 pub mod types;
 
 pub(crate) use db::ensure_tables;
-pub use runtime::{run_workflow_script, run_workflow_script_async, WorkflowRuntimeResult};
+pub use runtime::{
+    recover_pending_workflow_runs, run_workflow_script, run_workflow_script_async,
+    spawn_startup_recovery_if_primary, WorkflowRecoveryReport, WorkflowRuntimeResult,
+};
 pub use types::{
     CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
     WorkflowEvent, WorkflowOp, WorkflowOpState, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState,

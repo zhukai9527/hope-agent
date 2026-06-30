@@ -5,9 +5,9 @@ use crate::permission::SessionMode;
 use crate::session::SessionDB;
 
 use super::{
-    run_workflow_script, runtime::validation_exit_code, CreateWorkflowRunInput,
-    StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState,
-    WorkflowRunState,
+    recover_pending_workflow_runs, run_workflow_script, runtime::validation_exit_code,
+    CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
+    WorkflowOpState, WorkflowRunState,
 };
 
 fn temp_db() -> (tempfile::TempDir, SessionDB) {
@@ -213,6 +213,106 @@ fn cancel_prevents_new_ops() {
         })
         .expect_err("cancelled run must reject op");
     assert!(err.to_string().contains("cancelled"));
+}
+
+#[test]
+fn recovery_runner_claims_and_replays_completed_ops_without_duplicates() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Recover me" });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ summary: "recovered" });
+}
+"#;
+    let (session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let existing_task = db
+        .create_task(&session_id, "Recover me", None)
+        .expect("create existing task");
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: "main/op#0(task.create)".to_string(),
+        op_type: "task.create".to_string(),
+        effect_class: WorkflowEffectClass::Idempotent,
+        input: json!({ "title": "Recover me" }),
+        child_handle: None,
+    })
+    .expect("start task op");
+    db.complete_workflow_op(
+        &run_id,
+        "main/op#0(task.create)",
+        json!({
+            "id": existing_task.id,
+            "sessionId": session_id,
+            "title": existing_task.content,
+            "status": existing_task.status,
+            "label": null
+        }),
+    )
+    .expect("complete task op");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let report = runtime
+        .block_on(recover_pending_workflow_runs(db.clone(), "test-owner"))
+        .expect("recover workflows");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.recovered, 1);
+    assert!(report.errors.is_empty());
+
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Completed);
+    assert!(run.primary_owner.is_none());
+
+    let tasks = db.list_tasks(&session_id).expect("list tasks");
+    assert_eq!(tasks.len(), 1, "recovery replay must not duplicate task");
+    assert_eq!(tasks[0].id, existing_task.id);
+    assert_eq!(tasks[0].status, "completed");
+    assert!(db
+        .list_workflow_events(&run_id, 20)
+        .expect("list events")
+        .iter()
+        .any(|event| event.event_type == "run_recovery_claimed"));
+}
+
+#[test]
+fn recovery_runner_does_not_steal_already_claimed_runs() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let (_session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+    let claimed = db
+        .claim_workflow_run_for_recovery(&run_id, "other-owner")
+        .expect("claim")
+        .expect("claimed");
+    assert_eq!(claimed.state, WorkflowRunState::Recovering);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let report = runtime
+        .block_on(recover_pending_workflow_runs(db.clone(), "test-owner"))
+        .expect("recover workflows");
+    assert_eq!(report.attempted, 0);
+    assert_eq!(report.recovered, 0);
+
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Recovering);
+    assert_eq!(run.primary_owner.as_deref(), Some("other-owner"));
 }
 
 #[test]

@@ -1038,6 +1038,7 @@ pub async fn start_background_tasks() {
         tokio::spawn(async move {
             crate::async_jobs::JobManager::replay_pending();
         });
+        crate::workflow::spawn_startup_recovery_if_primary();
         crate::local_model_jobs::replay_interrupted_jobs();
 
         // Re-arm agent self-scheduled wakeups (R10). Primary-only — the rows
@@ -1286,6 +1287,7 @@ pub async fn start_minimal_background_tasks() {
         tokio::spawn(async move {
             crate::async_jobs::JobManager::replay_pending();
         });
+        crate::workflow::spawn_startup_recovery_if_primary();
         crate::local_model_jobs::replay_interrupted_jobs();
 
         // Re-arm agent self-scheduled wakeups (R10). Primary-only (shared rows).

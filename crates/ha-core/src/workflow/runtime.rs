@@ -35,6 +35,104 @@ pub struct WorkflowRuntimeResult {
     pub output: Option<Value>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRecoveryReport {
+    pub owner: String,
+    pub attempted: usize,
+    pub recovered: usize,
+    pub blocked: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
+}
+
+pub async fn recover_pending_workflow_runs(
+    db: Arc<SessionDB>,
+    owner: impl Into<String>,
+) -> Result<WorkflowRecoveryReport> {
+    let owner = owner.into();
+    let mut report = WorkflowRecoveryReport {
+        owner: owner.clone(),
+        ..Default::default()
+    };
+    let runs = db
+        .list_recoverable_workflow_runs()
+        .context("list recoverable workflow runs")?;
+
+    for run in runs {
+        let Some(claimed) = db
+            .claim_workflow_run_for_recovery(&run.id, &owner)
+            .with_context(|| format!("claim workflow run {} for recovery", run.id))?
+        else {
+            report.skipped += 1;
+            continue;
+        };
+        report.attempted += 1;
+
+        match run_workflow_script_async(db.clone(), &claimed.id).await {
+            Ok(result) => match result.snapshot.run.state {
+                WorkflowRunState::Completed => report.recovered += 1,
+                WorkflowRunState::Blocked => report.blocked += 1,
+                WorkflowRunState::Failed => report.failed += 1,
+                _ => {}
+            },
+            Err(err) => {
+                let state = db
+                    .get_workflow_run(&claimed.id)
+                    .ok()
+                    .flatten()
+                    .map(|run| run.state);
+                match state {
+                    Some(WorkflowRunState::Blocked) => report.blocked += 1,
+                    Some(WorkflowRunState::Failed) => report.failed += 1,
+                    _ => report.failed += 1,
+                }
+                report.errors.push(format!("{}: {err:#}", claimed.id));
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+pub fn spawn_startup_recovery_if_primary() {
+    if !crate::runtime_lock::is_primary() {
+        return;
+    }
+    let Some(db) = crate::get_session_db() else {
+        return;
+    };
+    let owner = format!("startup:pid:{}", std::process::id());
+    tokio::spawn(async move {
+        match recover_pending_workflow_runs(db.clone(), owner).await {
+            Ok(report) => {
+                if report.attempted > 0 || report.skipped > 0 || !report.errors.is_empty() {
+                    crate::app_info!(
+                        "workflow",
+                        "startup_recovery",
+                        "owner={} attempted={} recovered={} blocked={} failed={} skipped={} errors={}",
+                        report.owner,
+                        report.attempted,
+                        report.recovered,
+                        report.blocked,
+                        report.failed,
+                        report.skipped,
+                        report.errors.len()
+                    );
+                }
+            }
+            Err(err) => {
+                crate::app_warn!(
+                    "workflow",
+                    "startup_recovery",
+                    "workflow startup recovery failed: {err:#}"
+                );
+            }
+        }
+    });
+}
+
 pub fn run_workflow_script(db: Arc<SessionDB>, run_id: &str) -> Result<WorkflowRuntimeResult> {
     if TokioHandle::try_current().is_ok() {
         return Err(anyhow!(
