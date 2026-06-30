@@ -2195,7 +2195,7 @@
     "inheritGlobal": "وراثة الإعداد العام",
     "memoriesInProject": "{{count}} ذاكرة",
     "moveToProject": "نقل إلى مشروع",
-    "newChatInProject": "جلسة جديدة في المشروع",
+    "newChatInProject": "جلسة جديدة",
     "newProject": "مشروع جديد",
     "noProjects": "لا توجد مشاريع بعد",
     "noSessionsHint": "انقر لإنشاء الجلسة الأولى",

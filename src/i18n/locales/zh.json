@@ -2195,7 +2195,7 @@
     "inheritGlobal": "跟随全局",
     "memoriesInProject": "{{count}} 条记忆",
     "moveToProject": "移动到项目",
-    "newChatInProject": "在此项目中新建会话",
+    "newChatInProject": "新建会话",
     "newProject": "新建项目",
     "noProjects": "还没有项目",
     "noSessionsHint": "点击创建第一个会话",
