@@ -15,12 +15,29 @@
 //! init. Reads route through `get` / `list_active_by_session`; the raw DB stays
 //! `pub(crate)` for bootstrap (`app_init`) and white-box tests only.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Notify;
 
 use super::types::{BackgroundJob, BackgroundJobSnapshot, JobKind, JobOrigin, JobStatus};
 use crate::subagent::SubagentStatus;
 use crate::tools::ToolExecContext;
+
+const TERMINAL_WAIT_INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+const TERMINAL_WAIT_MAX_BACKOFF: Duration = Duration::from_secs(2);
+
+struct WaiterGuard {
+    job_id: String,
+    notify: Arc<Notify>,
+}
+
+impl Drop for WaiterGuard {
+    fn drop(&mut self) {
+        super::wait::cleanup_if_last_waiter(&self.job_id, &self.notify);
+    }
+}
 
 /// Single entry point for background-job operations (R1). Zero-sized; all
 /// methods are associated functions delegating to the shared internals.
@@ -40,6 +57,25 @@ impl JobManager {
         origin: JobOrigin,
     ) -> Result<String> {
         super::spawn::spawn_explicit_job(tool_name, args, ctx, origin)
+    }
+
+    /// Allocate a background job id before launching the side effect, so a
+    /// durable parent operation can persist the child handle first.
+    pub fn new_job_id() -> String {
+        super::spawn::new_job_id()
+    }
+
+    /// Spawn an explicit background tool job using a caller-preallocated id.
+    /// This is for durable parents that must record the child handle before the
+    /// side effect starts; ordinary tool calls should use [`Self::spawn_tool`].
+    pub fn spawn_tool_with_id(
+        tool_name: &str,
+        args: Value,
+        ctx: ToolExecContext,
+        origin: JobOrigin,
+        job_id: String,
+    ) -> Result<String> {
+        super::spawn::spawn_explicit_job_with_id(tool_name, args, ctx, origin, job_id)
     }
 
     /// Run a tool synchronously but auto-background it if it exceeds the budget
@@ -62,6 +98,68 @@ impl JobManager {
         match super::get_async_jobs_db() {
             Some(db) => db.load(job_id),
             None => Ok(None),
+        }
+    }
+
+    /// Wait until a job reaches a terminal state. Unlike the model-facing
+    /// `job_status(wait)`, this helper is for host runtimes that genuinely own
+    /// the child work and need the result before completing their parent op.
+    pub async fn wait_for_terminal(
+        job_id: &str,
+        timeout: Option<Duration>,
+    ) -> Result<Option<BackgroundJob>> {
+        let db = super::get_async_jobs_db()
+            .ok_or_else(|| anyhow!("Async jobs DB not initialized"))?
+            .clone();
+        let Some(initial) = db.load(job_id)? else {
+            return Ok(None);
+        };
+        if initial.status.is_terminal() {
+            return Ok(Some(initial));
+        }
+
+        let guard = WaiterGuard {
+            job_id: job_id.to_string(),
+            notify: super::wait::register_waiter(job_id),
+        };
+
+        let Some(recheck) = db.load(job_id)? else {
+            return Ok(None);
+        };
+        if recheck.status.is_terminal() {
+            return Ok(Some(recheck));
+        }
+
+        let deadline = timeout.map(|duration| std::time::Instant::now() + duration);
+        let mut backoff = TERMINAL_WAIT_INITIAL_BACKOFF;
+        loop {
+            let sleep_dur = match deadline {
+                Some(deadline) => {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    if remaining.is_zero() {
+                        return db.load(job_id);
+                    }
+                    std::cmp::min(backoff, remaining)
+                }
+                None => backoff,
+            };
+
+            tokio::select! {
+                _ = guard.notify.notified() => {}
+                _ = tokio::time::sleep(sleep_dur) => {
+                    backoff = std::cmp::min(
+                        backoff.saturating_mul(3) / 2,
+                        TERMINAL_WAIT_MAX_BACKOFF,
+                    );
+                }
+            }
+
+            let Some(job) = db.load(job_id)? else {
+                return Ok(None);
+            };
+            if job.status.is_terminal() {
+                return Ok(Some(job));
+            }
         }
     }
 

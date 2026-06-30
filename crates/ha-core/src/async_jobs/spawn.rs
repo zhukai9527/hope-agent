@@ -175,8 +175,18 @@ fn effective_max_job_secs(tool_name: &str, args: &Value, ctx: Option<&ToolExecCo
 pub(crate) fn spawn_explicit_job(
     tool_name: &str,
     args: Value,
+    ctx: ToolExecContext,
+    origin: JobOrigin,
+) -> Result<String> {
+    spawn_explicit_job_with_id(tool_name, args, ctx, origin, new_job_id())
+}
+
+pub(crate) fn spawn_explicit_job_with_id(
+    tool_name: &str,
+    args: Value,
     mut ctx: ToolExecContext,
     origin: JobOrigin,
+    job_id: String,
 ) -> Result<String> {
     let db = match super::get_async_jobs_db() {
         Some(db) => db.clone(),
@@ -188,7 +198,6 @@ pub(crate) fn spawn_explicit_job(
         }
     };
 
-    let job_id = new_job_id();
     // review#1: register the cancel token BEFORE the row becomes queryable, so a
     // concurrent cancel (cancel_jobs_for_session on session delete, or a cancel
     // of a still-QUEUED job) finds a live token. Roll back on any early failure.

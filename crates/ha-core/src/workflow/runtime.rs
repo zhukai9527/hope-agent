@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::runtime::Handle as TokioHandle;
 
+use crate::async_jobs::{BackgroundJob, JobManager, JobOrigin, JobStatus};
 use crate::plan::{check_workflow_script_draft, ScriptGateOptions};
 use crate::session::{SessionDB, Task, TaskStatus};
 use crate::tools::{self, ToolExecContext};
@@ -932,43 +933,98 @@ impl WorkflowRuntimeHost {
         let commands = validation_commands_from_args(&args)?;
         let reason = optional_string(&args, "reason");
         let input = compact_input(args);
-        self.execute_op(
+        let child_handle = validation_child_handle_for_commands(&commands)?;
+        let recover_reason = reason.clone();
+        let run_reason = reason.clone();
+        self.execute_op_with_child_handle(
             "validate",
             WorkflowEffectClass::NonIdempotent,
             input,
-            |host| {
-                let mut results = Vec::with_capacity(commands.len());
-                for command in commands {
-                    let exec_args = command.exec_args();
-                    let output = host.dispatch_validation_exec(&command.command, &exec_args)?;
-                    let exit_code = validation_exit_code(&output);
-                    results.push(json!({
-                        "command": command.command,
-                        "cwd": command.cwd,
-                        "timeout": command.timeout,
-                        "ok": exit_code == 0,
-                        "exitCode": exit_code,
-                        "output": output,
-                    }));
-                }
-                let failed = results
-                    .iter()
-                    .filter(|result| !result.get("ok").and_then(Value::as_bool).unwrap_or(false))
-                    .count();
-                let ok = failed == 0;
-                let summary = if ok {
-                    format!("{} validation command(s) passed", results.len())
-                } else {
-                    format!("{failed}/{} validation command(s) failed", results.len())
-                };
-                Ok(json!({
-                    "ok": ok,
-                    "summary": summary,
-                    "reason": reason,
-                    "results": results,
-                }))
+            child_handle,
+            move |host, child_handle| {
+                host.recover_validate_child(child_handle, recover_reason.as_deref())
             },
+            move |host, child_handle| host.run_validate_child(child_handle, run_reason.as_deref()),
         )
+    }
+
+    fn recover_validate_child(
+        &self,
+        child_handle: &str,
+        reason: Option<&str>,
+    ) -> Result<Option<Value>> {
+        Ok(Some(self.run_validate_child(child_handle, reason)?))
+    }
+
+    fn run_validate_child(&self, child_handle: &str, reason: Option<&str>) -> Result<Value> {
+        let child = parse_validation_child_handle(child_handle)?;
+        let mut results = Vec::with_capacity(child.jobs.len());
+        for job_ref in child.jobs {
+            let job = match JobManager::get(&job_ref.job_id)? {
+                Some(job) => job,
+                None => {
+                    self.spawn_validation_exec_job(&job_ref)?;
+                    self.wait_for_validation_job(&job_ref.job_id)?
+                }
+            };
+            let job = if job.status.is_terminal() {
+                job
+            } else {
+                self.wait_for_validation_job(&job_ref.job_id)?
+            };
+            results.push(validation_result_from_job(job_ref, &job)?);
+        }
+        let failed = results
+            .iter()
+            .filter(|result| !result.get("ok").and_then(Value::as_bool).unwrap_or(false))
+            .count();
+        let ok = failed == 0;
+        let summary = if ok {
+            format!("{} validation command(s) passed", results.len())
+        } else {
+            format!("{failed}/{} validation command(s) failed", results.len())
+        };
+        Ok(json!({
+            "ok": ok,
+            "summary": summary,
+            "reason": reason,
+            "results": results,
+        }))
+    }
+
+    fn spawn_validation_exec_job(&self, job_ref: &ValidationJobRef) -> Result<()> {
+        let mut ctx = self.tool_exec_context();
+        ctx.async_tool_policy = crate::agent_config::AsyncToolPolicy::NeverBackground;
+        let exec_args = job_ref.exec_args();
+        let session_id = self.session_id.clone();
+        let default_path = ctx.default_cwd();
+        JobManager::spawn_tool_with_id(
+            tools::TOOL_EXEC,
+            exec_args,
+            ctx,
+            JobOrigin::Explicit,
+            job_ref.job_id.clone(),
+        )
+        .with_context(|| {
+            format!(
+                "workflow.validate failed to spawn async exec job {} (session={session_id}, cwd={default_path}, command={})",
+                job_ref.job_id, job_ref.command
+            )
+        })?;
+        Ok(())
+    }
+
+    fn wait_for_validation_job(&self, job_id: &str) -> Result<BackgroundJob> {
+        let session_id = self.session_id.clone();
+        self.tokio_handle
+            .block_on(JobManager::wait_for_terminal(job_id, None))?
+            .ok_or_else(|| {
+                anyhow!(
+                    "workflow.validate child job {} disappeared (session={})",
+                    job_id,
+                    session_id
+                )
+            })
     }
 
     fn ask_user(&mut self, args: Value) -> Result<Value> {
@@ -1218,20 +1274,6 @@ impl WorkflowRuntimeHost {
             .block_on(tools::execute_tool_with_context(name, args, &ctx))
             .with_context(|| {
                 format!("workflow.tool({name}) failed (session={session_id}, cwd={default_path})")
-            })
-    }
-
-    fn dispatch_validation_exec(&self, command: &str, args: &Value) -> Result<String> {
-        let mut ctx = self.tool_exec_context();
-        ctx.async_tool_policy = crate::agent_config::AsyncToolPolicy::NeverBackground;
-        let default_path = ctx.default_cwd();
-        let session_id = self.session_id.clone();
-        self.tokio_handle
-            .block_on(tools::execute_tool_with_context(tools::TOOL_EXEC, args, &ctx))
-            .with_context(|| {
-                format!(
-                    "workflow.validate command failed before completion (session={session_id}, cwd={default_path}, command={command})"
-                )
             })
     }
 
@@ -1676,6 +1718,122 @@ impl ValidationCommand {
         }
         Value::Object(args)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidationChildHandle {
+    kind: String,
+    jobs: Vec<ValidationJobRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidationJobRef {
+    job_id: String,
+    command: String,
+    cwd: Option<String>,
+    timeout: Option<u64>,
+}
+
+impl ValidationJobRef {
+    fn from_command(command: &ValidationCommand) -> Self {
+        Self {
+            job_id: JobManager::new_job_id(),
+            command: command.command.clone(),
+            cwd: command.cwd.clone(),
+            timeout: command.timeout,
+        }
+    }
+
+    fn exec_args(&self) -> Value {
+        let command = ValidationCommand {
+            command: self.command.clone(),
+            cwd: self.cwd.clone(),
+            timeout: self.timeout,
+        };
+        let mut args = command.exec_args();
+        if let Value::Object(map) = &mut args {
+            if let Some(timeout) = self.timeout {
+                map.insert(
+                    tools::ASYNC_JOB_TIMEOUT_ARG.to_string(),
+                    Value::Number(timeout.into()),
+                );
+            }
+        }
+        args
+    }
+}
+
+fn validation_child_handle_for_commands(commands: &[ValidationCommand]) -> Result<String> {
+    serde_json::to_string(&ValidationChildHandle {
+        kind: "validate".to_string(),
+        jobs: commands
+            .iter()
+            .map(ValidationJobRef::from_command)
+            .collect(),
+    })
+    .context("serialize workflow.validate child handle")
+}
+
+fn parse_validation_child_handle(child_handle: &str) -> Result<ValidationChildHandle> {
+    let child: ValidationChildHandle =
+        serde_json::from_str(child_handle).context("parse workflow.validate child handle")?;
+    if child.kind != "validate" {
+        return Err(anyhow!(
+            "workflow.validate child handle kind mismatch: {}",
+            child.kind
+        ));
+    }
+    if child.jobs.is_empty() {
+        return Err(anyhow!("workflow.validate child handle contains no jobs"));
+    }
+    Ok(child)
+}
+
+fn validation_result_from_job(job_ref: ValidationJobRef, job: &BackgroundJob) -> Result<Value> {
+    let (ok, exit_code, output) = match job.status {
+        JobStatus::Completed => {
+            let output = validation_job_output(job)?;
+            let exit_code = validation_exit_code(&output);
+            (exit_code == 0, exit_code, output)
+        }
+        JobStatus::Failed | JobStatus::Interrupted | JobStatus::TimedOut | JobStatus::Cancelled => {
+            let output = job
+                .error
+                .clone()
+                .unwrap_or_else(|| format!("workflow.validate job {}", job.status.as_str()));
+            (false, -1, output)
+        }
+        JobStatus::Queued
+        | JobStatus::Running
+        | JobStatus::Cancelling
+        | JobStatus::AwaitingApproval => {
+            return Err(anyhow!(
+                "workflow.validate child job {} is still {} after wait",
+                job.job_id,
+                job.status.as_str()
+            ));
+        }
+    };
+    Ok(json!({
+        "command": job_ref.command,
+        "cwd": job_ref.cwd,
+        "timeout": job_ref.timeout,
+        "jobId": job.job_id,
+        "jobStatus": job.status.as_str(),
+        "ok": ok,
+        "exitCode": exit_code,
+        "output": output,
+    }))
+}
+
+fn validation_job_output(job: &BackgroundJob) -> Result<String> {
+    if let Some(path) = &job.result_path {
+        return std::fs::read_to_string(path)
+            .with_context(|| format!("read workflow.validate job result {}", path));
+    }
+    Ok(job.result_preview.clone().unwrap_or_default())
 }
 
 fn validation_commands_from_args(args: &Value) -> Result<Vec<ValidationCommand>> {

@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use crate::async_jobs::{BackgroundJob, JobKind, JobOrigin, JobStatus, JobsDB};
 use crate::permission::SessionMode;
 use crate::session::SessionDB;
 use crate::subagent::{SubagentRun, SubagentStatus};
@@ -47,6 +48,42 @@ fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, Strin
         })
         .expect("create workflow run");
     (session.id, run.id)
+}
+
+fn ensure_async_jobs_db() {
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("async jobs tempdir"));
+    let db = JobsDB::open(&dir.path().join("background_jobs.db")).expect("open async jobs db");
+    crate::async_jobs::set_async_jobs_db(Arc::new(db));
+}
+
+fn insert_completed_async_job(job_id: &str, session_id: &str, output: &str) {
+    ensure_async_jobs_db();
+    let db = crate::async_jobs::get_async_jobs_db().expect("async jobs db initialized");
+    let job = BackgroundJob {
+        job_id: job_id.to_string(),
+        kind: JobKind::Tool,
+        subagent_run_id: None,
+        group_id: None,
+        session_id: Some(session_id.to_string()),
+        agent_id: Some("ha-main".to_string()),
+        tool_name: crate::tools::TOOL_EXEC.to_string(),
+        tool_call_id: None,
+        args_json: "{}".to_string(),
+        status: JobStatus::Completed,
+        result_preview: Some(output.to_string()),
+        result_path: None,
+        error: None,
+        created_at: chrono::Utc::now().timestamp(),
+        completed_at: Some(chrono::Utc::now().timestamp()),
+        injected: true,
+        origin: JobOrigin::Explicit.as_str().to_string(),
+        approval_origin: None,
+        incognito: false,
+        pid: None,
+        cancel_requested: false,
+    };
+    db.insert(&job).expect("insert completed async job");
 }
 
 fn git(root: &std::path::Path, args: &[&str]) {
@@ -187,14 +224,18 @@ fn started_non_idempotent_recovery_action_blocks_run() {
     let (_session_id, run_id) = create_run(&db);
     db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
         .expect("run");
-    let op_key = "main/op#1(validate)".to_string();
+    let op_key = "main/op#1(tool:exec)".to_string();
 
     db.upsert_workflow_op_started(UpsertWorkflowOpInput {
         run_id: run_id.clone(),
         op_key: op_key.clone(),
-        op_type: "validate".to_string(),
+        op_type: "tool:exec".to_string(),
         effect_class: WorkflowEffectClass::NonIdempotent,
-        input: json!({ "commands": ["cargo check -p ha-core"] }),
+        input: json!({
+            "name": "exec",
+            "args": { "cmd": "echo should_not_attach" },
+            "label": null
+        }),
         child_handle: Some("job_123".to_string()),
     })
     .expect("start op");
@@ -210,7 +251,7 @@ fn started_non_idempotent_recovery_action_blocks_run() {
     assert_eq!(run.state, WorkflowRunState::Blocked);
     assert_eq!(
         run.blocked_reason.as_deref(),
-        Some("started_non_idempotent_op:main/op#1(validate)")
+        Some("started_non_idempotent_op:main/op#1(tool:exec)")
     );
 }
 
@@ -687,6 +728,7 @@ export default async function main(workflow) {
 
 #[test]
 fn runtime_validate_runs_targeted_exec_and_returns_structured_result() {
+    ensure_async_jobs_db();
     let dir = tempfile::tempdir().expect("tempdir");
     let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
     let workspace = dir.path().join("workspace");
@@ -1310,6 +1352,73 @@ export default async function main(workflow) {
         run.blocked_reason.as_deref(),
         Some("started_non_idempotent_op:main/op#1(tool:exec)")
     );
+}
+
+#[test]
+fn runtime_attaches_started_validate_child_job_without_blocking() {
+    ensure_async_jobs_db();
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Validate recovery" });
+  const validation = await workflow.validate({ commands: ["echo recovered"] });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({
+    ok: validation.ok,
+    jobId: validation.results[0].jobId,
+    output: validation.results[0].output
+  });
+}
+"#;
+    let (session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let job_id = format!("job_{}", uuid::Uuid::new_v4().simple());
+    insert_completed_async_job(&job_id, &session_id, "recovered\n[exit code: 0]");
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: "main/op#1(validate)".to_string(),
+        op_type: "validate".to_string(),
+        effect_class: WorkflowEffectClass::NonIdempotent,
+        input: json!({ "commands": ["echo recovered"] }),
+        child_handle: Some(
+            json!({
+                "kind": "validate",
+                "jobs": [{
+                    "jobId": job_id.clone(),
+                    "command": "echo recovered",
+                    "cwd": null,
+                    "timeout": null
+                }]
+            })
+            .to_string(),
+        ),
+    })
+    .expect("start validate op");
+
+    let result = run_workflow_script(db.clone(), &run_id).expect("recover workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+    assert_eq!(
+        result.output,
+        Some(json!({
+            "ok": true,
+            "jobId": job_id,
+            "output": "recovered\n[exit code: 0]"
+        }))
+    );
+
+    let validate_op = db
+        .get_workflow_op(&run_id, "main/op#1(validate)")
+        .expect("get validate op")
+        .expect("validate op exists");
+    assert_eq!(validate_op.state, WorkflowOpState::Completed);
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_ne!(run.state, WorkflowRunState::Blocked);
 }
 
 #[test]

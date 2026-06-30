@@ -480,7 +480,7 @@ impl SessionDB {
             WorkflowEffectClass::Pure => StartedOpRecoveryAction::RerunPure,
             WorkflowEffectClass::Idempotent => StartedOpRecoveryAction::RecheckIdempotent,
             WorkflowEffectClass::NonIdempotent => {
-                if op.op_type == "spawnAgent" {
+                if matches!(op.op_type.as_str(), "spawnAgent" | "validate") {
                     if let Some(handle) = op.child_handle {
                         StartedOpRecoveryAction::AttachChildHandle(handle)
                     } else {
