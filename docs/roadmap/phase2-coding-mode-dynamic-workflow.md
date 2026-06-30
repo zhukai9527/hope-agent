@@ -843,7 +843,7 @@ stop reason if any
 
 ### Phase 2.1：Hope-native coding skills MVP
 
-状态：2026-06-30 已新增首批 5 个 `ha-*` native coding skills；人工 coding eval 待跑。
+状态：2026-06-30 已新增首批 5 个 `ha-*` native coding skills；Phase 2 无 LLM 回归验收已覆盖 5 个核心场景，详见 [Phase 2 Eval 验收报告](phase2-eval-report.md)。真实 provider 回复型 fan-out 仍作为人工 smoke gate。
 
 先写：
 

@@ -299,6 +299,66 @@ export default async function main(workflow) {
 }
 
 #[test]
+fn phase2_eval_user_approval_pause_resume_cancel_flow() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 8 };
+  const task = await workflow.task.create({ title: "Approval control flow" });
+  const call = {
+    name: "write",
+    args: { path: "phase2.txt", content: "approval flow" },
+    label: "write-file"
+  };
+  await workflow.tool(call);
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+    let (_session_id, run_id) = create_run_with_script(&db, script);
+
+    let err = run_workflow_script(db.clone(), &run_id).expect_err("preview asks first");
+    assert!(
+        err.to_string().contains("requires user approval"),
+        "{err:#}"
+    );
+    let awaiting = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(awaiting.state, WorkflowRunState::AwaitingApproval);
+
+    let approved = db.approve_workflow_run(&run_id).expect("approve workflow");
+    assert_eq!(approved.state, WorkflowRunState::Running);
+    let paused = db.pause_workflow_run(&run_id).expect("pause workflow");
+    assert_eq!(paused.state, WorkflowRunState::Paused);
+    let resumed = db.resume_workflow_run(&run_id).expect("resume workflow");
+    assert_eq!(resumed.state, WorkflowRunState::Running);
+    let cancelled = db.cancel_workflow_run(&run_id).expect("cancel workflow");
+    assert_eq!(cancelled.state, WorkflowRunState::Cancelled);
+
+    let events = db
+        .list_workflow_events(&run_id, 20)
+        .expect("list workflow events");
+    for reason in [
+        "permission_preview",
+        "approval_granted",
+        "pause_requested",
+        "resume_requested",
+        "cancel_requested",
+    ] {
+        assert!(
+            events.iter().any(|event| {
+                event.event_type == "run_state_changed"
+                    && event.payload.get("reason").and_then(Value::as_str) == Some(reason)
+            }),
+            "missing state transition reason {reason}"
+        );
+    }
+}
+
+#[test]
 fn completed_op_replay_returns_recorded_output_without_regressing_state() {
     let (_dir, db) = temp_db();
     let (_session_id, run_id) = create_run(&db);
@@ -991,6 +1051,98 @@ export default async function main(workflow) {
         op_types,
         vec!["task.create", "diff", "task.update", "finish"]
     );
+}
+
+#[test]
+fn phase2_eval_feature_workflow_writes_diffs_validates_and_finishes() {
+    let _async_guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(workspace.join("src")).expect("create workspace");
+    git(&workspace, &["init"]);
+    git(
+        &workspace,
+        &["config", "user.email", "hope-agent@example.invalid"],
+    );
+    git(&workspace, &["config", "user.name", "Hope Agent Test"]);
+    std::fs::write(workspace.join("README.md"), "# Hope\n").expect("write baseline");
+    git(&workspace, &["add", "README.md"]);
+    git(&workspace, &["commit", "-m", "initial"]);
+
+    let session = db.create_session("ha-main").expect("create session");
+    db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+        .expect("set working dir");
+    db.update_session_permission_mode(&session.id, SessionMode::Yolo)
+        .expect("set yolo mode");
+
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Implement feature file" });
+  await workflow.tool({
+    name: "write",
+    args: { path: "src/feature.txt", content: "feature enabled\n" },
+    label: "write-feature"
+  });
+  const diff = await workflow.diff({ label: "feature-diff" });
+  const validation = await workflow.validate({
+    commands: ["test -f src/feature.txt"],
+    reason: "feature file exists"
+  });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({
+    ok: validation.ok,
+    changed: diff.changes.map((change) => change.path),
+    resultCount: validation.results.length
+  });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.feature".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10, "max_ops": 8 }),
+        })
+        .expect("create workflow run");
+    db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let result = run_workflow_script(db.clone(), &run.id).expect("run workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+    let output = result.output.as_ref().expect("workflow output");
+    assert_eq!(output.get("ok"), Some(&json!(true)));
+    assert_eq!(output.get("resultCount"), Some(&json!(1)));
+    let changed = output
+        .get("changed")
+        .and_then(Value::as_array)
+        .expect("changed paths");
+    assert!(changed.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|path| path.ends_with("src/feature.txt"))
+    }));
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("src/feature.txt")).expect("read feature"),
+        "feature enabled\n"
+    );
+
+    let op_types: Vec<&str> = result
+        .snapshot
+        .ops
+        .iter()
+        .map(|op| op.op_type.as_str())
+        .collect();
+    assert_eq!(
+        op_types,
+        vec!["task.create", "tool:write", "diff", "validate", "task.update", "finish"]
+    );
+    assert!(result
+        .snapshot
+        .events
+        .iter()
+        .any(|event| event.event_type == "guarded_repair_validation_passed"));
 }
 
 #[test]
