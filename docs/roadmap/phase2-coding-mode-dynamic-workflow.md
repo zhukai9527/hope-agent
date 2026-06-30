@@ -613,7 +613,7 @@ Script draft gate 检查可执行脚本：
 
 - 是否解释目标。
 - 是否列出预算。
-- 是否使用 stable op id。
+- 是否避免手写 op id / 旧 `(id, args)` host call 形态（op 身份由 runtime 位置化生成，`label` 仅展示）。
 - 是否使用 task 作为进度真相。
 - 是否有停止条件。
 - 是否没有 raw capabilities。
@@ -877,6 +877,8 @@ stop reason if any
 
 ### Phase 2.3：Plan Gate + Script Draft Gate
 
+状态：2026-06-30 已新增 Plan Gate / Script Gate 纯函数；`submit_plan` 已接入 Plan Gate，Script Gate 等 workflow runtime 入口落地后接入执行前检查。
+
 实现：
 
 - Plan gate checker。
@@ -887,7 +889,7 @@ stop reason if any
 
 - 缺 Critical Files 的 plan 被拦。
 - 无 Verification 的 plan 被拦。
-- 缺 stable op id 的 script 被拦。
+- 使用旧 `(id, args)` host call 或把 `label` 当身份的 script 被拦。
 - 使用 raw capabilities 的 script 被拦。
 
 ### Phase 2.4：WorkflowRun durable store
