@@ -1,10 +1,11 @@
 use serde_json::json;
+use std::sync::Arc;
 
 use crate::session::SessionDB;
 
 use super::{
-    CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
-    WorkflowOpState, WorkflowRunState,
+    run_workflow_script, CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput,
+    WorkflowEffectClass, WorkflowOpState, WorkflowRunState,
 };
 
 fn temp_db() -> (tempfile::TempDir, SessionDB) {
@@ -22,6 +23,20 @@ fn create_run(db: &SessionDB) -> (String, String) {
             loop_mode: "guarded".to_string(),
             script_source: "export default async function main(workflow) {}".to_string(),
             budget: json!({ "max_runtime_secs": 300, "max_ops": 12 }),
+        })
+        .expect("create workflow run");
+    (session.id, run.id)
+}
+
+fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, String) {
+    let session = db.create_session("ha-main").expect("create session");
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script_source.to_string(),
+            budget: json!({ "max_script_secs": 10, "max_ops": 12 }),
         })
         .expect("create workflow run");
     (session.id, run.id)
@@ -196,4 +211,184 @@ fn cancel_prevents_new_ops() {
         })
         .expect_err("cancelled run must reject op");
     assert!(err.to_string().contains("cancelled"));
+}
+
+#[test]
+fn runtime_executes_script_host_apis_and_finishes_run() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(workspace.join("src")).expect("create workspace");
+    std::fs::write(workspace.join("src/workflow_runtime.rs"), "runtime").expect("write file");
+
+    let session = db.create_session("ha-main").expect("create session");
+    db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+        .expect("set working dir");
+
+    let script = r#"
+export default async function main(workflow) {
+  const observeTask = await workflow.task.create({
+    title: "收集相关文件和约束",
+    label: "observe"
+  });
+  const files = await workflow.fileSearch({
+    query: "workflow runtime",
+    limit: 5,
+    label: "find-runtime"
+  });
+  await workflow.trace({
+    label: "matches",
+    payload: files.matches.map((file) => file.relPath)
+  });
+  await workflow.task.update({ task: observeTask, status: "completed" });
+  await workflow.finish({
+    summary: "done",
+    matchCount: files.matches.length
+  });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10 }),
+        })
+        .expect("create workflow run");
+
+    let result = run_workflow_script(db.clone(), &run.id).expect("run workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+    assert_eq!(
+        result.output.as_ref().and_then(|v| v.get("summary")),
+        Some(&json!("done"))
+    );
+
+    let op_types: Vec<&str> = result
+        .snapshot
+        .ops
+        .iter()
+        .map(|op| op.op_type.as_str())
+        .collect();
+    assert_eq!(
+        op_types,
+        vec![
+            "task.create",
+            "fileSearch",
+            "trace",
+            "task.update",
+            "finish"
+        ]
+    );
+    assert!(result
+        .snapshot
+        .events
+        .iter()
+        .any(|event| event.event_type == "trace"));
+
+    let tasks = db.list_tasks(&session.id).expect("list tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].status, "completed");
+}
+
+#[test]
+fn runtime_replays_completed_task_create_without_duplicate_task() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const observeTask = await workflow.task.create({ title: "Observe" });
+  await workflow.task.update({ task: observeTask, status: "completed" });
+  await workflow.finish({ summary: "recovered" });
+}
+"#;
+    let (session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let existing_task = db
+        .create_task(&session_id, "Observe", None)
+        .expect("create existing task");
+    let op_key = "main/op#0(task.create)";
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: op_key.to_string(),
+        op_type: "task.create".to_string(),
+        effect_class: WorkflowEffectClass::Idempotent,
+        input: json!({ "title": "Observe" }),
+        child_handle: None,
+    })
+    .expect("start preexisting op");
+    db.complete_workflow_op(
+        &run_id,
+        op_key,
+        json!({
+            "id": existing_task.id,
+            "sessionId": session_id,
+            "title": existing_task.content,
+            "status": existing_task.status,
+            "label": null
+        }),
+    )
+    .expect("complete preexisting op");
+
+    let result = run_workflow_script(db.clone(), &run_id).expect("recover workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+
+    let tasks = db.list_tasks(&session_id).expect("list tasks");
+    assert_eq!(tasks.len(), 1, "task.create replay must not duplicate task");
+    assert_eq!(tasks[0].id, existing_task.id);
+    assert_eq!(tasks[0].status, "completed");
+}
+
+#[test]
+fn runtime_rejects_bad_script_before_starting_ops() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  await workflow.task.update({ label: "observe", status: "completed" });
+}
+"#;
+    let (_session_id, run_id) = create_run_with_script(&db, script);
+
+    let err = run_workflow_script(db.clone(), &run_id).expect_err("gate must reject script");
+    assert!(err.to_string().contains("Workflow Script Gate"));
+    assert!(err.to_string().contains("task_update_by_label"));
+
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Draft);
+    assert!(db.list_workflow_ops(&run_id).expect("list ops").is_empty());
+}
+
+#[test]
+fn runtime_determinism_guard_blocks_dynamic_random_access() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const observeTask = await workflow.task.create({ title: "Observe" });
+  globalThis["Math"]["random"]();
+  await workflow.task.update({ task: observeTask, status: "completed" });
+  await workflow.finish({ summary: "unreachable" });
+}
+"#;
+    let (_session_id, run_id) = create_run_with_script(&db, script);
+
+    let err = run_workflow_script(db.clone(), &run_id).expect_err("runtime guard must reject");
+    assert!(err.to_string().contains("Math.random() is disabled"));
+
+    let run = db
+        .get_workflow_run(&run_id)
+        .expect("get run")
+        .expect("run exists");
+    assert_eq!(run.state, WorkflowRunState::Failed);
+
+    let ops = db.list_workflow_ops(&run_id).expect("list ops");
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].op_type, "task.create");
+    assert_eq!(ops[0].state, WorkflowOpState::Completed);
 }

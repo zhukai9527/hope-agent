@@ -877,7 +877,7 @@ stop reason if any
 
 ### Phase 2.3：Plan Gate + Script Draft Gate
 
-状态：2026-06-30 已新增 Plan Gate / Script Gate 纯函数；`submit_plan` 已接入 Plan Gate，Script Gate 等 workflow runtime 入口落地后接入执行前检查。
+状态：2026-06-30 已新增 Plan Gate / Script Gate 纯函数；`submit_plan` 已接入 Plan Gate；`workflow::runtime::run_workflow_script` 已在执行前复用 Script Gate。
 
 实现：
 
@@ -911,18 +911,20 @@ stop reason if any
 
 ### Phase 2.5：Embedded script runtime MVP
 
+状态：2026-06-30 已落 QuickJS/rquickjs runtime foundation：`workflow.js` 受控执行、`export default main(workflow)` 入口、无 raw fs/network/process/env host binding、memory/stack/timeout guard、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 `main/op#N(api)`、`task.create/update`（handle 定位）/ `fileSearch` / `trace` / `finish` 首批 host API、Completed op replay。无 LLM 单测覆盖脚本执行、Script Gate 执行前阻断、动态 `Math.random` 访问被 runtime 阻断、已完成 `task.create` replay 不重复建 task。尚未完成：异步 host bridge、`spawnAgent` / `waitAll` / `validate` / `tool/read/grep/diff/askUser`、Primary-only startup recovery worker、审批预览、重启恢复端到端。
+
 实现：
 
-- `workflow.js` 执行。
-- host API MVP。
-- durable replay。
-- user approval。
+- `workflow.js` 执行（已完成 foundation）。
+- host API MVP（已完成同步首批；异步/工具类待接）。
+- durable replay（Completed op replay 已完成；Started async attach / Primary-only recovery worker 待接）。
+- user approval（待接 permission preview / approval surface）。
 
 验收：
 
 - 一个 script 能 spawn 2 个 read-only subagents 并汇总。
 - 一个 script 能运行 targeted validation。
-- 重启后 replay 不重复已完成 host call。
+- 重启后 replay 不重复已完成 host call（Completed op 单测已覆盖；进程重启恢复 worker 待接）。
 
 ### Phase 2.6：Workflow Panel
 
@@ -1080,4 +1082,5 @@ Phase 2 完成时，应满足：
 3. ~~新建第一批 `ha-*` native skills~~ → 已新增首批 5 个 Hope-native coding skills。
 4. ~~实现 Plan Gate / Script Gate 的纯函数和 fixture~~ → 已接入 Plan Gate，Script Gate 等 runtime 入口落地后执行。
 5. ~~实现 durable store + 状态机（无 JS，纯函数 + fixture，[runtime §14](workflow-script-runtime.md)）~~ → 已新增 durable store、owner API、状态机与无 LLM 单测。
-6. 再进入 embedded runtime 代码实现。
+6. ~~进入 embedded runtime 代码实现~~ → 已落 QuickJS runtime foundation 与同步首批 host API。
+7. 接 async host bridge：`spawnAgent` / `waitAll` / `validate` / `tool/read/grep/diff/askUser`，并补 Primary-only startup recovery worker。
