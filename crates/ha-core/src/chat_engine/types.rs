@@ -568,6 +568,9 @@ pub struct ChatEngineResult {
     pub response: String,
     /// The model that produced the successful response.
     pub model_used: Option<ActiveModel>,
+    /// Token usage captured from this chat turn. Subsystems that fan out chat
+    /// turns, such as workflow-owned subagents, use this for durable budgets.
+    pub usage: CapturedUsage,
     /// The agent instance after chat (for UI chat to update State).
     pub agent: Option<AssistantAgent>,
 }

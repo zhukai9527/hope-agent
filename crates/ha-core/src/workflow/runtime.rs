@@ -15,12 +15,13 @@ use serde_json::{json, Value};
 use tokio::runtime::Handle as TokioHandle;
 
 use crate::async_jobs::{BackgroundJob, JobManager, JobOrigin, JobStatus};
-use crate::plan::{check_workflow_script_draft, ScriptGateOptions};
+use crate::plan::check_workflow_script_draft;
+use crate::runtime_tasks::{cancel_runtime_task, RuntimeTaskKind};
 use crate::session::{SessionDB, Task, TaskStatus};
 use crate::tools::{self, ToolExecContext};
 
 use super::types::{
-    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState, WorkflowRunSnapshot,
+    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState, WorkflowRun, WorkflowRunSnapshot,
     WorkflowRunState,
 };
 
@@ -32,6 +33,8 @@ const REPAIR_VALIDATION_FAILED_EVENT: &str = "guarded_repair_validation_failed";
 const REPAIR_VALIDATION_PASSED_EVENT: &str = "guarded_repair_validation_passed";
 const REPAIR_SAME_VALIDATION_REASON: &str = "guarded_repair_same_validation_fingerprint";
 const REPAIR_NO_EFFECTIVE_DIFF_REASON: &str = "guarded_repair_no_effective_diff";
+const BUDGET_USAGE_EVENT: &str = "budget_usage";
+const BUDGET_EXHAUSTED_REASON: &str = "workflow_budget_output_tokens_exhausted";
 const VALIDATION_FINGERPRINT_OUTPUT_BYTES: usize = 2048;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +143,161 @@ pub fn spawn_startup_recovery_if_primary() {
     });
 }
 
+pub fn spawn_workflow_run_if_primary(
+    db: Arc<SessionDB>,
+    run_id: impl Into<String>,
+    owner: impl Into<String>,
+) -> bool {
+    if !crate::runtime_lock::is_primary() {
+        crate::app_warn!(
+            "workflow",
+            "spawn_run",
+            "skip workflow launch because this process is not primary"
+        );
+        return false;
+    }
+
+    let run_id = run_id.into();
+    let owner = owner.into();
+    tokio::spawn(async move {
+        let state = match db.get_workflow_run(&run_id) {
+            Ok(Some(run)) => run.state,
+            Ok(None) => {
+                crate::app_warn!(
+                    "workflow",
+                    "spawn_run",
+                    "workflow run {} not found before launch",
+                    run_id
+                );
+                return;
+            }
+            Err(err) => {
+                crate::app_warn!(
+                    "workflow",
+                    "spawn_run",
+                    "failed to load workflow run {} before launch: {err:#}",
+                    run_id
+                );
+                return;
+            }
+        };
+
+        let result = match state {
+            WorkflowRunState::Running => {
+                match db.claim_workflow_run_for_recovery(&run_id, &owner) {
+                    Ok(Some(claimed)) => run_workflow_script_async(db.clone(), &claimed.id).await,
+                    Ok(None) => {
+                        crate::app_info!(
+                            "workflow",
+                            "spawn_run",
+                            "workflow run {} is already claimed or no longer running",
+                            run_id
+                        );
+                        return;
+                    }
+                    Err(err) => Err(err).context("claim workflow run before launch"),
+                }
+            }
+            WorkflowRunState::Draft | WorkflowRunState::Recovering => {
+                run_workflow_script_async(db.clone(), &run_id).await
+            }
+            WorkflowRunState::AwaitingApproval
+            | WorkflowRunState::AwaitingUser
+            | WorkflowRunState::Paused
+            | WorkflowRunState::Completed
+            | WorkflowRunState::Failed
+            | WorkflowRunState::Cancelled
+            | WorkflowRunState::Blocked => {
+                crate::app_info!(
+                    "workflow",
+                    "spawn_run",
+                    "skip workflow run {} launch while state={}",
+                    run_id,
+                    state.as_str()
+                );
+                return;
+            }
+        };
+
+        match result {
+            Ok(result) => {
+                crate::app_info!(
+                    "workflow",
+                    "spawn_run",
+                    "workflow run {} finished launch with state={}",
+                    run_id,
+                    result.snapshot.run.state.as_str()
+                );
+            }
+            Err(err) => {
+                crate::app_warn!(
+                    "workflow",
+                    "spawn_run",
+                    "workflow run {} launch failed: {err:#}",
+                    run_id
+                );
+            }
+        }
+    });
+    true
+}
+
+pub async fn cancel_workflow_run_with_children(
+    db: Arc<SessionDB>,
+    run_id: &str,
+) -> Result<WorkflowRun> {
+    let run = db.cancel_workflow_run(run_id)?;
+    let child_refs = workflow_child_task_refs(&db, run_id)?;
+    let mut results = Vec::new();
+    for (kind, id) in child_refs {
+        let kind_label = kind.as_str();
+        match cancel_runtime_task(kind, &id).await {
+            Ok(result) => results.push(json!(result)),
+            Err(err) => results.push(json!({
+                "kind": kind_label,
+                "id": id,
+                "accepted": false,
+                "status": "error",
+                "message": err.to_string(),
+            })),
+        }
+    }
+    if !results.is_empty() {
+        let _ = db.append_workflow_event(
+            run_id,
+            "run_child_cancel_requested",
+            json!({
+                "children": results,
+            }),
+        );
+    }
+    Ok(run)
+}
+
+fn workflow_child_task_refs(
+    db: &SessionDB,
+    run_id: &str,
+) -> Result<Vec<(RuntimeTaskKind, String)>> {
+    let mut refs = Vec::new();
+    for (op_type, child_handle) in db.list_workflow_child_handles(run_id)? {
+        if op_type == "validate" {
+            if let Ok(child) = parse_validation_child_handle(&child_handle) {
+                refs.extend(
+                    child
+                        .jobs
+                        .into_iter()
+                        .map(|job| (RuntimeTaskKind::AsyncJob, job.job_id)),
+                );
+            }
+        } else if op_type.starts_with("tool:") {
+            refs.push((RuntimeTaskKind::AsyncJob, child_handle));
+        } else if op_type == "spawnAgent" {
+            refs.push((RuntimeTaskKind::Subagent, child_handle));
+        }
+    }
+    Ok(refs)
+}
+
 pub fn run_workflow_script(db: Arc<SessionDB>, run_id: &str) -> Result<WorkflowRuntimeResult> {
     if TokioHandle::try_current().is_ok() {
         return Err(anyhow!(
@@ -189,9 +347,31 @@ pub async fn run_workflow_script_async(
         return Err(anyhow!("workflow run {} is paused", run_id));
     }
 
-    let gate = check_workflow_script_draft(&run.script_source, ScriptGateOptions::default());
+    let gate = check_workflow_script_draft(
+        &run.script_source,
+        super::preview::script_gate_options_for_loop_mode(&run.loop_mode),
+    );
     if !gate.passed() {
         return Err(anyhow!(gate.render_feedback("Workflow Script Gate")));
+    }
+    if run.loop_mode == "autonomous" && !has_required_autonomous_budget(&run) {
+        let _ = db.append_workflow_event(
+            run_id,
+            "workflow_budget_required",
+            json!({
+                "reason": "autonomous_requires_explicit_runtime_and_output_token_budget",
+                "budget": run.budget.clone(),
+            }),
+        );
+        let _ = db.transition_workflow_run(
+            run_id,
+            WorkflowRunState::Blocked,
+            Some("autonomous_budget_required"),
+        );
+        return Err(anyhow!(
+            "workflow run {} blocked: autonomous mode requires explicit max runtime and max output token budget",
+            run_id
+        ));
     }
 
     if run.state == WorkflowRunState::Draft {
@@ -681,6 +861,27 @@ fn script_timeout(run: &super::types::WorkflowRun) -> Duration {
     Duration::from_secs(secs)
 }
 
+fn output_token_budget_limit_from_budget(budget: &Value) -> Option<u64> {
+    optional_u64_any(budget, &["maxOutputTokens", "max_output_tokens"]).filter(|limit| *limit > 0)
+}
+
+fn has_runtime_budget(run: &super::types::WorkflowRun) -> bool {
+    optional_u64_any(
+        &run.budget,
+        &[
+            "maxScriptSecs",
+            "max_script_secs",
+            "maxRuntimeSecs",
+            "max_runtime_secs",
+        ],
+    )
+    .is_some_and(|secs| secs > 0)
+}
+
+fn has_required_autonomous_budget(run: &super::types::WorkflowRun) -> bool {
+    has_runtime_budget(run) && output_token_budget_limit_from_budget(&run.budget).is_some()
+}
+
 struct WorkflowRuntimeHost {
     db: Arc<SessionDB>,
     run_id: String,
@@ -700,6 +901,7 @@ struct WorkflowOpScope {
 struct ExecutedWorkflowOp {
     op_key: String,
     output: Value,
+    replayed: bool,
 }
 
 impl WorkflowRuntimeHost {
@@ -906,6 +1108,7 @@ impl WorkflowRuntimeHost {
                 host.recover_spawn_agent_child(child_handle, label.as_deref(), task.as_deref())
             },
             |host, child_handle| {
+                host.ensure_output_token_budget("spawnAgent")?;
                 let mut dispatch_args = tool_args.clone();
                 inject_workflow_preallocated_run_id(&mut dispatch_args, child_handle)?;
                 let output = host.dispatch_tool(tools::TOOL_SUBAGENT, &dispatch_args)?;
@@ -947,12 +1150,88 @@ impl WorkflowRuntimeHost {
     fn wait_all(&mut self, args: Value) -> Result<Value> {
         let tool_args = wait_all_tool_args(&args)?;
         let input = compact_input(args);
-        self.execute_op("waitAll", WorkflowEffectClass::Pure, input, |host| {
-            let output = host.dispatch_tool(tools::TOOL_SUBAGENT, &tool_args)?;
-            let mut parsed = parse_tool_json_output(&output, "workflow.waitAll")?;
-            normalize_wait_all_response(&mut parsed);
-            Ok(parsed)
-        })
+        let executed =
+            self.execute_op_tracked("waitAll", WorkflowEffectClass::Pure, input, |host| {
+                let output = host.dispatch_tool(tools::TOOL_SUBAGENT, &tool_args)?;
+                let mut parsed = parse_tool_json_output(&output, "workflow.waitAll")?;
+                normalize_wait_all_response(&mut parsed);
+                Ok(parsed)
+            })?;
+        if !executed.replayed {
+            self.record_output_token_budget_usage("waitAll")?;
+        }
+        Ok(executed.output)
+    }
+
+    fn ensure_output_token_budget(&self, api: &str) -> Result<()> {
+        let Some(limit) = self.output_token_budget_limit()? else {
+            return Ok(());
+        };
+        let spent = self.output_tokens_spent()?;
+        if spent < limit {
+            return Ok(());
+        }
+
+        let _ = self.db.append_workflow_event(
+            &self.run_id,
+            BUDGET_USAGE_EVENT,
+            json!({
+                "api": api,
+                "spentOutputTokens": spent,
+                "maxOutputTokens": limit,
+                "exhausted": true,
+                "reason": BUDGET_EXHAUSTED_REASON,
+            }),
+        )?;
+        let _ = self.db.transition_workflow_run(
+            &self.run_id,
+            WorkflowRunState::Blocked,
+            Some(BUDGET_EXHAUSTED_REASON),
+        )?;
+        Err(anyhow!(
+            "workflow output token budget exhausted before {api}: spent {spent}, limit {limit}"
+        ))
+    }
+
+    fn record_output_token_budget_usage(&self, api: &str) -> Result<()> {
+        let Some(limit) = self.output_token_budget_limit()? else {
+            return Ok(());
+        };
+        let spent = self.output_tokens_spent()?;
+        let _ = self.db.append_workflow_event(
+            &self.run_id,
+            BUDGET_USAGE_EVENT,
+            json!({
+                "api": api,
+                "spentOutputTokens": spent,
+                "maxOutputTokens": limit,
+                "exhausted": spent >= limit,
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn output_token_budget_limit(&self) -> Result<Option<u64>> {
+        let Some(run) = self.db.get_workflow_run(&self.run_id)? else {
+            return Ok(None);
+        };
+        Ok(output_token_budget_limit_from_budget(&run.budget))
+    }
+
+    fn output_tokens_spent(&self) -> Result<u64> {
+        let mut spent = 0u64;
+        for op in self.db.list_workflow_ops(&self.run_id)? {
+            if op.op_type != "spawnAgent" {
+                continue;
+            }
+            let Some(child_handle) = op.child_handle else {
+                continue;
+            };
+            if let Some(run) = self.db.get_subagent_run(&child_handle)? {
+                spent = spent.saturating_add(run.output_tokens.unwrap_or(0));
+            }
+        }
+        Ok(spent)
     }
 
     fn materialize_map(&mut self, args: Value) -> Result<Value> {
@@ -1054,7 +1333,9 @@ impl WorkflowRuntimeHost {
             },
             move |host, child_handle| host.run_validate_child(child_handle, run_reason.as_deref()),
         )?;
-        self.record_guarded_repair_validation(&executed.op_key, &executed.output)?;
+        if !executed.replayed {
+            self.record_guarded_repair_validation(&executed.op_key, &executed.output)?;
+        }
         Ok(executed.output)
     }
 
@@ -1105,6 +1386,7 @@ impl WorkflowRuntimeHost {
     fn spawn_validation_exec_job(&self, job_ref: &ValidationJobRef) -> Result<()> {
         let mut ctx = self.tool_exec_context();
         ctx.async_tool_policy = crate::agent_config::AsyncToolPolicy::NeverBackground;
+        ctx.suppress_completion_injection = true;
         let exec_args = job_ref.exec_args();
         let session_id = self.session_id.clone();
         let default_path = ctx.default_cwd();
@@ -1334,7 +1616,21 @@ impl WorkflowRuntimeHost {
     where
         F: FnOnce(&mut WorkflowRuntimeHost) -> Result<Value>,
     {
-        self.execute_op_with_key(op_type, effect_class, input, |host, _op_key| f(host))
+        self.execute_op_tracked(op_type, effect_class, input, f)
+            .map(|executed| executed.output)
+    }
+
+    fn execute_op_tracked<F>(
+        &mut self,
+        op_type: &str,
+        effect_class: WorkflowEffectClass,
+        input: Value,
+        f: F,
+    ) -> Result<ExecutedWorkflowOp>
+    where
+        F: FnOnce(&mut WorkflowRuntimeHost) -> Result<Value>,
+    {
+        self.execute_op_with_key_tracked(op_type, effect_class, input, |host, _op_key| f(host))
     }
 
     fn execute_op_with_key<F>(
@@ -1344,6 +1640,20 @@ impl WorkflowRuntimeHost {
         input: Value,
         f: F,
     ) -> Result<Value>
+    where
+        F: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Value>,
+    {
+        self.execute_op_with_key_tracked(op_type, effect_class, input, f)
+            .map(|executed| executed.output)
+    }
+
+    fn execute_op_with_key_tracked<F>(
+        &mut self,
+        op_type: &str,
+        effect_class: WorkflowEffectClass,
+        input: Value,
+        f: F,
+    ) -> Result<ExecutedWorkflowOp>
     where
         F: FnOnce(&mut WorkflowRuntimeHost, &str) -> Result<Value>,
     {
@@ -1359,7 +1669,13 @@ impl WorkflowRuntimeHost {
         })?;
 
         match op.state {
-            WorkflowOpState::Completed => return Ok(op.output.unwrap_or(Value::Null)),
+            WorkflowOpState::Completed => {
+                return Ok(ExecutedWorkflowOp {
+                    op_key,
+                    output: op.output.unwrap_or(Value::Null),
+                    replayed: true,
+                })
+            }
             WorkflowOpState::Failed => {
                 return Err(anyhow!(
                     "workflow op {} previously failed: {}",
@@ -1403,7 +1719,11 @@ impl WorkflowRuntimeHost {
         };
         self.db
             .complete_workflow_op(&self.run_id, &op_key, output.clone())?;
-        Ok(output)
+        Ok(ExecutedWorkflowOp {
+            op_key,
+            output,
+            replayed: false,
+        })
     }
 
     fn execute_op_with_child_handle<F, R>(
@@ -1470,6 +1790,7 @@ impl WorkflowRuntimeHost {
                 return Ok(ExecutedWorkflowOp {
                     op_key,
                     output: op.output.unwrap_or(Value::Null),
+                    replayed: true,
                 })
             }
             WorkflowOpState::Failed => {
@@ -1491,7 +1812,11 @@ impl WorkflowRuntimeHost {
                     if let Some(output) = recover_started_child(self, &handle)? {
                         self.db
                             .complete_workflow_op(&self.run_id, &op_key, output.clone())?;
-                        return Ok(ExecutedWorkflowOp { op_key, output });
+                        return Ok(ExecutedWorkflowOp {
+                            op_key,
+                            output,
+                            replayed: false,
+                        });
                     }
                 }
                 Some(super::types::StartedOpRecoveryAction::BlockNonIdempotent) => {
@@ -1522,7 +1847,11 @@ impl WorkflowRuntimeHost {
         };
         self.db
             .complete_workflow_op(&self.run_id, &op_key, output.clone())?;
-        Ok(ExecutedWorkflowOp { op_key, output })
+        Ok(ExecutedWorkflowOp {
+            op_key,
+            output,
+            replayed: false,
+        })
     }
 
     fn next_op_key(&mut self, op_type: &str) -> String {

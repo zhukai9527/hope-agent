@@ -9,7 +9,9 @@ use crate::session::SessionDB;
 use crate::subagent::{SubagentRun, SubagentStatus};
 
 use super::{
-    recover_pending_workflow_runs, run_workflow_script, run_workflow_script_async,
+    cancel_workflow_run_with_children, ensure_workflow_script_can_create,
+    preview_workflow_script_for_session, recover_pending_workflow_runs, run_workflow_script,
+    run_workflow_script_async,
     runtime::{
         ask_user_tool_args, spawn_agent_tool_args, validation_exit_code, wait_all_tool_args,
     },
@@ -32,6 +34,8 @@ fn create_run(db: &SessionDB) -> (String, String) {
             loop_mode: "guarded".to_string(),
             script_source: "export default async function main(workflow) {}".to_string(),
             budget: json!({ "max_runtime_secs": 300, "max_ops": 12 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     (session.id, run.id)
@@ -46,6 +50,8 @@ fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, Strin
             loop_mode: "guarded".to_string(),
             script_source: script_source.to_string(),
             budget: json!({ "max_script_secs": 10, "max_ops": 12 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     (session.id, run.id)
@@ -275,6 +281,8 @@ fn workflow_run_rejects_incognito_sessions() {
             loop_mode: "guarded".to_string(),
             script_source: "export default async function main(workflow) {}".to_string(),
             budget: json!({}),
+            parent_run_id: None,
+            origin: None,
         })
         .expect_err("incognito must be rejected");
     assert!(err.to_string().contains("incognito"));
@@ -303,6 +311,185 @@ export default async function main(workflow) {
         .expect("preview event");
     assert_eq!(preview.payload["summary"]["total"], json!(3));
     assert_eq!(preview.payload["summary"]["ask"], json!(0));
+}
+
+#[test]
+fn workflow_create_records_parent_repair_derivation() {
+    let (_dir, db) = temp_db();
+    let parent_script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 6 };
+  const task = await workflow.task.create({ title: "Parent" });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+    let (session_id, parent_run_id) = create_run_with_script(&db, parent_script);
+    let child_script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 6 };
+  const task = await workflow.task.create({ title: "Repair" });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+    let child = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session_id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: child_script.to_string(),
+            budget: json!({ "max_script_secs": 10, "max_ops": 12 }),
+            parent_run_id: Some(parent_run_id.clone()),
+            origin: Some("repair".to_string()),
+        })
+        .expect("create child workflow run");
+
+    assert_eq!(child.parent_run_id.as_deref(), Some(parent_run_id.as_str()));
+    assert_eq!(child.origin.as_deref(), Some("repair"));
+
+    let child_events = db
+        .list_workflow_events(&child.id, 20)
+        .expect("list child events");
+    assert!(child_events.iter().any(|event| {
+        event.event_type == "run_derived_from"
+            && event.payload.get("parentRunId").and_then(Value::as_str)
+                == Some(parent_run_id.as_str())
+            && event.payload.get("origin").and_then(Value::as_str) == Some("repair")
+    }));
+
+    let parent_events = db
+        .list_workflow_events(&parent_run_id, 20)
+        .expect("list parent events");
+    assert!(parent_events.iter().any(|event| {
+        event.event_type == "run_derived_child_created"
+            && event.payload.get("childRunId").and_then(Value::as_str) == Some(child.id.as_str())
+            && event.payload.get("origin").and_then(Value::as_str) == Some("repair")
+    }));
+}
+
+#[test]
+fn workflow_create_preflight_rejects_gate_failure() {
+    let (_dir, db) = temp_db();
+    let session = db.create_session("ha-main").expect("create session");
+    let script = r#"
+export default async function main(workflow) {
+  await workflow.task.update({ label: "observe", status: "completed" });
+}
+"#;
+
+    let err = ensure_workflow_script_can_create(&db, &session.id, script, Some("guarded"))
+        .expect_err("gate failure must block owner create");
+    assert!(err.to_string().contains("Workflow Script Gate"));
+    assert!(err.to_string().contains("task_update_by_label"));
+}
+
+#[test]
+fn workflow_create_preflight_allows_approval_required_script() {
+    let (_dir, db) = temp_db();
+    let session = db.create_session("ha-main").expect("create session");
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 8 };
+  const task = await workflow.task.create({ title: "Write" });
+  const call = {
+    name: "write",
+    args: { path: "a.txt", content: "hello" },
+    label: "write-file"
+  };
+  await workflow.tool(call);
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+
+    let preview = ensure_workflow_script_can_create(&db, &session.id, script, Some("guarded"))
+        .expect("approval-required scripts can be created");
+    assert!(preview.can_create);
+    assert!(preview.requires_approval);
+    assert!(!preview.has_denials);
+}
+
+#[test]
+fn workflow_create_preflight_denies_unattended_ask_user_by_default() {
+    let (_dir, db) = temp_db();
+    let session = db.create_session("ha-main").expect("create session");
+    let mut config = crate::config::AppConfig::default();
+    config.permission.unattended_approval_action =
+        crate::permission::UnattendedApprovalAction::Deny;
+    let _config_restore = replace_config_cache_for_test(config);
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 8 };
+  const task = await workflow.task.create({ title: "Clarify" });
+  await workflow.askUser({
+    label: "clarify",
+    question: "Continue without a visible user?",
+    options: ["Continue", "Stop"]
+  });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+
+    let preview = preview_workflow_script_for_session(&db, &session.id, script, Some("guarded"));
+    assert!(preview.gate_passed);
+    assert!(preview.has_denials);
+    assert!(!preview.can_create);
+    assert_eq!(preview.permission.summary.deny, 1);
+    let ask = preview
+        .permission
+        .calls
+        .iter()
+        .find(|call| call.api == "workflow.askUser")
+        .expect("askUser preview call");
+    assert_eq!(ask.decision, "deny");
+    assert!(ask
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("unattendedApprovalAction=deny"));
+
+    let err = ensure_workflow_script_can_create(&db, &session.id, script, Some("guarded"))
+        .expect_err("unattended askUser deny must block owner create");
+    assert!(err.to_string().contains("permission preview denied"));
+}
+
+#[test]
+fn workflow_create_preflight_allows_unattended_ask_user_when_policy_proceeds() {
+    let (_dir, db) = temp_db();
+    let session = db.create_session("ha-main").expect("create session");
+    let mut config = crate::config::AppConfig::default();
+    config.permission.unattended_approval_action =
+        crate::permission::UnattendedApprovalAction::Proceed;
+    let _config_restore = replace_config_cache_for_test(config);
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 8 };
+  const task = await workflow.task.create({ title: "Clarify" });
+  await workflow.askUser(workflow.trace({ label: "dynamic-question" }));
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ ok: true, budget });
+}
+"#;
+
+    let preview = ensure_workflow_script_can_create(&db, &session.id, script, Some("guarded"))
+        .expect("proceed policy allows unattended askUser create");
+    assert!(preview.can_create);
+    assert!(!preview.has_denials);
+    let ask = preview
+        .permission
+        .calls
+        .iter()
+        .find(|call| call.api == "workflow.askUser")
+        .expect("askUser preview call");
+    assert_eq!(ask.decision, "allow");
+    assert!(ask.args.is_none(), "dynamic askUser args are not static");
+    assert!(ask
+        .reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("unattendedApprovalAction=proceed"));
 }
 
 #[test]
@@ -628,6 +815,121 @@ fn cancel_prevents_new_ops() {
 }
 
 #[test]
+fn owner_cancel_cancels_workflow_child_async_jobs() {
+    let _async_guard = async_jobs_test_guard();
+    ensure_async_jobs_db();
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let (session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let job_id = format!("job_{}", uuid::Uuid::new_v4().simple());
+    insert_running_async_job(&job_id, &session_id);
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: "main/op#0(tool:exec)".to_string(),
+        op_type: "tool:exec".to_string(),
+        effect_class: WorkflowEffectClass::NonIdempotent,
+        input: json!({
+            "name": "exec",
+            "args": {
+                "command": "sleep 999",
+                "run_in_background": true
+            },
+            "label": null
+        }),
+        child_handle: Some(job_id.clone()),
+    })
+    .expect("start async child op");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let run = runtime
+        .block_on(cancel_workflow_run_with_children(db.clone(), &run_id))
+        .expect("cancel workflow with children");
+    assert_eq!(run.state, WorkflowRunState::Cancelled);
+
+    let job = crate::async_jobs::JobManager::get(&job_id)
+        .expect("get job")
+        .expect("job exists");
+    assert_eq!(job.status, JobStatus::Cancelled);
+    assert!(
+        job.injected,
+        "cancelled workflow child jobs must not inject"
+    );
+
+    let events = db
+        .list_workflow_events(&run_id, 20)
+        .expect("list workflow events");
+    assert!(events.iter().any(|event| {
+        event.event_type == "run_child_cancel_requested"
+            && event
+                .payload
+                .get("children")
+                .and_then(Value::as_array)
+                .is_some_and(|children| {
+                    children.iter().any(|child| {
+                        child.get("id").and_then(Value::as_str) == Some(job_id.as_str())
+                            && child.get("kind").and_then(Value::as_str) == Some("async_job")
+                    })
+                })
+    }));
+}
+
+#[test]
+fn pause_prevents_new_ops() {
+    let (_dir, db) = temp_db();
+    let (_session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+    db.pause_workflow_run(&run_id).expect("pause");
+
+    let err = db
+        .upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run_id.clone(),
+            op_key: "main/op#0(fileSearch)".to_string(),
+            op_type: "fileSearch".to_string(),
+            effect_class: WorkflowEffectClass::Pure,
+            input: json!({ "query": "x" }),
+            child_handle: None,
+        })
+        .expect_err("paused run must reject op");
+    let message = err.to_string();
+    assert!(message.contains("paused"), "{message}");
+}
+
+#[test]
+fn pause_clears_owner_so_resume_can_be_reclaimed() {
+    let (_dir, db) = temp_db();
+    let (_session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+    db.claim_workflow_run_for_recovery(&run_id, "old-owner")
+        .expect("claim")
+        .expect("claimed");
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("runtime_start"))
+        .expect("running after claim");
+
+    let paused = db.pause_workflow_run(&run_id).expect("pause");
+    assert_eq!(paused.state, WorkflowRunState::Paused);
+    assert!(paused.primary_owner.is_none());
+
+    let resumed = db.resume_workflow_run(&run_id).expect("resume");
+    assert_eq!(resumed.state, WorkflowRunState::Running);
+    assert!(resumed.primary_owner.is_none());
+
+    let claimed = db
+        .claim_workflow_run_for_recovery(&run_id, "new-owner")
+        .expect("reclaim after resume")
+        .expect("resumed run should be claimable");
+    assert_eq!(claimed.state, WorkflowRunState::Recovering);
+    assert_eq!(claimed.primary_owner.as_deref(), Some("new-owner"));
+}
+
+#[test]
 fn recovery_runner_claims_and_replays_completed_ops_without_duplicates() {
     let (_dir, db_raw) = temp_db();
     let db = Arc::new(db_raw);
@@ -886,6 +1188,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     assert_eq!(run.session_id, session.id);
@@ -972,6 +1276,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     assert_eq!(run.session_id, session.id);
@@ -1057,6 +1363,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
 
@@ -1154,6 +1462,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10, "max_ops": 8 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -1239,6 +1549,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
 
@@ -1263,6 +1575,20 @@ export default async function main(workflow) {
     assert_eq!(
         op_types,
         vec!["task.create", "validate", "task.update", "finish"]
+    );
+
+    let jobs_db = crate::async_jobs::get_async_jobs_db().expect("async jobs db");
+    let jobs = jobs_db
+        .list_for_session(&session.id, 10)
+        .expect("list validation jobs");
+    let validation_job = jobs
+        .iter()
+        .find(|job| job.tool_name == crate::tools::TOOL_EXEC)
+        .expect("validation exec job");
+    assert_eq!(validation_job.status, JobStatus::Completed);
+    assert!(
+        validation_job.injected,
+        "workflow-owned validation jobs are shown by Workflow UI, not chat injection"
     );
 }
 
@@ -1297,6 +1623,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -1363,6 +1691,8 @@ export default async function main(workflow) {
             loop_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -1412,6 +1742,8 @@ export default async function main(workflow) {
             loop_mode: "off".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
         })
         .expect("create workflow run");
     db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -1449,6 +1781,8 @@ export default async function main(workflow) {
 }
 "#;
     let (_session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
 
     let err = run_workflow_script(db.clone(), &run_id).expect_err("askUser must fail closed");
     assert!(err
@@ -1587,6 +1921,8 @@ export default async function main(workflow) {
 }
 "#;
     let (_session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
 
     db.upsert_workflow_op_started(UpsertWorkflowOpInput {
         run_id: run_id.clone(),
@@ -1702,6 +2038,8 @@ export default async function main(workflow) {
 }
 "#;
     let (_session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
 
     let handle = json!({
         "kind": "subagent",
@@ -1815,6 +2153,8 @@ export default async function main(workflow) {
 }
 "#;
     let (session_id, run_id) = create_run_with_script(&db, script);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
     let child_handle = uuid::Uuid::new_v4().to_string();
 
     db.upsert_workflow_op_started(UpsertWorkflowOpInput {
@@ -1928,6 +2268,8 @@ export default async function main(workflow) {
                 loop_mode: "guarded".to_string(),
                 script_source: script.to_string(),
                 budget: json!({ "max_script_secs": 10, "max_ops": 8 }),
+                parent_run_id: None,
+                origin: None,
             })
             .expect("create workflow run");
         db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -2069,6 +2411,8 @@ export default async function main(workflow) {{
                 loop_mode: "guarded".to_string(),
                 script_source: script,
                 budget: json!({ "max_script_secs": 15, "max_ops": 10 }),
+                parent_run_id: None,
+                origin: None,
             })
             .expect("create workflow run");
         db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
@@ -2187,6 +2531,154 @@ export default async function main(workflow) {
     assert_eq!(tasks.len(), 1, "task.create replay must not duplicate task");
     assert_eq!(tasks[0].id, existing_task.id);
     assert_eq!(tasks[0].status, "completed");
+}
+
+#[test]
+fn runtime_blocks_new_spawn_agent_after_output_token_budget_is_spent() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let script = r#"
+export default async function main(workflow) {
+  const budget = { max_runtime_secs: 60, max_ops: 12, maxOutputTokens: 5 };
+  const task = await workflow.task.create({ title: "Check budget" });
+  await workflow.task.update({ task, status: "in_progress" });
+  const first = await workflow.spawnAgent({ task: "First", agent_id: "ha-review", label: "first" });
+  await workflow.waitAll([first], { waitTimeout: 1 });
+  await workflow.spawnAgent({ task: "Second", agent_id: "ha-review", label: "second" });
+  await workflow.validate({ commands: ["echo unreachable"], reason: "budget test" });
+  await workflow.finish({ summary: "unreachable", budget });
+}
+"#;
+    let session = db.create_session("ha-main").expect("create session");
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "coding.workflow".to_string(),
+            loop_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({
+                "max_script_secs": 10,
+                "max_ops": 12,
+                "maxOutputTokens": 5,
+            }),
+            parent_run_id: None,
+            origin: None,
+        })
+        .expect("create workflow run");
+    db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+        .expect("run");
+
+    let first_run_id = uuid::Uuid::new_v4().to_string();
+    let first_handle = json!({
+        "kind": "subagent",
+        "runId": first_run_id,
+        "run_id": first_run_id,
+        "status": "completed",
+        "label": "first",
+        "task": "First",
+        "message": "attached to existing sub-agent run",
+    });
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run.id.clone(),
+        op_key: "main/op#2(spawnAgent)".to_string(),
+        op_type: "spawnAgent".to_string(),
+        effect_class: WorkflowEffectClass::NonIdempotent,
+        input: json!({
+            "args": {
+                "action": "spawn",
+                "task": "First",
+                "agent_id": "ha-review",
+                "label": "first"
+            },
+            "label": "first"
+        }),
+        child_handle: Some(first_run_id.clone()),
+    })
+    .expect("start first spawn op");
+    db.complete_workflow_op(&run.id, "main/op#2(spawnAgent)", first_handle.clone())
+        .expect("complete first spawn op");
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run.id.clone(),
+        op_key: "main/op#3(waitAll)".to_string(),
+        op_type: "waitAll".to_string(),
+        effect_class: WorkflowEffectClass::Pure,
+        input: json!({
+            "handles": [first_handle],
+            "waitTimeout": 1
+        }),
+        child_handle: None,
+    })
+    .expect("start waitAll op");
+    db.complete_workflow_op(
+        &run.id,
+        "main/op#3(waitAll)",
+        json!({
+            "allCompleted": true,
+            "all_completed": true,
+            "runs": [{
+                "runId": first_run_id,
+                "run_id": first_run_id,
+                "status": "completed",
+                "result_preview": "done"
+            }]
+        }),
+    )
+    .expect("complete waitAll op");
+    db.insert_subagent_run(&SubagentRun {
+        run_id: first_run_id,
+        parent_session_id: session.id.clone(),
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-session".to_string(),
+        task: "First".to_string(),
+        status: SubagentStatus::Completed,
+        result: Some("done".to_string()),
+        error: None,
+        depth: 1,
+        model_used: Some("mock".to_string()),
+        started_at: chrono::Utc::now().to_rfc3339(),
+        finished_at: Some(chrono::Utc::now().to_rfc3339()),
+        duration_ms: Some(1),
+        label: Some("first".to_string()),
+        attachment_count: 0,
+        input_tokens: Some(7),
+        output_tokens: Some(6),
+    })
+    .expect("insert completed subagent run");
+
+    let err =
+        run_workflow_script(db.clone(), &run.id).expect_err("budget should block second spawn");
+    assert!(
+        err.to_string()
+            .contains("workflow output token budget exhausted"),
+        "{err:#}"
+    );
+    let snapshot = db
+        .workflow_run_snapshot(&run.id, 100)
+        .expect("snapshot")
+        .expect("run exists");
+    assert_eq!(snapshot.run.state, WorkflowRunState::Blocked);
+    assert_eq!(
+        snapshot.run.blocked_reason.as_deref(),
+        Some("workflow_budget_output_tokens_exhausted")
+    );
+    let budget_events: Vec<_> = snapshot
+        .events
+        .iter()
+        .filter(|event| event.event_type == "budget_usage")
+        .collect();
+    assert_eq!(
+        budget_events.len(),
+        1,
+        "replaying completed waitAll must not duplicate budget usage events"
+    );
+    assert_eq!(
+        budget_events[0]
+            .payload
+            .get("spentOutputTokens")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
 }
 
 #[test]

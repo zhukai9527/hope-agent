@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import type { ComponentProps } from "react"
-import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { WorkspaceEnvironmentState } from "./useWorkspaceEnvironment"
 import type { WorkspaceEnvironmentSnapshot } from "@/lib/transport"
 import type { BackgroundJobSnapshot } from "@/types/background-jobs"
 import WorkspacePanel from "./WorkspacePanel"
+import type { WorkflowRun, WorkflowRunSnapshot, WorkflowScriptPreview } from "./useWorkflowRuns"
 
 const envMock = vi.hoisted(() => ({
   state: {
@@ -15,6 +16,16 @@ const envMock = vi.hoisted(() => ({
     loading: false,
     error: null,
   } as WorkspaceEnvironmentState,
+}))
+
+const transportMock = vi.hoisted(() => ({
+  supportsLocalFileOps: vi.fn(() => true),
+  call: vi.fn<(name: string, args?: Record<string, unknown>) => Promise<unknown>>((name: string) =>
+    Promise.resolve(name === "get_background_job" ? null : []),
+  ),
+  listen: vi.fn<
+    (eventName: string, handler: (payload: unknown) => void) => () => void
+  >(() => () => {}),
 }))
 
 vi.mock("react-i18next", () => ({
@@ -33,13 +44,7 @@ vi.mock("react-i18next", () => ({
 }))
 
 vi.mock("@/lib/transport-provider", () => ({
-  getTransport: () => ({
-    supportsLocalFileOps: () => true,
-    // KnowledgeSection (useSessionKnowledge) fetches attachments + subscribes to
-    // knowledge:changed — stub both so the panel mounts in tests.
-    call: (name: string) => Promise.resolve(name === "get_background_job" ? null : []),
-    listen: () => () => {},
-  }),
+  getTransport: () => transportMock,
 }))
 
 vi.mock("@/hooks/useDangerousModeStatus", () => ({
@@ -59,9 +64,31 @@ vi.mock("./useWorkspaceArtifacts", () => ({
   }),
 }))
 
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
+  transportMock.supportsLocalFileOps.mockReturnValue(true)
+  // KnowledgeSection (useSessionKnowledge) fetches attachments + subscribes to
+  // knowledge:changed — stub both so the panel mounts in tests.
+  transportMock.call.mockImplementation((name: string) =>
+    Promise.resolve(name === "get_background_job" ? null : []),
+  )
+  transportMock.listen.mockImplementation(() => () => {})
+})
+
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   envMock.state = { snapshot: null, loading: false, error: null }
+  transportMock.supportsLocalFileOps.mockReset()
+  transportMock.call.mockReset()
+  transportMock.listen.mockReset()
 })
 
 function backgroundJob(patch: Partial<BackgroundJobSnapshot> = {}): BackgroundJobSnapshot {
@@ -91,8 +118,9 @@ function backgroundJob(patch: Partial<BackgroundJobSnapshot> = {}): BackgroundJo
 function renderPanel(
   snapshot: WorkspaceEnvironmentSnapshot | null,
   props: Partial<ComponentProps<typeof WorkspacePanel>> = {},
+  envState: Partial<WorkspaceEnvironmentState> = {},
 ) {
-  envMock.state = { snapshot, loading: false, error: null }
+  envMock.state = { snapshot, loading: false, error: null, ...envState }
   return render(
     <TooltipProvider>
       <WorkspacePanel
@@ -140,6 +168,122 @@ function renderPanel(
       />
     </TooltipProvider>,
   )
+}
+
+function workflowRun(patch: Partial<WorkflowRun> = {}): WorkflowRun {
+  return {
+    id: "wf-1",
+    sessionId: "s1",
+    kind: "coding.feature",
+    state: "awaiting_approval",
+    loopMode: "guarded",
+    scriptHash: "abcdef123456",
+    scriptSource: "export default async function main() {}",
+    budget: {},
+    cursorSeq: 0,
+    primaryOwner: null,
+    blockedReason: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:01:00Z",
+    completedAt: null,
+    ...patch,
+  }
+}
+
+function workflowSnapshot(run: WorkflowRun): WorkflowRunSnapshot {
+  return {
+    run,
+    ops: [
+      {
+        id: "op-1",
+        runId: run.id,
+        opKey: "main/op#1(workflow.tool)",
+        opType: "tool",
+        effectClass: "non_idempotent",
+        inputHash: "hash-1",
+        input: { name: "write", label: "write-file" },
+        state: "pending",
+        output: null,
+        error: null,
+        childHandle: null,
+        startedAt: "2026-01-01T00:01:00Z",
+        completedAt: null,
+      },
+    ],
+    events: [
+      {
+        id: 1,
+        runId: run.id,
+        seq: 1,
+        eventType: "script_permission_preview",
+        payload: {
+          summary: { total: 2, allow: 1, ask: 1, dynamic: 1, deny: 0, strict: 1 },
+          calls: [
+            {
+              api: "workflow.tool",
+              line: 3,
+              toolName: "write",
+              decision: "ask",
+              strict: true,
+              dynamic: false,
+              reason: "edit-class tool requires approval",
+              label: "write-file",
+              args: { path: "src/app.ts", content: "hello" },
+            },
+            {
+              api: "workflow.tool",
+              line: 4,
+              toolName: "read",
+              decision: "allow",
+              strict: false,
+              dynamic: false,
+              label: "read-file",
+              args: { path: "src/app.ts" },
+            },
+          ],
+          truncated: false,
+        },
+        createdAt: "2026-01-01T00:00:30Z",
+      },
+      {
+        id: 2,
+        runId: run.id,
+        seq: 2,
+        eventType: "script_permission_approval_required",
+        payload: { summary: { total: 2, ask: 1, dynamic: 1, deny: 0, strict: 1 } },
+        createdAt: "2026-01-01T00:01:00Z",
+      },
+    ],
+  }
+}
+
+function workflowScriptPreview(patch: Partial<WorkflowScriptPreview> = {}): WorkflowScriptPreview {
+  return {
+    gate: { issues: [] },
+    gatePassed: true,
+    gateFeedback: "Workflow Script Gate passed.",
+    permission: {
+      summary: { total: 2, allow: 1, ask: 1, dynamic: 0, deny: 0, strict: 1 },
+      calls: [
+        {
+          api: "workflow.validate",
+          line: 4,
+          toolName: "exec",
+          decision: "ask",
+          strict: true,
+          dynamic: false,
+          label: "typecheck",
+          args: { command: "pnpm typecheck" },
+        },
+      ],
+      truncated: false,
+    },
+    canCreate: true,
+    canRunImmediately: true,
+    requiresApproval: true,
+    hasDenials: false,
+    ...patch,
+  }
 }
 
 describe("WorkspacePanel environment section", () => {
@@ -192,6 +336,21 @@ describe("WorkspacePanel environment section", () => {
     expect(screen.getByText("Add workspace env")).toBeTruthy()
   })
 
+  it("does not claim a fallback working directory is non-git while environment is loading", () => {
+    renderPanel(
+      null,
+      {
+        effectiveWorkingDir: "/repo",
+        workingDirSource: "session",
+      },
+      { loading: true },
+    )
+
+    expect(screen.getByText("状态未知")).toBeTruthy()
+    expect(screen.getByText("repo")).toBeTruthy()
+    expect(screen.queryByText("非 Git 工作目录")).toBeNull()
+  })
+
   it("reuses expandable background job controls in the workspace section", () => {
     const onBackgroundJobExpandedChange = vi.fn()
     renderPanel(null, {
@@ -204,5 +363,929 @@ describe("WorkspacePanel environment section", () => {
     fireEvent.click(screen.getByRole("button", { name: "收起任务" }))
 
     expect(onBackgroundJobExpandedChange).toHaveBeenCalledWith("job-1", false)
+  })
+})
+
+describe("WorkspacePanel workflow section", () => {
+  it("shows an actionable coding empty state before any workflow run exists", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("准备开始 Coding run")).toBeTruthy()
+    expect(screen.getByText("已设置")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "开始 Coding run" }))
+
+    expect(screen.getByLabelText("从 coding 目标开始")).toBeTruthy()
+  })
+
+  it("lets the user change the session coding loop mode from the workspace", async () => {
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "set_coding_loop_mode") return Promise.resolve({ mode: args?.mode })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("Coding Loop")).toBeTruthy()
+
+    fireEvent.click(screen.getByText("深入"))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("set_coding_loop_mode", {
+        sessionId: "s1",
+        mode: "deep",
+      })
+    })
+  })
+
+  it("lets the user create and immediately run a workflow script from the workspace", async () => {
+    const run = workflowRun({ state: "draft" })
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
+      if (name === "create_workflow_run") return Promise.resolve(run)
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建 Workflow" }))
+
+    const script = `export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Run" });
+  await workflow.validate({ commands: ["pnpm typecheck"] });
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.finish({ summary: "done", verification: ["pnpm typecheck"], residualRisk: [] });
+}`
+    fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
+    fireEvent.change(screen.getByLabelText("Script"), { target: { value: script } })
+    fireEvent.click(screen.getByRole("switch"))
+
+    expect((screen.getByRole("button", { name: "创建并运行" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("preview_workflow_script", {
+        sessionId: "s1",
+        scriptSource: script,
+        loopMode: "guarded",
+      })
+    })
+    expect(await screen.findByText("预检通过")).toBeTruthy()
+    expect(screen.getAllByText("授权清单").length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "创建并运行" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_workflow_run", {
+        sessionId: "s1",
+        kind: "coding.workflow",
+        loopMode: "guarded",
+        scriptSource: script,
+        budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
+        runImmediately: true,
+      })
+    })
+  })
+
+  it("generates a goal-driven workflow draft before preflight", async () => {
+    const run = workflowRun({ state: "draft" })
+    const snapshot = workflowSnapshot(run)
+    let previewedScript = ""
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") {
+        previewedScript = String(args?.scriptSource ?? "")
+        return Promise.resolve(workflowScriptPreview())
+      }
+      if (name === "create_workflow_run") return Promise.resolve(run)
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建 Workflow" }))
+    fireEvent.change(screen.getByLabelText("从 coding 目标开始"), {
+      target: { value: "修复设置页保存 Provider 后没有刷新状态的问题" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "生成可预检草稿" }))
+    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "preview_workflow_script",
+        expect.objectContaining({
+          sessionId: "s1",
+          loopMode: "guarded",
+        }),
+      )
+    })
+
+    expect(previewedScript).toContain("修复设置页保存 Provider 后没有刷新状态的问题")
+    expect(previewedScript).toContain("workflow.spawnAgent")
+    expect(previewedScript).toContain("workflow.waitAll")
+    expect(previewedScript).toContain("workflow.validate")
+    expect(previewedScript).toContain("Budget:")
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建并运行" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "create_workflow_run",
+        expect.objectContaining({
+          sessionId: "s1",
+          kind: "coding.workflow",
+          loopMode: "guarded",
+          budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
+          runImmediately: true,
+        }),
+      )
+    })
+  })
+
+  it("materializes a draft chat session before previewing and creating a workflow", async () => {
+    const run = workflowRun({ id: "wf-created", sessionId: "s-created", state: "draft" })
+    const snapshot = workflowSnapshot(run)
+    const onEnsureSession = vi.fn(() => Promise.resolve("s-created"))
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
+      if (name === "create_workflow_run") return Promise.resolve(run)
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel(
+      {
+        workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+        git: null,
+      },
+      {
+        sessionId: null,
+        sessionMeta: null,
+        onEnsureSession,
+      },
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建 Workflow" }))
+    expect(screen.getByText("预检时会自动创建并切换到一个新会话")).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText("从 coding 目标开始"), {
+      target: { value: "实现自动创建 workflow 会话" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "生成可预检草稿" }))
+    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+
+    await waitFor(() => {
+      expect(onEnsureSession).toHaveBeenCalledTimes(1)
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "preview_workflow_script",
+        expect.objectContaining({
+          sessionId: "s-created",
+          loopMode: "guarded",
+        }),
+      )
+    })
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建并运行" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "create_workflow_run",
+        expect.objectContaining({
+          sessionId: "s-created",
+          runImmediately: true,
+        }),
+      )
+    })
+  })
+
+  it("keeps goal-driven workflow drafts stopped when no working directory is set", async () => {
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
+      if (name === "create_workflow_run") return Promise.resolve(workflowRun({ state: "draft" }))
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建 Workflow" }))
+    expect(
+      screen.getByText("当前会话未设置工作目录；目标草稿会先创建为待启动，设置目录后再运行。"),
+    ).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText("从 coding 目标开始"), {
+      target: { value: "修复设置页保存 Provider 后没有刷新状态的问题" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "生成可预检草稿" }))
+
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole("button", { name: "创建" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "创建并运行" })).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+    expect(await screen.findByText("预检通过")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "创建" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "create_workflow_run",
+        expect.objectContaining({
+          sessionId: "s1",
+          runImmediately: false,
+        }),
+      )
+    })
+  })
+
+  it("blocks workflow creation when script preflight fails", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") {
+        return Promise.resolve(
+          workflowScriptPreview({
+            gate: {
+              issues: [
+                {
+                  severity: "error",
+                  code: "missing_finish",
+                  message: "Script does not finish through workflow.finish(...).",
+                  suggestion: "Return a structured final result.",
+                },
+              ],
+            },
+            gatePassed: false,
+            gateFeedback: "Workflow Script Gate failed.",
+            canCreate: false,
+            canRunImmediately: false,
+          }),
+        )
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建 Workflow" }))
+    fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
+    fireEvent.change(screen.getByLabelText("Script"), {
+      target: {
+        value:
+          "export default async function main(workflow) { await workflow.task.create({ title: 'x' }); }",
+      },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+
+    expect(await screen.findByText("预检未通过")).toBeTruthy()
+    expect(screen.getByText("Return a structured final result.")).toBeTruthy()
+    expect((screen.getByRole("button", { name: "创建" }) as HTMLButtonElement).disabled).toBe(true)
+    expect(transportMock.call).not.toHaveBeenCalledWith("create_workflow_run", expect.anything())
+  })
+
+  it("surfaces approval summary and primary workflow actions", async () => {
+    const run = workflowRun()
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("当前焦点：等待授权")).toBeTruthy()
+    expect(screen.queryByText("需要批准后继续")).toBeNull()
+    expect(await screen.findByText("授权清单")).toBeTruthy()
+    expect(screen.getAllByText("调用").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("需批准").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("write-file").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("需批准").length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: "批准" }).length).toBeGreaterThan(0)
+    expect(screen.getByText("最近信号")).toBeTruthy()
+  })
+
+  it("surfaces the active workflow focus and jumps to the relevant detail tab", async () => {
+    const run = workflowRun({ state: "running" })
+    const snapshot: WorkflowRunSnapshot = {
+      run,
+      ops: [
+        {
+          id: "op-validate",
+          runId: run.id,
+          opKey: "main/op#2(workflow.validate)",
+          opType: "validate",
+          effectClass: "non_idempotent",
+          inputHash: "hash-validate",
+          input: { label: "targeted-validation", commands: ["pnpm typecheck"] },
+          state: "started",
+          output: null,
+          error: null,
+          childHandle: null,
+          startedAt: "2026-01-01T00:01:00Z",
+          completedAt: null,
+        },
+      ],
+      events: [
+        {
+          id: 1,
+          runId: run.id,
+          seq: 1,
+          eventType: "op_started",
+          payload: { opKey: "main/op#2(workflow.validate)", opType: "validate", state: "started" },
+          createdAt: "2026-01-01T00:01:00Z",
+        },
+      ],
+    }
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("当前焦点：正在执行 targeted-validation")).toBeTruthy()
+    const validationTab = screen.getByRole("tab", { name: /Validation/ })
+    expect(validationTab.getAttribute("aria-selected")).toBe("false")
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 Validation" }))
+
+    expect(validationTab.getAttribute("aria-selected")).toBe("true")
+  })
+
+  it("lets the user expand workflow op details from the trace", async () => {
+    const run = workflowRun({ state: "running" })
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByRole("button", { name: "展开步骤详情" }))
+
+    expect(await screen.findByText("步骤详情")).toBeTruthy()
+    expect(screen.getAllByText(/write-file/).length).toBeGreaterThan(1)
+  })
+
+  it("keeps late failed workflow steps visible in the trace focus area", async () => {
+    const run = workflowRun({ state: "failed" })
+    const completedOps: WorkflowRunSnapshot["ops"] = Array.from({ length: 7 }, (_, index) => ({
+      id: `op-${index + 1}`,
+      runId: run.id,
+      opKey: `main/op#${index + 1}(workflow.tool)`,
+      opType: "tool",
+      effectClass: "idempotent",
+      inputHash: `hash-${index + 1}`,
+      input: { label: `setup-${index + 1}` },
+      state: "completed",
+      output: { summary: `setup ${index + 1} complete` },
+      error: null,
+      childHandle: null,
+      startedAt: "2026-01-01T00:01:00Z",
+      completedAt: "2026-01-01T00:01:30Z",
+    }))
+    const snapshot: WorkflowRunSnapshot = {
+      run,
+      ops: [
+        ...completedOps,
+        {
+          id: "op-late-tool",
+          runId: run.id,
+          opKey: "main/op#8(workflow.tool)",
+          opType: "tool",
+          effectClass: "non_idempotent",
+          inputHash: "hash-late-tool",
+          input: { label: "late-write-step", name: "write" },
+          state: "failed",
+          output: null,
+          error: { message: "late write failed" },
+          childHandle: null,
+          startedAt: "2026-01-01T00:08:00Z",
+          completedAt: "2026-01-01T00:08:30Z",
+        },
+      ],
+      events: [
+        {
+          id: 8,
+          runId: run.id,
+          seq: 8,
+          eventType: "op_failed",
+          payload: {
+            opKey: "main/op#8(workflow.tool)",
+            opType: "tool",
+            state: "failed",
+          },
+          createdAt: "2026-01-01T00:08:30Z",
+        },
+      ],
+    }
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("关注步骤")).toBeTruthy()
+    expect(screen.getAllByText("late-write-step").length).toBeGreaterThan(0)
+    expect(screen.getByText(/前 6\/8 个步骤/)).toBeTruthy()
+    expect(screen.getByText("关键信号")).toBeTruthy()
+    expect(screen.getByText("步骤失败")).toBeTruthy()
+  })
+
+  it("lets the user start a draft workflow run from the workspace", async () => {
+    const run = workflowRun({ state: "draft" })
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "run_workflow_run") return Promise.resolve({ ...run, state: "running" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect((await screen.findAllByText("待启动")).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole("button", { name: "运行" })[0])
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("run_workflow_run", { runId: "wf-1" })
+    })
+  })
+
+  it("shows output token budget usage in the workflow summary", async () => {
+    const run = workflowRun({
+      state: "blocked",
+      blockedReason: "workflow_budget_output_tokens_exhausted",
+      budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
+    })
+    const snapshot = workflowSnapshot(run)
+    snapshot.events.push({
+      id: 3,
+      runId: run.id,
+      seq: 3,
+      eventType: "budget_usage",
+      payload: {
+        spentOutputTokens: 10000,
+        maxOutputTokens: 10000,
+        exhausted: true,
+        reason: "workflow_budget_output_tokens_exhausted",
+      },
+      createdAt: "2026-01-01T00:02:00Z",
+    })
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByText("coding.feature"))
+
+    expect((await screen.findAllByText("输出预算")).length).toBeGreaterThan(0)
+    expect(screen.getAllByText("10.0k/10.0k").length).toBeGreaterThan(0)
+    expect(screen.getByText("预算用量")).toBeTruthy()
+  })
+
+  it("confirms before cancelling a workflow run", async () => {
+    const run = workflowRun({ state: "running" })
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "cancel_workflow_run") return Promise.resolve({ ...run, state: "cancelled" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect((await screen.findAllByText("coding.feature")).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole("button", { name: "取消" })[0])
+
+    expect(screen.getByText("取消这个 workflow run？")).toBeTruthy()
+    expect(screen.getByText(/已有 trace 会保留/)).toBeTruthy()
+    expect(transportMock.call).not.toHaveBeenCalledWith("cancel_workflow_run", expect.anything())
+
+    fireEvent.click(screen.getByRole("button", { name: "确认取消" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("cancel_workflow_run", { runId: "wf-1" })
+    })
+  })
+
+  it("disables the cancel confirmation when the run becomes terminal while the dialog is open", async () => {
+    const listeners = new Map<string, (payload: unknown) => void>()
+    transportMock.listen.mockImplementation((eventName: string, handler: (payload: unknown) => void) => {
+      listeners.set(eventName, handler)
+      return () => listeners.delete(eventName)
+    })
+    let currentRun = workflowRun({ state: "running" })
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([currentRun])
+      if (name === "get_workflow_run") return Promise.resolve(workflowSnapshot(currentRun))
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "cancel_workflow_run") return Promise.resolve({ ...currentRun, state: "cancelled" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect((await screen.findAllByText("coding.feature")).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByRole("button", { name: "取消" })[0])
+    expect(screen.getByText("取消这个 workflow run？")).toBeTruthy()
+
+    currentRun = workflowRun({
+      state: "completed",
+      updatedAt: "2026-01-01T00:03:00Z",
+      completedAt: "2026-01-01T00:03:00Z",
+    })
+    act(() => {
+      listeners.get("workflow:updated")?.(currentRun)
+    })
+
+    await waitFor(() => {
+      expect(screen.getAllByText("已完成").length).toBeGreaterThan(0)
+    })
+    const confirm = screen.getByRole("button", { name: "确认取消" }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+
+    fireEvent.click(confirm)
+    expect(transportMock.call).not.toHaveBeenCalledWith("cancel_workflow_run", expect.anything())
+  })
+
+  it("polls active workflow runs as a fallback when live events are missed", async () => {
+    vi.useFakeTimers()
+    const running = workflowRun({ state: "running", kind: "coding.running" })
+    const completed = workflowRun({
+      state: "completed",
+      kind: "coding.completed",
+      updatedAt: "2026-01-01T00:02:00Z",
+      completedAt: "2026-01-01T00:02:00Z",
+    })
+    let listCalls = 0
+    let currentRun = running
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") {
+        listCalls += 1
+        currentRun = listCalls >= 2 ? completed : running
+        return Promise.resolve([currentRun])
+      }
+      if (name === "get_workflow_run") return Promise.resolve(workflowSnapshot(currentRun))
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText("coding.running")).toBeTruthy()
+
+    await act(async () => {
+      vi.advanceTimersByTime(4000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(listCalls).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText("coding.completed")).toBeTruthy()
+  })
+
+  it("renders validation command details and recovery guidance", async () => {
+    const writeText = vi.fn(async (_value: string) => {})
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    })
+    const run = workflowRun({ state: "failed" })
+    const snapshot: WorkflowRunSnapshot = {
+      run,
+      ops: [
+        {
+          id: "op-validate",
+          runId: run.id,
+          opKey: "main/op#2(workflow.validate)",
+          opType: "validate",
+          effectClass: "non_idempotent",
+          inputHash: "hash-validate",
+          input: { commands: ["pnpm typecheck", "pnpm test"] },
+          state: "completed",
+          output: {
+            ok: false,
+            summary: "1/2 validation command(s) failed",
+            results: [
+              {
+                command: "pnpm typecheck",
+                cwd: "/repo",
+                jobStatus: "completed",
+                ok: true,
+                exitCode: 0,
+                output: "ok",
+              },
+              {
+                command: "pnpm test",
+                cwd: "/repo",
+                jobStatus: "completed",
+                ok: false,
+                exitCode: 1,
+                output: "expected value to be true",
+              },
+            ],
+          },
+          error: null,
+          childHandle: null,
+          startedAt: "2026-01-01T00:01:00Z",
+          completedAt: "2026-01-01T00:02:00Z",
+        },
+      ],
+      events: [
+        {
+          id: 1,
+          runId: run.id,
+          seq: 1,
+          eventType: "guarded_repair_validation_failed",
+          payload: {
+            opKey: "main/op#2(workflow.validate)",
+            summary: "1/2 validation command(s) failed",
+            failed: 1,
+            total: 2,
+            stopReason: "validation_failed",
+          },
+          createdAt: "2026-01-01T00:02:00Z",
+        },
+      ],
+    }
+    let previewedRepairScript = ""
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") {
+        previewedRepairScript = String(args?.scriptSource ?? "")
+        return Promise.resolve(workflowScriptPreview())
+      }
+      if (name === "create_workflow_run") {
+        return Promise.resolve(
+          workflowRun({
+            id: "wf-repair",
+            kind: "coding.workflow",
+            state: "draft",
+            parentRunId: "wf-1",
+            origin: "repair",
+          }),
+        )
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("当前焦点：验证失败")).toBeTruthy()
+    expect(screen.queryByText("有失败步骤")).toBeNull()
+    expect(await screen.findByText("下一步：修复验证失败")).toBeTruthy()
+
+    expect(await screen.findByText("pnpm typecheck")).toBeTruthy()
+    expect(screen.getByText("pnpm test")).toBeTruthy()
+    expect(screen.getByText(/expected value to be true/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "生成修复草稿" }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("从 coding 目标开始")).toBeTruthy()
+    })
+    const objective = screen.getByLabelText("从 coding 目标开始") as HTMLTextAreaElement
+    fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
+    const script = screen.getByLabelText("Script") as HTMLTextAreaElement
+    expect(objective.value).toContain("继续修复失败的 workflow run wf-1")
+    expect(objective.value).toContain("expected value to be true")
+    expect(script.value).toContain("expected value to be true")
+    expect(script.value).toContain("workflow.spawnAgent")
+    expect(screen.getByText("修复自 wf-1")).toBeTruthy()
+    expect(screen.getByText(/不会覆盖原 run/)).toBeTruthy()
+    expect(screen.getByRole("button", { name: "创建修复 run" })).toBeTruthy()
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "preview_workflow_script",
+        expect.objectContaining({
+          sessionId: "s1",
+          loopMode: "guarded",
+        }),
+      )
+    })
+    expect(await screen.findByText("预检通过")).toBeTruthy()
+    expect(previewedRepairScript).toContain("继续修复失败的 workflow run wf-1")
+    expect(previewedRepairScript).toContain("expected value to be true")
+
+    fireEvent.click(screen.getByRole("button", { name: "复制修复提示" }))
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1)
+    })
+    const prompt = String(writeText.mock.calls[0]?.[0] ?? "")
+    expect(prompt).toContain("Workflow 失败上下文")
+    expect(prompt).toContain("state: failed")
+    expect(prompt).toContain("main/op#2(workflow.validate)")
+    expect(prompt).toContain("pnpm test")
+    expect(prompt).toContain("expected value to be true")
+
+    fireEvent.click(screen.getByRole("button", { name: "创建修复 run" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "create_workflow_run",
+        expect.objectContaining({
+          sessionId: "s1",
+          kind: "coding.workflow",
+          loopMode: "guarded",
+          parentRunId: "wf-1",
+          origin: "repair",
+          runImmediately: false,
+        }),
+      )
+    })
+  })
+
+  it("surfaces persisted workflow derivation links", async () => {
+    const child = workflowRun({
+      id: "wf-child",
+      kind: "coding.repair",
+      state: "draft",
+      parentRunId: "wf-parent",
+      origin: "repair",
+    })
+    const childSnapshot: WorkflowRunSnapshot = {
+      ...workflowSnapshot(child),
+      events: [
+        {
+          id: 10,
+          runId: child.id,
+          seq: 10,
+          eventType: "run_derived_child_created",
+          payload: { parentRunId: child.id, childRunId: "wf-grandchild", origin: "repair" },
+          createdAt: "2026-01-01T00:03:00Z",
+        },
+      ],
+    }
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([child])
+      if (name === "get_workflow_run") return Promise.resolve(childSnapshot)
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("修复自 wf-parent")).toBeTruthy()
+    expect(await screen.findByText("已生成修复 run wf-grandchild")).toBeTruthy()
+  })
+
+  it("uses the latest repair source when switching between failed workflow runs", async () => {
+    const oldRun = workflowRun({ id: "wf-old", state: "failed", kind: "coding.old" })
+    const newRun = workflowRun({ id: "wf-new", state: "failed", kind: "coding.new" })
+    const fillerRuns = Array.from({ length: 6 }, (_, index) =>
+      workflowRun({
+        id: `wf-history-${index}`,
+        state: "completed",
+        kind: `coding.history.${index}`,
+      }),
+    )
+    const snapshotFor = (run: WorkflowRun): WorkflowRunSnapshot => ({
+      run,
+      ops: [
+        {
+          id: `op-${run.id}`,
+          runId: run.id,
+          opKey: "main/op#2(workflow.tool)",
+          opType: "tool",
+          effectClass: "non_idempotent",
+          inputHash: `hash-${run.id}`,
+          input: { label: `repair-${run.id}`, name: "write" },
+          state: "failed",
+          output: null,
+          error: { message: `${run.id} failed` },
+          childHandle: null,
+          startedAt: "2026-01-01T00:01:00Z",
+          completedAt: "2026-01-01T00:02:00Z",
+        },
+      ],
+      events: [],
+    })
+    const snapshots = new Map([
+      [oldRun.id, snapshotFor(oldRun)],
+      [newRun.id, snapshotFor(newRun)],
+      ...fillerRuns.map((run) => [run.id, workflowSnapshot(run)] as const),
+    ])
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([oldRun, ...fillerRuns, newRun])
+      if (name === "get_workflow_run") {
+        return Promise.resolve(snapshots.get(String(args?.runId)) ?? snapshotFor(oldRun))
+      }
+      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
+      if (name === "create_workflow_run") {
+        return Promise.resolve(
+          workflowRun({
+            id: "wf-repair",
+            kind: "coding.workflow",
+            state: "draft",
+            parentRunId: String(args?.parentRunId ?? ""),
+            origin: "repair",
+          }),
+        )
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("coding.old")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "生成修复草稿" }))
+    expect(await screen.findByText("修复自 wf-old")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "另有 2 个历史 run" }))
+    fireEvent.click(screen.getByRole("button", { name: /coding\.new/ }))
+    expect((await screen.findAllByText("wf-new failed")).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole("button", { name: "生成修复草稿" }))
+    expect(await screen.findByText("修复自 wf-new")).toBeTruthy()
+    expect(await screen.findByText("预检通过")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "创建修复 run" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith(
+        "create_workflow_run",
+        expect.objectContaining({
+          parentRunId: "wf-new",
+          origin: "repair",
+        }),
+      )
+    })
   })
 })

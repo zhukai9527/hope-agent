@@ -37,7 +37,7 @@ TooltipContent.displayName = TooltipPrimitive.Content.displayName
 /** Lightweight wrapper: wraps children in a tooltip. Renders inline to avoid layout shifts. */
 function IconTip({
   label,
-  side,
+  side = "top",
   children,
 }: {
   label?: string | null
@@ -45,11 +45,32 @@ function IconTip({
   children: React.ReactNode
 }) {
   if (!label) return <>{children}</>
+  const text = String(label)
+  const tipProps = {
+    "data-ha-tip": text,
+    "data-ha-tip-side": side,
+    title: text,
+  }
+
+  if (React.isValidElement(children) && children.type !== React.Fragment) {
+    type TipChildProps = {
+      className?: string
+      title?: string
+      "data-ha-tip"?: string
+      "data-ha-tip-side"?: typeof side
+    }
+    const child = children as React.ReactElement<TipChildProps>
+    return React.cloneElement(child, {
+      ...tipProps,
+      className: cn(child.props.className, "ha-icon-tip"),
+      title: child.props.title ?? text,
+    })
+  }
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side={side}>{label}</TooltipContent>
-    </Tooltip>
+    <span className="ha-icon-tip" {...tipProps}>
+      {children}
+    </span>
   )
 }
 

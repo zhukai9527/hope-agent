@@ -28,6 +28,7 @@ interface BrowserPanelProps {
   onPanelWidthChange?: (width: number) => void
   reservedMainWidth?: number
   collapsed?: boolean
+  overlay?: boolean
   onClose: () => void
 }
 
@@ -45,6 +46,7 @@ export default function BrowserPanel({
   onPanelWidthChange,
   reservedMainWidth,
   collapsed = false,
+  overlay = false,
   onClose,
 }: BrowserPanelProps) {
   const { t } = useTranslation()
@@ -129,6 +131,7 @@ export default function BrowserPanel({
       resizeLabel={t("chat.browserPanel.resizePanel", "Resize browser panel")}
       reservedMainWidth={reservedMainWidth}
       collapsed={collapsed}
+      overlay={overlay}
       contentKey="browser"
     >
       {/* Header */}

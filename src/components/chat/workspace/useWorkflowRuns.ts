@@ -29,6 +29,8 @@ export interface WorkflowRun {
   cursorSeq: number
   primaryOwner?: string | null
   blockedReason?: string | null
+  parentRunId?: string | null
+  origin?: string | null
   createdAt: string
   updatedAt: string
   completedAt?: string | null
@@ -65,6 +67,34 @@ export interface WorkflowRunSnapshot {
   events: WorkflowEvent[]
 }
 
+export interface WorkflowGateIssue {
+  severity: "error" | "warning"
+  code: string
+  message: string
+  suggestion: string
+}
+
+export interface WorkflowGateReport {
+  issues: WorkflowGateIssue[]
+}
+
+export interface WorkflowPermissionPreview {
+  summary: Record<string, unknown>
+  calls: Record<string, unknown>[]
+  truncated?: boolean
+}
+
+export interface WorkflowScriptPreview {
+  gate: WorkflowGateReport
+  gatePassed: boolean
+  gateFeedback: string
+  permission: WorkflowPermissionPreview
+  canCreate: boolean
+  canRunImmediately: boolean
+  requiresApproval: boolean
+  hasDenials: boolean
+}
+
 export interface WorkflowRunsState {
   runs: WorkflowRun[]
   activeCount: number
@@ -72,6 +102,9 @@ export interface WorkflowRunsState {
   error: string | null
   refresh: () => void
 }
+
+const WORKFLOW_EVENT_REFRESH_DEBOUNCE_MS = 250
+const WORKFLOW_ACTIVE_POLL_MS = 4000
 
 function isWorkflowRunPayload(payload: unknown): payload is WorkflowRun {
   return (
@@ -94,16 +127,23 @@ function workflowRunIsActive(run: WorkflowRun): boolean {
 
 export function useWorkflowRuns(
   sessionId: string | null | undefined,
-  opts: { incognito?: boolean; turnActive?: boolean } = {},
+  opts: { incognito?: boolean; turnActive?: boolean; disabled?: boolean } = {},
 ): WorkflowRunsState {
-  const { incognito = false, turnActive = false } = opts
+  const { incognito = false, turnActive = false, disabled = false } = opts
   const [runs, setRuns] = useState<WorkflowRun[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reqRef = useRef(0)
+  const eventRefreshTimerRef = useRef<number | null>(null)
 
   const fetchRuns = useCallback(
     (fetchOpts: { clear?: boolean } = {}) => {
+      if (disabled) {
+        reqRef.current += 1
+        setLoading(false)
+        setError(null)
+        return
+      }
       if (!sessionId || incognito) {
         reqRef.current += 1
         setRuns([])
@@ -134,7 +174,7 @@ export function useWorkflowRuns(
           setLoading(false)
         })
     },
-    [incognito, sessionId],
+    [disabled, incognito, sessionId],
   )
 
   useEffect(() => {
@@ -163,26 +203,58 @@ export function useWorkflowRuns(
   }, [fetchRuns, turnActive])
 
   useEffect(() => {
-    if (!sessionId || incognito) return
+    if (disabled || !sessionId || incognito) return
     const transport = getTransport()
+    const scheduleRefresh = () => {
+      if (eventRefreshTimerRef.current !== null) return
+      eventRefreshTimerRef.current = window.setTimeout(() => {
+        eventRefreshTimerRef.current = null
+        fetchRuns()
+      }, WORKFLOW_EVENT_REFRESH_DEBOUNCE_MS)
+    }
     const maybeRefreshForRun = (payload: unknown) => {
       if (isWorkflowRunPayload(payload) && payload.sessionId !== sessionId) return
-      fetchRuns()
+      scheduleRefresh()
     }
-    const refresh = () => fetchRuns()
+    const refresh = () => scheduleRefresh()
     const offCreated = transport.listen("workflow:created", maybeRefreshForRun)
     const offUpdated = transport.listen("workflow:updated", maybeRefreshForRun)
     const offOp = transport.listen("workflow:op_updated", refresh)
     const offEvent = transport.listen("workflow:event", refresh)
+    const offLagged = transport.listen("_lagged", refresh)
     return () => {
       offCreated()
       offUpdated()
       offOp()
       offEvent()
+      offLagged()
+      if (eventRefreshTimerRef.current !== null) {
+        window.clearTimeout(eventRefreshTimerRef.current)
+        eventRefreshTimerRef.current = null
+      }
     }
-  }, [fetchRuns, incognito, sessionId])
+  }, [disabled, fetchRuns, incognito, sessionId])
 
   const activeCount = useMemo(() => runs.filter(workflowRunIsActive).length, [runs])
+
+  useEffect(() => {
+    if (disabled || !sessionId || incognito || activeCount === 0) return
+    const id = window.setInterval(() => {
+      fetchRuns()
+    }, WORKFLOW_ACTIVE_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [activeCount, disabled, fetchRuns, incognito, sessionId])
+
+  useEffect(() => {
+    if (disabled || !sessionId || incognito) return
+    const refreshOnVisible = () => {
+      if (document.visibilityState === "visible") {
+        fetchRuns()
+      }
+    }
+    document.addEventListener("visibilitychange", refreshOnVisible)
+    return () => document.removeEventListener("visibilitychange", refreshOnVisible)
+  }, [disabled, fetchRuns, incognito, sessionId])
 
   return {
     runs,

@@ -4,13 +4,17 @@
 //! fail fast with actionable feedback, while the future workflow runtime can
 //! reuse the script gate before trusting or executing a draft.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GateSeverity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GateIssue {
     pub severity: GateSeverity,
     pub code: &'static str,
@@ -38,7 +42,8 @@ impl GateIssue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GateReport {
     pub issues: Vec<GateIssue>,
 }
@@ -273,13 +278,11 @@ pub fn check_workflow_script_draft(script: &str, options: ScriptGateOptions) -> 
         ));
     }
 
-    if options.autonomous
-        && (!lower.contains("max_output_tokens") || !lower.contains("max_runtime"))
-    {
+    if options.autonomous && (!has_output_token_budget(&lower) || !has_runtime_budget(&lower)) {
         issues.push(GateIssue::error(
             "autonomous_budget_required",
             "Autonomous workflow scripts require explicit token and runtime budgets.",
-            "Set max_output_tokens and max_runtime_secs before allowing autonomous execution.",
+            "Set max_output_tokens/maxOutputTokens and max_runtime_secs/maxRuntimeSecs before allowing autonomous execution.",
         ));
     }
 
@@ -341,6 +344,14 @@ fn lacks_budget_hint(lower: &str) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle))
+}
+
+fn has_output_token_budget(lower: &str) -> bool {
+    lower.contains("max_output_tokens") || lower.contains("maxoutputtokens")
+}
+
+fn has_runtime_budget(lower: &str) -> bool {
+    lower.contains("max_runtime") || lower.contains("maxruntime") || lower.contains("maxscripts")
 }
 
 #[cfg(test)]
@@ -465,5 +476,46 @@ export default async function main(workflow) {
 
         let report = check_workflow_script_draft(script, ScriptGateOptions::default());
         assert!(report.passed(), "{}", report.render_feedback("Script Gate"));
+    }
+
+    #[test]
+    fn script_gate_autonomous_accepts_camel_case_budget_keys() {
+        let script = r#"
+export default async function main(workflow) {
+  const budget = { maxScriptSecs: 300, maxOps: 24, maxOutputTokens: 12000 };
+  const observe = await workflow.task.create({ title: "Observe", label: "observe" });
+  await workflow.validate({
+    commands: ["pnpm typecheck"],
+    reason: "targeted validation",
+    label: "targeted-check"
+  });
+  await workflow.task.update({ task: observe, status: "completed" });
+  return workflow.finish({ summary: "done", budget });
+}
+"#;
+
+        let report = check_workflow_script_draft(script, ScriptGateOptions { autonomous: true });
+        assert!(report.passed(), "{}", report.render_feedback("Script Gate"));
+    }
+
+    #[test]
+    fn script_gate_autonomous_requires_output_token_budget() {
+        let script = r#"
+export default async function main(workflow) {
+  const budget = { maxScriptSecs: 300, maxOps: 24 };
+  const observe = await workflow.task.create({ title: "Observe", label: "observe" });
+  await workflow.validate({
+    commands: ["pnpm typecheck"],
+    reason: "targeted validation",
+    label: "targeted-check"
+  });
+  await workflow.task.update({ task: observe, status: "completed" });
+  return workflow.finish({ summary: "done", budget });
+}
+"#;
+
+        let report = check_workflow_script_draft(script, ScriptGateOptions { autonomous: true });
+        assert!(!report.passed());
+        assert!(has_error(&report, "autonomous_budget_required"));
     }
 }

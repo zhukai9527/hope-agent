@@ -1790,6 +1790,7 @@ impl AssistantAgent {
             bypass_async_dispatch: false,
             suppress_global_tool_timeout: false,
             suppress_result_disk_persistence: false,
+            suppress_completion_injection: false,
             // E3/E4/E5 (INCOG-2/5/6): single source of truth for the turn's
             // incognito state, read from the same SessionMeta lookup above.
             incognito: meta.as_ref().map(|m| m.incognito).unwrap_or(false),

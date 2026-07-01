@@ -40,17 +40,32 @@ import {
   Monitor,
   Pause,
   Play,
+  Plus,
   Radio,
   Search,
   Server,
   Shield,
   ShieldAlert,
+  Sparkles,
   X,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { AnimatedCollapse } from "@/components/ui/animated-presence"
 import { IconTip } from "@/components/ui/tooltip"
 import { basename } from "@/lib/path"
@@ -60,10 +75,7 @@ import { openExternalUrl } from "@/lib/openExternalUrl"
 import { useSafeFavicon } from "@/hooks/useSafeFavicon"
 import { getTransport } from "@/lib/transport-provider"
 import { useDangerousModeStatus } from "@/hooks/useDangerousModeStatus"
-import {
-  type BackgroundJobSnapshot,
-  isBackgroundJobActive,
-} from "@/types/background-jobs"
+import { type BackgroundJobSnapshot, isBackgroundJobActive } from "@/types/background-jobs"
 import { SessionBackgroundJobsList } from "../background-jobs/SessionBackgroundJobsList"
 import type { WorkspaceGitSnapshot } from "@/lib/transport"
 import {
@@ -108,10 +120,14 @@ import { useSessionKnowledge } from "./useSessionKnowledge"
 import {
   useWorkflowRuns,
   type WorkflowEvent,
+  type WorkflowGateIssue,
+  type WorkflowPermissionPreview,
   type WorkflowOp,
   type WorkflowRun,
   type WorkflowRunSnapshot,
   type WorkflowRunState,
+  type WorkflowRunsState,
+  type WorkflowScriptPreview,
 } from "./useWorkflowRuns"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
 import { PANEL_SCROLL_FADE } from "../right-panel/panelFade"
@@ -158,6 +174,8 @@ interface WorkspacePanelProps {
   incognito?: boolean
   /** 当前会话是否正在跑一轮:true→false 跳变时面板重新拉后端聚合。 */
   turnActive?: boolean
+  /** 标题栏常驻订阅到的 workflow runs；面板打开时复用它，避免重复轮询。 */
+  workflowRunsState?: WorkflowRunsState
   /** R4:本会话后台任务（由 ChatScreen 的 useBackgroundJobs 传入,与头部徽标 / 独立面板共用一份订阅）。 */
   backgroundJobs?: BackgroundJobSnapshot[]
   /** R4:后台任务展开状态,与独立面板共享,避免工作台和面板交互分叉。 */
@@ -167,6 +185,8 @@ interface WorkspacePanelProps {
   onOpenBackgroundJobs?: () => void
   /** 打开子 agent 实时会话弹层，不切换当前主会话。 */
   onViewSubagentSession?: (sessionId: string) => void
+  /** 草稿态新对话里创建 workflow 前,由 ChatScreen 物化一个真实会话并切过去。 */
+  onEnsureSession?: () => Promise<string | null>
   onClose: () => void
 }
 
@@ -331,7 +351,9 @@ function SourceRow({ source }: { source: SessionUrlSource }) {
         ) : (
           <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">{domainOf(source.url)}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
+          {domainOf(source.url)}
+        </span>
         {source.origin === "web_search" && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             <Search className="h-2.5 w-2.5" />
@@ -347,7 +369,9 @@ function EmptyHint({ children }: { children: ReactNode }) {
   return <div className="px-2 py-3 text-center text-xs text-muted-foreground/70">{children}</div>
 }
 
-const STATUS_TONE_CLASS: Record<string, string> = {
+type StatusTone = "muted" | "good" | "warn" | "danger" | "info"
+
+const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
   good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   warn: "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -361,7 +385,7 @@ function StatusPill({
   loading,
 }: {
   label: string
-  tone: "muted" | "good" | "warn" | "danger" | "info"
+  tone: StatusTone
   loading?: boolean
 }) {
   return (
@@ -416,7 +440,9 @@ function EnvRow({
       <Icon className={cn("h-3.5 w-3.5 shrink-0", iconClass)} />
       <span className="w-14 shrink-0 text-muted-foreground">{label}</span>
       <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">{value}</span>
-      {detail ? <span className="max-w-[45%] shrink-0 truncate text-muted-foreground">{detail}</span> : null}
+      {detail ? (
+        <span className="max-w-[45%] shrink-0 truncate text-muted-foreground">{detail}</span>
+      ) : null}
     </>
   )
   const row = onClick ? (
@@ -444,7 +470,10 @@ function planStateLabel(t: ReturnType<typeof useTranslation>["t"], state: PlanMo
   }
 }
 
-function gitSyncLabel(t: ReturnType<typeof useTranslation>["t"], git: WorkspaceGitSnapshot | null): string | null {
+function gitSyncLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  git: WorkspaceGitSnapshot | null,
+): string | null {
   if (!git) return null
   const { sync } = git
   switch (sync.state) {
@@ -469,7 +498,6 @@ function gitSyncLabel(t: ReturnType<typeof useTranslation>["t"], git: WorkspaceG
 /** Shared action-button styling for the session card (matches the status popover). */
 const SESSION_ACTION_BTN =
   "rounded-md border border-border/50 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground disabled:opacity-50"
-
 
 /**
  * 会话卡 —— 把标题栏状态悬浮窗的能力「复刻一份」到工作台。模型 / 认证、上下文用量条
@@ -517,9 +545,12 @@ function SessionSection({
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Clear the "copied" reset timer on unmount so it can't fire after the card
   // is closed / the session switched (leaked timer + stale setState).
-  useEffect(() => () => {
-    if (copyTimer.current) clearTimeout(copyTimer.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+    },
+    [],
+  )
 
   const currentModel = useMemo(
     () => resolveCurrentModel(activeModel, availableModels),
@@ -623,7 +654,10 @@ function SessionSection({
               ) : null}
               <button
                 type="button"
-                className={cn(SESSION_ACTION_BTN, "inline-flex flex-1 items-center justify-center gap-1")}
+                className={cn(
+                  SESSION_ACTION_BTN,
+                  "inline-flex flex-1 items-center justify-center gap-1",
+                )}
                 onClick={handleViewContext}
               >
                 <BarChart3 className="h-3 w-3" />
@@ -635,7 +669,11 @@ function SessionSection({
 
         {/* 核心 — Agent */}
         <div className="space-y-0.5">
-          <EnvRow icon={Bot} label={t("chat.statusAgent")} value={agentName || t("chat.mainAgent")} />
+          <EnvRow
+            icon={Bot}
+            label={t("chat.statusAgent")}
+            value={agentName || t("chat.mainAgent")}
+          />
         </div>
 
         {/* 展开更多 / 收起 */}
@@ -646,7 +684,9 @@ function SessionSection({
           className="flex w-full items-center justify-center gap-1 rounded-md py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground"
         >
           {showMore ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {showMore ? t("workspace.sessionShowLess", "收起") : t("workspace.sessionShowMore", "展开更多")}
+          {showMore
+            ? t("workspace.sessionShowLess", "收起")
+            : t("workspace.sessionShowMore", "展开更多")}
         </button>
 
         <AnimatedCollapse open={showMore}>
@@ -780,17 +820,17 @@ function EnvironmentSection({
   const env = useWorkspaceEnvironment(sessionId, { turnActive, refreshKey: environmentRefreshKey })
   const dangerous = useDangerousModeStatus()
   const isLocalRuntime = useMemo(() => getTransport().supportsLocalFileOps(), [])
-  const status = resolveWorkspaceEnvironmentStatus(
-    env.snapshot,
-    effectiveWorkingDir,
-    !!env.error,
-  )
+  const status = resolveWorkspaceEnvironmentStatus(env.snapshot, effectiveWorkingDir, !!env.error)
   const statusLabel = t(status.labelKey, status.fallback)
   const workingDir = env.snapshot?.workingDir.path ?? effectiveWorkingDir ?? null
   const workingDirName = env.snapshot?.workingDir.name ?? (workingDir ? basename(workingDir) : null)
   const source =
     env.snapshot?.workingDir.source ??
-    (workingDirSource === "project" ? "project" : workingDirSource === "session" ? "session" : "none")
+    (workingDirSource === "project"
+      ? "project"
+      : workingDirSource === "session"
+        ? "session"
+        : "none")
   const sourceLabel = workingDirSourceLabelKey(source)
   const git = env.snapshot?.git ?? null
   const currentWorktree = git?.worktrees.find((w) => w.isCurrent) ?? null
@@ -824,7 +864,11 @@ function EnvironmentSection({
           sessionMeta.channelInfo.chatType,
       }
     : sessionMeta?.isCron
-      ? { icon: CalendarClock, value: t("workspace.environment.sourceCron", "定时任务"), detail: null }
+      ? {
+          icon: CalendarClock,
+          value: t("workspace.environment.sourceCron", "定时任务"),
+          detail: null,
+        }
       : sessionMeta?.parentSessionId
         ? {
             icon: Bot,
@@ -926,7 +970,9 @@ function EnvironmentSection({
               icon={GitBranch}
               label={t("workspace.environment.branch", "分支")}
               value={formatGitRef(git)}
-              detail={git.detached ? t("fileBrowser.gitDetached", "detached") : git.head ?? undefined}
+              detail={
+                git.detached ? t("fileBrowser.gitDetached", "detached") : (git.head ?? undefined)
+              }
             />
             {currentWorktree || git.worktrees.length > 1 ? (
               <EnvRow
@@ -981,7 +1027,11 @@ function EnvironmentSection({
               <EnvRow
                 icon={GitPullRequest}
                 label={t("workspace.environment.sync", "同步")}
-                value={syncLabel ?? git.sync.upstream ?? t("workspace.environment.syncUnknown", "同步状态未知")}
+                value={
+                  syncLabel ??
+                  git.sync.upstream ??
+                  t("workspace.environment.syncUnknown", "同步状态未知")
+                }
                 detail={git.sync.upstream ?? git.sync.remote ?? undefined}
                 tone={
                   git.sync.state === "diverged"
@@ -1004,7 +1054,7 @@ function EnvironmentSection({
               />
             ) : null}
           </>
-        ) : workingDir ? (
+        ) : env.snapshot && workingDir ? (
           <EnvRow
             icon={GitBranch}
             label={t("workspace.environment.git", "Git")}
@@ -1182,6 +1232,165 @@ function BackgroundJobsSection({
 const WORKFLOW_RUN_PREVIEW = 6
 const WORKFLOW_EVENT_PREVIEW = 4
 const WORKFLOW_OP_PREVIEW = 6
+const WORKFLOW_FOCUS_OP_PREVIEW = 4
+
+type CodingLoopMode = "off" | "guarded" | "deep" | "autonomous"
+type WorkflowDetailTab = "trace" | "validation" | "agents"
+
+const WORKFLOW_KIND_DEFAULT = "coding.workflow"
+const WORKFLOW_SCRIPT_TEMPLATE = `export default async function main(workflow) {
+  const observe = await workflow.task.create({
+    title: "Observe workspace",
+    label: "observe",
+  });
+
+  await workflow.trace({
+    label: "observe",
+    payload: { summary: "Manual workflow started" },
+  });
+  await workflow.fileSearch({
+    query: "TODO",
+    limit: 5,
+    label: "observe-files",
+  });
+  await workflow.task.update({ task: observe, status: "completed" });
+
+  const validate = await workflow.task.create({
+    title: "Run targeted validation",
+    label: "validate",
+  });
+  await workflow.validate({
+    commands: ["pnpm typecheck"],
+    reason: "targeted validation before finish; repair budget is bounded by loop mode",
+    label: "targeted-validation",
+  });
+  await workflow.task.update({ task: validate, status: "completed" });
+
+  await workflow.finish({
+    summary: "Manual workflow completed",
+    changedFiles: [],
+    verification: ["pnpm typecheck"],
+    residualRisk: [],
+  });
+}
+`
+
+function workflowJsLiteral(value: string): string {
+  return JSON.stringify(value.trim()).replace(/</g, "\\u003C")
+}
+
+function buildGoalDrivenWorkflowScript(objective: string): string {
+  const target = objective.trim() || "Complete the requested coding task."
+  const targetLiteral = workflowJsLiteral(target)
+  const implementationTask = workflowJsLiteral(`Implement this coding target end-to-end:
+
+${target}
+
+Work in the current workspace. First inspect the relevant files, then make the smallest coherent code change, and finish with a concise summary of changed files, validation performed, and residual risk. Follow the repository AGENTS.md instructions: run targeted validation only; do not run the full pre-push suite unless explicitly requested.`)
+
+  return `export default async function main(workflow) {
+  // Budget: owner create request sets maxScriptSecs/maxOps/maxOutputTokens by loop mode; waitAll and validation stay bounded.
+  const observe = await workflow.task.create({
+    title: "Understand target",
+    label: "observe",
+  });
+
+  await workflow.trace({
+    label: "target",
+    payload: {
+      target: ${targetLiteral},
+      source: "goal-driven-workflow",
+    },
+  });
+  const files = await workflow.fileSearch({
+    query: ${targetLiteral},
+    limit: 12,
+    label: "target-files",
+  });
+  await workflow.task.update({ task: observe, status: "completed" });
+
+  const implement = await workflow.task.create({
+    title: "Implement target",
+    label: "implement",
+  });
+  const worker = await workflow.spawnAgent({
+    task: ${implementationTask},
+    label: "implement-target",
+  });
+  const implementation = await workflow.waitAll([worker], {
+    waitTimeout: 90,
+    label: "wait-implementation",
+  });
+  await workflow.task.update({ task: implement, status: "completed" });
+
+  const validate = await workflow.task.create({
+    title: "Run targeted validation",
+    label: "validate",
+  });
+  const validation = await workflow.validate({
+    commands: ["pnpm typecheck"],
+    reason: "targeted validation after the implementation agent finishes; full pre-push suite remains user-gated",
+    label: "targeted-validation",
+  });
+  const diff = await workflow.diff({ label: "final-diff" });
+  await workflow.task.update({ task: validate, status: "completed" });
+
+  await workflow.finish({
+    summary: "Goal-driven coding workflow finished",
+    target: ${targetLiteral},
+    searchedFiles: files.matches ?? [],
+    implementation,
+    validation,
+    diff,
+    verification: ["pnpm typecheck"],
+    residualRisk: validation.ok ? [] : ["Targeted validation did not pass; inspect the Validation tab."],
+  });
+}
+`
+}
+
+function workflowBudgetForMode(mode: CodingLoopMode): Record<string, number> {
+  switch (mode) {
+    case "autonomous":
+      return { maxScriptSecs: 300, maxOps: 32, maxOutputTokens: 24000 }
+    case "deep":
+      return { maxScriptSecs: 240, maxOps: 28, maxOutputTokens: 16000 }
+    case "guarded":
+      return { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 }
+    case "off":
+      return { maxScriptSecs: 90, maxOps: 16, maxOutputTokens: 6000 }
+  }
+}
+
+const WORKFLOW_MODE_OPTIONS: Array<{ mode: CodingLoopMode; icon: LucideIcon }> = [
+  { mode: "off", icon: X },
+  { mode: "guarded", icon: Shield },
+  { mode: "deep", icon: Brain },
+  { mode: "autonomous", icon: Bot },
+]
+
+type WorkflowRunCommand =
+  | "run_workflow_run"
+  | "approve_workflow_run"
+  | "pause_workflow_run"
+  | "resume_workflow_run"
+  | "cancel_workflow_run"
+
+interface WorkflowRunActionSpec {
+  command: WorkflowRunCommand
+  label: string
+  success: string
+  icon: LucideIcon
+  danger?: boolean
+  primary?: boolean
+}
+
+interface WorkflowDraftOrigin {
+  type: "repair"
+  runId: string
+  runKind: string
+  runState: WorkflowRunState
+}
 
 function workflowRunStateLabel(
   t: ReturnType<typeof useTranslation>["t"],
@@ -1211,7 +1420,7 @@ function workflowRunStateLabel(
   }
 }
 
-function workflowRunTone(state: WorkflowRunState): "muted" | "good" | "warn" | "danger" | "info" {
+function workflowRunTone(state: WorkflowRunState): StatusTone {
   switch (state) {
     case "completed":
       return "good"
@@ -1232,7 +1441,14 @@ function workflowRunTone(state: WorkflowRunState): "muted" | "good" | "warn" | "
 }
 
 function workflowRunIsLive(state: WorkflowRunState): boolean {
-  return state === "running" || state === "awaiting_user" || state === "paused" || state === "recovering"
+  return (
+    state === "running" || state === "awaiting_user" || state === "paused" || state === "recovering"
+  )
+}
+
+function normalizeCodingLoopMode(value: unknown): CodingLoopMode {
+  const raw = typeof value === "string" ? value : stringField(asRecord(value), "mode")
+  return raw === "guarded" || raw === "deep" || raw === "autonomous" ? raw : "off"
 }
 
 function compactJson(value: unknown, fallback: string): string {
@@ -1246,23 +1462,65 @@ function compactJson(value: unknown, fallback: string): string {
   }
 }
 
+function prettyJson(value: unknown, fallback: string): string {
+  if (value == null) return fallback
+  if (typeof value === "string") return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return fallback
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
 }
 
-function stringField(record: Record<string, unknown> | null | undefined, key: string): string | null {
+function stringField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
   const value = record?.[key]
   return typeof value === "string" && value.length > 0 ? value : null
 }
 
-function numberField(record: Record<string, unknown> | null | undefined, key: string): number | null {
+function numberField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
   const value = record?.[key]
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-function boolField(record: Record<string, unknown> | null | undefined, key: string): boolean | null {
+function compactCount(value: number): string {
+  if (!Number.isFinite(value)) return "0"
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`
+  return String(Math.round(value))
+}
+
+function workflowOutputBudget(
+  run: WorkflowRun,
+  events: WorkflowEvent[] = [],
+): { spent: number; limit: number; exhausted: boolean } | null {
+  const budget = asRecord(run.budget)
+  const limit = numberField(budget, "maxOutputTokens") ?? numberField(budget, "max_output_tokens")
+  const latestBudgetPayload = events
+    .filter((event) => event.eventType === "budget_usage")
+    .map((event) => asRecord(event.payload))
+    .filter((payload): payload is Record<string, unknown> => Boolean(payload))
+    .at(-1)
+  const spent = numberField(latestBudgetPayload, "spentOutputTokens") ?? 0
+  const exhausted = boolField(latestBudgetPayload, "exhausted") ?? false
+  return typeof limit === "number" && limit > 0 ? { spent, limit, exhausted } : null
+}
+
+function boolField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): boolean | null {
   const value = record?.[key]
   return typeof value === "boolean" ? value : null
 }
@@ -1272,6 +1530,15 @@ function arrayField(record: Record<string, unknown> | null | undefined, key: str
   return Array.isArray(value) ? value : []
 }
 
+function recordArrayField(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): Record<string, unknown>[] {
+  return arrayField(record, key)
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => !!item)
+}
+
 function truncateMiddle(value: string, max = 96): string {
   if (value.length <= max) return value
   const head = Math.max(8, Math.floor((max - 1) * 0.58))
@@ -1279,10 +1546,7 @@ function truncateMiddle(value: string, max = 96): string {
   return `${value.slice(0, head)}…${value.slice(-tail)}`
 }
 
-function workflowOpSummary(
-  t: ReturnType<typeof useTranslation>["t"],
-  ops: WorkflowOp[],
-): string {
+function workflowOpSummary(t: ReturnType<typeof useTranslation>["t"], ops: WorkflowOp[]): string {
   if (ops.length === 0) return t("workspace.workflow.noOps", "暂无 op")
   const completed = ops.filter((op) => op.state === "completed").length
   const failed = ops.filter((op) => op.state === "failed").length
@@ -1299,42 +1563,618 @@ function workflowOpSummary(
   })
 }
 
+function codingLoopModeLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  mode: CodingLoopMode,
+): string {
+  switch (mode) {
+    case "off":
+      return t("workspace.workflow.loopOff", "关闭")
+    case "guarded":
+      return t("workspace.workflow.loopGuarded", "守护")
+    case "deep":
+      return t("workspace.workflow.loopDeep", "深入")
+    case "autonomous":
+      return t("workspace.workflow.loopAutonomous", "自主")
+  }
+}
+
+function codingLoopModeHint(
+  t: ReturnType<typeof useTranslation>["t"],
+  mode: CodingLoopMode,
+): string {
+  switch (mode) {
+    case "off":
+      return t("workspace.workflow.loopOffHint", "普通对话")
+    case "guarded":
+      return t("workspace.workflow.loopGuardedHint", "编辑后验证")
+    case "deep":
+      return t("workspace.workflow.loopDeepHint", "更强排查")
+    case "autonomous":
+      return t("workspace.workflow.loopAutonomousHint", "长任务持续")
+  }
+}
+
+function workflowRunActionSpecs(
+  t: ReturnType<typeof useTranslation>["t"],
+  state: WorkflowRunState,
+): WorkflowRunActionSpec[] {
+  const cancel: WorkflowRunActionSpec = {
+    command: "cancel_workflow_run",
+    label: t("workspace.workflow.cancel", "取消"),
+    success: t("workspace.workflow.cancelled", "已取消 workflow"),
+    icon: X,
+    danger: true,
+  }
+
+  switch (state) {
+    case "draft":
+      return [
+        {
+          command: "run_workflow_run",
+          label: t("workspace.workflow.run", "运行"),
+          success: t("workspace.workflow.runStarted", "已启动 workflow"),
+          icon: Play,
+          primary: true,
+        },
+        cancel,
+      ]
+    case "awaiting_approval":
+      return [
+        {
+          command: "approve_workflow_run",
+          label: t("workspace.workflow.approve", "批准"),
+          success: t("workspace.workflow.approved", "已批准 workflow"),
+          icon: Check,
+          primary: true,
+        },
+        cancel,
+      ]
+    case "running":
+      return [
+        {
+          command: "pause_workflow_run",
+          label: t("workspace.workflow.pause", "暂停"),
+          success: t("workspace.workflow.paused", "已暂停 workflow"),
+          icon: Pause,
+        },
+        cancel,
+      ]
+    case "paused":
+      return [
+        {
+          command: "resume_workflow_run",
+          label: t("workspace.workflow.resume", "恢复"),
+          success: t("workspace.workflow.resumed", "已恢复 workflow"),
+          icon: Play,
+          primary: true,
+        },
+        cancel,
+      ]
+    case "awaiting_user":
+    case "recovering":
+      return [cancel]
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "blocked":
+      return []
+  }
+}
+
+function workflowPermissionSummaryText(
+  t: ReturnType<typeof useTranslation>["t"],
+  summary: Record<string, unknown> | null | undefined,
+): string {
+  const parts: string[] = []
+  const total = numberField(summary, "total")
+  const allow = numberField(summary, "allow")
+  const ask = numberField(summary, "ask")
+  const dynamic = numberField(summary, "dynamic")
+  const deny = numberField(summary, "deny")
+  const strict = numberField(summary, "strict")
+  if (typeof total === "number") {
+    parts.push(t("workspace.workflow.permissionTotal", "{{count}} 个调用", { count: total }))
+  }
+  if (typeof ask === "number" && ask > 0) {
+    parts.push(t("workspace.workflow.permissionAsk", "{{count}} 个需批准", { count: ask }))
+  }
+  if (typeof dynamic === "number" && dynamic > 0) {
+    parts.push(
+      t("workspace.workflow.permissionDynamic", "{{count}} 个动态调用", { count: dynamic }),
+    )
+  }
+  if (typeof deny === "number" && deny > 0) {
+    parts.push(t("workspace.workflow.permissionDeny", "{{count}} 个被拒绝", { count: deny }))
+  }
+  if (typeof strict === "number" && strict > 0) {
+    parts.push(t("workspace.workflow.permissionStrict", "{{count}} 个 strict", { count: strict }))
+  }
+  if (parts.length === 0 && typeof allow === "number") {
+    parts.push(t("workspace.workflow.permissionAllow", "{{count}} 个可自动执行", { count: allow }))
+  }
+  return parts.join(" · ")
+}
+
+function workflowPermissionPreview(snapshot: WorkflowRunSnapshot | null): {
+  summary: Record<string, unknown>
+  calls: Record<string, unknown>[]
+  truncated: boolean
+} | null {
+  const events = snapshot?.events ?? []
+  const permissionEvents = events.filter(
+    (event) =>
+      event.eventType === "script_permission_preview" ||
+      event.eventType === "script_permission_preview_blocked" ||
+      event.eventType === "script_permission_approval_required",
+  )
+  if (permissionEvents.length === 0) return null
+
+  const latestPayload = asRecord(permissionEvents.at(-1)?.payload)
+  const callsPayload =
+    [...permissionEvents]
+      .reverse()
+      .map((event) => asRecord(event.payload))
+      .find((payload) => recordArrayField(payload, "calls").length > 0) ?? latestPayload
+  const summary = asRecord(latestPayload?.summary) ?? asRecord(callsPayload?.summary)
+  const calls = recordArrayField(callsPayload, "calls")
+  const truncated = boolField(callsPayload, "truncated") ?? false
+
+  return summary || calls.length > 0 ? { summary: summary ?? {}, calls, truncated } : null
+}
+
+function workflowPermissionDecisionLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  call: Record<string, unknown>,
+): string {
+  const decision = stringField(call, "decision")
+  if (boolField(call, "dynamic")) return t("workspace.workflow.permissionDecisionDynamic", "动态")
+  if (boolField(call, "strict")) return t("workspace.workflow.permissionDecisionStrict", "Strict")
+  switch (decision) {
+    case "allow":
+      return t("workspace.workflow.permissionDecisionAllow", "自动")
+    case "ask":
+      return t("workspace.workflow.permissionDecisionAsk", "需批准")
+    case "deny":
+      return t("workspace.workflow.permissionDecisionDeny", "拒绝")
+    default:
+      return decision ?? t("workspace.workflow.permissionDecisionUnknown", "未知")
+  }
+}
+
+function workflowPermissionDecisionTone(call: Record<string, unknown>): StatusTone {
+  const decision = stringField(call, "decision")
+  if (decision === "deny") return "danger"
+  if (boolField(call, "strict") || decision === "ask") return "warn"
+  if (boolField(call, "dynamic")) return "info"
+  if (decision === "allow") return "good"
+  return "muted"
+}
+
+function workflowPermissionCallTitle(call: Record<string, unknown>): string {
+  return (
+    stringField(call, "label") ??
+    stringField(call, "toolName") ??
+    stringField(call, "tool_name") ??
+    stringField(call, "api") ??
+    "workflow"
+  )
+}
+
+function workflowPermissionCallDetail(
+  t: ReturnType<typeof useTranslation>["t"],
+  call: Record<string, unknown>,
+): string {
+  const api = stringField(call, "api")
+  const toolName = stringField(call, "toolName") ?? stringField(call, "tool_name")
+  const line = numberField(call, "line")
+  const reason = stringField(call, "reason")
+  const detail = [
+    typeof line === "number"
+      ? t("workspace.workflow.permissionLine", "line {{line}}", { line })
+      : null,
+    api && toolName && api !== toolName ? `${api} · ${toolName}` : (api ?? toolName),
+    reason,
+  ].filter(Boolean)
+  return detail.join(" · ")
+}
+
+function workflowOpHasValidationFailure(op: WorkflowOp): boolean {
+  if (op.opType !== "validate") return false
+  const output = asRecord(op.output)
+  return op.state === "failed" || boolField(output, "ok") === false
+}
+
+function workflowOpNeedsAttention(op: WorkflowOp): boolean {
+  return op.state === "failed" || op.state === "started" || workflowOpHasValidationFailure(op)
+}
+
+function workflowOpTone(op: WorkflowOp): StatusTone {
+  if (workflowOpHasValidationFailure(op) || op.state === "failed") return "danger"
+  if (op.state === "completed") return "good"
+  if (op.state === "started" || op.state === "pending") return "info"
+  return "muted"
+}
+
+function workflowOpTitle(op: WorkflowOp): string {
+  const input = asRecord(op.input)
+  const output = asRecord(op.output)
+  return (
+    stringField(input, "label") ??
+    stringField(output, "label") ??
+    stringField(input, "name") ??
+    stringField(output, "name") ??
+    op.opKey
+  )
+}
+
+function workflowOpDetail(op: WorkflowOp): string {
+  const input = asRecord(op.input)
+  const output = asRecord(op.output)
+  const error = asRecord(op.error)
+  return (
+    stringField(error, "message") ??
+    stringField(output, "summary") ??
+    stringField(output, "status") ??
+    stringField(input, "query") ??
+    op.opType
+  )
+}
+
+function workflowOpDetailTab(op: WorkflowOp): WorkflowDetailTab {
+  if (op.opType === "validate") return "validation"
+  if (op.opType === "spawnAgent") return "agents"
+  return "trace"
+}
+
+function workflowDetailTabLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  tab: WorkflowDetailTab,
+): string {
+  switch (tab) {
+    case "trace":
+      return t("workspace.workflow.tabTrace", "Trace")
+    case "validation":
+      return t("workspace.workflow.tabValidation", "Validation")
+    case "agents":
+      return t("workspace.workflow.tabAgents", "Agents")
+  }
+}
+
+function workflowValidationResultLines(op: WorkflowOp): string[] {
+  const output = asRecord(op.output)
+  const results = recordArrayField(output, "results")
+  return results.slice(0, 6).map((result) => {
+    const command = stringField(result, "command") ?? "validation command"
+    const ok = boolField(result, "ok")
+    const exitCode = numberField(result, "exitCode")
+    const cwd = stringField(result, "cwd")
+    const resultOutput = stringField(result, "output")
+    return [
+      `- ${command}`,
+      ok === null ? null : `ok=${ok}`,
+      typeof exitCode === "number" ? `exit=${exitCode}` : null,
+      cwd ? `cwd=${cwd}` : null,
+      resultOutput ? `output=${truncateMiddle(resultOutput, 260)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ")
+  })
+}
+
+function buildWorkflowRepairPrompt(
+  run: WorkflowRun,
+  snapshot: WorkflowRunSnapshot | null,
+): string | null {
+  const ops = snapshot?.ops ?? []
+  const events = snapshot?.events ?? []
+  const failedOp =
+    [...ops].reverse().find((op) => op.state === "failed") ??
+    [...ops].reverse().find(workflowOpHasValidationFailure)
+  const validationOps = ops.filter(workflowOpHasValidationFailure)
+  const isRecoverableFailure =
+    run.state === "failed" ||
+    run.state === "blocked" ||
+    !!run.blockedReason ||
+    !!failedOp ||
+    validationOps.length > 0
+
+  if (!isRecoverableFailure) return null
+
+  const lines = [
+    "请基于下面的 Workflow 失败上下文继续修复。先定位根因，必要时调整代码或 workflow 脚本，然后运行最小验证。",
+    "",
+    "## Run",
+    `- id: ${run.id}`,
+    `- kind: ${run.kind}`,
+    `- state: ${run.state}`,
+    `- loopMode: ${run.loopMode}`,
+    `- scriptHash: ${run.scriptHash}`,
+  ]
+
+  if (run.blockedReason) {
+    lines.push(`- blockedReason: ${run.blockedReason}`)
+  }
+
+  if (failedOp) {
+    const failedInput = compactJson(failedOp.input, "")
+    const failedOutput = compactJson(failedOp.output, "")
+    const failedError = compactJson(failedOp.error, "")
+    lines.push(
+      "",
+      "## Failed Op",
+      `- key: ${failedOp.opKey}`,
+      `- type: ${failedOp.opType}`,
+      `- state: ${failedOp.state}`,
+    )
+    if (failedInput) lines.push(`- input: ${truncateMiddle(failedInput, 360)}`)
+    if (failedOutput) lines.push(`- output: ${truncateMiddle(failedOutput, 360)}`)
+    if (failedError) lines.push(`- error: ${truncateMiddle(failedError, 360)}`)
+  }
+
+  if (validationOps.length > 0) {
+    lines.push("", "## Validation")
+    for (const op of validationOps.slice(0, 3)) {
+      const output = asRecord(op.output)
+      const summary = stringField(output, "summary")
+      lines.push(`- op: ${op.opKey}${summary ? ` | ${summary}` : ""}`)
+      lines.push(...workflowValidationResultLines(op))
+    }
+  }
+
+  if (events.length > 0) {
+    lines.push("", "## Recent Events")
+    for (const event of events.slice(-5)) {
+      lines.push(
+        `- #${event.seq} ${event.eventType}: ${truncateMiddle(compactJson(event.payload, ""), 240)}`,
+      )
+    }
+  }
+
+  return lines.join("\n")
+}
+
+function workflowInitialDetailTab(
+  snapshot: WorkflowRunSnapshot,
+): "trace" | "validation" | "agents" {
+  if (snapshot.ops.some(workflowOpHasValidationFailure)) return "validation"
+  if (snapshot.ops.some((op) => op.opType === "spawnAgent")) return "agents"
+  return "trace"
+}
+
+function workflowEventNeedsAttention(event: WorkflowEvent): boolean {
+  const payload = asRecord(event.payload)
+  const to = stringField(payload, "to")
+  return (
+    event.eventType === "op_failed" ||
+    event.eventType === "script_permission_preview_blocked" ||
+    event.eventType === "script_permission_approval_required" ||
+    event.eventType === "budget_usage" ||
+    event.eventType === "guarded_repair_validation_failed" ||
+    event.eventType === "run_derived_from" ||
+    event.eventType === "run_derived_child_created" ||
+    to === "failed" ||
+    to === "blocked" ||
+    to === "awaiting_approval"
+  )
+}
+
+function workflowEventTitle(
+  t: ReturnType<typeof useTranslation>["t"],
+  event: WorkflowEvent,
+): string {
+  const payload = asRecord(event.payload)
+  switch (event.eventType) {
+    case "run_created":
+      return t("workspace.workflow.eventRunCreated", "Workflow 已创建")
+    case "run_state_changed":
+      return t("workspace.workflow.eventRunStateChanged", "状态已更新")
+    case "run_recovery_claimed":
+      return t("workspace.workflow.eventRecoveryClaimed", "恢复接管")
+    case "script_permission_preview":
+      return t("workspace.workflow.eventPermissionPreview", "权限预览")
+    case "script_permission_preview_blocked":
+      return t("workspace.workflow.eventPermissionBlocked", "权限预览阻塞")
+    case "script_permission_approval_required":
+      return t("workspace.workflow.eventApprovalRequired", "需要批准")
+    case "budget_usage":
+      return t("workspace.workflow.eventBudgetUsage", "预算用量")
+    case "run_derived_from":
+      return t("workspace.workflow.eventRunDerivedFrom", "派生来源")
+    case "run_derived_child_created":
+      return t("workspace.workflow.eventRunDerivedChildCreated", "已生成派生 run")
+    case "op_started":
+      return t("workspace.workflow.eventOpStarted", "步骤开始")
+    case "op_completed":
+      return t("workspace.workflow.eventOpCompleted", "步骤完成")
+    case "op_failed":
+      return t("workspace.workflow.eventOpFailed", "步骤失败")
+    case "guarded_repair_validation_failed":
+      return t("workspace.workflow.eventRepairValidationFailed", "修复验证失败")
+    case "guarded_repair_validation_passed":
+      return t("workspace.workflow.eventRepairValidationPassed", "修复验证通过")
+    case "trace":
+      return stringField(payload, "label") ?? t("workspace.workflow.eventTrace", "Trace")
+    default:
+      return event.eventType
+  }
+}
+
+function workflowEventDetail(
+  t: ReturnType<typeof useTranslation>["t"],
+  event: WorkflowEvent,
+): string {
+  const payload = asRecord(event.payload)
+  switch (event.eventType) {
+    case "run_created": {
+      const kind = stringField(payload, "kind")
+      const state = stringField(payload, "state")
+      return [kind, state].filter(Boolean).join(" · ")
+    }
+    case "run_state_changed": {
+      const from = stringField(payload, "from")
+      const to = stringField(payload, "to")
+      const reason = stringField(payload, "reason")
+      return [from && to ? `${from} → ${to}` : null, reason].filter(Boolean).join(" · ")
+    }
+    case "script_permission_preview":
+    case "script_permission_preview_blocked":
+    case "script_permission_approval_required":
+      return workflowPermissionSummaryText(t, asRecord(payload?.summary))
+    case "budget_usage": {
+      const spent = numberField(payload, "spentOutputTokens")
+      const limit = numberField(payload, "maxOutputTokens")
+      const exhausted = boolField(payload, "exhausted")
+      const reason = stringField(payload, "reason")
+      const usage =
+        typeof spent === "number" && typeof limit === "number"
+          ? `${compactCount(spent)}/${compactCount(limit)}`
+          : null
+      return [
+        usage,
+        exhausted ? t("workspace.workflow.budgetExhausted", "已达上限") : null,
+        reason,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    case "run_derived_from":
+    case "run_derived_child_created": {
+      const parentRunId = stringField(payload, "parentRunId")
+      const childRunId = stringField(payload, "childRunId")
+      const origin = stringField(payload, "origin")
+      return [
+        parentRunId ? `parent ${parentRunId}` : null,
+        childRunId ? `child ${childRunId}` : null,
+        origin,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    case "op_started":
+    case "op_completed":
+    case "op_failed": {
+      const opKey = stringField(payload, "opKey")
+      const opType = stringField(payload, "opType")
+      const state = stringField(payload, "state")
+      return [opKey, opType, state].filter(Boolean).join(" · ")
+    }
+    case "guarded_repair_validation_failed":
+    case "guarded_repair_validation_passed": {
+      const summary = stringField(payload, "summary")
+      const failed = numberField(payload, "failed")
+      const total = numberField(payload, "total")
+      const stopReason = stringField(payload, "stopReason")
+      const count =
+        typeof failed === "number" && typeof total === "number"
+          ? t("workspace.workflow.validationCount", "{{failed}}/{{total}} failed", {
+              failed,
+              total,
+            })
+          : typeof total === "number"
+            ? t("workspace.workflow.validationTotal", "{{total}} total", { total })
+            : null
+      return [summary, count, stopReason].filter(Boolean).join(" · ")
+    }
+    case "trace":
+      return truncateMiddle(compactJson(payload?.payload, event.eventType), 120)
+    default:
+      return truncateMiddle(compactJson(event.payload, event.eventType), 120)
+  }
+}
+
 function WorkflowRunsSection({
   sessionId,
   incognito,
   turnActive,
+  workingDir,
+  onEnsureSession,
   onViewSubagentSession,
+  workflowRunsState,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
+  workingDir?: string | null
+  onEnsureSession?: () => Promise<string | null>
   onViewSubagentSession?: (sessionId: string) => void
+  workflowRunsState?: WorkflowRunsState
 }) {
   const { t } = useTranslation()
-  const { runs, activeCount, loading, error, refresh } = useWorkflowRuns(sessionId, {
+  const ownedWorkflowRuns = useWorkflowRuns(sessionId, {
     incognito,
     turnActive,
+    disabled: Boolean(workflowRunsState),
   })
+  const { runs, activeCount, loading, error, refresh } = workflowRunsState ?? ownedWorkflowRuns
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<WorkflowRunSnapshot | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [actionKey, setActionKey] = useState<string | null>(null)
-  const [detailTab, setDetailTab] = useState<"trace" | "validation" | "agents">("trace")
+  const [loopMode, setLoopMode] = useState<CodingLoopMode>("off")
+  const [loopLoading, setLoopLoading] = useState(false)
+  const [loopSaving, setLoopSaving] = useState<CodingLoopMode | null>(null)
+  const [detailTab, setDetailTab] = useState<WorkflowDetailTab>("trace")
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createSaving, setCreateSaving] = useState(false)
+  const [draftPreview, setDraftPreview] = useState<WorkflowScriptPreview | null>(null)
+  const [draftPreviewLoading, setDraftPreviewLoading] = useState(false)
+  const [draftPreviewError, setDraftPreviewError] = useState<string | null>(null)
+  const [draftKind, setDraftKind] = useState(WORKFLOW_KIND_DEFAULT)
+  const [draftMode, setDraftMode] = useState<CodingLoopMode>("guarded")
+  const [draftRunImmediately, setDraftRunImmediately] = useState(false)
+  const [draftObjective, setDraftObjective] = useState("")
+  const [draftScript, setDraftScript] = useState(WORKFLOW_SCRIPT_TEMPLATE)
+  const [draftOrigin, setDraftOrigin] = useState<WorkflowDraftOrigin | null>(null)
+  const [showAllRuns, setShowAllRuns] = useState(false)
+  const [pendingCancelRun, setPendingCancelRun] = useState<WorkflowRun | null>(null)
   const snapshotReqRef = useRef(0)
+  const loopModeReqRef = useRef(0)
+  const previewReqRef = useRef(0)
+  const autoDetailTabRunRef = useRef<string | null>(null)
+  const ensureSessionRef = useRef<Promise<string | null> | null>(null)
 
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null
-  const visibleRuns = runs.slice(0, WORKFLOW_RUN_PREVIEW)
+  const visibleRuns = showAllRuns ? runs : runs.slice(0, WORKFLOW_RUN_PREVIEW)
+  const canMaterializeSession = Boolean(sessionId || onEnsureSession)
+
+  const ensureWorkflowSession = useCallback(async () => {
+    if (sessionId) return sessionId
+    if (!onEnsureSession) {
+      toast.error(t("workspace.workflow.sessionRequired", "先选择或创建一个会话后再新建 workflow"))
+      return null
+    }
+    if (!ensureSessionRef.current) {
+      ensureSessionRef.current = onEnsureSession().finally(() => {
+        ensureSessionRef.current = null
+      })
+    }
+    const nextSessionId = await ensureSessionRef.current
+    if (!nextSessionId) {
+      toast.error(t("workspace.workflow.sessionRequired", "先选择或创建一个会话后再新建 workflow"))
+    }
+    return nextSessionId
+  }, [onEnsureSession, sessionId, t])
 
   useEffect(() => {
     if (runs.length === 0) {
       setSelectedRunId(null)
       setSnapshot(null)
+      autoDetailTabRunRef.current = null
       return
     }
     if (selectedRunId && runs.some((run) => run.id === selectedRunId)) return
-    const live = runs.find((run) => workflowRunIsLive(run.state) || run.state === "awaiting_approval")
+    const live = runs.find(
+      (run) => workflowRunIsLive(run.state) || run.state === "awaiting_approval",
+    )
     setSelectedRunId((live ?? runs[0]).id)
   }, [runs, selectedRunId])
+
+  useEffect(() => {
+    if (runs.length <= WORKFLOW_RUN_PREVIEW && showAllRuns) {
+      setShowAllRuns(false)
+    }
+  }, [runs.length, showAllRuns])
 
   const loadSnapshot = useCallback((runId: string) => {
     const req = ++snapshotReqRef.current
@@ -1344,15 +2184,53 @@ function WorkflowRunsSection({
       .then((next) => {
         if (snapshotReqRef.current !== req) return
         setSnapshot(next)
+        if (next && autoDetailTabRunRef.current !== next.run.id) {
+          setDetailTab(workflowInitialDetailTab(next))
+          autoDetailTabRunRef.current = next.run.id
+        }
         setSnapshotLoading(false)
       })
       .catch((e) => {
         if (snapshotReqRef.current !== req) return
-        logger.error("ui", "WorkflowRunsSection::loadSnapshot", "Failed to load workflow snapshot", e)
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::loadSnapshot",
+          "Failed to load workflow snapshot",
+          e,
+        )
         setSnapshot(null)
         setSnapshotLoading(false)
       })
   }, [])
+
+  const loadLoopMode = useCallback(() => {
+    if (!sessionId || incognito) {
+      loopModeReqRef.current += 1
+      setLoopMode("off")
+      setLoopLoading(false)
+      setLoopSaving(null)
+      return
+    }
+    const req = ++loopModeReqRef.current
+    setLoopLoading(true)
+    getTransport()
+      .call<unknown>("get_coding_loop_mode", { sessionId })
+      .then((next) => {
+        if (loopModeReqRef.current !== req) return
+        setLoopMode(normalizeCodingLoopMode(next))
+        setLoopLoading(false)
+      })
+      .catch((e) => {
+        if (loopModeReqRef.current !== req) return
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::loadLoopMode",
+          "Failed to load coding loop mode",
+          e,
+        )
+        setLoopLoading(false)
+      })
+  }, [incognito, sessionId])
 
   useEffect(() => {
     if (!selectedRunId || incognito) {
@@ -1363,6 +2241,231 @@ function WorkflowRunsSection({
     }
     loadSnapshot(selectedRunId)
   }, [incognito, loadSnapshot, selectedRun?.state, selectedRun?.updatedAt, selectedRunId])
+
+  useEffect(() => {
+    loadLoopMode()
+  }, [loadLoopMode])
+
+  const updateLoopMode = useCallback(
+    async (nextMode: CodingLoopMode) => {
+      if (!sessionId || incognito || nextMode === loopMode) return
+      setLoopSaving(nextMode)
+      try {
+        const next = await getTransport().call<unknown>("set_coding_loop_mode", {
+          sessionId,
+          mode: nextMode,
+        })
+        const saved = normalizeCodingLoopMode(next)
+        setLoopMode(saved)
+        toast.success(
+          t("workspace.workflow.loopModeSaved", "Coding loop 已切换为 {{mode}}", {
+            mode: codingLoopModeLabel(t, saved),
+          }),
+        )
+      } catch (e) {
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::updateLoopMode",
+          "Failed to update coding loop mode",
+          e,
+        )
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setLoopSaving(null)
+      }
+    },
+    [incognito, loopMode, sessionId, t],
+  )
+
+  const clearDraftPreview = useCallback(() => {
+    previewReqRef.current += 1
+    setDraftPreview(null)
+    setDraftPreviewError(null)
+    setDraftPreviewLoading(false)
+  }, [])
+
+  const previewWorkflowScriptSource = useCallback(
+    async (
+      scriptSource: string,
+      mode: CodingLoopMode,
+      toastMessages: { passed?: string; blocked?: string } = {},
+    ) => {
+      if (incognito) return null
+      const script = scriptSource.trim()
+      if (!script) {
+        toast.error(t("workspace.workflow.scriptRequired", "请输入 workflow 脚本"))
+        return null
+      }
+      const targetSessionId = await ensureWorkflowSession()
+      if (!targetSessionId) return null
+      const req = ++previewReqRef.current
+      setDraftPreview(null)
+      setDraftPreviewLoading(true)
+      setDraftPreviewError(null)
+      try {
+        const preview = await getTransport().call<WorkflowScriptPreview>(
+          "preview_workflow_script",
+          {
+            sessionId: targetSessionId,
+            scriptSource: script,
+            loopMode: mode,
+          },
+        )
+        if (previewReqRef.current !== req) return null
+        setDraftPreview(preview)
+        if (preview.canCreate) {
+          toast.success(toastMessages.passed ?? t("workspace.workflow.previewPassed", "预检通过"))
+        } else {
+          toast.error(toastMessages.blocked ?? t("workspace.workflow.previewBlocked", "预检未通过"))
+        }
+        return preview
+      } catch (e) {
+        if (previewReqRef.current !== req) return null
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::previewWorkflowDraft",
+          "Failed to preview workflow script",
+          e,
+        )
+        setDraftPreview(null)
+        setDraftPreviewError(e instanceof Error ? e.message : String(e))
+        toast.error(e instanceof Error ? e.message : String(e))
+        return null
+      } finally {
+        if (previewReqRef.current === req) setDraftPreviewLoading(false)
+      }
+    },
+    [ensureWorkflowSession, incognito, t],
+  )
+
+  const generateGoalDrivenDraft = useCallback(() => {
+    const objective = draftObjective.trim()
+    if (!objective) {
+      toast.error(t("workspace.workflow.objectiveRequired", "请输入要完成的 coding 目标"))
+      return
+    }
+    setDraftKind(WORKFLOW_KIND_DEFAULT)
+    setDraftScript(buildGoalDrivenWorkflowScript(objective))
+    setDraftRunImmediately(Boolean(workingDir))
+    setDraftOrigin(null)
+    clearDraftPreview()
+    if (workingDir) {
+      toast.success(t("workspace.workflow.objectiveDraftReady", "已生成目标驱动 workflow 草稿"))
+    } else {
+      toast.warning(
+        t(
+          "workspace.workflow.objectiveDraftNeedsWorkspace",
+          "已生成草稿；设置工作目录后再运行更稳妥",
+        ),
+      )
+    }
+  }, [clearDraftPreview, draftObjective, t, workingDir])
+
+  const generateRepairDraft = useCallback(
+    (repairPrompt: string, run: WorkflowRun) => {
+      const sourceMode = normalizeCodingLoopMode(run.loopMode)
+      const nextMode = sourceMode === "off" ? "guarded" : sourceMode
+      const objective = `继续修复失败的 workflow run ${run.id}。
+
+${repairPrompt}`
+      setCreateOpen(true)
+      setDraftKind(WORKFLOW_KIND_DEFAULT)
+      setDraftMode(nextMode)
+      setDraftObjective(objective)
+      setDraftOrigin({
+        type: "repair",
+        runId: run.id,
+        runKind: run.kind,
+        runState: run.state,
+      })
+      const script = buildGoalDrivenWorkflowScript(objective)
+      setDraftScript(script)
+      setDraftRunImmediately(Boolean(workingDir))
+      if (workingDir) {
+        toast.success(t("workspace.workflow.repairDraftReady", "已生成修复 workflow 草稿"))
+      } else {
+        toast.warning(
+          t(
+            "workspace.workflow.repairDraftNeedsWorkspace",
+            "已生成修复草稿；设置工作目录后再运行更稳妥",
+          ),
+        )
+      }
+      void previewWorkflowScriptSource(script, nextMode, {
+        passed: t("workspace.workflow.repairDraftPreviewPassed", "修复草稿预检通过"),
+        blocked: t("workspace.workflow.repairDraftPreviewBlocked", "修复草稿预检未通过"),
+      })
+    },
+    [previewWorkflowScriptSource, t, workingDir],
+  )
+
+  const previewWorkflowDraft = useCallback(async () => {
+    await previewWorkflowScriptSource(draftScript, draftMode)
+  }, [draftMode, draftScript, previewWorkflowScriptSource])
+
+  const createWorkflow = useCallback(async () => {
+    if (incognito) return
+    const script = draftScript.trim()
+    if (!script) {
+      toast.error(t("workspace.workflow.scriptRequired", "请输入 workflow 脚本"))
+      return
+    }
+    if (!draftPreview?.canCreate) {
+      toast.error(t("workspace.workflow.previewRequired", "请先完成预检并修复阻塞项"))
+      return
+    }
+    const targetSessionId = await ensureWorkflowSession()
+    if (!targetSessionId) return
+    setCreateSaving(true)
+    const runImmediatelyForCreate = Boolean(workingDir) && draftRunImmediately
+    try {
+      const run = await getTransport().call<WorkflowRun>("create_workflow_run", {
+        sessionId: targetSessionId,
+        kind: draftKind.trim() || WORKFLOW_KIND_DEFAULT,
+        loopMode: draftMode,
+        scriptSource: script,
+        budget: workflowBudgetForMode(draftMode),
+        parentRunId: draftOrigin?.type === "repair" ? draftOrigin.runId : undefined,
+        origin: draftOrigin?.type === "repair" ? "repair" : undefined,
+        runImmediately: runImmediatelyForCreate,
+      })
+      setSelectedRunId(run.id)
+      loadSnapshot(run.id)
+      refresh()
+      toast.success(
+        draftOrigin?.type === "repair"
+          ? runImmediatelyForCreate
+            ? t("workspace.workflow.repairCreatedAndStarted", "已创建并启动修复 workflow")
+            : t("workspace.workflow.repairCreated", "已创建修复 workflow")
+          : runImmediatelyForCreate
+            ? t("workspace.workflow.createdAndStarted", "已创建并启动 workflow")
+            : t("workspace.workflow.created", "已创建 workflow"),
+      )
+      setCreateOpen(false)
+      setDraftOrigin(null)
+      clearDraftPreview()
+    } catch (e) {
+      logger.error("ui", "WorkflowRunsSection::createWorkflow", "Failed to create workflow", e)
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCreateSaving(false)
+    }
+  }, [
+    clearDraftPreview,
+    draftKind,
+    draftMode,
+    draftOrigin?.runId,
+    draftOrigin?.type,
+    draftPreview?.canCreate,
+    draftRunImmediately,
+    draftScript,
+    ensureWorkflowSession,
+    incognito,
+    loadSnapshot,
+    refresh,
+    t,
+    workingDir,
+  ])
 
   const runAction = useCallback(
     async (run: WorkflowRun, command: string, label: string) => {
@@ -1376,7 +2479,12 @@ function WorkflowRunsSection({
           loadSnapshot(run.id)
         }
       } catch (e) {
-        logger.error("ui", "WorkflowRunsSection::runAction", `Workflow action failed: ${command}`, e)
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::runAction",
+          `Workflow action failed: ${command}`,
+          e,
+        )
         toast.error(e instanceof Error ? e.message : String(e))
       } finally {
         setActionKey(null)
@@ -1385,113 +2493,100 @@ function WorkflowRunsSection({
     [loadSnapshot, refresh, selectedRunId],
   )
 
-  const renderActions = (run: WorkflowRun) => {
-    const btn = (
-      command: string,
-      label: string,
-      icon: LucideIcon,
-      success: string,
-      danger = false,
-    ) => {
-      const Icon = icon
-      const key = `${command}:${run.id}`
-      return (
-        <IconTip key={command} label={label}>
-          <button
-            type="button"
-            className={cn(
-              "inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 text-muted-foreground transition-colors hover:bg-secondary/65 hover:text-foreground disabled:opacity-50",
-              danger && "hover:border-destructive/50 hover:text-destructive",
-            )}
-            disabled={!!actionKey}
-            onClick={(e) => {
-              e.stopPropagation()
-              void runAction(run, command, success)
-            }}
-            aria-label={label}
-          >
-            {actionKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Icon className="h-3 w-3" />}
-          </button>
-        </IconTip>
-      )
-    }
+  const requestRunAction = useCallback(
+    (run: WorkflowRun, action: WorkflowRunActionSpec) => {
+      if (action.command === "cancel_workflow_run") {
+        setPendingCancelRun(run)
+        return
+      }
+      void runAction(run, action.command, action.success)
+    },
+    [runAction],
+  )
 
-    switch (run.state) {
-      case "awaiting_approval":
-        return (
-          <div className="flex shrink-0 items-center gap-1">
-            {btn(
-              "approve_workflow_run",
-              t("workspace.workflow.approve", "批准"),
-              Check,
-              t("workspace.workflow.approved", "已批准 workflow"),
-            )}
-            {btn(
-              "cancel_workflow_run",
-              t("workspace.workflow.cancel", "取消"),
-              X,
-              t("workspace.workflow.cancelled", "已取消 workflow"),
-              true,
-            )}
-          </div>
-        )
-      case "running":
-        return (
-          <div className="flex shrink-0 items-center gap-1">
-            {btn(
-              "pause_workflow_run",
-              t("workspace.workflow.pause", "暂停"),
-              Pause,
-              t("workspace.workflow.paused", "已暂停 workflow"),
-            )}
-            {btn(
-              "cancel_workflow_run",
-              t("workspace.workflow.cancel", "取消"),
-              X,
-              t("workspace.workflow.cancelled", "已取消 workflow"),
-              true,
-            )}
-          </div>
-        )
-      case "paused":
-        return (
-          <div className="flex shrink-0 items-center gap-1">
-            {btn(
-              "resume_workflow_run",
-              t("workspace.workflow.resume", "恢复"),
-              Play,
-              t("workspace.workflow.resumed", "已恢复 workflow"),
-            )}
-            {btn(
-              "cancel_workflow_run",
-              t("workspace.workflow.cancel", "取消"),
-              X,
-              t("workspace.workflow.cancelled", "已取消 workflow"),
-              true,
-            )}
-          </div>
-        )
-      case "draft":
-      case "awaiting_user":
-      case "recovering":
-        return (
-          <div className="flex shrink-0 items-center gap-1">
-            {btn(
-              "cancel_workflow_run",
-              t("workspace.workflow.cancel", "取消"),
-              X,
-              t("workspace.workflow.cancelled", "已取消 workflow"),
-              true,
-            )}
-          </div>
-        )
-      case "completed":
-      case "failed":
-      case "cancelled":
-      case "blocked":
-        return null
-    }
+  const renderActions = (run: WorkflowRun) => {
+    const actions = workflowRunActionSpecs(t, run.state)
+    if (actions.length === 0) return null
+    return (
+      <div className="flex shrink-0 items-center gap-1">
+        {actions.map((action) => {
+          const Icon = action.icon
+          const key = `${action.command}:${run.id}`
+          return (
+            <IconTip key={action.command} label={action.label}>
+              <button
+                type="button"
+                className={cn(
+                  "inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/50 text-muted-foreground transition-colors hover:bg-secondary/65 hover:text-foreground disabled:opacity-50",
+                  action.danger && "hover:border-destructive/50 hover:text-destructive",
+                )}
+                disabled={!!actionKey}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  requestRunAction(run, action)
+                }}
+                aria-label={action.label}
+              >
+                {actionKey === key ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Icon className="h-3 w-3" />
+                )}
+              </button>
+            </IconTip>
+          )
+        })}
+      </div>
+    )
   }
+
+  const renderDetailActions = (run: WorkflowRun) => {
+    const actions = workflowRunActionSpecs(t, run.state)
+    if (actions.length === 0) return null
+    return (
+      <div className="grid grid-cols-2 gap-1.5">
+        {actions.map((action) => {
+          const Icon = action.icon
+          const key = `${action.command}:${run.id}`
+          const busy = actionKey === key
+          return (
+            <Button
+              key={action.command}
+              type="button"
+              size="sm"
+              variant={action.primary ? "default" : "outline"}
+              className={cn(
+                "h-8 min-w-0 gap-1.5 text-xs",
+                action.danger && "border-destructive/35 text-destructive hover:text-destructive",
+                actions.length === 1 && "col-span-2",
+              )}
+              disabled={!!actionKey}
+              onClick={() => requestRunAction(run, action)}
+            >
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Icon className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">{action.label}</span>
+            </Button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const pendingCancelCurrentRun = pendingCancelRun
+    ? (runs.find((run) => run.id === pendingCancelRun.id) ?? pendingCancelRun)
+    : null
+  const pendingCancelAction = pendingCancelCurrentRun
+    ? workflowRunActionSpecs(t, pendingCancelCurrentRun.state).find(
+        (action) => action.command === "cancel_workflow_run",
+      )
+    : null
+  const pendingCancelKey = pendingCancelCurrentRun
+    ? `cancel_workflow_run:${pendingCancelCurrentRun.id}`
+    : null
 
   const latestEvent = snapshot?.events.at(-1)
   const detailRun = snapshot?.run ?? selectedRun
@@ -1499,179 +2594,1758 @@ function WorkflowRunsSection({
   const agentCount = snapshot?.ops.filter((op) => op.opType === "spawnAgent").length ?? 0
 
   return (
-    <WorkspaceSection
-      title={t("workspace.workflow.title", "Workflow")}
-      count={activeCount}
-      icon={GitPullRequest}
-      meta={loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
-    >
-      {incognito ? (
-        <EmptyHint>{t("workspace.workflow.incognito", "无痕会话不持久化 workflow")}</EmptyHint>
-      ) : error ? (
-        <EmptyHint>{error}</EmptyHint>
-      ) : runs.length === 0 ? (
-        <EmptyHint>{t("workspace.workflow.empty", "暂无 workflow run")}</EmptyHint>
-      ) : (
-        <div className="space-y-2">
-          <div className="space-y-1">
-            {visibleRuns.map((run) => {
-              const selected = run.id === selectedRunId
-              return (
-                <div
-                  key={run.id}
-                  className={cn(
-                    "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/45",
-                    selected && "bg-secondary/45",
-                  )}
-                >
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                    onClick={() => setSelectedRunId(run.id)}
-                  >
-                    <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
-                      {run.kind}
-                      <span className="px-1 text-muted-foreground/50">·</span>
-                      {run.loopMode}
-                    </span>
-                    <StatusPill
-                      label={workflowRunStateLabel(t, run.state)}
-                      tone={workflowRunTone(run.state)}
-                      loading={run.state === "running" || run.state === "recovering"}
-                    />
-                  </button>
-                  {renderActions(run)}
+    <>
+      <WorkspaceSection
+        title={t("workspace.workflow.title", "Workflow")}
+        count={activeCount}
+        icon={GitPullRequest}
+        meta={
+          loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null
+        }
+      >
+        {incognito ? (
+          <EmptyHint>{t("workspace.workflow.incognito", "无痕会话不持久化 workflow")}</EmptyHint>
+        ) : (
+          <div className="space-y-2">
+            <WorkflowLoopModeControl
+              mode={loopMode}
+              loading={loopLoading}
+              saving={loopSaving}
+              onChange={(mode) => void updateLoopMode(mode)}
+            />
+            <WorkflowCreateComposer
+              open={createOpen}
+              disabled={!canMaterializeSession}
+              disabledReason={
+                !canMaterializeSession
+                  ? t("workspace.workflow.sessionRequired", "先选择或创建一个会话后再新建 workflow")
+                  : !sessionId
+                    ? t(
+                        "workspace.workflow.sessionAutoCreateHint",
+                        "预检时会自动创建并切换到一个新会话",
+                      )
+                    : null
+              }
+              workspaceReady={!!workingDir}
+              saving={createSaving}
+              preview={draftPreview}
+              previewLoading={draftPreviewLoading}
+              previewError={draftPreviewError}
+              kind={draftKind}
+              mode={draftMode}
+              objective={draftObjective}
+              script={draftScript}
+              draftOrigin={draftOrigin}
+              runImmediately={draftRunImmediately}
+              onOpenChange={setCreateOpen}
+              onKindChange={setDraftKind}
+              onModeChange={(mode) => {
+                setDraftMode(mode)
+                clearDraftPreview()
+              }}
+              onScriptChange={(script) => {
+                setDraftScript(script)
+                clearDraftPreview()
+              }}
+              onObjectiveChange={(objective) => {
+                setDraftObjective(objective)
+                clearDraftPreview()
+              }}
+              onClearDraftOrigin={() => setDraftOrigin(null)}
+              onRunImmediatelyChange={setDraftRunImmediately}
+              onGenerateGoalDraft={generateGoalDrivenDraft}
+              onPreview={() => void previewWorkflowDraft()}
+              onSubmit={() => void createWorkflow()}
+            />
+
+            {error ? (
+              <EmptyHint>{error}</EmptyHint>
+            ) : runs.length === 0 ? (
+              <WorkflowEmptyState
+                mode={loopMode}
+                workspaceReady={!!workingDir}
+                disabled={!canMaterializeSession}
+                onCreate={() => setCreateOpen(true)}
+              />
+            ) : (
+              <>
+                <div className="space-y-1">
+                  {visibleRuns.map((run) => {
+                    const selected = run.id === selectedRunId
+                    const rowBudget = workflowOutputBudget(
+                      run,
+                      selected ? (snapshot?.events ?? []) : [],
+                    )
+                    return (
+                      <div
+                        key={run.id}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/45",
+                          selected && "bg-secondary/45",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                          onClick={() => setSelectedRunId(run.id)}
+                        >
+                          <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
+                            {run.kind}
+                            <span className="px-1 text-muted-foreground/50">·</span>
+                            {run.loopMode}
+                            {rowBudget ? (
+                              <>
+                                <span className="px-1 text-muted-foreground/50">·</span>
+                                <span className="text-muted-foreground">
+                                  {t("workspace.workflow.outputBudget", "输出预算")}
+                                </span>
+                                <span className="pl-1 font-mono text-muted-foreground">
+                                  {rowBudget.spent > 0
+                                    ? `${compactCount(rowBudget.spent)}/${compactCount(rowBudget.limit)}`
+                                    : compactCount(rowBudget.limit)}
+                                </span>
+                              </>
+                            ) : null}
+                          </span>
+                          <StatusPill
+                            label={workflowRunStateLabel(t, run.state)}
+                            tone={workflowRunTone(run.state)}
+                            loading={run.state === "running" || run.state === "recovering"}
+                          />
+                        </button>
+                        {renderActions(run)}
+                      </div>
+                    )
+                  })}
+                  {runs.length > WORKFLOW_RUN_PREVIEW ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2 py-1 text-[10px] text-muted-foreground/70 transition-colors hover:bg-secondary/45 hover:text-foreground"
+                      aria-expanded={showAllRuns}
+                      onClick={() => setShowAllRuns((value) => !value)}
+                    >
+                      <span>
+                        {showAllRuns
+                          ? t("workspace.workflow.collapseRuns", "收起历史 run")
+                          : t("workspace.workflow.moreRuns", "另有 {{count}} 个历史 run", {
+                              count: runs.length - WORKFLOW_RUN_PREVIEW,
+                            })}
+                      </span>
+                      {showAllRuns ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : null}
                 </div>
-              )
-            })}
-            {runs.length > WORKFLOW_RUN_PREVIEW ? (
-              <div className="px-2 text-[10px] text-muted-foreground/60">
-                {t("workspace.workflow.moreRuns", "另有 {{count}} 个历史 run", {
-                  count: runs.length - WORKFLOW_RUN_PREVIEW,
-                })}
+
+                {detailRun ? (
+                  <div className="space-y-1.5 border-t border-border/60 pt-2">
+                    <WorkflowRunOverview
+                      run={detailRun}
+                      snapshot={snapshot}
+                      latestEvent={latestEvent}
+                      actions={renderDetailActions(detailRun)}
+                      onSelectDetailTab={setDetailTab}
+                      onCreateRepairDraft={generateRepairDraft}
+                    />
+
+                    {snapshotLoading ? (
+                      <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {t("workspace.workflow.loadingTrace", "加载 trace")}
+                      </div>
+                    ) : snapshot ? (
+                      <div className="space-y-1.5">
+                        <Tabs
+                          value={detailTab}
+                          onValueChange={(value) => setDetailTab(value as WorkflowDetailTab)}
+                          className="space-y-1.5"
+                        >
+                          <TabsList className="grid h-8 w-full grid-cols-3">
+                            <TabsTrigger value="trace" className="text-[11px]">
+                              {t("workspace.workflow.tabTrace", "Trace")}
+                            </TabsTrigger>
+                            <TabsTrigger value="validation" className="text-[11px]">
+                              {t("workspace.workflow.tabValidation", "Validation")}
+                              {validationCount > 0 ? (
+                                <span className="ml-1 text-[10px] text-muted-foreground">
+                                  {validationCount}
+                                </span>
+                              ) : null}
+                            </TabsTrigger>
+                            <TabsTrigger value="agents" className="text-[11px]">
+                              {t("workspace.workflow.tabAgents", "Agents")}
+                              {agentCount > 0 ? (
+                                <span className="ml-1 text-[10px] text-muted-foreground">
+                                  {agentCount}
+                                </span>
+                              ) : null}
+                            </TabsTrigger>
+                          </TabsList>
+
+                          <TabsContent value="trace" className="mt-0">
+                            <WorkflowTraceTimeline snapshot={snapshot} />
+                          </TabsContent>
+
+                          <TabsContent value="validation" className="mt-0">
+                            <WorkflowValidationTab snapshot={snapshot} />
+                          </TabsContent>
+
+                          <TabsContent value="agents" className="mt-0">
+                            <WorkflowAgentsTab
+                              snapshot={snapshot}
+                              onViewSubagentSession={onViewSubagentSession}
+                            />
+                          </TabsContent>
+                        </Tabs>
+                      </div>
+                    ) : (
+                      <EmptyHint>{t("workspace.workflow.emptyTrace", "暂无 trace")}</EmptyHint>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        )}
+      </WorkspaceSection>
+      <AlertDialog
+        open={!!pendingCancelRun}
+        onOpenChange={(open) => {
+          if (!open) setPendingCancelRun(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("workspace.workflow.cancelConfirmTitle", "取消这个 workflow run？")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "workspace.workflow.cancelConfirmBody",
+                "会停止这个 run，并尽量取消它拥有的后台任务、验证命令和子 Agent；已有 trace 会保留，方便之后复盘或生成修复草稿。",
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pendingCancelCurrentRun ? (
+            <div className="rounded-md border border-border/55 bg-secondary/25 px-2.5 py-2 text-xs">
+              <div className="flex min-w-0 items-center gap-2">
+                <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">
+                  {pendingCancelCurrentRun.kind}
+                </span>
+                <StatusPill
+                  label={workflowRunStateLabel(t, pendingCancelCurrentRun.state)}
+                  tone={workflowRunTone(pendingCancelCurrentRun.state)}
+                />
+              </div>
+              <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                {pendingCancelCurrentRun.id}
+              </div>
+            </div>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pendingCancelKey ? actionKey === pendingCancelKey : false}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={
+                !pendingCancelCurrentRun ||
+                !pendingCancelAction ||
+                (pendingCancelKey ? actionKey === pendingCancelKey : false)
+              }
+              onClick={(event) => {
+                event.preventDefault()
+                if (!pendingCancelCurrentRun || !pendingCancelAction) return
+                const run = pendingCancelCurrentRun
+                const action = pendingCancelAction
+                setPendingCancelRun(null)
+                void runAction(run, action.command, action.success)
+              }}
+            >
+              {pendingCancelKey && actionKey === pendingCancelKey ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {t("workspace.workflow.cancelConfirmAction", "确认取消")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+function WorkflowEmptyState({
+  mode,
+  workspaceReady,
+  disabled,
+  onCreate,
+}: {
+  mode: CodingLoopMode
+  workspaceReady: boolean
+  disabled?: boolean
+  onCreate: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="rounded-md border border-dashed border-border/70 bg-secondary/15 p-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+          {t("workspace.workflow.emptyTitle", "准备开始 Coding run")}
+        </span>
+        <StatusPill label={codingLoopModeLabel(t, mode)} tone={mode === "off" ? "muted" : "info"} />
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-1 text-[10px]">
+        <WorkflowMetric
+          label={t("workspace.workflow.emptyMode", "Loop")}
+          value={codingLoopModeLabel(t, mode)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.emptyWorkspace", "工作目录")}
+          value={
+            workspaceReady
+              ? t("workspace.workflow.emptyWorkspaceReady", "已设置")
+              : t("workspace.workflow.emptyWorkspaceDraftOnly", "草稿")
+          }
+        />
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        className="mt-2 h-8 w-full gap-1.5 text-xs"
+        disabled={disabled}
+        onClick={onCreate}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        <span className="truncate">{t("workspace.workflow.emptyCreate", "开始 Coding run")}</span>
+      </Button>
+    </div>
+  )
+}
+
+function WorkflowCreateComposer({
+  open,
+  disabled,
+  disabledReason,
+  workspaceReady,
+  saving,
+  preview,
+  previewLoading,
+  previewError,
+  kind,
+  mode,
+  objective,
+  script,
+  draftOrigin,
+  runImmediately,
+  onOpenChange,
+  onKindChange,
+  onModeChange,
+  onObjectiveChange,
+  onScriptChange,
+  onClearDraftOrigin,
+  onRunImmediatelyChange,
+  onGenerateGoalDraft,
+  onPreview,
+  onSubmit,
+}: {
+  open: boolean
+  disabled?: boolean
+  disabledReason?: string | null
+  workspaceReady?: boolean
+  saving?: boolean
+  preview: WorkflowScriptPreview | null
+  previewLoading?: boolean
+  previewError?: string | null
+  kind: string
+  mode: CodingLoopMode
+  objective: string
+  script: string
+  draftOrigin?: WorkflowDraftOrigin | null
+  runImmediately: boolean
+  onOpenChange: (open: boolean) => void
+  onKindChange: (kind: string) => void
+  onModeChange: (mode: CodingLoopMode) => void
+  onObjectiveChange: (objective: string) => void
+  onScriptChange: (script: string) => void
+  onClearDraftOrigin: () => void
+  onRunImmediatelyChange: (checked: boolean) => void
+  onGenerateGoalDraft: () => void
+  onPreview: () => void
+  onSubmit: () => void
+}) {
+  const { t } = useTranslation()
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const effectiveRunImmediately = workspaceReady && runImmediately
+  const canPreview = !disabled && !saving && !previewLoading && script.trim().length > 0
+  const canSubmit =
+    !disabled &&
+    !saving &&
+    !previewLoading &&
+    script.trim().length > 0 &&
+    preview?.canCreate === true
+  const canGenerate = !disabled && !saving && !previewLoading && objective.trim().length > 0
+  const repairOrigin = draftOrigin?.type === "repair" ? draftOrigin : null
+
+  useEffect(() => {
+    if (!open) setAdvancedOpen(false)
+  }, [open])
+
+  return (
+    <div className="rounded-md border border-border/55 bg-background/35">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary/45 disabled:opacity-60"
+        disabled={disabled}
+        aria-expanded={open}
+        onClick={() => onOpenChange(!open)}
+      >
+        <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">
+          {t("workspace.workflow.createTitle", "新建 Workflow")}
+        </span>
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      {disabledReason ? (
+        <div className="border-t border-border/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+          {disabledReason}
+        </div>
+      ) : null}
+      <AnimatedCollapse open={open}>
+        <form
+          className="space-y-2 border-t border-border/60 p-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (canSubmit) onSubmit()
+          }}
+        >
+          {repairOrigin ? (
+            <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+              <div className="flex min-w-0 items-center gap-1.5 font-medium">
+                <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t("workspace.workflow.repairDraftOrigin", "修复自 {{id}}", {
+                    id: repairOrigin.runId,
+                  })}
+                </span>
+                <StatusPill
+                  label={workflowRunStateLabel(t, repairOrigin.runState)}
+                  tone={workflowRunTone(repairOrigin.runState)}
+                />
+              </div>
+              <div className="mt-0.5 truncate opacity-80">
+                {t(
+                  "workspace.workflow.repairDraftOriginDetail",
+                  "将创建新的修复 run，不会覆盖原 run · {{kind}}",
+                  {
+                    kind: repairOrigin.runKind,
+                  },
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="space-y-1.5 rounded-md border border-primary/20 bg-primary/5 p-2">
+            <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="truncate">
+                {t("workspace.workflow.objectiveTitle", "从 coding 目标开始")}
+              </span>
+            </div>
+            <Textarea
+              value={objective}
+              disabled={saving || previewLoading}
+              onChange={(event) => onObjectiveChange(event.target.value)}
+              placeholder={t(
+                "workspace.workflow.objectivePlaceholder",
+                "例如：修复登录页空白问题，并跑一次 pnpm typecheck",
+              )}
+              className="min-h-20 resize-y text-xs"
+              aria-label={t("workspace.workflow.objectiveTitle", "从 coding 目标开始")}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 w-full gap-1.5 text-xs"
+              disabled={!canGenerate}
+              onClick={onGenerateGoalDraft}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span className="truncate">
+                {t("workspace.workflow.generateObjectiveDraft", "生成可预检草稿")}
+              </span>
+            </Button>
+            {!workspaceReady ? (
+              <div className="rounded-md bg-background/55 px-2 py-1.5 text-[11px] text-muted-foreground">
+                {t(
+                  "workspace.workflow.workspaceRequiredHint",
+                  "当前会话未设置工作目录；目标草稿会先创建为待启动，设置目录后再运行。",
+                )}
               </div>
             ) : null}
           </div>
 
-          {detailRun ? (
-            <div className="space-y-1.5 border-t border-border/60 pt-2">
-              <div className="flex min-w-0 items-center gap-2 px-2 text-[11px] text-muted-foreground">
-                <span className="min-w-0 flex-1 truncate">
-                  {t("workspace.workflow.updated", "更新")} {formatMessageTime(detailRun.updatedAt)}
-                </span>
-                <span className="shrink-0 font-mono">{detailRun.scriptHash.slice(0, 7)}</span>
-              </div>
-              {detailRun.blockedReason ? (
-                <div className="rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-                  {truncateMiddle(detailRun.blockedReason, 120)}
-                </div>
-              ) : null}
+          <div className="space-y-1">
+            <label className="block text-[10px] font-medium text-muted-foreground">
+              {t("workspace.workflow.createKind", "Kind")}
+            </label>
+            <Input
+              value={kind}
+              disabled={saving || previewLoading}
+              onChange={(event) => onKindChange(event.target.value)}
+              className="h-8 text-xs"
+              aria-label={t("workspace.workflow.createKind", "Kind")}
+            />
+          </div>
 
-              {snapshotLoading ? (
-                <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {t("workspace.workflow.loadingTrace", "加载 trace")}
-                </div>
-              ) : snapshot ? (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 px-2 text-[11px] text-muted-foreground">
-                    <span>{workflowOpSummary(t, snapshot.ops)}</span>
-                    {latestEvent ? (
-                      <span className="min-w-0 truncate">
-                        #{latestEvent.seq} {latestEvent.eventType}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <Tabs
-                    value={detailTab}
-                    onValueChange={(value) => setDetailTab(value as "trace" | "validation" | "agents")}
-                    className="space-y-1.5"
+          <div className="space-y-1">
+            <div className="text-[10px] font-medium text-muted-foreground">
+              {t("workspace.workflow.createMode", "Loop mode")}
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {WORKFLOW_MODE_OPTIONS.map((option) => {
+                const Icon = option.icon
+                const selected = option.mode === mode
+                return (
+                  <button
+                    key={option.mode}
+                    type="button"
+                    className={cn(
+                      "flex min-h-8 min-w-0 items-center gap-1.5 rounded-md border px-2 text-left text-[11px] transition-colors disabled:opacity-60",
+                      selected
+                        ? "border-primary/55 bg-primary/10 text-foreground"
+                        : "border-border/45 bg-background/35 text-muted-foreground hover:bg-secondary/55 hover:text-foreground",
+                    )}
+                    disabled={saving || previewLoading}
+                    aria-pressed={selected}
+                    onClick={() => onModeChange(option.mode)}
                   >
-                    <TabsList className="grid h-8 w-full grid-cols-3">
-                      <TabsTrigger value="trace" className="text-[11px]">
-                        {t("workspace.workflow.tabTrace", "Trace")}
-                      </TabsTrigger>
-                      <TabsTrigger value="validation" className="text-[11px]">
-                        {t("workspace.workflow.tabValidation", "Validation")}
-                        {validationCount > 0 ? (
-                          <span className="ml-1 text-[10px] text-muted-foreground">{validationCount}</span>
-                        ) : null}
-                      </TabsTrigger>
-                      <TabsTrigger value="agents" className="text-[11px]">
-                        {t("workspace.workflow.tabAgents", "Agents")}
-                        {agentCount > 0 ? (
-                          <span className="ml-1 text-[10px] text-muted-foreground">{agentCount}</span>
-                        ) : null}
-                      </TabsTrigger>
-                    </TabsList>
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">{codingLoopModeLabel(t, option.mode)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
 
-                    <TabsContent value="trace" className="mt-0 space-y-1.5">
-                      {snapshot.ops.length > 0 ? (
-                        <div className="space-y-0.5">
-                          {snapshot.ops.slice(0, WORKFLOW_OP_PREVIEW).map((op) => (
-                            <WorkflowOpRow key={op.id} op={op} />
-                          ))}
-                        </div>
-                      ) : null}
+          <div className="overflow-hidden rounded-md border border-border/55 bg-secondary/15">
+            <button
+              type="button"
+              className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-secondary/45"
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((value) => !value)}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+                {t("workspace.workflow.advancedScript", "高级脚本")}
+              </span>
+              <span className="hidden min-w-0 max-w-[9rem] truncate text-[10px] text-muted-foreground sm:inline">
+                {t("workspace.workflow.advancedScriptHint", "需要时再编辑 workflow.js")}
+              </span>
+              <ChevronRight
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                  advancedOpen && "rotate-90",
+                )}
+              />
+            </button>
+            <AnimatedCollapse open={advancedOpen}>
+              <div className="space-y-1 border-t border-border/60 p-2">
+                <label className="block text-[10px] font-medium text-muted-foreground">
+                  {t("workspace.workflow.createScript", "Script")}
+                </label>
+                <Textarea
+                  value={script}
+                  disabled={saving || previewLoading}
+                  onChange={(event) => onScriptChange(event.target.value)}
+                  placeholder={t(
+                    "workspace.workflow.createScriptPlaceholder",
+                    "Paste or edit workflow.js",
+                  )}
+                  className="min-h-44 resize-y font-mono text-[11px]"
+                  aria-label={t("workspace.workflow.createScript", "Script")}
+                  spellCheck={false}
+                />
+              </div>
+            </AnimatedCollapse>
+          </div>
 
-                      {snapshot.events.length > 0 ? (
-                        <div className="space-y-0.5">
-                          {snapshot.events.slice(-WORKFLOW_EVENT_PREVIEW).map((event) => (
-                            <WorkflowEventRow key={event.id} event={event} />
-                          ))}
-                        </div>
-                      ) : null}
-                    </TabsContent>
+          <div className="flex items-center justify-between gap-2 rounded-md bg-secondary/25 px-2 py-1.5">
+            <label className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
+              {t("workspace.workflow.runImmediately", "创建后立即运行")}
+            </label>
+            <Switch
+              checked={effectiveRunImmediately}
+              disabled={saving || previewLoading || !workspaceReady}
+              onCheckedChange={onRunImmediatelyChange}
+            />
+          </div>
 
-                    <TabsContent value="validation" className="mt-0">
-                      <WorkflowValidationTab snapshot={snapshot} />
-                    </TabsContent>
+          <WorkflowScriptPreviewPanel
+            preview={preview}
+            loading={previewLoading}
+            error={previewError}
+          />
 
-                    <TabsContent value="agents" className="mt-0">
-                      <WorkflowAgentsTab snapshot={snapshot} onViewSubagentSession={onViewSubagentSession} />
-                    </TabsContent>
-                  </Tabs>
-                </div>
+          <div className="flex gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 flex-1 gap-1.5 text-xs"
+              disabled={saving || previewLoading}
+              onClick={() => {
+                onKindChange(WORKFLOW_KIND_DEFAULT)
+                onModeChange("guarded")
+                onObjectiveChange("")
+                onScriptChange(WORKFLOW_SCRIPT_TEMPLATE)
+                onClearDraftOrigin()
+              }}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {t("workspace.workflow.resetTemplate", "恢复模板")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 flex-1 gap-1.5 text-xs"
+              disabled={!canPreview}
+              onClick={onPreview}
+            >
+              {previewLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <EmptyHint>{t("workspace.workflow.emptyTrace", "暂无 trace")}</EmptyHint>
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">{t("workspace.workflow.preview", "预检")}</span>
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 flex-1 gap-1.5 text-xs"
+              disabled={!canSubmit}
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">
+                {repairOrigin
+                  ? effectiveRunImmediately
+                    ? t("workspace.workflow.createRepairAndRun", "创建并运行修复")
+                    : t("workspace.workflow.createRepair", "创建修复 run")
+                  : effectiveRunImmediately
+                    ? t("workspace.workflow.createAndRun", "创建并运行")
+                    : t("workspace.workflow.create", "创建")}
+              </span>
+            </Button>
+          </div>
+        </form>
+      </AnimatedCollapse>
+    </div>
+  )
+}
+
+function WorkflowScriptPreviewPanel({
+  preview,
+  loading,
+  error,
+}: {
+  preview: WorkflowScriptPreview | null
+  loading?: boolean
+  error?: string | null
+}) {
+  const { t } = useTranslation()
+
+  if (loading) {
+    return (
+      <div className="rounded-md border border-border/55 bg-secondary/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          <span className="truncate">{t("workspace.workflow.previewLoading", "正在预检脚本")}</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+        <div className="flex min-w-0 items-center gap-1.5 font-medium">
+          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{t("workspace.workflow.previewError", "预检失败")}</span>
+        </div>
+        <div className="mt-0.5 truncate opacity-85">{truncateMiddle(error, 140)}</div>
+      </div>
+    )
+  }
+
+  if (!preview) {
+    return (
+      <div className="rounded-md border border-border/55 bg-secondary/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Shield className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            {t("workspace.workflow.previewBeforeCreate", "创建前先预检脚本和授权清单")}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const issues = preview.gate?.issues ?? []
+  const errorCount = issues.filter((issue) => issue.severity === "error").length
+  const warningCount = issues.filter((issue) => issue.severity === "warning").length
+  const visibleIssues = issues.slice(0, 4)
+  const tone = preview.canCreate ? "good" : "danger"
+
+  return (
+    <div
+      className={cn(
+        "space-y-1.5 rounded-md border p-2 text-[11px]",
+        preview.canCreate
+          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-destructive/25 bg-destructive/10 text-destructive",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {preview.canCreate ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {preview.canCreate
+            ? t("workspace.workflow.previewPassed", "预检通过")
+            : t("workspace.workflow.previewBlocked", "预检未通过")}
+        </span>
+        <StatusPill
+          label={
+            preview.requiresApproval
+              ? t("workspace.workflow.previewNeedsApproval", "需审批")
+              : t("workspace.workflow.previewNoApproval", "可直接创建")
+          }
+          tone={preview.requiresApproval ? "warn" : tone}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 text-[10px]">
+        <WorkflowMetric
+          label={t("workspace.workflow.gateMetricErrors", "错误")}
+          value={String(errorCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.gateMetricWarnings", "警告")}
+          value={String(warningCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.gateMetricDenied", "拒绝")}
+          value={preview.hasDenials ? "1" : "0"}
+        />
+      </div>
+
+      {visibleIssues.length > 0 ? (
+        <div className="space-y-1">
+          {visibleIssues.map((issue) => (
+            <WorkflowGateIssueRow key={`${issue.severity}:${issue.code}`} issue={issue} />
+          ))}
+          {issues.length > visibleIssues.length ? (
+            <div className="px-1 text-[10px] opacity-75">
+              {t("workspace.workflow.gateMoreIssues", "另有 {{count}} 个 gate 提示", {
+                count: issues.length - visibleIssues.length,
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-md bg-background/40 px-2 py-1 text-[10px] opacity-85">
+          {t("workspace.workflow.noGateIssues", "Script Gate 未发现阻塞项")}
+        </div>
+      )}
+
+      <WorkflowPermissionPreviewCard preview={preview.permission} />
+    </div>
+  )
+}
+
+function WorkflowGateIssueRow({ issue }: { issue: WorkflowGateIssue }) {
+  const { t } = useTranslation()
+  const isError = issue.severity === "error"
+  return (
+    <div className="rounded-md bg-background/45 px-2 py-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        {isError ? (
+          <CircleAlert className="h-3 w-3 shrink-0 text-destructive" />
+        ) : (
+          <ShieldAlert className="h-3 w-3 shrink-0 text-amber-500" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+          {truncateMiddle(issue.message, 110)}
+        </span>
+        <StatusPill
+          label={
+            isError
+              ? t("workspace.workflow.gateSeverityError", "错误")
+              : t("workspace.workflow.gateSeverityWarning", "警告")
+          }
+          tone={isError ? "danger" : "warn"}
+        />
+      </div>
+      <div className="mt-0.5 truncate pl-4 text-[10px] text-muted-foreground/80">
+        {issue.suggestion}
+      </div>
+    </div>
+  )
+}
+
+function WorkflowLoopModeControl({
+  mode,
+  loading,
+  saving,
+  onChange,
+}: {
+  mode: CodingLoopMode
+  loading?: boolean
+  saving?: CodingLoopMode | null
+  onChange: (mode: CodingLoopMode) => void
+}) {
+  const { t } = useTranslation()
+  const options: Array<{ mode: CodingLoopMode; icon: LucideIcon }> = [
+    { mode: "off", icon: X },
+    { mode: "guarded", icon: Shield },
+    { mode: "deep", icon: Brain },
+    { mode: "autonomous", icon: Bot },
+  ]
+  const busy = loading || !!saving
+
+  return (
+    <div className="rounded-md border border-border/55 bg-secondary/20 p-2">
+      <div className="mb-1.5 flex min-w-0 items-center gap-2">
+        <Gauge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+          {t("workspace.workflow.loopMode", "Coding Loop")}
+        </span>
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
+      </div>
+      <div className="grid grid-cols-2 gap-1">
+        {options.map((option) => {
+          const Icon = option.icon
+          const selected = option.mode === mode
+          const isSaving = saving === option.mode
+          return (
+            <button
+              key={option.mode}
+              type="button"
+              className={cn(
+                "min-h-12 rounded-md border px-2 py-1.5 text-left transition-colors disabled:opacity-60",
+                selected
+                  ? "border-primary/55 bg-primary/10 text-foreground"
+                  : "border-border/45 bg-background/35 text-muted-foreground hover:bg-secondary/55 hover:text-foreground",
+              )}
+              disabled={busy}
+              onClick={() => onChange(option.mode)}
+              aria-pressed={selected}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                {isSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : (
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate text-[11px] font-medium">
+                  {codingLoopModeLabel(t, option.mode)}
+                </span>
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] opacity-70">
+                {codingLoopModeHint(t, option.mode)}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function WorkflowRunOverview({
+  run,
+  snapshot,
+  latestEvent,
+  actions,
+  onSelectDetailTab,
+  onCreateRepairDraft,
+}: {
+  run: WorkflowRun
+  snapshot: WorkflowRunSnapshot | null
+  latestEvent?: WorkflowEvent
+  actions?: ReactNode
+  onSelectDetailTab?: (tab: WorkflowDetailTab) => void
+  onCreateRepairDraft?: (repairPrompt: string, run: WorkflowRun) => void
+}) {
+  const { t } = useTranslation()
+  const ops = snapshot?.ops ?? []
+  const completed = ops.filter((op) => op.state === "completed").length
+  const failed = ops.filter((op) => op.state === "failed").length
+  const validationCount = ops.filter((op) => op.opType === "validate").length
+  const agentCount = ops.filter((op) => op.opType === "spawnAgent").length
+  const derivedChildEvents = (snapshot?.events ?? []).filter(
+    (event) => event.eventType === "run_derived_child_created",
+  )
+  const budget = workflowOutputBudget(run, snapshot?.events ?? [])
+  const total = ops.length
+  const progress =
+    total > 0 ? Math.round((completed / total) * 100) : run.state === "completed" ? 100 : 0
+  const progressTone =
+    failed > 0 || run.state === "failed" || run.state === "blocked"
+      ? "bg-destructive"
+      : run.state === "completed"
+        ? "bg-emerald-500"
+        : "bg-blue-500"
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/55 bg-background/45 p-2">
+      <div className="flex min-w-0 items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 truncate text-xs font-medium text-foreground/90">
+              {run.kind}
+            </span>
+            <StatusPill
+              label={workflowRunStateLabel(t, run.state)}
+              tone={workflowRunTone(run.state)}
+              loading={run.state === "running" || run.state === "recovering"}
+            />
+          </div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span className="truncate">
+              {codingLoopModeLabel(t, normalizeCodingLoopMode(run.loopMode))}
+            </span>
+            <span className="text-muted-foreground/45">·</span>
+            <span className="truncate">
+              {t("workspace.workflow.updated", "更新")} {formatMessageTime(run.updatedAt)}
+            </span>
+            <span className="text-muted-foreground/45">·</span>
+            <span className="shrink-0 font-mono">{run.scriptHash.slice(0, 7)}</span>
+          </div>
+        </div>
+        {latestEvent ? (
+          <IconTip label={compactJson(latestEvent.payload, latestEvent.eventType)}>
+            <span className="inline-flex max-w-[6.5rem] shrink-0 items-center gap-1 rounded-md bg-secondary/55 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <Clock className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">
+                #{latestEvent.seq} {workflowEventTitle(t, latestEvent)}
+              </span>
+            </span>
+          </IconTip>
+        ) : null}
+      </div>
+
+      <div className="space-y-1">
+        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+          <div
+            className={cn("h-full rounded-full transition-all", progressTone)}
+            style={{ width: `${Math.max(failed > 0 ? 8 : 0, progress)}%` }}
+          />
+        </div>
+        <div className="grid grid-cols-4 gap-1 text-[10px]">
+          <WorkflowMetric
+            label={t("workspace.workflow.metricOps", "Ops")}
+            value={total.toString()}
+          />
+          <WorkflowMetric
+            label={t("workspace.workflow.metricDone", "完成")}
+            value={`${completed}/${total || 0}`}
+          />
+          <WorkflowMetric
+            label={t("workspace.workflow.metricValidate", "验证")}
+            value={validationCount.toString()}
+          />
+          <WorkflowMetric
+            label={t("workspace.workflow.metricAgents", "Agents")}
+            value={agentCount.toString()}
+          />
+        </div>
+        {budget ? (
+          <div
+            className={cn(
+              "flex min-w-0 items-center justify-between gap-2 rounded-md border px-2 py-1 text-[10px]",
+              budget.exhausted
+                ? "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : "border-border/55 bg-secondary/35 text-muted-foreground",
+            )}
+          >
+            <span className="truncate">{t("workspace.workflow.outputBudget", "输出预算")}</span>
+            <span className="shrink-0 font-mono">
+              {compactCount(budget.spent)}/{compactCount(budget.limit)}
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {run.parentRunId || derivedChildEvents.length > 0 ? (
+        <div className="space-y-1 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1.5 text-[11px] text-blue-700 dark:text-blue-300">
+          {run.parentRunId ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <GitBranch className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                {run.origin === "repair"
+                  ? t("workspace.workflow.derivedFromRepair", "修复自 {{id}}", {
+                      id: run.parentRunId,
+                    })
+                  : t("workspace.workflow.derivedFrom", "派生自 {{id}}", { id: run.parentRunId })}
+              </span>
+            </div>
+          ) : null}
+          {derivedChildEvents.slice(-2).map((event) => {
+            const payload = asRecord(event.payload)
+            const childRunId = stringField(payload, "childRunId")
+            const origin = stringField(payload, "origin")
+            if (!childRunId) return null
+            return (
+              <div key={event.id} className="flex min-w-0 items-center gap-1.5">
+                <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {origin === "repair"
+                    ? t("workspace.workflow.derivedChildRepair", "已生成修复 run {{id}}", {
+                        id: childRunId,
+                      })
+                    : t("workspace.workflow.derivedChild", "已生成派生 run {{id}}", {
+                        id: childRunId,
+                      })}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+
+      <WorkflowRunFocusCard run={run} snapshot={snapshot} onSelectDetailTab={onSelectDetailTab} />
+      <WorkflowApprovalPreview snapshot={snapshot} />
+      <WorkflowRecoveryHint
+        run={run}
+        snapshot={snapshot}
+        onCreateRepairDraft={onCreateRepairDraft}
+      />
+      {actions ? <div>{actions}</div> : null}
+    </div>
+  )
+}
+
+function WorkflowMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-secondary/35 px-1.5 py-1 text-center">
+      <div className="truncate font-medium text-foreground/85">{value}</div>
+      <div className="truncate text-muted-foreground/70">{label}</div>
+    </div>
+  )
+}
+
+function WorkflowRunFocusCard({
+  run,
+  snapshot,
+  onSelectDetailTab,
+}: {
+  run: WorkflowRun
+  snapshot: WorkflowRunSnapshot | null
+  onSelectDetailTab?: (tab: WorkflowDetailTab) => void
+}) {
+  const { t } = useTranslation()
+  const ops = snapshot?.ops ?? []
+  const events = snapshot?.events ?? []
+  const activeOp = [...ops].reverse().find((op) => op.state === "started")
+  const pendingOp = ops.find((op) => op.state === "pending")
+  const validationFailureOp = [...ops].reverse().find(workflowOpHasValidationFailure)
+  const failedOp = [...ops].reverse().find((op) => op.state === "failed") ?? validationFailureOp
+  const focusOp = activeOp ?? pendingOp
+  const permissionPreview = workflowPermissionPreview(snapshot)
+  const waitEvent = [...events]
+    .reverse()
+    .find((event) => event.eventType.includes("user") || event.eventType.includes("ask"))
+  const latestEvent = events.at(-1)
+  const completed = ops.filter((op) => op.state === "completed").length
+  const total = ops.length
+  const failedError = asRecord(failedOp?.error)
+  const failedMessage =
+    stringField(failedError, "message") ??
+    (failedOp ? workflowOpDetail(failedOp) : null) ??
+    run.blockedReason
+
+  let title: string
+  let body: string
+  let tone: "muted" | "good" | "warn" | "danger" | "info" = workflowRunTone(run.state)
+  let Icon: LucideIcon = Radio
+  let targetTab: WorkflowDetailTab | null = null
+
+  if (run.state === "draft") {
+    title = t("workspace.workflow.focusDraftTitle", "当前焦点：草稿待启动")
+    body = t("workspace.workflow.focusDraftBody", "脚本已保存，运行前仍会保留 trace 与审批记录。")
+    Icon = Play
+  } else if (run.state === "awaiting_approval") {
+    title = t("workspace.workflow.focusApprovalTitle", "当前焦点：等待授权")
+    body =
+      workflowPermissionSummaryText(t, permissionPreview?.summary) ||
+      t("workspace.workflow.focusApprovalBody", "有调用需要确认，批准后 run 会继续。")
+    tone = "warn"
+    Icon = ShieldAlert
+    targetTab = "trace"
+  } else if (run.state === "awaiting_user") {
+    title = t("workspace.workflow.focusUserTitle", "当前焦点：等待用户回复")
+    body =
+      (waitEvent ? workflowEventDetail(t, waitEvent) || workflowEventTitle(t, waitEvent) : null) ??
+      t("workspace.workflow.focusUserBody", "当前 run 正在等待会话里的用户输入或外部确认。")
+    tone = "warn"
+    Icon = MessageCircle
+    targetTab = "trace"
+  } else if (run.state === "running" || run.state === "recovering") {
+    if (focusOp) {
+      const opTitle = truncateMiddle(workflowOpTitle(focusOp), 56)
+      title =
+        run.state === "recovering"
+          ? t("workspace.workflow.focusRecoveringOpTitle", "当前焦点：恢复 {{op}}", { op: opTitle })
+          : activeOp
+            ? t("workspace.workflow.focusRunningOpTitle", "当前焦点：正在执行 {{op}}", {
+                op: opTitle,
+              })
+            : t("workspace.workflow.focusPendingOpTitle", "当前焦点：准备执行 {{op}}", {
+                op: opTitle,
+              })
+      body = `${focusOp.opType} · ${truncateMiddle(workflowOpDetail(focusOp), 100)}`
+      targetTab = workflowOpDetailTab(focusOp)
+    } else {
+      title =
+        run.state === "recovering"
+          ? t("workspace.workflow.focusRecoveringTitle", "当前焦点：恢复中")
+          : t("workspace.workflow.focusRunningTitle", "当前焦点：运行中")
+      body = latestEvent
+        ? `${workflowEventTitle(t, latestEvent)} · ${workflowEventDetail(t, latestEvent) || `#${latestEvent.seq}`}`
+        : t("workspace.workflow.focusRunningBody", "正在等待下一条运行信号。")
+      targetTab = "trace"
+    }
+    tone = "info"
+    Icon = run.state === "recovering" ? Clock : Radio
+  } else if (run.state === "paused") {
+    title = t("workspace.workflow.focusPausedTitle", "当前焦点：已暂停")
+    body = focusOp
+      ? t("workspace.workflow.focusPausedBodyWithOp", "暂停在 {{op}}，恢复后会继续该 run。", {
+          op: truncateMiddle(workflowOpTitle(focusOp), 64),
+        })
+      : t("workspace.workflow.focusPausedBody", "恢复后会从当前 trace 继续，取消则保留已有记录。")
+    tone = "warn"
+    Icon = Pause
+    targetTab = focusOp ? workflowOpDetailTab(focusOp) : "trace"
+  } else if (run.state === "blocked") {
+    title = t("workspace.workflow.focusBlockedTitle", "当前焦点：阻塞原因")
+    body = truncateMiddle(
+      run.blockedReason ?? t("workspace.workflow.blockedFallback", "需要人工处理"),
+      140,
+    )
+    tone = "danger"
+    Icon = CircleAlert
+    targetTab = validationFailureOp ? "validation" : "trace"
+  } else if (run.state === "failed") {
+    title = validationFailureOp
+      ? t("workspace.workflow.focusValidationFailedTitle", "当前焦点：验证失败")
+      : t("workspace.workflow.focusFailedTitle", "当前焦点：步骤失败")
+    body = truncateMiddle(
+      failedMessage ??
+        t("workspace.workflow.nextFailedBody", "查看 Trace 与 Validation，基于失败步骤继续修复。"),
+      140,
+    )
+    tone = "danger"
+    Icon = CircleAlert
+    targetTab = validationFailureOp
+      ? "validation"
+      : failedOp
+        ? workflowOpDetailTab(failedOp)
+        : "trace"
+  } else if (run.state === "completed") {
+    title = t("workspace.workflow.focusCompletedTitle", "当前焦点：已完成")
+    body =
+      total > 0
+        ? t(
+            "workspace.workflow.focusCompletedBody",
+            "{{completed}}/{{total}} 个步骤完成，验证和产物已保留。",
+            {
+              completed,
+              total,
+            },
+          )
+        : t("workspace.workflow.focusCompletedBodyNoOps", "run 已完成，trace 已保留。")
+    tone = "good"
+    Icon = CheckCircle2
+    targetTab = "trace"
+  } else {
+    title = t("workspace.workflow.focusCancelledTitle", "当前焦点：已取消")
+    body = t("workspace.workflow.focusCancelledBody", "run 已停止，已有 trace 可用于复盘。")
+    tone = "muted"
+    Icon = X
+    targetTab = "trace"
+  }
+
+  const tabLabel = targetTab ? workflowDetailTabLabel(t, targetTab) : null
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-2 py-1.5 text-[11px]",
+        tone === "danger"
+          ? "border-destructive/25 bg-destructive/10 text-destructive"
+          : tone === "warn"
+            ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : tone === "good"
+              ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : tone === "info"
+                ? "border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                : "border-border/55 bg-secondary/20 text-muted-foreground",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-1.5 font-medium">
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {targetTab && onSelectDetailTab && tabLabel ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 min-w-0 shrink-0 gap-1 border-current/25 bg-background/45 px-1.5 text-[10px] hover:bg-background/70"
+            onClick={() => onSelectDetailTab(targetTab)}
+          >
+            <Eye className="h-3 w-3" />
+            <span className="truncate">
+              {t("workspace.workflow.focusOpenTab", "查看 {{tab}}", { tab: tabLabel })}
+            </span>
+          </Button>
+        ) : null}
+      </div>
+      <div className="mt-0.5 truncate opacity-85">{body}</div>
+    </div>
+  )
+}
+
+function WorkflowApprovalPreview({ snapshot }: { snapshot: WorkflowRunSnapshot | null }) {
+  const preview = workflowPermissionPreview(snapshot)
+  if (!preview) return null
+  return <WorkflowPermissionPreviewCard preview={preview} />
+}
+
+function WorkflowPermissionPreviewCard({ preview }: { preview: WorkflowPermissionPreview }) {
+  const { t } = useTranslation()
+  const { summary, calls, truncated } = preview
+  const total = numberField(summary, "total")
+  const allow = numberField(summary, "allow")
+  const ask = numberField(summary, "ask")
+  const dynamic = numberField(summary, "dynamic")
+  const deny = numberField(summary, "deny")
+  const strict = numberField(summary, "strict")
+  const visibleCalls = calls.slice(0, 5)
+
+  return (
+    <div className="rounded-md border border-border/55 bg-secondary/20 p-2">
+      <div className="mb-1.5 flex min-w-0 items-center gap-2">
+        <Shield className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/90">
+          {t("workspace.workflow.permissionChecklist", "授权清单")}
+        </span>
+        {truncated ? (
+          <StatusPill label={t("workspace.workflow.truncated", "已截断")} tone="warn" />
+        ) : null}
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 text-[10px]">
+        {typeof total === "number" ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricTotal", "调用")}
+            value={String(total)}
+          />
+        ) : null}
+        {typeof ask === "number" ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricAsk", "需批准")}
+            value={String(ask)}
+          />
+        ) : null}
+        {typeof strict === "number" ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricStrict", "Strict")}
+            value={String(strict)}
+          />
+        ) : null}
+        {typeof dynamic === "number" ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricDynamic", "动态")}
+            value={String(dynamic)}
+          />
+        ) : null}
+        {typeof deny === "number" && deny > 0 ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricDeny", "拒绝")}
+            value={String(deny)}
+          />
+        ) : null}
+        {typeof allow === "number" ? (
+          <WorkflowMetric
+            label={t("workspace.workflow.permissionMetricAllow", "自动")}
+            value={String(allow)}
+          />
+        ) : null}
+      </div>
+
+      {visibleCalls.length > 0 ? (
+        <div className="mt-1.5 space-y-1">
+          {visibleCalls.map((call, index) => (
+            <WorkflowPermissionCallRow
+              key={`${workflowPermissionCallTitle(call)}:${index}`}
+              call={call}
+            />
+          ))}
+          {calls.length > visibleCalls.length ? (
+            <div className="px-1 text-[10px] text-muted-foreground/70">
+              {t("workspace.workflow.permissionMoreCalls", "另有 {{count}} 个调用", {
+                count: calls.length - visibleCalls.length,
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function WorkflowPermissionCallRow({ call }: { call: Record<string, unknown> }) {
+  const { t } = useTranslation()
+  const title = workflowPermissionCallTitle(call)
+  const detail = workflowPermissionCallDetail(t, call)
+  const args = call.args
+  const argsPreview = args == null ? null : truncateMiddle(compactJson(args, ""), 110)
+  return (
+    <IconTip label={compactJson(call, title)}>
+      <div className="rounded-md bg-background/40 px-2 py-1.5 text-[11px]">
+        <div className="flex min-w-0 items-center gap-2">
+          <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+            {truncateMiddle(title, 88)}
+          </span>
+          <StatusPill
+            label={workflowPermissionDecisionLabel(t, call)}
+            tone={workflowPermissionDecisionTone(call)}
+          />
+        </div>
+        {detail ? (
+          <div className="mt-0.5 truncate pl-5 text-[10px] text-muted-foreground/80">{detail}</div>
+        ) : null}
+        {argsPreview ? (
+          <div className="mt-0.5 truncate pl-5 font-mono text-[10px] text-muted-foreground/65">
+            {argsPreview}
+          </div>
+        ) : null}
+      </div>
+    </IconTip>
+  )
+}
+
+function WorkflowRecoveryHint({
+  run,
+  snapshot,
+  onCreateRepairDraft,
+}: {
+  run: WorkflowRun
+  snapshot: WorkflowRunSnapshot | null
+  onCreateRepairDraft?: (repairPrompt: string, run: WorkflowRun) => void
+}) {
+  const { t } = useTranslation()
+  const failedOp = [...(snapshot?.ops ?? [])].reverse().find((op) => op.state === "failed")
+  const failedError = asRecord(failedOp?.error)
+  const failedMessage = stringField(failedError, "message")
+  const blockedReason = run.blockedReason
+  const hasValidationFailure = (snapshot?.ops ?? []).some(workflowOpHasValidationFailure)
+  const repairPrompt = buildWorkflowRepairPrompt(run, snapshot)
+
+  let title: string | null = null
+  let body: string | null = null
+  let tone: "warn" | "danger" | "info" = "info"
+
+  if (run.state === "awaiting_approval") {
+    title = t("workspace.workflow.nextApproveTitle", "下一步：确认授权")
+    body = t(
+      "workspace.workflow.nextApproveBody",
+      "检查上面的授权清单，确认后批准；不符合预期就取消。",
+    )
+    tone = "warn"
+  } else if (run.state === "paused") {
+    title = t("workspace.workflow.nextPausedTitle", "下一步：恢复或取消")
+    body = t(
+      "workspace.workflow.nextPausedBody",
+      "当前 run 已暂停，可恢复继续执行，也可取消并保留 trace。",
+    )
+    tone = "warn"
+  } else if (run.state === "blocked") {
+    title = t("workspace.workflow.nextBlockedTitle", "下一步：处理阻塞")
+    body =
+      blockedReason === "script_hash_mismatch"
+        ? t(
+            "workspace.workflow.nextBlockedScriptHash",
+            "脚本内容已变化；请基于当前目标生成新的 workflow。",
+          )
+        : truncateMiddle(
+            blockedReason ?? t("workspace.workflow.blockedFallback", "需要人工处理"),
+            140,
+          )
+    tone = "danger"
+  } else if (run.state === "failed" || failedOp || hasValidationFailure) {
+    title = hasValidationFailure
+      ? t("workspace.workflow.nextValidationTitle", "下一步：修复验证失败")
+      : t("workspace.workflow.nextFailedTitle", "下一步：定位失败步骤")
+    body =
+      failedMessage ??
+      failedOp?.opKey ??
+      t("workspace.workflow.nextFailedBody", "查看 Trace 与 Validation，基于失败步骤继续修复。")
+    tone = "danger"
+  }
+
+  if (!title || !body) return null
+
+  const copyRepairPrompt = async () => {
+    if (!repairPrompt) return
+    try {
+      await navigator.clipboard.writeText(repairPrompt)
+      toast.success(t("workspace.workflow.repairPromptCopied", "已复制修复提示"))
+    } catch (e) {
+      logger.error(
+        "ui",
+        "WorkflowRecoveryHint::copyRepairPrompt",
+        "Copy workflow repair prompt failed",
+        e,
+      )
+      toast.error(t("workspace.workflow.repairPromptCopyFailed", "复制修复提示失败"))
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-2 py-1.5 text-[11px]",
+        tone === "danger"
+          ? "border-destructive/25 bg-destructive/10 text-destructive"
+          : tone === "warn"
+            ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : "border-blue-500/25 bg-blue-500/10 text-blue-700 dark:text-blue-300",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-1.5 font-medium">
+        {tone === "danger" ? (
+          <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="truncate">{title}</span>
+      </div>
+      <div className="mt-0.5 truncate opacity-85">{body}</div>
+      {repairPrompt ? (
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 min-w-0 gap-1.5 border-current/25 bg-background/45 text-[11px] hover:bg-background/70"
+            onClick={() => onCreateRepairDraft?.(repairPrompt, run)}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="truncate">
+              {t("workspace.workflow.createRepairDraft", "生成修复草稿")}
+            </span>
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 min-w-0 gap-1.5 border-current/25 bg-background/45 text-[11px] hover:bg-background/70"
+            onClick={() => void copyRepairPrompt()}
+          >
+            <Copy className="h-3.5 w-3.5" />
+            <span className="truncate">
+              {t("workspace.workflow.copyRepairPrompt", "复制修复提示")}
+            </span>
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function WorkflowTraceTimeline({ snapshot }: { snapshot: WorkflowRunSnapshot }) {
+  const { t } = useTranslation()
+  const indexedOps = snapshot.ops.map((op, index) => ({ op, index: index + 1 }))
+  const focusOps = indexedOps
+    .filter(({ op }) => workflowOpNeedsAttention(op))
+    .slice(-WORKFLOW_FOCUS_OP_PREVIEW)
+  const previewOps = indexedOps.slice(0, WORKFLOW_OP_PREVIEW)
+  const importantEvents = snapshot.events
+    .filter(workflowEventNeedsAttention)
+    .slice(-WORKFLOW_EVENT_PREVIEW)
+  const importantEventIds = new Set(importantEvents.map((event) => event.id))
+  const recentEvents = snapshot.events
+    .slice(-WORKFLOW_EVENT_PREVIEW)
+    .filter((event) => !importantEventIds.has(event.id))
+  if (snapshot.ops.length === 0 && snapshot.events.length === 0) {
+    return <EmptyHint>{t("workspace.workflow.emptyTrace", "暂无 trace")}</EmptyHint>
+  }
+
+  return (
+    <div className="space-y-2">
+      {focusOps.length > 0 ? (
+        <div className="space-y-1">
+          <div className="flex min-w-0 items-center justify-between gap-2 px-1 text-[10px] font-medium uppercase tracking-normal text-muted-foreground/70">
+            <span className="truncate">{t("workspace.workflow.focusOps", "关注步骤")}</span>
+            <span className="shrink-0 tabular-nums">
+              {t("workspace.workflow.focusOpsCount", "{{count}} 个", { count: focusOps.length })}
+            </span>
+          </div>
+          <div className="space-y-1">
+            {focusOps.map(({ op, index }) => (
+              <WorkflowOpRow key={`focus:${op.id}`} op={op} index={index} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {previewOps.length > 0 ? (
+        <div className="space-y-1">
+          <div className="px-1 text-[10px] font-medium uppercase tracking-normal text-muted-foreground/70">
+            {workflowOpSummary(t, snapshot.ops)}
+          </div>
+          <div className="space-y-1">
+            {previewOps.map(({ op, index }) => (
+              <WorkflowOpRow key={op.id} op={op} index={index} />
+            ))}
+          </div>
+          {snapshot.ops.length > previewOps.length ? (
+            <div className="px-2 text-[10px] text-muted-foreground/60">
+              {t(
+                "workspace.workflow.opPreviewTruncated",
+                "先显示前 {{shown}}/{{total}} 个步骤；失败和运行中的步骤会在关注步骤中置顶。",
+                {
+                  shown: previewOps.length,
+                  total: snapshot.ops.length,
+                },
               )}
             </div>
           ) : null}
         </div>
-      )}
-    </WorkspaceSection>
+      ) : null}
+
+      {importantEvents.length > 0 ? (
+        <div className="space-y-1">
+          <div className="px-1 text-[10px] font-medium uppercase tracking-normal text-muted-foreground/70">
+            {t("workspace.workflow.keySignals", "关键信号")}
+          </div>
+          <div className="space-y-1">
+            {importantEvents.map((event) => (
+              <WorkflowEventRow key={`important:${event.id}`} event={event} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {recentEvents.length > 0 ? (
+        <div className="space-y-1">
+          <div className="px-1 text-[10px] font-medium uppercase tracking-normal text-muted-foreground/70">
+            {t("workspace.workflow.recentSignals", "最近信号")}
+          </div>
+          <div className="space-y-1">
+            {recentEvents.map((event) => (
+              <WorkflowEventRow key={event.id} event={event} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
-function WorkflowOpRow({ op }: { op: WorkflowOp }) {
-  const tone = op.state === "completed" ? "good" : op.state === "failed" ? "danger" : "info"
+function WorkflowOpRow({ op, index }: { op: WorkflowOp; index: number }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const tone = workflowOpTone(op)
+  const title = workflowOpTitle(op)
+  const detail = workflowOpDetail(op)
+  const payload = op.output ?? op.error ?? op.input
+  const payloadText = prettyJson(payload, t("workspace.workflow.noDetails", "暂无详情"))
+  const Icon =
+    op.opType === "validate"
+      ? CheckCircle2
+      : op.opType === "spawnAgent"
+        ? Bot
+        : op.opType === "fileSearch"
+          ? Search
+          : op.opType === "tool"
+        ? Cpu
+        : Radio
+
+  const copyDetails = async () => {
+    try {
+      await navigator.clipboard.writeText(payloadText)
+      toast.success(t("workspace.workflow.detailsCopied", "已复制详情"))
+    } catch (e) {
+      logger.error("ui", "WorkflowOpRow::copyDetails", "Copy workflow op details failed", e)
+      toast.error(t("workspace.workflow.detailsCopyFailed", "复制详情失败"))
+    }
+  }
+
   return (
-    <IconTip label={compactJson(op.input, op.opKey)}>
-      <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-secondary/35">
-        <Radio className="h-3 w-3 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/85">
-          {op.opKey}
-        </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground">{op.opType}</span>
-        <StatusPill label={op.state} tone={tone} loading={op.state === "started"} />
-      </div>
-    </IconTip>
+    <div className="rounded-md hover:bg-secondary/35">
+      <IconTip label={compactJson(payload, op.opKey)}>
+        <div className="flex min-w-0 gap-2 px-2 py-1.5 text-xs">
+          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-secondary/65 text-[10px] text-muted-foreground">
+            {index}
+          </div>
+          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/90">
+                {truncateMiddle(title, 88)}
+              </span>
+              <StatusPill label={op.state} tone={tone} loading={op.state === "started"} />
+              <button
+                type="button"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+                aria-label={
+                  expanded
+                    ? t("workspace.workflow.collapseStepDetails", "收起步骤详情")
+                    : t("workspace.workflow.expandStepDetails", "展开步骤详情")
+                }
+                aria-expanded={expanded}
+                onClick={() => setExpanded((value) => !value)}
+              >
+                <ChevronDown
+                  className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
+                />
+              </button>
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="truncate font-mono">{op.opKey}</span>
+              <span className="shrink-0 text-muted-foreground/45">·</span>
+              <span className="shrink-0">{op.opType}</span>
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">
+              {truncateMiddle(detail, 120)}
+            </div>
+          </div>
+        </div>
+      </IconTip>
+      <AnimatedCollapse open={expanded}>
+        <div className="mx-2 mb-1.5 rounded-md border border-border/55 bg-background/65 p-2">
+          <div className="mb-1.5 flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-muted-foreground">
+              {t("workspace.workflow.stepDetails", "步骤详情")}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 shrink-0 gap-1 px-1.5 text-[10px]"
+              onClick={() => void copyDetails()}
+            >
+              <Copy className="h-3 w-3" />
+              <span>{t("common.copy", "复制")}</span>
+            </Button>
+          </div>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-secondary/30 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+            {payloadText}
+          </pre>
+        </div>
+      </AnimatedCollapse>
+    </div>
   )
 }
 
 function WorkflowEventRow({ event }: { event: WorkflowEvent }) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
   const label = truncateMiddle(compactJson(event.payload, event.eventType), 120)
+  const title = workflowEventTitle(t, event)
+  const detail = workflowEventDetail(t, event)
+  const payloadText = prettyJson(event.payload, t("workspace.workflow.noDetails", "暂无详情"))
+
+  const copyDetails = async () => {
+    try {
+      await navigator.clipboard.writeText(payloadText)
+      toast.success(t("workspace.workflow.detailsCopied", "已复制详情"))
+    } catch (e) {
+      logger.error("ui", "WorkflowEventRow::copyDetails", "Copy workflow event details failed", e)
+      toast.error(t("workspace.workflow.detailsCopyFailed", "复制详情失败"))
+    }
+  }
+
   return (
-    <IconTip label={label}>
-      <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary/35">
-        <Clock className="h-3 w-3 shrink-0" />
-        <span className="shrink-0 font-mono">#{event.seq}</span>
-        <span className="min-w-0 flex-1 truncate text-foreground/80">{event.eventType}</span>
-        <span className="max-w-[38%] shrink-0 truncate">{formatMessageTime(event.createdAt)}</span>
-      </div>
-    </IconTip>
+    <div className="rounded-md hover:bg-secondary/35">
+      <IconTip label={label}>
+        <div className="flex min-w-0 items-start gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
+          <Clock className="h-3 w-3 shrink-0" />
+          <span className="shrink-0 font-mono">#{event.seq}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-foreground/85">{title}</span>
+              <span className="max-w-[38%] shrink-0 truncate">
+                {formatMessageTime(event.createdAt)}
+              </span>
+              <button
+                type="button"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+                aria-label={
+                  expanded
+                    ? t("workspace.workflow.collapseEventDetails", "收起事件详情")
+                    : t("workspace.workflow.expandEventDetails", "展开事件详情")
+                }
+                aria-expanded={expanded}
+                onClick={() => setExpanded((value) => !value)}
+              >
+                <ChevronDown
+                  className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
+                />
+              </button>
+            </div>
+            {detail ? (
+              <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">{detail}</div>
+            ) : null}
+          </div>
+        </div>
+      </IconTip>
+      <AnimatedCollapse open={expanded}>
+        <div className="mx-2 mb-1.5 rounded-md border border-border/55 bg-background/65 p-2">
+          <div className="mb-1.5 flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-muted-foreground">
+              {t("workspace.workflow.eventDetails", "事件详情")}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 shrink-0 gap-1 px-1.5 text-[10px]"
+              onClick={() => void copyDetails()}
+            >
+              <Copy className="h-3 w-3" />
+              <span>{t("common.copy", "复制")}</span>
+            </Button>
+          </div>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-secondary/30 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+            {payloadText}
+          </pre>
+        </div>
+      </AnimatedCollapse>
+    </div>
   )
 }
 
@@ -1681,6 +4355,11 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
   if (validationOps.length === 0) {
     return <EmptyHint>{t("workspace.workflow.noValidation", "暂无验证记录")}</EmptyHint>
   }
+  const passedCount = validationOps.filter(
+    (op) => boolField(asRecord(op.output), "ok") === true,
+  ).length
+  const failedCount = validationOps.filter(workflowOpHasValidationFailure).length
+  const runningCount = validationOps.filter((op) => op.state === "started").length
 
   const repairEventsByOp = new Map<string, WorkflowEvent>()
   for (const event of snapshot.events) {
@@ -1696,17 +4375,32 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
   }
 
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-4 gap-1 text-[10px]">
+        <WorkflowMetric
+          label={t("workspace.workflow.validationMetricTotal", "验证")}
+          value={String(validationOps.length)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.validationMetricPassed", "通过")}
+          value={String(passedCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.validationMetricFailed", "失败")}
+          value={String(failedCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.validationMetricRunning", "运行中")}
+          value={String(runningCount)}
+        />
+      </div>
       {validationOps.map((op) => {
         const output = asRecord(op.output)
         const error = asRecord(op.error)
         const repairEvent = repairEventsByOp.get(op.opKey)
         const repairPayload = asRecord(repairEvent?.payload)
         const ok = boolField(output, "ok")
-        const results = arrayField(output, "results")
-        const firstResult = asRecord(results[0])
-        const command = stringField(firstResult, "command")
-        const exitCode = numberField(firstResult, "exitCode")
+        const results = recordArrayField(output, "results")
         const stopReason = stringField(repairPayload, "stopReason")
         const summary =
           stringField(output, "summary") ??
@@ -1715,8 +4409,13 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
           op.state
         const failed = numberField(repairPayload, "failed")
         const total = numberField(repairPayload, "total") ?? results.length
+        const visibleResults = results.slice(0, 4)
         const tone =
-          stopReason || ok === false || op.state === "failed" ? "danger" : ok === true ? "good" : "info"
+          stopReason || ok === false || op.state === "failed"
+            ? "danger"
+            : ok === true
+              ? "good"
+              : "info"
 
         return (
           <IconTip key={op.id} label={compactJson(op.output ?? op.error ?? op.input, op.opKey)}>
@@ -1733,7 +4432,13 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
                   {op.opKey}
                 </span>
                 <StatusPill
-                  label={ok === true ? t("workspace.workflow.validationPassed", "通过") : ok === false ? t("workspace.workflow.validationFailed", "失败") : op.state}
+                  label={
+                    ok === true
+                      ? t("workspace.workflow.validationPassed", "通过")
+                      : ok === false
+                        ? t("workspace.workflow.validationFailed", "失败")
+                        : op.state
+                  }
                   tone={tone}
                   loading={op.state === "started"}
                 />
@@ -1748,10 +4453,22 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
                     })}
                   </div>
                 ) : null}
-                {command ? (
-                  <div className="truncate font-mono">
-                    {command}
-                    {typeof exitCode === "number" ? ` · exit ${exitCode}` : ""}
+                {visibleResults.length > 0 ? (
+                  <div className="space-y-1 pt-0.5">
+                    {visibleResults.map((result, index) => (
+                      <WorkflowValidationResultRow key={`${op.id}:${index}`} result={result} />
+                    ))}
+                    {results.length > visibleResults.length ? (
+                      <div className="text-[10px] text-muted-foreground/70">
+                        {t(
+                          "workspace.workflow.validationMoreCommands",
+                          "另有 {{count}} 条验证命令",
+                          {
+                            count: results.length - visibleResults.length,
+                          },
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {stopReason ? (
@@ -1768,6 +4485,74 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
   )
 }
 
+function WorkflowValidationResultRow({ result }: { result: Record<string, unknown> }) {
+  const { t } = useTranslation()
+  const command =
+    stringField(result, "command") ?? t("workspace.workflow.validationCommand", "验证命令")
+  const cwd = stringField(result, "cwd")
+  const jobStatus = stringField(result, "jobStatus")
+  const ok = boolField(result, "ok")
+  const exitCode = numberField(result, "exitCode")
+  const output = stringField(result, "output")
+  const tone: "good" | "danger" | "info" =
+    ok === true
+      ? "good"
+      : ok === false || (typeof exitCode === "number" && exitCode !== 0)
+        ? "danger"
+        : "info"
+
+  return (
+    <IconTip label={compactJson(result, command)}>
+      <div className="rounded-md bg-background/45 px-2 py-1">
+        <div className="flex min-w-0 items-center gap-2">
+          {tone === "good" ? (
+            <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" />
+          ) : tone === "danger" ? (
+            <CircleAlert className="h-3 w-3 shrink-0 text-destructive" />
+          ) : (
+            <Radio className="h-3 w-3 shrink-0 text-blue-500" />
+          )}
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground/80">
+            {command}
+          </span>
+          {typeof exitCode === "number" ? (
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+              exit {exitCode}
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted-foreground/75">
+          {jobStatus ? <span className="shrink-0">{jobStatus}</span> : null}
+          {jobStatus && cwd ? <span className="text-muted-foreground/45">·</span> : null}
+          {cwd ? <span className="truncate">{cwd}</span> : null}
+        </div>
+        {output ? (
+          <div className="mt-0.5 truncate pl-5 font-mono text-[10px] text-muted-foreground/65">
+            {truncateMiddle(output, 130)}
+          </div>
+        ) : null}
+      </div>
+    </IconTip>
+  )
+}
+
+function workflowAgentStatusInfo(op: WorkflowOp): { status: string; tone: StatusTone } {
+  const output = asRecord(op.output)
+  const status = stringField(output, "status") ?? op.state
+  const tone: StatusTone =
+    status === "completed" || status === "success"
+      ? "good"
+      : status === "failed" || status === "cancelled" || op.state === "failed"
+        ? "danger"
+        : status === "queued" ||
+            status === "running" ||
+            status === "spawned" ||
+            op.state === "started"
+          ? "info"
+          : "muted"
+  return { status, tone }
+}
+
 function WorkflowAgentsTab({
   snapshot,
   onViewSubagentSession,
@@ -1780,25 +4565,40 @@ function WorkflowAgentsTab({
   if (agentOps.length === 0) {
     return <EmptyHint>{t("workspace.workflow.noAgents", "暂无子 Agent 记录")}</EmptyHint>
   }
+  const agentStatusInfos = agentOps.map(workflowAgentStatusInfo)
+  const completedCount = agentStatusInfos.filter((info) => info.tone === "good").length
+  const failedCount = agentStatusInfos.filter((info) => info.tone === "danger").length
+  const runningCount = agentStatusInfos.filter((info) => info.tone === "info").length
 
   return (
-    <div className="space-y-0.5">
-      {agentOps.map((op) => {
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-4 gap-1 text-[10px]">
+        <WorkflowMetric
+          label={t("workspace.workflow.agentMetricTotal", "Agents")}
+          value={String(agentOps.length)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.agentMetricDone", "完成")}
+          value={String(completedCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.agentMetricRunning", "运行中")}
+          value={String(runningCount)}
+        />
+        <WorkflowMetric
+          label={t("workspace.workflow.agentMetricFailed", "失败")}
+          value={String(failedCount)}
+        />
+      </div>
+      {agentOps.map((op, index) => {
         const output = asRecord(op.output)
         const input = asRecord(op.input)
-        const runId = stringField(output, "runId") ?? stringField(output, "run_id") ?? op.childHandle ?? null
+        const runId =
+          stringField(output, "runId") ?? stringField(output, "run_id") ?? op.childHandle ?? null
         const sessionId = stringField(output, "sessionId")
         const label = stringField(output, "label") ?? stringField(input, "label")
         const task = stringField(output, "task")
-        const status = stringField(output, "status") ?? op.state
-        const tone =
-          status === "completed" || status === "success"
-            ? "good"
-            : status === "failed" || status === "cancelled" || op.state === "failed"
-              ? "danger"
-              : status === "queued" || status === "running" || status === "spawned"
-                ? "info"
-                : "muted"
+        const { status, tone } = agentStatusInfos[index]
 
         return (
           <IconTip key={op.id} label={compactJson(op.output ?? op.input, op.opKey)}>
@@ -1809,7 +4609,11 @@ function WorkflowAgentsTab({
                   <span className="min-w-0 truncate font-mono text-[11px] text-foreground/85">
                     {label ?? runId ?? op.opKey}
                   </span>
-                  <StatusPill label={status} tone={tone} loading={status === "running" || op.state === "started"} />
+                  <StatusPill
+                    label={status}
+                    tone={tone}
+                    loading={status === "running" || op.state === "started"}
+                  />
                 </div>
                 <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                   {task ? `${task} · ` : ""}
@@ -1870,11 +4674,13 @@ export default function WorkspacePanel({
   systemPromptLoading,
   incognito = false,
   turnActive = false,
+  workflowRunsState,
   backgroundJobs = [],
   backgroundJobExpansionOverrides,
   onBackgroundJobExpandedChange,
   onOpenBackgroundJobs,
   onViewSubagentSession,
+  onEnsureSession,
   onClose,
 }: WorkspacePanelProps) {
   const { t } = useTranslation()
@@ -1948,9 +4754,17 @@ export default function WorkspacePanel({
 
         {/* 进度 — 复用 TaskProgressPanel(自带「任务 · N/M」折叠头)。 */}
         {taskSnapshot && taskSnapshot.total > 0 ? (
-          <TaskProgressPanel snapshot={taskSnapshot} variant="card" executionState={taskExecutionState} />
+          <TaskProgressPanel
+            snapshot={taskSnapshot}
+            variant="card"
+            executionState={taskExecutionState}
+          />
         ) : (
-          <WorkspaceSection title={t("workspace.sectionProgress", "进度")} count={0} icon={LayoutDashboard}>
+          <WorkspaceSection
+            title={t("workspace.sectionProgress", "进度")}
+            count={0}
+            icon={LayoutDashboard}
+          >
             <EmptyHint>{t("workspace.emptyProgress", "暂无任务")}</EmptyHint>
           </WorkspaceSection>
         )}
@@ -1960,7 +4774,10 @@ export default function WorkspacePanel({
           sessionId={sessionId}
           incognito={incognito}
           turnActive={turnActive}
+          workingDir={effectiveWorkingDir}
+          onEnsureSession={onEnsureSession}
           onViewSubagentSession={onViewSubagentSession}
+          workflowRunsState={workflowRunsState}
         />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
@@ -1973,7 +4790,11 @@ export default function WorkspacePanel({
         />
 
         {/* 输出 — 本会话碰到的文件(读 + 改),定高内部滚动 + 滚动增量渲染。 */}
-        <WorkspaceSection title={t("workspace.sectionOutput", "输出")} count={files.length} icon={Files}>
+        <WorkspaceSection
+          title={t("workspace.sectionOutput", "输出")}
+          count={files.length}
+          icon={Files}
+        >
           {files.length > 0 ? (
             <div className="max-h-[40vh] space-y-1 overflow-y-auto pr-0.5">
               {visibleFiles.map((entry) => (
@@ -1994,7 +4815,11 @@ export default function WorkspacePanel({
         </WorkspaceSection>
 
         {/* 来源 — web_search 命中 + 正文链接,定高内部滚动 + 滚动增量渲染。 */}
-        <WorkspaceSection title={t("workspace.sectionSources", "来源")} count={sources.length} icon={Globe}>
+        <WorkspaceSection
+          title={t("workspace.sectionSources", "来源")}
+          count={sources.length}
+          icon={Globe}
+        >
           {sources.length > 0 ? (
             <div className="max-h-[40vh] space-y-0.5 overflow-y-auto pr-0.5">
               {visibleSources.map((source) => (

@@ -4,7 +4,7 @@
 >
 > 状态：Draft RFC
 >
-> 更新时间：2026-06-30
+> 更新时间：2026-07-01
 
 ## 0. 设计修订说明（2026-06-30 Review 收口）
 
@@ -15,21 +15,21 @@
 
 本轮折入的修复（详节见各处与上述子文档）：
 
-| 修复点 | 原问题 | 落点 |
-| --- | --- | --- |
-| op 生命周期 + 副作用恰好一次 | replay 未定义"已发起未记录"崩溃窗口，非幂等写可能重复 | [runtime §3](workflow-script-runtime.md) |
-| 位置化 op-key + fan-out 物化 | 模型手写字面量 id 脆；结果驱动扇出重放错位 | [runtime §4](workflow-script-runtime.md)，本文 §8.1/§8.5 |
-| 确定性靠 runtime throw 非 lint | 能力沙箱与确定性混在一个 denylist，denylist 易逃逸 | [runtime §4.3](workflow-script-runtime.md)，本文 §8.5 |
-| repair 系统侧编排 | 脚本内 repair 改 script_hash 使整 run replay 失效 | [runtime §7](workflow-script-runtime.md)，本文 §10.4 |
-| Primary-only 执行/恢复 | 未定执行进程，多实例会双跑 | [runtime §5](workflow-script-runtime.md)，本文 §10.1 |
-| coordinator 不占 worker 槽 | 父占槽等子 = 死锁 | [runtime §8](workflow-script-runtime.md)，本文 §12.2 |
-| incognito × workflow 互斥 | durable 持久化与"关闭即焚"冲突 | 本文 §13.1 |
-| askUser 走无人值守 fail-closed | autonomous 下 askUser 永久阻塞 | 本文 §8.4 |
-| AGENTS 单点验证硬约束 | autonomous repair 易漂移成跑全套 | 本文 §13.1 |
-| profile 注入不破 cache | 动态内容进静态前缀使 cache 失效 | 本文 §7.1 |
-| token/cost 预算 | 原预算只有结构计数，缺成本天花板 | 本文 §10.3 |
-| 技能命名 `hope-*` → `ha-*` | 与现有 10 个 `ha-*` 内置系统 skill 不一致 | 本文 §6.3 |
-| eval 回归闸 | eval 仅作一次性验收，非持续闸 | 本文 §14/§19 |
+| 修复点                         | 原问题                                                | 落点                                                     |
+| ------------------------------ | ----------------------------------------------------- | -------------------------------------------------------- |
+| op 生命周期 + 副作用恰好一次   | replay 未定义"已发起未记录"崩溃窗口，非幂等写可能重复 | [runtime §3](workflow-script-runtime.md)                 |
+| 位置化 op-key + fan-out 物化   | 模型手写字面量 id 脆；结果驱动扇出重放错位            | [runtime §4](workflow-script-runtime.md)，本文 §8.1/§8.5 |
+| 确定性靠 runtime throw 非 lint | 能力沙箱与确定性混在一个 denylist，denylist 易逃逸    | [runtime §4.3](workflow-script-runtime.md)，本文 §8.5    |
+| repair 系统侧编排              | 脚本内 repair 改 script_hash 使整 run replay 失效     | [runtime §7](workflow-script-runtime.md)，本文 §10.4     |
+| Primary-only 执行/恢复         | 未定执行进程，多实例会双跑                            | [runtime §5](workflow-script-runtime.md)，本文 §10.1     |
+| coordinator 不占 worker 槽     | 父占槽等子 = 死锁                                     | [runtime §8](workflow-script-runtime.md)，本文 §12.2     |
+| incognito × workflow 互斥      | durable 持久化与"关闭即焚"冲突                        | 本文 §13.1                                               |
+| askUser 走无人值守 fail-closed | autonomous 下 askUser 永久阻塞                        | 本文 §8.4                                                |
+| AGENTS 单点验证硬约束          | autonomous repair 易漂移成跑全套                      | 本文 §13.1                                               |
+| profile 注入不破 cache         | 动态内容进静态前缀使 cache 失效                       | 本文 §7.1                                                |
+| token/cost 预算                | 只控结构计数会让长任务成本无上限；Phase2 已补输出 token 硬天花板 | 本文 §10.3                                               |
+| 技能命名 `hope-*` → `ha-*`     | 与现有 10 个 `ha-*` 内置系统 skill 不一致             | 本文 §6.3                                                |
+| eval 回归闸                    | eval 仅作一次性验收，非持续闸                         | 本文 §14/§19                                             |
 
 ## 1. 设计结论
 
@@ -223,6 +223,7 @@ workflow 不是黑盒。默认可见：
 - repair 原因。
 - 停止原因。
 - 预算消耗。
+- Workspace Workflow Control Center 里可直接切换当前会话 loop mode；标题栏 `Coding` 入口在 run active / waiting / failed 时显示 badge；新建 workflow 前先预检 Script Gate 与 permission preview，只有通过后才能创建；普通创建从 coding 目标开始，脚本编辑收进高级区；已有 run 可看到总览、审批焦点、授权清单、Trace timeline、Validation 命令明细、Agents 分视图、失败恢复建议；历史 run 超过首屏预览时可展开选择；Trace op/event 支持展开原始详情并复制；并可复制包含 run 状态、失败 op、验证输出、最近事件的修复提示，或直接由失败上下文生成并自动预检下一版修复 workflow 草稿；修复草稿会显示来源 run，并用修复专用创建文案避免误解为覆盖原 run。
 
 ### 4.6 Performance by state externalization
 
@@ -230,7 +231,7 @@ workflow 不是黑盒。默认可见：
 
 原则：
 
-- 状态存在 workflow run / artifacts / task / job 里，不存在 prompt 里。
+- 状态存在 workflow run / artifacts / task / job 里，不存在 prompt 里。修复 run 的来源关系同样落在 `workflow_runs.parent_run_id` / `origin` 与父子 run 事件中，而不是只藏在脚本正文。
 - 子代理返回摘要，不把原始日志塞主上下文。
 - 大结果落盘。
 - `tool_search` 发现工具，默认 deferred。
@@ -302,32 +303,32 @@ User Request
 
 审计已产出：[Coding Skills Detox 审计](coding-skills-detox.md)（证据化逐 skill 判定 + attribution 卫生红线 + `ha-*` 替代映射 + 迁移策略）。审计表字段：
 
-| 字段 | 含义 |
-| --- | --- |
-| skill | 当前 skill 名 |
-| attribution | 是否第三方 / 原创 / 混合 |
-| license_risk | license / notice 是否清楚 |
-| behavior_quality | 是否真的适合 coding workflow |
-| prompt_quality | 是否清晰、短、可执行 |
-| tool_awareness | 是否了解 Hope 工具和 AGENTS 约束 |
-| production_role | reference / vendor_optional / rewrite_native / deprecate |
-| replacement | 对应 Hope-native skill |
+| 字段             | 含义                                                     |
+| ---------------- | -------------------------------------------------------- |
+| skill            | 当前 skill 名                                            |
+| attribution      | 是否第三方 / 原创 / 混合                                 |
+| license_risk     | license / notice 是否清楚                                |
+| behavior_quality | 是否真的适合 coding workflow                             |
+| prompt_quality   | 是否清晰、短、可执行                                     |
+| tool_awareness   | 是否了解 Hope 工具和 AGENTS 约束                         |
+| production_role  | reference / vendor_optional / rewrite_native / deprecate |
+| replacement      | 对应 Hope-native skill                                   |
 
 ### 6.3 Hope-native skill suite
 
 新增一组原生 skills，命名统一用 **`ha-*`**——与现有 10 个内置系统 skill（`ha-logs` / `ha-settings` / `ha-browser` / …）一致，**不引入第三套 `hope-*` 前缀**。完整映射与"吸收自哪份 vendor（重写非复制）"见 [Coding Skills Detox 审计 §5](coding-skills-detox.md)。
 
-| Skill | 目标 |
-| --- | --- |
-| `ha-coding-common` | 共享 coding 行为契约：读现有代码、尊重 AGENTS、最小改动、单点验证默认 |
-| `ha-implement` | feature / small implementation 的标准流程 |
-| `ha-debug` | 复现、trace、假设、最小修复、回归验证 |
-| `ha-code-review` | code review 输出格式、finding 标准、inline comment 约束 |
-| `ha-tdd` | 先写或补最小测试，再实现，适合明确行为变更（opt-in，非默认策略） |
-| `ha-refactor` | 保行为重构、阶段性 diff、强验证 |
-| `ha-subagent-work` | 何时并行探索、何时禁止并行写 |
-| `ha-workflow-script` | 如何起草可执行 workflow script |
-| `ha-verify` | 按 AGENTS 选择最小验证，不主动跑全套 |
+| Skill                | 目标                                                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `ha-coding-common`   | 共享 coding 行为契约：读现有代码、尊重 AGENTS、最小改动、单点验证默认 |
+| `ha-implement`       | feature / small implementation 的标准流程                             |
+| `ha-debug`           | 复现、trace、假设、最小修复、回归验证                                 |
+| `ha-code-review`     | code review 输出格式、finding 标准、inline comment 约束               |
+| `ha-tdd`             | 先写或补最小测试，再实现，适合明确行为变更（opt-in，非默认策略）      |
+| `ha-refactor`        | 保行为重构、阶段性 diff、强验证                                       |
+| `ha-subagent-work`   | 何时并行探索、何时禁止并行写                                          |
+| `ha-workflow-script` | 如何起草可执行 workflow script                                        |
+| `ha-verify`          | 按 AGENTS 选择最小验证，不主动跑全套                                  |
 
 ### 6.4 Skill 写法要求
 
@@ -379,24 +380,24 @@ CodingSessionProfile {
 
 ### 7.2 任务分类
 
-| task_kind | 典型输入 | 默认策略 |
-| --- | --- | --- |
-| `review` | “检查未提交改动” | 不改代码；findings first；必要时 inline comments |
-| `fix_bug` | “报错，修一下” | 先复现 / 定位 / 最小修复 / 验证 |
-| `feature` | “加一个能力” | 读现状 / plan / 实现 / 验证 / 文档 |
-| `debug` | “为什么挂了” | 证据优先；不急着改 |
-| `test` | “补测试” | 找测试风格；最小覆盖 |
-| `refactor` | “重构” | 行为保持；强验证；分阶段 |
-| `workflow` | “批量/长任务/并行” | 起草 script；用户审批；运行 |
+| task_kind  | 典型输入           | 默认策略                                         |
+| ---------- | ------------------ | ------------------------------------------------ |
+| `review`   | “检查未提交改动”   | 不改代码；findings first；必要时 inline comments |
+| `fix_bug`  | “报错，修一下”     | 先复现 / 定位 / 最小修复 / 验证                  |
+| `feature`  | “加一个能力”       | 读现状 / plan / 实现 / 验证 / 文档               |
+| `debug`    | “为什么挂了”       | 证据优先；不急着改                               |
+| `test`     | “补测试”           | 找测试风格；最小覆盖                             |
+| `refactor` | “重构”             | 行为保持；强验证；分阶段                         |
+| `workflow` | “批量/长任务/并行” | 起草 script；用户审批；运行                      |
 
 ### 7.3 Loop mode
 
-| mode | 默认行为 |
-| --- | --- |
-| `off` | 不自动 repair，只建议下一步 |
-| `guarded` | 默认；允许 1-2 次低风险 repair |
-| `deep` | 长任务；更多 explore / validate / repair，但预算强约束 |
-| `autonomous` | server/cron；强预算、强 trace、强 human gate |
+| mode         | 默认行为                                               |
+| ------------ | ------------------------------------------------------ |
+| `off`        | 不自动 repair，只建议下一步                            |
+| `guarded`    | 默认；允许 1-2 次低风险 repair                         |
+| `deep`       | 长任务；更多 explore / validate / repair，但预算强约束 |
+| `autonomous` | server/cron；强预算、强 trace、强 human gate           |
 
 ## 8. Track C：Script-first Workflow Runtime
 
@@ -417,14 +418,14 @@ workflow 脚本是一个持久化 artifact：
 export default async function main(workflow) {
   const observeTask = await workflow.task.create({
     label: "observe",
-    title: "收集相关文件和约束"
-  });
+    title: "收集相关文件和约束",
+  })
 
   const files = await workflow.fileSearch({
     label: "find-critical-files",
     query: "file search scoring",
-    limit: 20
-  });
+    limit: 20,
+  })
 
   const reviews = await workflow.map("parallel-review", files.matches.slice(0, 4), async (file) => {
     return workflow.spawnAgent({
@@ -432,31 +433,31 @@ export default async function main(workflow) {
       agent: "reviewer",
       task: `Review ${file.relPath} for correctness and missing tests.`,
       tools: ["read", "grep"],
-      mode: "read_only"
-    });
-  });
+      mode: "read_only",
+    })
+  })
 
-  await workflow.task.update({ task: observeTask, status: "completed" });
-  await workflow.trace({ label: "review_summaries", payload: reviews });
+  await workflow.task.update({ task: observeTask, status: "completed" })
+  await workflow.trace({ label: "review_summaries", payload: reviews })
 
   const validation = await workflow.validate({
     label: "targeted-check",
     commands: ["cargo check -p ha-core --tests"],
-    reason: "Rust core scorer and tests changed"
-  });
+    reason: "Rust core scorer and tests changed",
+  })
 
   if (!validation.ok) {
     await workflow.askUser({
       label: "validation-failed",
       question: "验证失败，是否允许进入 guarded repair？",
-      context: validation.summary
-    });
+      context: validation.summary,
+    })
   }
 
   return workflow.finish({
     status: "completed",
-    summary: "Workflow completed."
-  });
+    summary: "Workflow completed.",
+  })
 }
 ```
 
@@ -472,12 +473,12 @@ export default async function main(workflow) {
 
 候选：
 
-| 方案 | 优点 | 风险 |
-| --- | --- | --- |
-| QuickJS / rquickjs | 小、可嵌入、适合 sandbox | async host API 设计复杂 |
-| Boa | Rust 原生 | 生态和兼容性需验证 |
-| Deno | 权限模型强 | 体积和分发复杂 |
-| system Node | 实现快 | 分发、权限、稳定性不可控 |
+| 方案               | 优点                     | 风险                     |
+| ------------------ | ------------------------ | ------------------------ |
+| QuickJS / rquickjs | 小、可嵌入、适合 sandbox | async host API 设计复杂  |
+| Boa                | Rust 原生                | 生态和兼容性需验证       |
+| Deno               | 权限模型强               | 体积和分发复杂           |
+| system Node        | 实现快                   | 分发、权限、稳定性不可控 |
 
 MVP 推荐：
 
@@ -544,20 +545,20 @@ workflow_events
 
 ### 8.4 Host API MVP
 
-| API | 作用 | 底层接入 |
-| --- | --- | --- |
-| `workflow.tool({ name, args, label? })` | 调任意工具 | `execute_tool_with_context` + permission |
-| `workflow.fileSearch({ query, limit?, label? })` | 文件搜索 | `filesystem::search_files` |
-| `workflow.read({ path, label? })` | 读文件快捷方式 | `read` tool |
-| `workflow.grep({ pattern, path?, label? })` | 内容搜索 | `grep` tool |
-| `workflow.spawnAgent({ task, agent?, label?, ... })` | 子代理 | `subagent` |
-| `workflow.waitAll(handles, { label?, concurrency? })` | 等待多任务 | async job / subagent status |
-| `workflow.task.create({ title, label? })` / `workflow.task.update({ task, status, label? })` | 用户可见进度；`create` 返回 task handle，`update` 按 handle 定位 | `task_create/update` |
-| `workflow.validate({ commands, reason, label? })` | 验证命令 | `exec` async job + AGENTS 策略 |
-| `workflow.askUser({ question, context?, label? })` | 人工 gate | `ask_user` |
-| `workflow.trace({ payload, label? })` | trace event | `workflow_events` |
-| `workflow.diff({ label? })` | diff snapshot | git / session artifacts |
-| `workflow.finish(result)` | 完成 | `workflow_runs.state` |
+| API                                                                                          | 作用                                                             | 底层接入                                 |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------- |
+| `workflow.tool({ name, args, label? })`                                                      | 调任意工具                                                       | `execute_tool_with_context` + permission |
+| `workflow.fileSearch({ query, limit?, label? })`                                             | 文件搜索                                                         | `filesystem::search_files`               |
+| `workflow.read({ path, label? })`                                                            | 读文件快捷方式                                                   | `read` tool                              |
+| `workflow.grep({ pattern, path?, label? })`                                                  | 内容搜索                                                         | `grep` tool                              |
+| `workflow.spawnAgent({ task, agent?, label?, ... })`                                         | 子代理                                                           | `subagent`                               |
+| `workflow.waitAll(handles, { label?, concurrency? })`                                        | 等待多任务                                                       | async job / subagent status              |
+| `workflow.task.create({ title, label? })` / `workflow.task.update({ task, status, label? })` | 用户可见进度；`create` 返回 task handle，`update` 按 handle 定位 | `task_create/update`                     |
+| `workflow.validate({ commands, reason, label? })`                                            | 验证命令                                                         | `exec` async job + AGENTS 策略           |
+| `workflow.askUser({ question, context?, label? })`                                           | 人工 gate                                                        | `ask_user`                               |
+| `workflow.trace({ payload, label? })`                                                        | trace event                                                      | `workflow_events`                        |
+| `workflow.diff({ label? })`                                                                  | diff snapshot                                                    | git / session artifacts                  |
+| `workflow.finish(result)`                                                                    | 完成                                                             | `workflow_runs.state`                    |
 
 MVP 不提供：
 
@@ -688,6 +689,8 @@ Draft
 
 **token/cost 维度（红线，补结构计数之外）**：每个 loop_mode 的预算除上述结构计数外，必须含 `max_output_tokens` 硬天花板（跨主线程 + 全部子 agent 共享一个池）。达上限后会消耗 token 的 op（spawnAgent / validate 触发的 LLM 轮）直接拒绝 + `Blocked`，对齐"耗尽即停"语义。`autonomous` **必须**显式设 token 与 runtime 上限，否则拒绝进入。`0` 语义按 async_tools 约定（仅明确允许项为不限，其余钳地板）。
 
+状态：2026-07-01 已落第一版产品级输出 token 预算闭环。GUI goal-driven 草稿会按 loop mode 写入 `maxOutputTokens`；`run_chat_engine` 返回 usage，workflow-owned subagent 完成后把 input/output tokens 持久化到 `subagent_runs`；runtime 在 `waitAll` 后写 `budget_usage` trace event，并在后续 `spawnAgent` 等会继续消耗模型 token 的 op 前检查累计 output tokens，达到上限即把 run 转为 `Blocked(reason=workflow_budget_output_tokens_exhausted)`。`autonomous` run 若没有显式 runtime + output token 预算会在执行前拒绝进入。当前语义是"已完成子 Agent 用量归集后阻止后续 LLM op"，不是实时取消已经并发跑出的子 Agent；并发中途硬切属于后续增强。
+
 ### 10.4 No-progress 检测
 
 **repair 由 runtime 系统侧编排，不在脚本内循环（红线）**：脚本/模板只描述"一轮怎么跑"，单 run 内 script_hash 不可变；validate 失败 → 生成 structured feedback 作为下一轮 op 输入注入，而非改写脚本（脚本改写会使整 run replay 失效，与"同 run 内 repair"矛盾）。详见 [runtime §7](workflow-script-runtime.md)。
@@ -718,17 +721,20 @@ AwaitingUser 或 Blocked
 
 ### 11.1 Workflow Panel
 
-右侧 Workspace 面板新增 workflow 视图：
+右侧 Workspace 面板新增 Workflow Control Center：
 
-Tabs：
-
-- Overview：目标、状态、预算、当前步骤。
-- Script：脚本源码、hash、审批状态。
-- Tasks：用户可见 task。
-- Agents：subagent / async jobs。
-- Trace：事件流。
-- Diff：当前 diff snapshot。
-- Validation：验证命令和结果。
+- Loop mode：当前会话 `off / guarded / deep / autonomous` 常驻切换。
+- Goal-driven draft：普通用户先填写 coding 目标，一键生成可预检 `workflow.js` 草稿；草稿默认编排观察、子 Agent 实现、`waitAll`、单点验证、diff、finish，并按 loop mode 带保守脚本预算。生成脚本必须显式带预算提示，避免 Script Gate 把目标式草稿误判为无界脚本。
+- Session / workspace guard：没有当前会话时，新建入口要说明预检会自动物化并切换到一个真实会话；物化时继承草稿态 agent / project / workingDir，并保持 Workspace 面板打开，避免用户先手动发一条消息、切一次会话或重新打开面板。当前会话没有工作目录时，目标式草稿只能默认创建为 `draft`，并提示设置目录后再运行，避免 GUI 一键启动落到不确定目录。
+- Script draft：普通路径先写 coding 目标并生成草稿，`workflow.js` 编辑默认折叠到高级脚本区；高级用户仍可填写 kind、选择 loop mode、编辑 `workflow.js`、选择是否创建后立即运行。
+- Preflight：创建前不落库调用 `preview_workflow_script`，展示 Script Gate 阻塞项 / 修复建议、permission preview 授权清单、是否需要审批、是否存在确定 deny。
+- Run list：本会话 workflow runs、active 数、状态和快捷操作；超过首屏预览时提供展开 / 收起，避免较早失败 run 只能被提示但无法选择。
+- Overview：run 状态、loop mode、更新时间、script hash、op 进度、validation / agents 计数。
+- Approval focus：`awaiting_approval` 时突出 permission preview 摘要和批准 / 取消操作。
+- Recovery prompt：`blocked` / `failed` / validation failure 时把 run 状态、失败 op、验证命令输出、最近事件整理成可复制修复提示；同一上下文也可直接生成下一版 goal-driven workflow 草稿并立即触发 preflight，草稿区显示来源 run、说明会创建新的修复 run，并使用修复专用创建按钮，便于带着 Script Gate / permission preview 反馈继续处理。
+- Trace：步骤时间线 + 最近 workflow events，op/event 支持展开原始详情并复制。
+- Validation：验证命令、结果、repair stop reason。
+- Agents：subagent run/status/task，并可跳转子会话。
 
 ### 11.2 用户控制
 
@@ -807,13 +813,13 @@ stop reason if any
 
 脚本来源：
 
-| 来源 | 默认策略 |
-| --- | --- |
-| model-generated one-off | 必须用户审批 |
-| saved user workflow | 首次审批，hash 变更重审 |
+| 来源                         | 默认策略                         |
+| ---------------------------- | -------------------------------- |
+| model-generated one-off      | 必须用户审批                     |
+| saved user workflow          | 首次审批，hash 变更重审          |
 | bundled Hope-native workflow | release 信任，但高风险 op 仍审批 |
-| imported workflow | 默认不信任 |
-| cron/autonomous workflow | 必须显式 allowlist + budget |
+| imported workflow            | 默认不信任                       |
+| cron/autonomous workflow     | 必须显式 allowlist + budget      |
 
 ### 13.3 Secret handling
 
@@ -930,20 +936,32 @@ stop reason if any
 
 ### Phase 2.6：Workflow Panel
 
-状态：2026-06-30 已落第一版控制面：Workspace Panel 内展示本会话 workflow runs、active 数、状态、最近 ops/events、blocked reason，并提供 approve / pause / resume / cancel；Tauri 与 HTTP 共用既有 owner API。`/workflow` slash command 可列 run、看 trace、执行 approve / pause / resume / cancel；`/loop` 已持久化到会话级 `coding_loop_mode`，并在下一轮 system prompt 注入 guarded/deep/autonomous 的执行策略与停止条件。
+状态：2026-07-01 已落 Workflow Control Center v2：标题栏提供显性 `Coding` 入口，点击打开同一个 Workspace / Workflow 控制台，并在 active / waiting / failed run 存在时显示状态 badge；Workspace Panel 内展示本会话 workflow runs、active 数、状态、loop mode、总览进度、permission preview 授权清单、approval 焦点、Trace timeline、Validation / Agents 分视图、blocked/failed reason、当前焦点 / 下一步卡片、恢复建议、可复制修复提示与一键修复草稿生成；没有 run 时显示可操作空态，直接呈现当前 loop mode / 工作目录状态，并提供主按钮展开创建表单；run 超过首屏预览时提供历史展开 / 收起，用户可选择较早失败 run 并从该 run 生成修复草稿；当前焦点卡会把 running / recovering / awaiting_user / awaiting_approval / paused / failed / blocked / completed 等状态转成用户可理解的“正在执行哪一步 / 卡在哪里 / 看哪个详情页”，并可一键跳到 Trace、Validation 或 Agents；Trace 会把失败 / 运行中步骤和关键事件置顶，同时保留步骤预览与原始序号，避免长 run 固定预览吞掉真正卡点，op/event 原始 payload 可展开和复制；Validation / Agents 页头提供通过 / 失败 / 运行统计，便于扫读；审批/失败/阻塞态不再叠加语义重复的 warning/error notice，保留“当前焦点 + 授权清单/修复动作”的清晰层级；新建入口从“目标驱动”开始，用户填写 coding 目标后一键生成可预检 `workflow.js` 草稿，草稿默认编排观察、子 Agent 实现、`waitAll`、单点验证、diff、finish，并按 loop mode 带保守脚本预算；脚本编辑默认收在高级脚本区，高级用户仍可填写 kind、选择 loop mode、编辑 `workflow.js` 并选择创建后立即运行；无当前会话时预检会自动物化真实 session 并继承草稿态 agent / project / workingDir，且 Workspace 保持打开；无工作目录时只能创建 draft，不允许误触发立即运行；创建前通过不落库 `preview_workflow_script` 同时展示 Script Gate 阻塞项 / 修复建议与 permission preview 授权清单，Tauri/HTTP owner create API 也强制复用同一 preflight，只有 gate 通过且没有确定 deny 时才允许创建；Validation tab 展开每条验证命令的 job status / exit code / output 摘要，并在 validation failure 时自动聚焦；失败/阻塞态可一键复制包含 run 状态、失败 op、验证输出和最近事件的修复提示，或直接把这段上下文写入下一版 goal-driven workflow 草稿并自动触发预检，草稿区显示来源 run、说明会创建新的修复 run 且不覆盖原 run，并使用修复专用创建文案；修复 run 创建时通过 `parentRunId` / `origin=repair` 持久记录来源，父子 run 都写派生事件，刷新后仍可在详情卡和 Trace 中追踪；连续切换不同失败 run 后创建修复 run 会使用当前选中 run 的来源，不串到旧 run；提供 run draft / approve / pause / resume / cancel；`paused` run 在 DB op guard 层拒绝启动新 op，pause 会释放旧 `primary_owner`，resume 后可被新的 primary owner 重新 claim，避免按钮显示恢复但 runtime 因旧 owner 不继续；owner cancel 先把 run 转 `cancelled`，再 best-effort 取消 workflow-owned async tool / validation / subagent children，并写 `run_child_cancel_requested` trace event；GUI cancel 前弹确认，说明会停止 run 与 workflow-owned children 且保留 trace；Tauri 与 HTTP 共用 owner API（preview / create / run / list / get / approve / pause / resume / cancel）。`approve` / `resume` 会异步 kick workflow runtime，避免只改状态不执行；workflow run 刷新走 `workflow:*` EventBus + 短 debounce，并在 WS lag / 页面回前台 / active run 运行期间用低频轮询兜底；窄屏 / 移动宽度下用户主动打开所有右侧互斥面板（含 Workspace/Workflow、Files、Browser、Canvas、Mac Control、Team、Background Jobs、Preview）都走 fixed overlay，不再被桌面 split-pane 挤到视口外；`/workflow` slash command 可列 run、看 trace、执行 approve / pause / resume / cancel；`/loop` 已持久化到会话级 `coding_loop_mode`，GUI 也可直接切换，并在下一轮 system prompt 注入 guarded/deep/autonomous 的执行策略与停止条件。
 
 实现：
 
-- Overview / Trace 摘要 / Ops / Events / blocked reason。
-- Approve / Pause / Resume / Cancel。
+- Loop mode GUI 控制。
+- 标题栏 `Coding` 入口：显性进入 Workspace / Workflow 控制台，并用 badge 显示 active / waiting / failed run，避免只能靠 `/workflow` 命令或打开面板后才发现状态。
+- 无 run 空态启动面板：展示当前 loop mode / 工作目录状态，并一键展开创建表单。
+- Goal-driven create form：coding 目标 → 生成可预检 workflow 草稿；草稿态新对话会在预检前自动物化为真实 session 并继承 draft workingDir，默认创建后运行。
+- Script draft create form：kind / loop mode / `workflow.js` / run immediately。
+- Script draft preflight：创建前 Script Gate / permission preview / approval need / deny blocker。
+- Run list + history expand / Overview / current focus + next-step jump / permission notice + call checklist / Trace timeline + op/event detail expand/copy / Validation command details / Agents / blocked or failed reason + recovery hint + repair prompt copy + repair draft generation + auto-preflight + origin-aware repair create copy。
+- Dev-only viewport smoke harness：`?window=workflow-smoke` 动态导入 `WorkflowSmokeWindow`，用真实 `WorkspacePanel` + fake transport 切换 approval / running / failed / completed 场景；用于桌面/窄屏验证当前焦点、授权清单、修复动作、派生 run 和水平溢出，不作为生产功能入口。
+- Owner API：preview / create / run / list / get / approve / pause / resume / cancel；create 强制执行同一 preflight；run draft、approve、resume 后异步启动 runtime。
+- GUI 操作：Run draft / Approve / Pause / Resume / Cancel。
+- Pause / resume runtime guard：paused run 拒绝启动新 op；pause 清理 owner，resume 后 runtime launcher 可重新 claim。
+- Cancel child cleanup：owner cancel 会 best-effort 取消 workflow-owned async tool / validation / subagent children，并保留 trace event；GUI cancel 前确认，防止误触发长任务停止。
+- Output token budget：goal-driven 草稿按 loop mode 写入 `maxOutputTokens`；run list 与详情总览展示 `输出预算` 用量，budget exhausted 事件进入关键事件 / Trace；runtime 达上限会阻断后续 LLM op 并转 `Blocked`。
 - `/workflow status|trace|approve|pause|resume|cancel`。
 - `/loop off|guarded|deep|autonomous` 持久化控制入口。
 
 验收：
 
-- 长任务期间用户能看懂状态（已覆盖 run state / ops / events / blocked reason）。
-- validation failure 清楚展示（Trace / Validation tab 展示 validate summary、failed/total、stop reason）。
+- 长任务期间用户能看懂状态（已覆盖标题栏 Coding 入口 / 无 run 空态启动入口 / run state / ops / events / current focus / tab jump / 历史 run 展开选择 / 长 run 晚期失败步骤置顶 / 关键事件置顶 / blocked reason / recovery hint / repair prompt copy / repair draft generation / auto-preflight / origin-aware repair create copy）。
+- validation failure 清楚展示（Trace / Validation tab 展示 validate summary、failed/total、stop reason、每条 validation command、job status、exit code、output 摘要，并自动聚焦 Validation）。
 - subagent 状态清楚展示（Agents tab 展示 spawnAgent op、runId/status/label/task；background job 投影仍保留）。
+- 预算耗尽清楚展示（run list / Overview 展示 `输出预算` spent/limit，`budget_usage` 关键事件说明 exhausted 与 reason，runtime 达上限转 blocked）。
 
 ### Phase 2.7：Guarded repair loop
 
@@ -1019,20 +1037,20 @@ Hope：
 
 给 Claude Code review 时，可以让它看这份 checklist：
 
-| 能力 | 本方案是否覆盖 | 说明 |
-| --- | --- | --- |
-| Skills | 是 | Hope-native skill suite，vendor skill 不进核心 |
-| Dynamic workflows | 是 | script-first，而不是纯结构化节点 |
-| Subagents | 是 | host API 接现有 subagent 队列 |
-| Hooks | 是 | host calls 走现有 hooks / permission |
-| Script approval | 是 | script gate + user approval + hash trust |
-| Long-running workflows | 是 | durable run / ops / events |
-| Resume | 是 | replay-based durability |
-| Cancellation | 是 | workflow cancel / pause / resume |
-| Trace | 是 | workflow_events + UI panel |
-| Loop stop conditions | 是 | no-progress / validation fingerprint / budget |
-| Performance | 是 | state externalization + summaries + deferred tools |
-| Safety | 是 | no raw fs/network/process/env |
+| 能力                   | 本方案是否覆盖 | 说明                                               |
+| ---------------------- | -------------- | -------------------------------------------------- |
+| Skills                 | 是             | Hope-native skill suite，vendor skill 不进核心     |
+| Dynamic workflows      | 是             | script-first，而不是纯结构化节点                   |
+| Subagents              | 是             | host API 接现有 subagent 队列                      |
+| Hooks                  | 是             | host calls 走现有 hooks / permission               |
+| Script approval        | 是             | script gate + user approval + hash trust           |
+| Long-running workflows | 是             | durable run / ops / events                         |
+| Resume                 | 是             | replay-based durability                            |
+| Cancellation           | 是             | workflow cancel / pause / resume                   |
+| Trace                  | 是             | workflow_events + UI panel                         |
+| Loop stop conditions   | 是             | no-progress / validation fingerprint / budget      |
+| Performance            | 是             | state externalization + summaries + deferred tools |
+| Safety                 | 是             | no raw fs/network/process/env                      |
 
 ## 17. 非目标
 
@@ -1050,16 +1068,16 @@ Phase 2 不做：
 
 ## 18. 风险与待验证问题
 
-| 风险 | 处理 |
-| --- | --- |
-| JS runtime async bridge 复杂 | MVP host API 保守；先验证 3-5 个调用 |
+| 风险                                               | 处理                                                                                                |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| JS runtime async bridge 复杂                       | MVP host API 保守；先验证 3-5 个调用                                                                |
 | op identity 依赖执行位置，模型可能误把 label 当 id | runtime 只用位置化 op-key 做身份，label 仅展示；script gate 检查 host call 形态并提示不要依赖 label |
-| script 太自由导致难审 | preview + lint + budget + no raw capability |
-| 长任务 UI 复杂 | 先复用 Workspace panel |
-| subagent 成本高 | bounded concurrency + explicit budget |
-| 旧 vendor skills 行为不一致 | detox 标记，不进核心 |
-| 用户不想看脚本 | 展示摘要 + 可展开源码 |
-| autonomous 风险高 | 默认不开放或只允许 allowlisted scripts |
+| script 太自由导致难审                              | preview + lint + budget + no raw capability                                                         |
+| 长任务 UI 复杂                                     | 先复用 Workspace panel                                                                              |
+| subagent 成本高                                    | bounded concurrency + explicit budget                                                               |
+| 旧 vendor skills 行为不一致                        | detox 标记，不进核心                                                                                |
+| 用户不想看脚本                                     | 展示摘要 + 可展开源码                                                                               |
+| autonomous 风险高                                  | 默认不开放或只允许 allowlisted scripts                                                              |
 
 ## 19. 验收标准
 

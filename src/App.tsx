@@ -329,8 +329,8 @@ export default function App() {
   const bootstrapApp = useCallback(async () => {
     setView("loading")
     try {
-      const health = await getTransport().call<ConfigHealth>("get_config_health")
-      if (!health.ok) {
+      const health = await getTransport().call<ConfigHealth | null | undefined>("get_config_health")
+      if (health?.ok === false) {
         setConfigHealth(health)
         setView("configRecovery")
         return
@@ -347,9 +347,9 @@ export default function App() {
       //   2. Prior session restorable → "chat"
       //   3. Has a provider configured (legacy users) → "chat"
       //   4. Otherwise → "setup" (the old provider-only fallback)
-      let onboarding: { completedVersion?: number }
+      let onboarding: { completedVersion?: number } | null | undefined
       try {
-        onboarding = await getTransport().call<{ completedVersion?: number }>(
+        onboarding = await getTransport().call<{ completedVersion?: number } | null | undefined>(
           "get_onboarding_state",
         )
       } catch (e) {
@@ -363,7 +363,7 @@ export default function App() {
         }
         throw e
       }
-      if ((onboarding.completedVersion ?? 0) < CURRENT_ONBOARDING_VERSION) {
+      if ((onboarding?.completedVersion ?? 0) < CURRENT_ONBOARDING_VERSION) {
         setView("onboarding")
         return
       }

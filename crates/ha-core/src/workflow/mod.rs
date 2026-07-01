@@ -11,12 +11,14 @@ pub mod types;
 
 pub(crate) use db::ensure_tables;
 pub use preview::{
-    preview_workflow_run, WorkflowPermissionPreview, WorkflowPermissionPreviewCall,
-    WorkflowPermissionPreviewSummary,
+    ensure_workflow_script_can_create, preview_workflow_run, preview_workflow_script_for_session,
+    WorkflowPermissionPreview, WorkflowPermissionPreviewCall, WorkflowPermissionPreviewSummary,
+    WorkflowScriptPreview,
 };
 pub use runtime::{
-    recover_pending_workflow_runs, run_workflow_script, run_workflow_script_async,
-    spawn_startup_recovery_if_primary, WorkflowRecoveryReport, WorkflowRuntimeResult,
+    cancel_workflow_run_with_children, recover_pending_workflow_runs, run_workflow_script,
+    run_workflow_script_async, spawn_startup_recovery_if_primary, spawn_workflow_run_if_primary,
+    WorkflowRecoveryReport, WorkflowRuntimeResult,
 };
 pub use types::{
     CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,

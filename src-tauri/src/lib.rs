@@ -798,6 +798,9 @@ pub fn run() {
             // Workflow runs (Phase 2 durable coding workflows)
             commands::workflow::list_workflow_runs,
             commands::workflow::get_workflow_run,
+            commands::workflow::preview_workflow_script,
+            commands::workflow::create_workflow_run,
+            commands::workflow::run_workflow_run,
             commands::workflow::pause_workflow_run,
             commands::workflow::resume_workflow_run,
             commands::workflow::approve_workflow_run,

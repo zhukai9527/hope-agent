@@ -1328,11 +1328,19 @@ fn build_router_with_cors(
         // Workflow runs (Phase 2 durable coding workflows)
         .route(
             "/sessions/{sid}/workflow-runs",
-            get(routes::workflow::list_workflow_runs),
+            get(routes::workflow::list_workflow_runs).post(routes::workflow::create_workflow_run),
+        )
+        .route(
+            "/sessions/{sid}/workflow-runs/preview",
+            post(routes::workflow::preview_workflow_script),
         )
         .route(
             "/workflow-runs/{id}",
             get(routes::workflow::get_workflow_run),
+        )
+        .route(
+            "/workflow-runs/{id}/run",
+            post(routes::workflow::run_workflow_run),
         )
         .route(
             "/workflow-runs/{id}/pause",

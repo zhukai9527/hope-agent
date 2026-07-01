@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Number, Value};
 
 use crate::permission::{AskReason, Decision};
+use crate::plan::{check_workflow_script_draft, GateReport, ScriptGateOptions};
 use crate::session::SessionDB;
 use crate::tools;
 
@@ -58,9 +59,76 @@ pub struct WorkflowPermissionPreviewCall {
     pub args: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowScriptPreview {
+    pub gate: GateReport,
+    pub gate_passed: bool,
+    pub gate_feedback: String,
+    pub permission: WorkflowPermissionPreview,
+    pub can_create: bool,
+    pub can_run_immediately: bool,
+    pub requires_approval: bool,
+    pub has_denials: bool,
+}
+
 pub fn preview_workflow_run(db: &SessionDB, run: &WorkflowRun) -> WorkflowPermissionPreview {
     let session_context = workflow_session_context(db, &run.session_id);
     preview_workflow_script(&run.script_source, &run.session_id, &session_context)
+}
+
+pub fn preview_workflow_script_for_session(
+    db: &SessionDB,
+    session_id: &str,
+    script: &str,
+    loop_mode: Option<&str>,
+) -> WorkflowScriptPreview {
+    let gate = check_workflow_script_draft(
+        script,
+        script_gate_options_for_loop_mode(loop_mode.unwrap_or("guarded")),
+    );
+    let gate_passed = gate.passed();
+    let gate_feedback = gate.render_feedback("Workflow Script Gate");
+    let session_context = workflow_session_context(db, session_id);
+    let permission = preview_workflow_script(script, session_id, &session_context);
+    let requires_approval = permission.requires_user_approval();
+    let has_denials = permission.has_denials();
+    let can_create = gate_passed && !has_denials;
+
+    WorkflowScriptPreview {
+        gate,
+        gate_passed,
+        gate_feedback,
+        permission,
+        can_create,
+        can_run_immediately: can_create,
+        requires_approval,
+        has_denials,
+    }
+}
+
+pub fn ensure_workflow_script_can_create(
+    db: &SessionDB,
+    session_id: &str,
+    script: &str,
+    loop_mode: Option<&str>,
+) -> Result<WorkflowScriptPreview> {
+    let preview = preview_workflow_script_for_session(db, session_id, script, loop_mode);
+    if !preview.gate_passed {
+        return Err(anyhow!(preview.gate_feedback.clone()));
+    }
+    if preview.has_denials {
+        return Err(anyhow!(
+            "Workflow permission preview denied; inspect the permission checklist before creating this run"
+        ));
+    }
+    Ok(preview)
+}
+
+pub(crate) fn script_gate_options_for_loop_mode(loop_mode: &str) -> ScriptGateOptions {
+    ScriptGateOptions {
+        autonomous: loop_mode == "autonomous",
+    }
 }
 
 pub(crate) fn preview_workflow_script(
@@ -111,6 +179,10 @@ fn preview_raw_call(
     calls: &mut Vec<WorkflowPermissionPreviewCall>,
 ) {
     let Some(value) = raw.args else {
+        if raw.api == "workflow.askUser" {
+            preview_ask_user(raw.api, raw.line, None, session_id, calls);
+            return;
+        }
         if is_permission_neutral_api(&raw.api) {
             calls.push(allow_call(
                 raw.api,
@@ -165,7 +237,7 @@ fn preview_raw_call(
                 Err(err) => calls.push(dynamic_call(raw.api, raw.line, &err.to_string())),
             }
         }
-        "workflow.askUser" => preview_ask_user(raw.api, raw.line, value, session_id, calls),
+        "workflow.askUser" => preview_ask_user(raw.api, raw.line, Some(value), session_id, calls),
         "workflow.fileSearch"
         | "workflow.diff"
         | "workflow.trace"
@@ -239,42 +311,45 @@ fn preview_validate(
 fn preview_ask_user(
     api: String,
     line: usize,
-    value: Value,
+    value: Option<Value>,
     session_id: &str,
     calls: &mut Vec<WorkflowPermissionPreviewCall>,
 ) {
-    let label = optional_string(&value, "label");
+    let label = value
+        .as_ref()
+        .and_then(|value| optional_string(value, "label"));
     match crate::permission::evaluate_approval_surface(Some(session_id)) {
         crate::permission::ApprovalSurface::Attended => calls.push(allow_call(
             api,
             line,
             None,
             label,
-            Some(value),
+            value,
             Some("attended surface available".to_string()),
         )),
         crate::permission::ApprovalSurface::Unattended(reason) => {
             let action = crate::config::cached_config()
                 .permission
                 .unattended_approval_action;
+            let (decision, detail) = match action {
+                crate::permission::UnattendedApprovalAction::Proceed => ("allow", "proceed"),
+                crate::permission::UnattendedApprovalAction::Deny => ("deny", "deny"),
+            };
             calls.push(WorkflowPermissionPreviewCall {
                 api,
                 line,
                 tool_name: None,
-                decision: "allow".to_string(),
+                decision: decision.to_string(),
                 strict: false,
                 dynamic: false,
                 reason: Some(format!(
                     "askUser surface is unattended ({}) and runtime will apply unattendedApprovalAction={}: {}",
                     reason.as_str(),
-                    match action {
-                        crate::permission::UnattendedApprovalAction::Proceed => "proceed",
-                        crate::permission::UnattendedApprovalAction::Deny => "deny",
-                    },
+                    detail,
                     reason.explain()
                 )),
                 label,
-                args: Some(value),
+                args: value,
             });
         }
     }

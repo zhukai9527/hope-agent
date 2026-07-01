@@ -26,10 +26,13 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             cursor_seq INTEGER NOT NULL DEFAULT 0,
             primary_owner TEXT,
             blocked_reason TEXT,
+            parent_run_id TEXT,
+            origin TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL
         );
 
         CREATE TABLE IF NOT EXISTS workflow_ops (
@@ -72,6 +75,22 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_workflow_events_run_seq
             ON workflow_events(run_id, seq);",
     )?;
+    if conn
+        .prepare("SELECT parent_run_id FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN parent_run_id TEXT;")?;
+    }
+    if conn
+        .prepare("SELECT origin FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN origin TEXT;")?;
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_runs_parent
+            ON workflow_runs(parent_run_id);",
+    )?;
     Ok(())
 }
 
@@ -97,11 +116,30 @@ impl SessionDB {
                 input.session_id
             ));
         }
+        if let Some(parent_run_id) = input.parent_run_id.as_deref() {
+            let parent_session_id: Option<String> = conn
+                .query_row(
+                    "SELECT session_id FROM workflow_runs WHERE id = ?1",
+                    params![parent_run_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let parent_session_id = parent_session_id
+                .ok_or_else(|| anyhow!("parent workflow run not found: {parent_run_id}"))?;
+            if parent_session_id != input.session_id {
+                return Err(anyhow!(
+                    "parent workflow run {} belongs to session {}; expected {}",
+                    parent_run_id,
+                    parent_session_id,
+                    input.session_id
+                ));
+            }
+        }
         conn.execute(
             "INSERT INTO workflow_runs (
                 id, session_id, kind, state, loop_mode, script_hash, script_source,
-                budget_json, cursor_seq, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)",
+                budget_json, cursor_seq, parent_run_id, origin, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?11)",
             params![
                 id,
                 input.session_id,
@@ -111,6 +149,8 @@ impl SessionDB {
                 script_hash,
                 input.script_source,
                 budget_json,
+                input.parent_run_id,
+                input.origin,
                 now
             ],
         )?;
@@ -122,8 +162,24 @@ impl SessionDB {
         let _ = self.append_workflow_event(
             &run.id,
             "run_created",
-            json!({ "sessionId": run.session_id, "kind": run.kind, "state": run.state }),
+            json!({
+                "sessionId": run.session_id,
+                "kind": run.kind,
+                "state": run.state,
+                "parentRunId": run.parent_run_id,
+                "origin": run.origin,
+            }),
         )?;
+        if let Some(parent_run_id) = run.parent_run_id.as_deref() {
+            let payload = json!({
+                "parentRunId": parent_run_id,
+                "childRunId": run.id,
+                "origin": run.origin,
+            });
+            let _ = self.append_workflow_event(&run.id, "run_derived_from", payload.clone())?;
+            let _ =
+                self.append_workflow_event(parent_run_id, "run_derived_child_created", payload)?;
+        }
         let preview = super::preview::preview_workflow_run(self, &run);
         let _ = self.append_workflow_event(&run.id, "script_permission_preview", json!(preview))?;
         events::emit_run_changed("workflow:created", &run);
@@ -135,7 +191,7 @@ impl SessionDB {
         conn.query_row(
             "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    created_at, updated_at, completed_at
+                    parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
             params![run_id],
             row_to_run,
@@ -154,7 +210,7 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    created_at, updated_at, completed_at
+                    parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE session_id = ?1
              ORDER BY updated_at DESC, created_at DESC
@@ -206,7 +262,7 @@ impl SessionDB {
                 "UPDATE workflow_runs
                     SET state = ?1,
                         blocked_reason = CASE WHEN ?1 = 'blocked' THEN ?2 ELSE NULL END,
-                        primary_owner = CASE WHEN ?1 IN ('completed','failed','cancelled','blocked') THEN NULL ELSE primary_owner END,
+                        primary_owner = CASE WHEN ?1 IN ('paused','completed','failed','cancelled','blocked') THEN NULL ELSE primary_owner END,
                         completed_at = CASE WHEN ?1 IN ('completed','failed','cancelled','blocked') THEN ?3 ELSE completed_at END,
                         updated_at = ?3
                  WHERE id = ?4",
@@ -295,7 +351,7 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    created_at, updated_at, completed_at
+                    parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE state = 'running' AND (primary_owner IS NULL OR primary_owner = '')
              ORDER BY updated_at ASC",
@@ -481,6 +537,20 @@ impl SessionDB {
         collect_rows(rows)
     }
 
+    pub fn list_workflow_child_handles(&self, run_id: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT op_type, child_handle
+             FROM workflow_ops
+             WHERE run_id = ?1 AND child_handle IS NOT NULL AND child_handle != ''
+             ORDER BY started_at ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![run_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        collect_rows(rows)
+    }
+
     pub fn started_op_recovery_action(
         &self,
         run_id: &str,
@@ -589,6 +659,13 @@ impl SessionDB {
                 run.state.as_str()
             ));
         }
+        if run.state != WorkflowRunState::Running {
+            return Err(anyhow!(
+                "workflow run {} is {}; refusing to start new op",
+                run_id,
+                run.state.as_str()
+            ));
+        }
         Ok(())
     }
 }
@@ -608,9 +685,11 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
         cursor_seq: row.get(8)?,
         primary_owner: row.get(9)?,
         blocked_reason: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        completed_at: row.get(13)?,
+        parent_run_id: row.get(11)?,
+        origin: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        completed_at: row.get(15)?,
     })
 }
 

@@ -27,6 +27,7 @@ import type {
   ActiveModel,
   AvailableModel,
   Message,
+  SessionMeta,
   SessionMode,
   SandboxMode,
 } from "@/types/chat"
@@ -102,6 +103,7 @@ import { resolveWorkspaceTaskExecutionState } from "./workspace/taskExecutionSta
 import { messagesHaveFileActivity } from "./workspace/useSessionFileChanges"
 import { messagesHaveUrlActivity } from "./workspace/useSessionUrlSources"
 import { messagesHaveKnowledgeActivity } from "./workspace/useSessionKnowledge"
+import { useWorkflowRuns, type WorkflowRun } from "./workspace/useWorkflowRuns"
 import SubagentSessionDialog from "./SubagentSessionDialog"
 import { useModelState } from "./hooks/useModelState"
 import SystemPromptDialog from "./SystemPromptDialog"
@@ -542,6 +544,7 @@ export default function ChatScreen({
   // 展开一次，用户关闭后本会话不再自动弹（dismissedRef 跟踪，仿 browser 面板）。
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false)
   const workspacePanelDismissedRef = useRef(false)
+  const preserveWorkspaceOnSessionSwitchRef = useRef(false)
 
   // R4 背景任务：会话级在跑/最近作业 + 本地模型任务镜像。新后台任务出现时
   // 自动打开一次；用户关闭后本会话不再抢回焦点。订阅在 ChatScreen 级常驻
@@ -1058,6 +1061,72 @@ export default function ChatScreen({
     : projectWorkingDir
       ? "project"
       : undefined
+  const workspaceEffectiveWorkingDir = session.currentSessionId
+    ? effectiveWorkingDir
+    : (draftWorkingDir ?? projectWorkingDir)
+  const workspaceWorkingDirSource: "session" | "project" | undefined = session.currentSessionId
+    ? workingDirSource
+    : draftWorkingDir
+      ? "session"
+      : projectWorkingDir
+        ? "project"
+        : undefined
+
+  const ensureWorkflowSession = useCallback(async (): Promise<string | null> => {
+    if (session.currentSessionId) return session.currentSessionId
+    if (draftIncognito) {
+      toast.error(t("workspace.workflow.incognito", "无痕会话不持久化 workflow"))
+      return null
+    }
+
+    try {
+      const transport = getTransport()
+      const clearPreserveWorkspaceSoon = () => {
+        window.setTimeout(() => {
+          preserveWorkspaceOnSessionSwitchRef.current = false
+        }, 1000)
+      }
+      const meta = await transport.call<SessionMeta>("create_session_cmd", {
+        agentId: session.currentAgentId,
+        projectId: draftProjectId ?? undefined,
+        incognito: false,
+      })
+      preserveWorkspaceOnSessionSwitchRef.current = true
+      if (draftWorkingDir) {
+        try {
+          await transport.call("set_session_working_dir", {
+            sessionId: meta.id,
+            workingDir: draftWorkingDir,
+          })
+        } catch (err) {
+          await session.handleSwitchSession(meta.id).catch(() => {})
+          await reloadSessions().catch(() => {})
+          clearPreserveWorkspaceSoon()
+          throw err
+        }
+      }
+      await session.handleSwitchSession(meta.id)
+      clearPreserveWorkspaceSoon()
+      if (draftWorkingDir) {
+        session.updateSessionMeta(meta.id, (prev) => ({ ...prev, workingDir: draftWorkingDir }))
+      }
+      await reloadSessions()
+      return meta.id
+    } catch (err) {
+      logger.error("chat", "ChatScreen::ensureWorkflowSession", "Failed to materialize workflow session", err)
+      toast.error(t("workspace.workflow.sessionCreateFailed", "创建 workflow 会话失败"), {
+        description: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }, [
+    draftIncognito,
+    draftProjectId,
+    draftWorkingDir,
+    reloadSessions,
+    session,
+    t,
+  ])
 
   // Wrap moveSessionToProject so the sidebar also reloads — otherwise the
   // moved session keeps rendering under the old "Unassigned" group until
@@ -2192,6 +2261,10 @@ export default function ChatScreen({
   const shouldAutoExpandRightPanel = useViewportMediaQuery(
     `(min-width: ${rightPanelExpandAt}px)`,
   )
+  const rightPanelOverlay =
+    hasOpenExclusiveRightPanel &&
+    manualRightPanelExpandedOverride &&
+    shouldAutoCollapseRightPanel
   const shouldAutoCollapseSidebar = useViewportMediaQuery(`(max-width: ${sidebarCollapseAt}px)`)
   const shouldAutoExpandSidebar = useViewportMediaQuery(`(min-width: ${sidebarExpandAt}px)`)
 
@@ -2313,6 +2386,7 @@ export default function ChatScreen({
   // preview toggle).
   const closeFilePreview = filePreview.closePreview
   useEffect(() => {
+    const preserveWorkspace = preserveWorkspaceOnSessionSwitchRef.current
     browserPanelDismissedRef.current = false
     macControlPanelDismissedRef.current = false
     workspacePanelDismissedRef.current = false
@@ -2321,10 +2395,13 @@ export default function ChatScreen({
     previousBackgroundRunningCountRef.current = 0
     setShowBrowserPanel(false)
     setShowMacControlPanel(false)
-    setShowWorkspacePanel(false)
+    setShowWorkspacePanel(preserveWorkspace)
     setShowBackgroundJobsPanel(false)
     setBackgroundJobExpansionOverrides({})
     closeFilePreview()
+    if (preserveWorkspace) {
+      preserveWorkspaceOnSessionSwitchRef.current = false
+    }
   }, [session.currentSessionId, closeFilePreview])
 
   // Auto-open the BrowserPanel only on the first `browser:frame` of a session
@@ -2424,6 +2501,24 @@ export default function ChatScreen({
       : undefined,
     session.loading,
   )
+  const workflowTitleBarRuns = useWorkflowRuns(session.currentSessionId, {
+    incognito: incognitoEnabled,
+    turnActive:
+      workspaceTaskExecutionState === "running" || workspaceTaskExecutionState === "cancelling",
+  })
+  const workflowTitleBarStatus = useMemo(() => {
+    const needsAttention = (run: WorkflowRun) =>
+      run.state === "awaiting_approval" ||
+      run.state === "awaiting_user" ||
+      run.state === "blocked" ||
+      run.state === "failed"
+    const isRunning = (run: WorkflowRun) => run.state === "running" || run.state === "recovering"
+    return {
+      activeCount: workflowTitleBarRuns.activeCount,
+      attentionCount: workflowTitleBarRuns.runs.filter(needsAttention).length,
+      runningCount: workflowTitleBarRuns.runs.filter(isRunning).length,
+    }
+  }, [workflowTitleBarRuns.activeCount, workflowTitleBarRuns.runs])
 
   const handleToggleFilesPanel = useCallback(() => {
     if (showFilesPanel) {
@@ -2630,6 +2725,7 @@ export default function ChatScreen({
             }
           }}
           workspacePanelOpen={showWorkspacePanel}
+          workspaceWorkflowStatus={workflowTitleBarStatus}
           onToggleBackgroundJobsPanel={() => {
             if (showBackgroundJobsPanel) {
               closeBackgroundJobsPanel()
@@ -2870,6 +2966,7 @@ export default function ChatScreen({
               maxWidth={860}
               reservedMainWidth={rightPanelReservedMainWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               contentKey="diff"
             >
               <DiffPanel
@@ -2893,6 +2990,7 @@ export default function ChatScreen({
               maxWidth={860}
               reservedMainWidth={rightPanelReservedMainWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               contentKey="plan"
             >
               <PlanPanel
@@ -2925,6 +3023,7 @@ export default function ChatScreen({
             sessionId={session.currentSessionId}
             visible={shouldRenderRightPanelContent && renderedExclusiveRightPanel === "files"}
             collapsed={rightPanelCollapsed}
+            overlay={rightPanelOverlay}
             panelWidth={rightPanelWidth}
             onPanelWidthChange={setRightPanelWidth}
             reservedMainWidth={rightPanelReservedMainWidth}
@@ -2940,6 +3039,7 @@ export default function ChatScreen({
             currentSessionId={currentSessionId}
             onOpenChange={setCanvasPanelOpen}
             collapsed={rightPanelCollapsed}
+            overlay={rightPanelOverlay}
             reservedMainWidth={rightPanelReservedMainWidth}
             visible={
               shouldRenderRightPanelContent && renderedExclusiveRightPanel === "canvas"
@@ -2953,6 +3053,7 @@ export default function ChatScreen({
               panelWidth={rightPanelWidth}
               onPanelWidthChange={setRightPanelWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               reservedMainWidth={rightPanelReservedMainWidth}
               onClose={() => {
                 browserPanelDismissedRef.current = true
@@ -2969,6 +3070,7 @@ export default function ChatScreen({
               panelWidth={rightPanelWidth}
               onPanelWidthChange={setRightPanelWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               reservedMainWidth={rightPanelReservedMainWidth}
               onClose={() => {
                 macControlPanelDismissedRef.current = true
@@ -2986,6 +3088,7 @@ export default function ChatScreen({
                 panelWidth={rightPanelWidth}
                 onPanelWidthChange={setRightPanelWidth}
                 collapsed={rightPanelCollapsed}
+                overlay={rightPanelOverlay}
                 reservedMainWidth={rightPanelReservedMainWidth}
                 onClose={() => setShowTeamPanel(false)}
                 onViewSession={setSubagentPreviewSessionId}
@@ -3001,6 +3104,7 @@ export default function ChatScreen({
               maxWidth={860}
               reservedMainWidth={rightPanelReservedMainWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               contentKey="workspace"
             >
               <WorkspacePanel
@@ -3013,8 +3117,8 @@ export default function ChatScreen({
                 sessionId={session.currentSessionId}
                 sessionMeta={currentSessionMeta}
                 project={currentProject}
-                effectiveWorkingDir={effectiveWorkingDir}
-                workingDirSource={workingDirSource}
+                effectiveWorkingDir={workspaceEffectiveWorkingDir}
+                workingDirSource={workspaceWorkingDirSource}
                 permissionMode={stream.permissionMode}
                 planState={planMode.planState}
                 activeModel={activeModel}
@@ -3032,11 +3136,13 @@ export default function ChatScreen({
                   workspaceTaskExecutionState === "running" ||
                   workspaceTaskExecutionState === "cancelling"
                 }
+                workflowRunsState={workflowTitleBarRuns}
                 backgroundJobs={backgroundJobs.jobs}
                 backgroundJobExpansionOverrides={backgroundJobExpansionOverrides}
                 onBackgroundJobExpandedChange={handleBackgroundJobExpandedChange}
                 onOpenBackgroundJobs={openBackgroundJobsPanel}
                 onViewSubagentSession={setSubagentPreviewSessionId}
+                onEnsureSession={ensureWorkflowSession}
                 onClose={() => {
                   workspacePanelDismissedRef.current = true
                   setShowWorkspacePanel(false)
@@ -3055,6 +3161,7 @@ export default function ChatScreen({
               maxWidth={860}
               reservedMainWidth={rightPanelReservedMainWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               contentKey="background-jobs"
             >
               <BackgroundJobsPanel
@@ -3079,6 +3186,7 @@ export default function ChatScreen({
               maximized={filePreviewMaximized}
               reservedMainWidth={rightPanelReservedMainWidth}
               collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
               contentKey="preview"
             >
               <FilePreviewPanel

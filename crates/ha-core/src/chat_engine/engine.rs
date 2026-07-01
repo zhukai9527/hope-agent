@@ -1119,6 +1119,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                                 return Ok(ChatEngineResult {
                                     response,
                                     model_used: Some(model_ref.clone()),
+                                    usage: persister.usage(),
                                     agent: Some(agent),
                                 });
                             }
@@ -1157,6 +1158,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         return Ok(ChatEngineResult {
                             response: String::new(),
                             model_used: None,
+                            usage: persister.usage(),
                             agent: None,
                         });
                     }
@@ -1236,6 +1238,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         return Ok(ChatEngineResult {
                             response,
                             model_used: Some(model_ref.clone()),
+                            usage: persister.usage(),
                             agent: Some(agent),
                         });
                     }
@@ -1397,6 +1400,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     return Ok(ChatEngineResult {
                         response,
                         model_used: Some(model_ref.clone()),
+                        usage: persister.usage(),
                         agent: Some(agent),
                     });
                 }
@@ -1411,6 +1415,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         return Ok(ChatEngineResult {
                             response: String::new(),
                             model_used: Some(model_ref.clone()),
+                            usage: Default::default(),
                             agent: None,
                         });
                     }
@@ -1558,6 +1563,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         return Ok(ChatEngineResult {
                             response: String::new(),
                             model_used: Some(model_ref.clone()),
+                            usage: Default::default(),
                             agent: None,
                         });
                     }
@@ -1800,6 +1806,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         return Ok(ChatEngineResult {
             response: String::new(),
             model_used: None,
+            usage: Default::default(),
             agent: None,
         });
     }

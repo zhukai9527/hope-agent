@@ -260,6 +260,8 @@ budget {
 - autonomous 模式**必须**显式设 `max_output_tokens` 与 `max_runtime_secs`，否则拒绝进入 autonomous。
 - 各 bounded 旋钮的 `0` 语义须与 async_tools 一致约定（`0`=不限 仅限明确允许的项，其余钳地板），实现时单测锁定。
 
+当前实现（2026-07-01）：`maxOutputTokens` 从 run budget 读取；workflow-owned subagent 完成后把 `run_chat_engine` usage 写入 `subagent_runs.input_tokens/output_tokens`；runtime 汇总 completed `spawnAgent` op 对应子 run 的 output tokens，在 `waitAll` 后记录 `budget_usage`，并在新的 `spawnAgent` 副作用发起前检查 `spent >= limit`。超限时 run 进入 `Blocked(reason=workflow_budget_output_tokens_exhausted)`。该版本保证"预算耗尽后不再发起新的 LLM 子任务"，但不在并发子 Agent 运行中途做实时取消。
+
 ## 10. Script Gate 与信任分层
 
 执行前 gate（在上层方案 §8.5 基础上明确"哪些是边界"）：
@@ -328,12 +330,12 @@ bundled 模板就是"被 release 信任的脚本"，与通用引擎共用同一 
 
 确定性恢复测试必须**无 LLM**（仿 `dreaming_eval` 模式），只测安全红线：副作用恰好一次边界、Primary-only、incognito 拒绝、无人值守 askUser fail-closed、预算硬上限。
 
-## 15. 待验证问题
+## 15. 风险与验证状态
 
-| 问题 | 处理 |
+| 问题 | 状态 |
 | --- | --- |
-| rquickjs async bridge 与 durable 记录的事务边界 | MVP 先验证 5–6 op；op 落库与副作用发起的先后用 §3.2 强制顺序 |
-| `exec` 不可判定副作用面太大 | 默认 non_idempotent + 崩溃转人工；鼓励 validate 用只读命令 |
-| 位置键在脚本含数据依赖循环时是否仍稳定 | 循环体由确定性输入驱动即稳定；非确定性输入已被 §4.3 禁 |
-| token 预算跨子 agent 归集精度 | 复用现有用量统计；池化计数，单测锁 spent 归集 |
-| 模型仍可能写出重放分叉的脚本 | gate lint 早报错 + 重放分叉时 fail-safe 转 Blocked，不静默产出错误结果 |
+| rquickjs async bridge 与 durable 记录的事务边界 | 已用首批 host op 与 replay 单测锁定；op 落库与副作用发起的先后仍以 §3.2 作为红线 |
+| `exec` 不可判定副作用面太大 | 已按默认 non_idempotent + 崩溃转人工处理；validate 仍鼓励只读命令 |
+| 位置键在脚本含数据依赖循环时是否仍稳定 | 已用 map 物化与位置化 op-key 约束；循环体必须由确定性输入驱动，非确定性输入由 §4.3 禁止 |
+| token 预算跨子 agent 归集精度 | 已落 output token 池化计数；`runtime_blocks_new_spawn_agent_after_output_token_budget_is_spent` 锁定 spent 归集、`budget_usage` 与 blocked 转移 |
+| 模型仍可能写出重放分叉的脚本 | Gate lint 早报错 + 重放分叉时 fail-safe 转 Blocked，不静默产出错误结果 |

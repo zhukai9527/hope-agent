@@ -73,6 +73,32 @@ impl SessionDB {
         Ok(())
     }
 
+    /// Persist token usage for a completed sub-agent run. This is intentionally
+    /// separate from status transitions so kill/error paths can remain lightweight.
+    pub fn set_subagent_usage(
+        &self,
+        run_id: &str,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE subagent_runs
+             SET input_tokens = COALESCE(?1, input_tokens),
+                 output_tokens = COALESCE(?2, output_tokens)
+             WHERE run_id = ?3",
+            params![
+                input_tokens.map(|v| v as i64),
+                output_tokens.map(|v| v as i64),
+                run_id,
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Guarded status transition: write `to` only when the row is currently
     /// `from`. Returns `Ok(true)` iff a row was updated. The R7.2 promoter uses
     /// this to flip `Queued → Spawning` atomically so it loses cleanly to a

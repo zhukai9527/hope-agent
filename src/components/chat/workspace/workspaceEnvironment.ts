@@ -53,6 +53,14 @@ export function resolveWorkspaceEnvironmentStatus(
       tone: "warn",
     }
   }
+  if (!snapshot) {
+    return {
+      kind: "unknown",
+      labelKey: "workspace.environment.status.unknown",
+      fallback: "状态未知",
+      tone: "muted",
+    }
+  }
   const git = snapshot?.git ?? null
   if (!git) {
     return {

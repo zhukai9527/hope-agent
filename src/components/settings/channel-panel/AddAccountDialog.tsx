@@ -51,8 +51,8 @@ export default function AddAccountDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  plugins: ChannelPluginInfo[]
-  agents: AgentInfo[]
+  plugins?: ChannelPluginInfo[] | null
+  agents?: AgentInfo[] | null
   onAdded: () => void
   initialChannelId?: string
 }) {
@@ -111,8 +111,10 @@ export default function AddAccountDialog({
   const [validationError, setValidationError] = useState<string | null>(null)
   const [wechatConnection, setWeChatConnection] = useState<WeChatConnection | null>(null)
 
-  const selectedPlugin = plugins.find((p) => p.meta.id === channelId)
-  const selectedAgent = agents.find((agent) => agent.id === agentId)
+  const safePlugins = Array.isArray(plugins) ? plugins : []
+  const safeAgents = Array.isArray(agents) ? agents : []
+  const selectedPlugin = safePlugins.find((p) => p.meta.id === channelId)
+  const selectedAgent = safeAgents.find((agent) => agent.id === agentId)
 
   const handleSelectChannel = (id: string) => {
     setChannelId(id)
@@ -308,7 +310,7 @@ export default function AddAccountDialog({
             </DialogHeader>
 
             <div className="grid grid-cols-2 gap-3">
-              {plugins.map((p) => (
+              {safePlugins.map((p) => (
                 <Button
                   key={p.meta.id}
                   variant="outline"
@@ -781,7 +783,7 @@ export default function AddAccountDialog({
                     >
                       {t("channels.boundAgentDefault")}
                     </SelectItem>
-                    {agents.map((a) => (
+                    {safeAgents.map((a) => (
                       <SelectItem key={a.id} value={a.id} textValue={a.name}>
                         <AgentSelectDisplay agent={a} />
                       </SelectItem>
@@ -826,7 +828,7 @@ export default function AddAccountDialog({
                   onGroupsChange={setGroups}
                   channels={channels}
                   onChannelsChange={setChannels}
-                  agents={agents}
+                  agents={safeAgents}
                   t={t}
                 />
               )}

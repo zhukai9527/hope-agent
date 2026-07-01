@@ -324,6 +324,11 @@ pub struct ToolExecContext {
     /// not wrap the output first, materialize image markers, or turn the async
     /// output-file into a pointer to a second file.
     pub suppress_result_disk_persistence: bool,
+    /// Internal flag for workflow-owned async jobs whose result is surfaced by
+    /// their parent workflow UI instead of by a chat `<task-notification>`.
+    /// Terminal state, hooks, events, and Background Jobs rows still update; the
+    /// row is simply marked injected so replay does not synthesize a chat turn.
+    pub suppress_completion_injection: bool,
     /// Whether the owning session is incognito (`sessions.incognito`). Resolved
     /// once per ctx build from the session row. Incognito sessions must leave no
     /// disk trace, so this gates large-tool-result spooling

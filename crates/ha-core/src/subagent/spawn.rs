@@ -14,6 +14,10 @@ use super::{
     MAX_RESULT_CHARS,
 };
 
+fn usage_tokens(value: Option<i64>) -> Option<u64> {
+    value.and_then(|v| u64::try_from(v).ok())
+}
+
 // ── Spawn Logic ─────────────────────────────────────────────────
 
 /// `SpawnParams.label` value used by the `agent` hook handler. Subagents
@@ -331,7 +335,7 @@ pub(crate) fn launch_subagent_run(
         );
 
         enum ExecutionResult {
-            Finished(Result<(String, Option<String>)>),
+            Finished(Result<(String, Option<String>, crate::chat_engine::CapturedUsage)>),
             Timeout,
         }
 
@@ -374,10 +378,16 @@ pub(crate) fn launch_subagent_run(
         let finished_at = chrono::Utc::now().to_rfc3339();
 
         // Determine outcome — handles Ok, Err, Timeout, Cancel, and Panic
-        let (status, result_text, error_text, model_used) = match result {
-            Ok(ExecutionResult::Finished(Ok((response, model)))) => {
+        let (status, result_text, error_text, model_used, usage) = match result {
+            Ok(ExecutionResult::Finished(Ok((response, model, usage)))) => {
                 let truncated = truncate_str(&response, MAX_RESULT_CHARS);
-                (SubagentStatus::Completed, Some(truncated), None, model)
+                (
+                    SubagentStatus::Completed,
+                    Some(truncated),
+                    None,
+                    model,
+                    usage,
+                )
             }
             Ok(ExecutionResult::Finished(Err(e))) => {
                 if cancel_flag.load(Ordering::SeqCst) {
@@ -386,9 +396,16 @@ pub(crate) fn launch_subagent_run(
                         None,
                         Some("Killed by parent".into()),
                         None,
+                        Default::default(),
                     )
                 } else {
-                    (SubagentStatus::Error, None, Some(e.to_string()), None)
+                    (
+                        SubagentStatus::Error,
+                        None,
+                        Some(e.to_string()),
+                        None,
+                        Default::default(),
+                    )
                 }
             }
             Ok(ExecutionResult::Timeout) => {
@@ -398,6 +415,7 @@ pub(crate) fn launch_subagent_run(
                     None,
                     Some(format!("Timed out after {}s", timeout_secs)),
                     None,
+                    Default::default(),
                 )
             }
             Err(_panic) => {
@@ -407,9 +425,12 @@ pub(crate) fn launch_subagent_run(
                     None,
                     Some("Sub-agent panicked unexpectedly".into()),
                     None,
+                    Default::default(),
                 )
             }
         };
+        let input_tokens = usage_tokens(usage.input_tokens);
+        let output_tokens = usage_tokens(usage.output_tokens);
 
         if !matches!(status, SubagentStatus::Completed) {
             let reply_text = error_text
@@ -432,6 +453,7 @@ pub(crate) fn launch_subagent_run(
             model_used.as_deref(),
             Some(duration_ms),
         );
+        let _ = db.set_subagent_usage(&run_id_clone, input_tokens, output_tokens);
         let _ = db.set_subagent_finished_at(&run_id_clone, &finished_at);
 
         // Emit completion event — guaranteed to fire
@@ -468,8 +490,8 @@ pub(crate) fn launch_subagent_run(
             error: error_text.clone(),
             duration_ms: Some(duration_ms),
             label: label.clone(),
-            input_tokens: None, // TODO: extract from agent usage when available
-            output_tokens: None,
+            input_tokens,
+            output_tokens,
             result_full: result_text,
             skill_name: skill_name_for_events.clone(),
         });
@@ -549,7 +571,7 @@ pub(crate) fn launch_subagent_run(
 }
 
 /// Execute the sub-agent (runs within the spawned tokio task).
-/// Returns (response_text, model_used).
+/// Returns (response_text, model_used, captured_usage).
 ///
 /// `+ Send` is declared explicitly so the spawner's `tokio::spawn` bounds
 /// stay self-documenting. Collapsing to `async fn` would infer the bound
@@ -574,7 +596,9 @@ fn execute_subagent(
     reasoning_effort: Option<String>,
     origin_source: Option<crate::knowledge::KbAccessSource>,
     origin_channel_kb_context: Option<crate::knowledge::ChannelKbContext>,
-) -> impl std::future::Future<Output = Result<(String, Option<String>)>> + Send {
+) -> impl std::future::Future<
+    Output = Result<(String, Option<String>, crate::chat_engine::CapturedUsage)>,
+> + Send {
     async move {
         use crate::provider;
 
@@ -731,7 +755,7 @@ fn execute_subagent(
         .map_err(|e| anyhow::anyhow!("All models failed for sub-agent: {}", e))?;
 
         let model_used = result.model_used.as_ref().map(ToString::to_string);
-        Ok((result.response, model_used))
+        Ok((result.response, model_used, result.usage))
     } // async move
 }
 

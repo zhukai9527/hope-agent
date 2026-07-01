@@ -366,7 +366,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Workflow runs --
   list_workflow_runs:              { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs" },
+  preview_workflow_script:         { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs/preview" },
+  create_workflow_run:             { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs" },
   get_workflow_run:                { method: "GET",    path: "/api/workflow-runs/{runId}" },
+  run_workflow_run:                { method: "POST",   path: "/api/workflow-runs/{runId}/run" },
   pause_workflow_run:              { method: "POST",   path: "/api/workflow-runs/{runId}/pause" },
   resume_workflow_run:             { method: "POST",   path: "/api/workflow-runs/{runId}/resume" },
   approve_workflow_run:            { method: "POST",   path: "/api/workflow-runs/{runId}/approve" },
@@ -903,9 +906,36 @@ function normalizeCommandResponse(command: string, value: unknown): unknown {
       case "get_local_llm_auto_maintenance_enabled":
         // axum 路由返回 `{ enabled: bool }`；Tauri 命令直接返回 bool。
         return record.enabled ?? false;
+      case "try_restore_session":
+        // HTTP returns `{ restored: bool }`; Tauri returns the boolean directly.
+        return record.restored ?? false;
     }
   }
   return value;
+}
+
+function providerConfigFromArgs(args: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  const config = args?.config;
+  if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+  return { ...(config as Record<string, unknown>) };
+}
+
+function normalizeHttpCommandArgs(
+  command: string,
+  args: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (command === "add_provider" || command === "test_provider") {
+    return providerConfigFromArgs(args) ?? args;
+  }
+  if (command === "update_provider") {
+    const config = providerConfigFromArgs(args);
+    if (!config) return args;
+    return {
+      ...config,
+      providerId: args?.providerId ?? config.id,
+    };
+  }
+  return args;
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,7 +1041,8 @@ export class HttpTransport implements Transport {
       );
     }
 
-    const { url: rawUrl, remainingArgs } = buildUrl(this.baseUrl, def, args);
+    const httpArgs = normalizeHttpCommandArgs(command, args);
+    const { url: rawUrl, remainingArgs } = buildUrl(this.baseUrl, def, httpArgs);
 
     const isBodyMethod = def.method === "POST" || def.method === "PUT" || def.method === "PATCH";
     const url = isBodyMethod ? rawUrl : appendQueryParams(rawUrl, remainingArgs);

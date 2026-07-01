@@ -51,6 +51,7 @@ interface CanvasPanelProps {
   onOpenChange?: (open: boolean) => void
   visible?: boolean
   collapsed?: boolean
+  overlay?: boolean
 }
 
 export const CLOSE_CANVAS_PANEL_EVENT = "hope-agent:close-canvas"
@@ -63,6 +64,7 @@ export default function CanvasPanel({
   onOpenChange,
   visible = true,
   collapsed = false,
+  overlay = false,
 }: CanvasPanelProps) {
   const { t } = useTranslation()
   const [canvas, setCanvas] = useState<CanvasInfo | null>(null)
@@ -414,6 +416,7 @@ export default function CanvasPanel({
         resizeLabel={t("canvas.resizePanel", "Resize canvas panel")}
         reservedMainWidth={reservedMainWidth}
         collapsed={collapsed}
+        overlay={overlay}
         contentKey="canvas-detached"
       >
         {/* Title Bar */}
@@ -456,6 +459,7 @@ export default function CanvasPanel({
       maximized={maximized}
       reservedMainWidth={reservedMainWidth}
       collapsed={collapsed}
+      overlay={overlay}
       contentKey="canvas"
     >
       {/* Title Bar */}
