@@ -31,7 +31,11 @@ fn scan_agent_mention_ids(message: &str) -> Vec<String> {
 
 fn task_text_without_agent_mentions(message: &str) -> String {
     let stripped = agent_mention_re().replace_all(message, "");
-    stripped.split_whitespace().collect::<Vec<_>>().join(" ")
+    if stripped.trim().is_empty() {
+        String::new()
+    } else {
+        stripped.into_owned()
+    }
 }
 
 /// Resolve composer `@agent` mentions into a turn-local advisory system block.
@@ -135,6 +139,23 @@ mod tests {
     fn task_text_removes_agent_tokens() {
         let task =
             task_text_without_agent_mentions("请 [@Reviewer](#agent:reviewer) 检查这个 PR 的风险");
-        assert_eq!(task, "请 检查这个 PR 的风险");
+        assert_eq!(task, "请  检查这个 PR 的风险");
+    }
+
+    #[test]
+    fn task_text_preserves_formatting_after_removing_agent_tokens() {
+        let task = task_text_without_agent_mentions(
+            "请 [@Reviewer](#agent:reviewer) 检查:\n```yaml\nsteps:\n  - run: cargo test\n```\n\n    traceback line",
+        );
+        assert_eq!(
+            task,
+            "请  检查:\n```yaml\nsteps:\n  - run: cargo test\n```\n\n    traceback line"
+        );
+    }
+
+    #[test]
+    fn task_text_returns_empty_when_only_agent_tokens_remain() {
+        let task = task_text_without_agent_mentions("  [@Reviewer](#agent:reviewer)\n");
+        assert_eq!(task, "");
     }
 }
