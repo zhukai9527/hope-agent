@@ -515,7 +515,7 @@ export default function KnowledgeCompilePanel({
   )
 }
 
-function ProposalDiff({ proposal }: { proposal: CompileProposal }) {
+export function ProposalDiff({ proposal }: { proposal: CompileProposal }) {
   const rows = useMemo(
     () => buildUnifiedRows(proposal.beforeText ?? "", proposal.afterText ?? ""),
     [proposal.afterText, proposal.beforeText],

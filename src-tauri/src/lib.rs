@@ -623,6 +623,7 @@ pub fn run() {
             commands::knowledge::kb_compile_proposal_approve_cmd,
             commands::knowledge::kb_compile_proposal_reject_cmd,
             commands::knowledge::kb_compile_run_cancel_cmd,
+            commands::knowledge::kb_query_file_cmd,
             commands::knowledge::kb_schema_profile_cmd,
             commands::knowledge::kb_schema_issues_cmd,
             commands::knowledge::kb_note_source_refs_cmd,

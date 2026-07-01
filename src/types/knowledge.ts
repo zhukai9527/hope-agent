@@ -160,6 +160,22 @@ export interface CompileStartInput {
   strategy?: string | null
 }
 
+export type QueryFileMode =
+  | "create_note"
+  | "update_current_note"
+  | "append_to_moc"
+  | "append_open_questions"
+
+export interface QueryFileInput {
+  sessionId: string
+  messageId: number
+  mode?: QueryFileMode | null
+  currentNotePath?: string | null
+  targetPath?: string | null
+  title?: string | null
+  confirmConversationSource?: boolean
+}
+
 export interface CompileRun {
   id: string
   kbId: string

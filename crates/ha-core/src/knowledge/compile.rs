@@ -8,13 +8,17 @@ use serde::Deserialize;
 
 use super::types::{
     CompileProposal, CompileProposalAction, CompileProposalKind, CompileProposalStatus, CompileRun,
-    CompileRunStatus, CompileStartInput, KnowledgeSource, NewCompileProposal,
-    DEFAULT_SCHEMA_SECTIONS,
+    CompileRunStatus, CompileStartInput, KnowledgeSource, NewCompileProposal, QueryFileInput,
+    QueryFileMode, DEFAULT_SCHEMA_SECTIONS,
 };
 use super::{service, source};
+use crate::session::{MessageRole, SessionKind, SessionMessage};
 
 const DEFAULT_STRATEGY: &str = "source_summary_v1";
+const QUERY_FILE_STRATEGY: &str = "query_filing_v1";
 const MAX_SOURCE_PROMPT_CHARS: usize = 18_000;
+const MAX_FILED_ANSWER_CHARS: usize = 12_000;
+const MAX_FILED_PROMPT_CHARS: usize = 3_000;
 const MAX_RELATED_NOTES: usize = 5;
 const LLM_TIMEOUT_SECS: u64 = 120;
 const LLM_MAX_TOKENS: u32 = 4_000;
@@ -121,6 +125,71 @@ pub fn list_proposals(
 ) -> Result<Vec<CompileProposal>> {
     ensure_kb_exists(kb_id)?;
     registry()?.list_compile_proposals(kb_id, run_id, status)
+}
+
+pub fn query_file(kb_id: &str, input: QueryFileInput) -> Result<CompileProposal> {
+    ensure_kb_exists(kb_id)?;
+    let session_db =
+        crate::get_session_db().ok_or_else(|| anyhow!("session db not initialized"))?;
+    let session = session_db
+        .get_session(&input.session_id)?
+        .ok_or_else(|| anyhow!("session not found: {}", input.session_id))?;
+    if session.incognito {
+        bail!("cannot file an incognito conversation into a knowledge base");
+    }
+    if session.kind != SessionKind::Knowledge && !input.confirm_conversation_source {
+        bail!("filing a regular conversation requires explicit confirmation");
+    }
+
+    let message = session_db
+        .get_message(input.message_id)?
+        .ok_or_else(|| anyhow!("message not found: {}", input.message_id))?;
+    if message.session_id != input.session_id {
+        bail!("message does not belong to the requested session");
+    }
+    if message.role != MessageRole::Assistant {
+        bail!("only assistant messages can be filed");
+    }
+    let answer = message.content.trim();
+    if answer.is_empty() {
+        bail!("assistant message is empty");
+    }
+    let user_prompt = previous_user_prompt(
+        &session_db.load_session_messages(&input.session_id)?,
+        message.id,
+    );
+    let mode = input.mode.unwrap_or(QueryFileMode::CreateNote);
+    let title = normalize_title(
+        input.title.as_deref(),
+        user_prompt.as_deref().unwrap_or(answer),
+    );
+    let target_path = resolve_query_file_target(&input, mode, &title)?;
+    let proposal = build_query_file_proposal(
+        kb_id,
+        &input,
+        mode,
+        &message,
+        user_prompt,
+        &title,
+        &target_path,
+    )?;
+    let fingerprint = query_file_run_fingerprint(kb_id, &input, mode, &target_path, &proposal);
+    let (run, should_execute) =
+        registry()?.begin_compile_run(kb_id, &[], QUERY_FILE_STRATEGY, &fingerprint)?;
+    if !should_execute {
+        return existing_query_file_proposal(kb_id, &run.id, &proposal.fingerprint);
+    }
+
+    let inserted = registry()?.insert_compile_proposals(&run.id, kb_id, &[proposal.clone()])?;
+    registry()?.finish_compile_run(
+        &run.id,
+        CompileRunStatus::Completed,
+        Some("Generated 1 query filing review proposal."),
+        None,
+        inserted as u32,
+        None,
+    )?;
+    existing_query_file_proposal(kb_id, &run.id, &proposal.fingerprint)
 }
 
 pub async fn approve_proposal(id: i64) -> Result<CompileProposal> {
@@ -301,6 +370,396 @@ fn ensure_run_not_cancelled(run_id: &str) -> Result<()> {
         bail!("compile run cancelled");
     }
     Ok(())
+}
+
+fn existing_query_file_proposal(
+    kb_id: &str,
+    run_id: &str,
+    fingerprint: &str,
+) -> Result<CompileProposal> {
+    registry()?
+        .list_compile_proposals(kb_id, Some(run_id), None)?
+        .into_iter()
+        .find(|p| p.fingerprint == fingerprint)
+        .or_else(|| {
+            registry()
+                .ok()
+                .and_then(|reg| reg.list_compile_proposals(kb_id, None, None).ok())
+                .and_then(|items| items.into_iter().find(|p| p.fingerprint == fingerprint))
+        })
+        .ok_or_else(|| anyhow!("query filing proposal vanished after creation"))
+}
+
+fn previous_user_prompt(messages: &[SessionMessage], assistant_message_id: i64) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| m.id < assistant_message_id && m.role == MessageRole::User)
+        .map(|m| m.content.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn resolve_query_file_target(
+    input: &QueryFileInput,
+    mode: QueryFileMode,
+    title: &str,
+) -> Result<String> {
+    let clean = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    match mode {
+        QueryFileMode::CreateNote => Ok(clean(&input.target_path).unwrap_or_else(|| {
+            format!(
+                "Filed Conversations/{}-{}.md",
+                sanitize_file_stem(title),
+                input.message_id
+            )
+        })),
+        QueryFileMode::UpdateCurrentNote => clean(&input.current_note_path)
+            .ok_or_else(|| anyhow!("current note is required for update-current-note filing")),
+        QueryFileMode::AppendToMoc => clean(&input.target_path)
+            .ok_or_else(|| anyhow!("target MOC path is required for MOC filing")),
+        QueryFileMode::AppendOpenQuestions => clean(&input.target_path)
+            .or_else(|| clean(&input.current_note_path))
+            .ok_or_else(|| anyhow!("target note is required for Open Questions filing")),
+    }
+}
+
+fn build_query_file_proposal(
+    kb_id: &str,
+    input: &QueryFileInput,
+    mode: QueryFileMode,
+    message: &SessionMessage,
+    user_prompt: Option<String>,
+    title: &str,
+    target_path: &str,
+) -> Result<NewCompileProposal> {
+    let answer = crate::truncate_utf8(message.content.trim(), MAX_FILED_ANSWER_CHARS);
+    let user_prompt = user_prompt
+        .as_deref()
+        .map(|s| crate::truncate_utf8(s, MAX_FILED_PROMPT_CHARS).to_string());
+    let filed_block = conversation_filed_block(title, user_prompt.as_deref(), answer, message);
+    let (kind, action, before_text, after_text) = match mode {
+        QueryFileMode::CreateNote => {
+            let content = conversation_note_content(title, user_prompt.as_deref(), answer, message);
+            (
+                CompileProposalKind::CreateNote,
+                CompileProposalAction::CreateNote {
+                    path: target_path.to_string(),
+                    content: content.clone(),
+                    overwrite: false,
+                },
+                Some(String::new()),
+                Some(content),
+            )
+        }
+        QueryFileMode::UpdateCurrentNote => {
+            let cur = service::note_read(kb_id, target_path)?;
+            let updated = append_under_section(&cur.content, "Compiled Truth", &filed_block);
+            (
+                CompileProposalKind::PatchNote,
+                CompileProposalAction::PatchNote {
+                    path: target_path.to_string(),
+                    old: cur.content.clone(),
+                    new: updated.clone(),
+                    expected_file_hash: Some(cur.content_hash),
+                },
+                Some(cur.content),
+                Some(updated),
+            )
+        }
+        QueryFileMode::AppendToMoc => {
+            if let Ok(cur) = service::note_read(kb_id, target_path) {
+                let updated =
+                    append_under_section(&cur.content, "Filed Conversations", &filed_block);
+                (
+                    CompileProposalKind::PatchNote,
+                    CompileProposalAction::PatchNote {
+                        path: target_path.to_string(),
+                        old: cur.content.clone(),
+                        new: updated.clone(),
+                        expected_file_hash: Some(cur.content_hash),
+                    },
+                    Some(cur.content),
+                    Some(updated),
+                )
+            } else {
+                let content = moc_with_filed_conversation(target_path, &filed_block);
+                (
+                    CompileProposalKind::CreateMoc,
+                    CompileProposalAction::CreateMoc {
+                        path: target_path.to_string(),
+                        content: content.clone(),
+                        overwrite: false,
+                    },
+                    Some(String::new()),
+                    Some(content),
+                )
+            }
+        }
+        QueryFileMode::AppendOpenQuestions => {
+            let cur = service::note_read(kb_id, target_path)?;
+            let updated = append_under_section(
+                &cur.content,
+                "Open Questions",
+                &open_question_filing(title, user_prompt.as_deref(), answer, message),
+            );
+            (
+                CompileProposalKind::PatchNote,
+                CompileProposalAction::PatchNote {
+                    path: target_path.to_string(),
+                    old: cur.content.clone(),
+                    new: updated.clone(),
+                    expected_file_hash: Some(cur.content_hash),
+                },
+                Some(cur.content),
+                Some(updated),
+            )
+        }
+    };
+    let fingerprint = super::blake3_hex(
+        format!(
+            "query-file-proposal:v1:{kb_id}:{}:{}:{}:{}:{}",
+            input.session_id,
+            input.message_id,
+            mode_key(mode),
+            target_path,
+            super::blake3_hex(answer.as_bytes())
+        )
+        .as_bytes(),
+    );
+    Ok(NewCompileProposal {
+        kind,
+        title: format!("File answer: {title}"),
+        detail: format!(
+            "conversation {}#{} -> {}",
+            input.session_id, input.message_id, target_path
+        ),
+        action,
+        fingerprint,
+        source_ids: Vec::new(),
+        before_text,
+        after_text,
+    })
+}
+
+fn query_file_run_fingerprint(
+    kb_id: &str,
+    input: &QueryFileInput,
+    mode: QueryFileMode,
+    target_path: &str,
+    proposal: &NewCompileProposal,
+) -> String {
+    super::blake3_hex(
+        format!(
+            "query-file-run:v1:{kb_id}:{}:{}:{}:{}:{}",
+            input.session_id,
+            input.message_id,
+            mode_key(mode),
+            target_path,
+            proposal.fingerprint
+        )
+        .as_bytes(),
+    )
+}
+
+fn mode_key(mode: QueryFileMode) -> &'static str {
+    match mode {
+        QueryFileMode::CreateNote => "create_note",
+        QueryFileMode::UpdateCurrentNote => "update_current_note",
+        QueryFileMode::AppendToMoc => "append_to_moc",
+        QueryFileMode::AppendOpenQuestions => "append_open_questions",
+    }
+}
+
+fn normalize_title(requested: Option<&str>, fallback: &str) -> String {
+    let raw = requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            fallback
+                .lines()
+                .next()
+                .unwrap_or("Filed conversation")
+                .trim()
+        });
+    let raw = raw
+        .trim_start_matches('#')
+        .trim_start_matches(['-', '*'])
+        .trim();
+    let title = crate::truncate_utf8(raw, 80).trim().to_string();
+    if title.is_empty() {
+        "Filed conversation".to_string()
+    } else {
+        title
+    }
+}
+
+fn conversation_note_content(
+    title: &str,
+    user_prompt: Option<&str>,
+    answer: &str,
+    message: &SessionMessage,
+) -> String {
+    let filed_at = chrono::Utc::now().to_rfc3339();
+    let prompt = user_prompt.unwrap_or("No user prompt captured.");
+    format!(
+        r#"---
+type: conversation_note
+source: conversation
+conversation_session_id: "{}"
+conversation_message_id: {}
+filed_at: "{}"
+confidence: medium
+---
+
+# {}
+
+## For Agent
+
+This note was filed from a knowledge conversation. Treat it as a reviewed conversation-derived synthesis and follow the Evidence section back to the original turn when needed.
+
+## Compiled Truth
+
+{}
+
+## Timeline
+
+- {}: Filed from conversation message `{}`.
+
+## Evidence
+
+- source: conversation
+- session_id: `{}`
+- message_id: `{}`
+- assistant_timestamp: `{}`
+- user_prompt: {}
+
+## Open Questions
+
+## Related
+"#,
+        yaml_escape(&message.session_id),
+        message.id,
+        yaml_escape(&filed_at),
+        title.trim(),
+        answer.trim(),
+        filed_at,
+        message.id,
+        message.session_id,
+        message.id,
+        message.timestamp,
+        yaml_inline(prompt),
+    )
+}
+
+fn conversation_filed_block(
+    title: &str,
+    user_prompt: Option<&str>,
+    answer: &str,
+    message: &SessionMessage,
+) -> String {
+    let prompt = user_prompt.unwrap_or("No user prompt captured.");
+    format!(
+        "### {}\n\n> source: conversation · session `{}` · message `{}` · assistant `{}`\n\n**User prompt**\n\n> {}\n\n**Filed answer**\n\n{}\n",
+        title.trim(),
+        message.session_id,
+        message.id,
+        message.timestamp,
+        quote_markdown(prompt),
+        answer.trim(),
+    )
+}
+
+fn open_question_filing(
+    title: &str,
+    user_prompt: Option<&str>,
+    answer: &str,
+    message: &SessionMessage,
+) -> String {
+    let prompt = user_prompt.unwrap_or(title);
+    format!(
+        "- [ ] {}\n  - source: conversation `{}` / message `{}`\n  - prompt: {}\n  - filed answer: {}\n",
+        title.trim(),
+        message.session_id,
+        message.id,
+        one_line(prompt),
+        one_line(answer),
+    )
+}
+
+fn moc_with_filed_conversation(path: &str, filed_block: &str) -> String {
+    let title = path
+        .rsplit('/')
+        .next()
+        .unwrap_or("Conversation MOC")
+        .trim_end_matches(".md")
+        .trim();
+    format!(
+        "---\ntype: moc\nconfidence: medium\n---\n\n# {}\n\n## For Agent\n\nThis MOC collects conversation filings.\n\n## Compiled Truth\n\n## Timeline\n\n## Evidence\n\n## Open Questions\n\n## Related\n\n## Filed Conversations\n\n{}",
+        title,
+        filed_block.trim(),
+    )
+}
+
+fn append_under_section(content: &str, section: &str, addition: &str) -> String {
+    let heading = format!("## {section}");
+    let mut pos = 0usize;
+    let mut section_start = None;
+    let mut section_end = content.len();
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed == heading {
+            section_start = Some(pos + line.len());
+        } else if section_start.is_some() && trimmed.starts_with("## ") {
+            section_end = pos;
+            break;
+        }
+        pos += line.len();
+    }
+
+    let addition = addition.trim();
+    let mut out = String::new();
+    if section_start.is_some() {
+        out.push_str(&content[..section_end].trim_end());
+        out.push_str("\n\n");
+        out.push_str(addition);
+        out.push('\n');
+        out.push_str(&content[section_end..]);
+    } else {
+        out.push_str(content.trim_end());
+        out.push_str("\n\n");
+        out.push_str(&heading);
+        out.push_str("\n\n");
+        out.push_str(addition);
+        out.push('\n');
+    }
+    out
+}
+
+fn quote_markdown(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                ">".to_string()
+            } else {
+                format!("> {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn one_line(text: &str) -> String {
+    crate::truncate_utf8(&text.split_whitespace().collect::<Vec<_>>().join(" "), 240).to_string()
+}
+
+fn yaml_inline(text: &str) -> String {
+    format!("\"{}\"", yaml_escape(&one_line(text)))
 }
 
 async fn generate_summary(

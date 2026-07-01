@@ -1493,6 +1493,24 @@ impl SessionDB {
         Ok(messages)
     }
 
+    /// Load a single persisted message by database id.
+    pub fn get_message(&self, message_id: i64) -> Result<Option<SessionMessage>> {
+        let conn = self.read_conn()?;
+        conn.query_row(
+            "SELECT id, session_id, role, content, timestamp,
+                    attachments_meta, model, tokens_in, tokens_out, reasoning_effort,
+                    tool_call_id, tool_name, tool_arguments, tool_result,
+                    tool_duration_ms, is_error, thinking, ttft_ms, tokens_in_last,
+                    tokens_cache_creation, tokens_cache_read, tool_metadata, stream_status
+             FROM messages
+             WHERE id = ?1",
+            params![message_id],
+            Self::row_to_session_message,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     /// Load the latest N messages for a session (for initial page load).
     ///
     /// Returns `(messages_in_asc_order, total_count, has_more)`.

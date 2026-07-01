@@ -332,6 +332,7 @@ impl SchemaProfile {
             kb_id: kb_id.to_string(),
             page_types: vec![
                 SchemaPageTypeSpec::new("source_summary", "Source Summary"),
+                SchemaPageTypeSpec::new("conversation_note", "Conversation Note"),
                 SchemaPageTypeSpec::new("concept", "Concept"),
                 SchemaPageTypeSpec::new("person", "Person"),
                 SchemaPageTypeSpec::new("project", "Project"),
@@ -559,6 +560,34 @@ pub struct CompileStartInput {
     pub source_ids: Vec<String>,
     #[serde(default)]
     pub strategy: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryFileMode {
+    CreateNote,
+    UpdateCurrentNote,
+    AppendToMoc,
+    AppendOpenQuestions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryFileInput {
+    pub session_id: String,
+    pub message_id: i64,
+    #[serde(default)]
+    pub mode: Option<QueryFileMode>,
+    #[serde(default)]
+    pub current_note_path: Option<String>,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Required when filing from a non-knowledge chat surface so the caller must
+    /// explicitly acknowledge that chat content will be written into a KB.
+    #[serde(default)]
+    pub confirm_conversation_source: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

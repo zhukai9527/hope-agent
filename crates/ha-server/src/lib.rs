@@ -305,6 +305,10 @@ fn build_router_with_cors(
             post(routes::knowledge::kb_compile_proposal_reject),
         )
         .route(
+            "/knowledge/{kb_id}/query-file",
+            post(routes::knowledge::kb_query_file),
+        )
+        .route(
             "/knowledge/{kb_id}/schema-profile",
             get(routes::knowledge::kb_schema_profile),
         )

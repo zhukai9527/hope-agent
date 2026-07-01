@@ -79,6 +79,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_compile_proposal_approve_cmd: { method: "POST",   path: "/api/knowledge/{kbId}/compile-proposals/{id}/approve" },
   kb_compile_proposal_reject_cmd:  { method: "POST",   path: "/api/knowledge/{kbId}/compile-proposals/{id}/reject" },
   kb_compile_run_cancel_cmd:       { method: "POST",   path: "/api/knowledge/{kbId}/compile-runs/{runId}/cancel" },
+  kb_query_file_cmd:               { method: "POST",   path: "/api/knowledge/{kbId}/query-file" },
   kb_schema_profile_cmd:           { method: "GET",    path: "/api/knowledge/{kbId}/schema-profile" },
   kb_schema_issues_cmd:            { method: "GET",    path: "/api/knowledge/{kbId}/schema-issues" },
   kb_note_source_refs_cmd:         { method: "GET",    path: "/api/knowledge/{kbId}/note/source-refs" },

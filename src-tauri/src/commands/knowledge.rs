@@ -12,7 +12,7 @@ use ha_core::knowledge::{
     CompileStartInput, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KbAttachment,
     KbChatThread, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
     KnowledgeSourceImportInput, KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit,
-    NoteSourceRef, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
     UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
@@ -188,6 +188,14 @@ pub async fn kb_compile_proposal_reject_cmd(id: i64) -> Result<bool, CmdError> {
 #[tauri::command]
 pub async fn kb_compile_run_cancel_cmd(run_id: String) -> Result<CompileRun, CmdError> {
     service::compile_run_cancel(&run_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_query_file_cmd(
+    kb_id: String,
+    input: QueryFileInput,
+) -> Result<CompileProposal, CmdError> {
+    service::query_file(&kb_id, input).map_err(Into::into)
 }
 
 // ── Schema profile + evidence refs (Phase 3) ─────────────────────

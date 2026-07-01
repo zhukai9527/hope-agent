@@ -39,7 +39,7 @@ flowchart LR
 
 读取桥三通道：① 用户消息 `[[note]]` 确定性注入；② agent 主动调 `note_search` / `knowledge_recall`；③ 被动「相关笔记标题」提示（opt-in 默认关）。三者都套 `<untrusted_external_data>` 信封，永不提升为 system 指令（#7）。
 
-## 设计取舍（决策账本 D1–D14）
+## 设计取舍（决策账本 D1–D18）
 
 > 每条记录**结论 + 理由**。D 编号在全文用作契约锚点。
 
@@ -62,6 +62,7 @@ flowchart LR
 | D15 | Raw Source / 编译输入层 | 资料舱 source 是 Hope 管理的原始输入快照，metadata + source chunk 落 `sessions.db`，文件落 `~/.hope-agent/knowledge/{kb}/sources/`；**不写外部 vault、不混进 note_chunk、不进入 agent prompt** | Karpathy LLM Wiki 的 raw/wiki 分层需要先把「原始资料」和「编译后的笔记」物理分开；Phase 1 只做导入/查看/删除，编译进入 Review Diff 是后续阶段 |
 | D16 | Knowledge Compile Review | Compile run/proposal 是 owner-plane 审阅队列：run + proposal 落 `sessions.db`，fingerprint 幂等；LLM 只产 proposal，**approve 前不写 `.md`**；apply 统一走 `service::note_save` / 当前磁盘 BLAKE3 stale guard / 外部 root 写 opt-in | 把 Karpathy LLM Wiki 的「raw -> wiki」落到产品里时，必须先有人审 diff；既避免 LLM 静默污染笔记，也让崩溃重启后待审变更不丢 |
 | D17 | Schema Profile / Evidence | 每个 KB 有 `knowledge_schema_profiles` 默认 profile（页面类型 + 必需章节）；compiled note 必含默认章节与 `source_id` evidence；owner UI 可从 note source refs 打开 raw source；维护面板列 schema/evidence lint issues | 编译层要给 agent 读的是稳定 schema，而不是任意 Markdown；source refs 是审计与跳转的最小证据链，lint 让不完整知识显性化 |
+| D18 | Query Filing | 知识对话回答可通过 owner-plane `kb_query_file_cmd` 生成归档 proposal，支持新建笔记 / 更新当前笔记 / 追加 MOC / 追加 Open Questions；approve 前不写盘，普通聊天来源必须显式确认，产物写 `source: conversation` 与 session/message 溯源 | 把探索式问答沉淀成长期 Wiki，但仍保持 Review Diff、人类确认、可追踪来源和 incognito fail-closed |
 
 ## 两类存储（D9）
 
@@ -203,6 +204,8 @@ AGENTS.md 只列这些为单行红线，细节在此。
 **当前文档上下文（cache-safe）**：每轮经 `useChatStream` 新增的 `getExtraAttachments` 回调把当前打开笔记作为 `source:"quote"` 附件注入用户消息（截断 ~4000 字符 + 提示用 `note_read` 取全文），**绝不进 system 静态前缀**（避免击穿 prompt cache）；与「锚定笔记」解耦——续聊旧对话时 AI 看到的「当前文档」永远是编辑器里打开的那篇。
 
 **前端复用**：[`chat/KnowledgeChatPanel.tsx`](../../src/components/knowledge/chat/KnowledgeChatPanel.tsx) 复用主对话 `useChatStream`（新增 `toolScope`/`getExtraAttachments`/`draftKbAnchorNote` 三个**可选** prop，主对话 / QuickChat 不传 = 行为不变）+ `MessageList`/`ChatInput`(`enableNoteMention` 开 `[[note]]` 补全)/`ApprovalDialog`；[`chat/useKnowledgeChat.ts`](../../src/components/knowledge/chat/useKnowledgeChat.ts) 管 thread 生命周期 + 模型 / Agent 态（镜像 `useQuickChatSession`）。面板在 links 模式仍**保持挂载**（隐藏），故「加入对话」的命令式 ref（`addQuote` / `insertToken`）随时可用；`active` prop 控制是否真正加载。**桌面走 per-call 通道实时流式**；HTTP 无 reattach，靠 turn 完成后 reload 线程消息对账。
+
+**Query Filing（D18）**：知识对话中已落库的 assistant 消息显示「归档」入口，打开 [`KnowledgeQueryFilingDialog.tsx`](../../src/components/knowledge/chat/KnowledgeQueryFilingDialog.tsx)：用户选择 filing mode（新建笔记 / 更新当前笔记 / MOC / Open Questions）、标题与目标路径后调用 owner 命令 `kb_query_file_cmd` 生成 `CompileProposal`，用 [`KnowledgeCompilePanel.tsx`](../../src/components/knowledge/KnowledgeCompilePanel.tsx) 的 `ProposalDiff` 预览，确认后复用 `kb_compile_proposal_approve_cmd`。后端入口 [`compile::query_file`](../../crates/ha-core/src/knowledge/compile.rs) 只产 proposal：incognito 直接拒绝；非 `kind='knowledge'` 会话必须传 `confirmConversationSource=true`；新建笔记 frontmatter 写 `type: conversation_note`、`source: conversation`、`conversation_session_id`、`conversation_message_id`，追加块写 session/message/timestamp。真正写盘仍由 Phase 2 apply 管线处理 stale-write guard、外部 root 写保护和 `knowledge:changed` 事件。
 
 **选区针对性编辑（替代旧 `AiRewriteDialog`，已删）两路并存**：
 - **加入对话**：编辑器选区 → 输入框上方可删除 quote chip（`useChatStream.pendingQuotes`）→ 进对话由 AI 用 `note_patch`/`note_update` 改写。note 工具结果带 `FileChangeMetadata`（[`note.rs::emit_note_diff`](../../crates/ha-core/src/tools/note.rs)，`language:"markdown"`，复用 `diff_util`）→ `ToolCallBlock` 内联 diff。落盘 emit `knowledge:changed` → 编辑器**重载当前笔记**（仅当 hash 变 + 非 dirty + 非 draft）。**脏态 + 磁盘 hash 变**（自身改写 / 外部 vault watcher 改了同一篇）不再静默跳过，而是弹**外部修改冲突横幅**（`externalConflict` slot，[`KnowledgeView.tsx`](../../src/components/knowledge/KnowledgeView.tsx)）：「重新加载」覆盖编辑器为磁盘版、「保留我的改动」把 `baseHash` rebase 到磁盘当前 hash 使下次保存能过 stale-write guard 覆盖外部版；切换 / 关闭笔记或保存成功即清。底层兜底仍是 stale-write guard（盲存必拒），横幅只是把冲突提前暴露给用户。

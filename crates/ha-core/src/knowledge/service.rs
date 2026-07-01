@@ -14,7 +14,8 @@ use super::types::{
     Backlink, CompileProposal, CompileProposalStatus, CompileRun, CompileStartInput,
     CreateKnowledgeBaseInput, KbAccess, KbAttachInput, KbChatThread, KnowledgeBaseMeta,
     KnowledgeSource, KnowledgeSourceImportInput, KnowledgeSourceReadResult, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
+    SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -106,6 +107,10 @@ pub fn compile_proposal_reject(id: i64) -> Result<bool> {
 
 pub fn compile_run_cancel(run_id: &str) -> Result<CompileRun> {
     super::compile::cancel_run(run_id)
+}
+
+pub fn query_file(kb_id: &str, input: QueryFileInput) -> Result<CompileProposal> {
+    super::compile::query_file(kb_id, input)
 }
 
 // ── Schema profile + evidence refs (Knowledge Compiler Phase 3) ───

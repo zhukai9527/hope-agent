@@ -25,7 +25,7 @@ use ha_core::knowledge::{
     CompileStartInput, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KbAttachment,
     KbChatThread, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
     KnowledgeSourceImportInput, KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit,
-    NoteSourceRef, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
     UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
@@ -200,6 +200,11 @@ pub struct KbSourceImportBody {
 #[derive(Debug, Deserialize)]
 pub struct KbCompileStartBody {
     pub input: CompileStartInput,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KbQueryFileBody {
+    pub input: QueryFileInput,
 }
 
 #[derive(Debug, Deserialize)]
@@ -412,6 +417,14 @@ pub async fn kb_compile_proposal_reject(
 ) -> Result<Json<bool>, AppError> {
     ensure_compile_proposal_in_kb(&kb_id, id)?;
     Ok(Json(service::compile_proposal_reject(id)?))
+}
+
+/// `POST /api/knowledge/{kb_id}/query-file`
+pub async fn kb_query_file(
+    Path(kb_id): Path<String>,
+    Json(body): Json<KbQueryFileBody>,
+) -> Result<Json<CompileProposal>, AppError> {
+    Ok(Json(service::query_file(&kb_id, body.input)?))
 }
 
 fn ensure_compile_proposal_in_kb(kb_id: &str, id: i64) -> Result<(), AppError> {
