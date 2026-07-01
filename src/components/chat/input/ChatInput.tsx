@@ -32,6 +32,7 @@ import type {
   SessionMode,
   PendingFileQuote,
   PendingSendPreview,
+  AgentSummaryForSidebar,
 } from "@/types/chat"
 import type { KbDraftAttachment } from "@/types/knowledge"
 import { DEFAULT_AGENT_ID } from "@/types/tools"
@@ -133,6 +134,9 @@ interface ChatInputProps {
   /** Enable the `@` menu's built-in **skills** section (`@skill:<name>` →
    *  office / browser / mac control). Off by default; the main chat opts in. */
   enableSkillMention?: boolean
+  /** Enable the `@` menu's Agent delegation section (`@agent:<id>`). */
+  enableAgentMention?: boolean
+  agents?: AgentSummaryForSidebar[]
   // Working directory
   workingDir?: string | null
   /** True when `workingDir` is inherited from the parent project rather than
@@ -235,6 +239,8 @@ export default function ChatInput({
   onDraftKbAttachChange,
   enableNoteMention = false,
   enableSkillMention = false,
+  enableAgentMention = false,
+  agents = [],
   workingDir,
   workingDirInherited = false,
   workingDirSaving = false,
@@ -497,6 +503,8 @@ export default function ChatInput({
         }
       : undefined,
     enableSkillMention,
+    enableAgentMention ? agents : [],
+    currentAgentId,
   )
   // `[[note]]` picker — knowledge-space notes reachable from this chat.
   const noteMention = useNoteMention(
@@ -940,6 +948,8 @@ export default function ChatInput({
           noteCapable={mention.noteCapable}
           skillEntries={mention.skillEntries}
           skillCapable={mention.skillCapable}
+          agentEntries={mention.agentEntries}
+          agentCapable={mention.agentCapable}
           selectedIndex={mention.selectedIndex}
           mode={mention.mode}
           dirPath={mention.dirPath}
@@ -951,14 +961,13 @@ export default function ChatInput({
           onSelect={mention.applyEntry}
           onSelectNote={mention.applyNote}
           onSelectSkill={mention.applySkill}
+          onSelectAgent={mention.applyAgent}
           onHover={mention.setSelectedIndex}
         />
 
         {/* Quick Prompt Menu (`#` popper) */}
         <QuickPromptMenu
-          isOpen={
-            quickPrompt.isOpen && !slash.isOpen && !noteMention.isOpen && !mention.isOpen
-          }
+          isOpen={quickPrompt.isOpen && !slash.isOpen && !noteMention.isOpen && !mention.isOpen}
           entries={quickPrompt.entries}
           selectedIndex={quickPrompt.selectedIndex}
           query={quickPrompt.query}
@@ -1188,6 +1197,8 @@ export default function ChatInput({
             fileEnabled={!!workingDir}
             noteEnabled={enableNoteMention}
             skillEnabled={enableSkillMention}
+            agentMentionEnabled={enableAgentMention}
+            agents={agents}
             hero={hero}
             readOnly={voice.state === "recording" || voice.state === "transcribing"}
           />

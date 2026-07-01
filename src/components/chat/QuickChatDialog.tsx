@@ -15,11 +15,7 @@ import { useQuickChatSession } from "./useQuickChatSession"
 import { useChatStream } from "./useChatStream"
 import type { CommandResult } from "./slash-commands/types"
 import type { AgentSummaryForSidebar } from "@/types/chat"
-import type {
-  QuickPromptAddResult,
-  QuickPromptConfig,
-  QuickPromptItem,
-} from "@/types/quickPrompts"
+import type { QuickPromptAddResult, QuickPromptConfig, QuickPromptItem } from "@/types/quickPrompts"
 import { recentUserInputHistory } from "./quick-prompts/messageQuickPrompts"
 
 interface QuickChatDialogProps {
@@ -56,10 +52,7 @@ export default function QuickChatDialog({
   const incognitoEnabled = session.currentSessionId
     ? (currentSessionMeta?.incognito ?? false)
     : session.draftIncognito
-  const inputHistory = useMemo(
-    () => recentUserInputHistory(session.messages),
-    [session.messages],
-  )
+  const inputHistory = useMemo(() => recentUserInputHistory(session.messages), [session.messages])
 
   useEffect(() => {
     if (!open) return
@@ -86,16 +79,12 @@ export default function QuickChatDialog({
         })
         setQuickPrompts((prev) => {
           if (result.duplicate) {
-            return prev.some((item) => item.id === result.item.id)
-              ? prev
-              : [result.item, ...prev]
+            return prev.some((item) => item.id === result.item.id) ? prev : [result.item, ...prev]
           }
           return [result.item, ...prev.filter((item) => item.id !== result.item.id)]
         })
         toast.success(
-          result.duplicate
-            ? t("chat.quickPrompts.duplicate")
-            : t("chat.quickPrompts.added"),
+          result.duplicate ? t("chat.quickPrompts.duplicate") : t("chat.quickPrompts.added"),
         )
       } catch {
         toast.error(t("chat.quickPrompts.addFailed"))
@@ -159,7 +148,9 @@ export default function QuickChatDialog({
       } else if (action.type === "newSession") {
         session.handleNewChat()
         if (action.sessionId) {
-          getTransport().call("delete_session_cmd", { sessionId: action.sessionId }).catch(() => {})
+          getTransport()
+            .call("delete_session_cmd", { sessionId: action.sessionId })
+            .catch(() => {})
         }
       }
     },
@@ -212,9 +203,7 @@ export default function QuickChatDialog({
 
           {/* Continuing session hint */}
           {session.currentSessionId && session.messages.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {t("quickChat.continueSession")}
-            </span>
+            <span className="text-xs text-muted-foreground">{t("quickChat.continueSession")}</span>
           )}
 
           {/* Incognito toggle — draft state only (mirrors main chat). */}
@@ -238,21 +227,19 @@ export default function QuickChatDialog({
           </Button>
 
           {/* Open in main window — only when there's a session with messages */}
-          {session.currentSessionId &&
-            session.messages.length > 0 &&
-            onNavigateToSession && (
-              <IconTip label={t("quickChat.viewFullChat")}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleNavigate(session.currentSessionId!)}
-                  className="h-7 w-7"
-                  aria-label={t("quickChat.viewFullChat")}
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </Button>
-              </IconTip>
-            )}
+          {session.currentSessionId && session.messages.length > 0 && onNavigateToSession && (
+            <IconTip label={t("quickChat.viewFullChat")}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleNavigate(session.currentSessionId!)}
+                className="h-7 w-7"
+                aria-label={t("quickChat.viewFullChat")}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            </IconTip>
+          )}
 
           {/* Close button */}
           <Button
@@ -308,6 +295,8 @@ export default function QuickChatDialog({
             onStop={stream.handleStop}
             currentSessionId={session.currentSessionId}
             currentAgentId={session.currentAgentId}
+            enableAgentMention
+            agents={session.agents}
             onCommandAction={handleCommandAction}
             permissionMode={stream.permissionMode}
             onPermissionModeChange={stream.setPermissionModeByUser}
@@ -360,9 +349,7 @@ function AgentSelector({
         )}
       >
         <AgentAvatarIcon agent={currentAgent} size="sm" />
-        <span className="font-medium">
-          {currentAgent?.name || t("chat.mainAgent")}
-        </span>
+        <span className="font-medium">{currentAgent?.name || t("chat.mainAgent")}</span>
         <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </button>
 
@@ -405,7 +392,12 @@ function AgentAvatarIcon({
   const dim = size === "md" ? "w-6 h-6" : "w-5 h-5"
   const iconDim = size === "md" ? "h-3.5 w-3.5" : "h-3 w-3"
   return (
-    <div className={cn(dim, "rounded-full bg-primary/15 flex items-center justify-center text-primary shrink-0 text-[10px] overflow-hidden")}>
+    <div
+      className={cn(
+        dim,
+        "rounded-full bg-primary/15 flex items-center justify-center text-primary shrink-0 text-[10px] overflow-hidden",
+      )}
+    >
       {agent?.avatar ? (
         <img
           src={getTransport().resolveAssetUrl(agent.avatar) ?? agent.avatar}
