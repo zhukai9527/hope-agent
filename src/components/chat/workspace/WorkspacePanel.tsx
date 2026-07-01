@@ -129,6 +129,7 @@ import {
   type WorkflowRunsState,
   type WorkflowScriptPreview,
 } from "./useWorkflowRuns"
+import { useGoal, type Goal, type GoalSnapshot, type GoalState } from "./useGoal"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
 import { PANEL_SCROLL_FADE } from "../right-panel/panelFade"
 import {
@@ -2107,6 +2108,7 @@ function WorkflowRunsSection({
     disabled: Boolean(workflowRunsState),
   })
   const { runs, activeCount, loading, error, refresh } = workflowRunsState ?? ownedWorkflowRuns
+  const goalState = useGoal(sessionId, { incognito })
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<WorkflowRunSnapshot | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
@@ -2128,6 +2130,11 @@ function WorkflowRunsSection({
   const [draftOrigin, setDraftOrigin] = useState<WorkflowDraftOrigin | null>(null)
   const [showAllRuns, setShowAllRuns] = useState(false)
   const [pendingCancelRun, setPendingCancelRun] = useState<WorkflowRun | null>(null)
+  const [goalActionKey, setGoalActionKey] = useState<string | null>(null)
+  const [goalCreateOpen, setGoalCreateOpen] = useState(false)
+  const [goalObjective, setGoalObjective] = useState("")
+  const [goalCriteria, setGoalCriteria] = useState("")
+  const [goalSaving, setGoalSaving] = useState(false)
   const snapshotReqRef = useRef(0)
   const executionModeReqRef = useRef(0)
   const previewReqRef = useRef(0)
@@ -2137,6 +2144,7 @@ function WorkflowRunsSection({
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null
   const visibleRuns = showAllRuns ? runs : runs.slice(0, WORKFLOW_RUN_PREVIEW)
   const canMaterializeSession = Boolean(sessionId || onEnsureSession)
+  const activeGoal = goalState.snapshot?.goal ?? null
 
   const ensureWorkflowSession = useCallback(async () => {
     if (sessionId) return sessionId
@@ -2275,6 +2283,61 @@ function WorkflowRunsSection({
       }
     },
     [incognito, executionMode, sessionId, t],
+  )
+
+  const createGoalFromDraft = useCallback(async () => {
+    if (incognito) return
+    const objective = goalObjective.trim()
+    if (!objective) {
+      toast.error(t("workspace.goal.objectiveRequired", "请输入目标"))
+      return
+    }
+    const targetSessionId = await ensureWorkflowSession()
+    if (!targetSessionId) return
+    setGoalSaving(true)
+    try {
+      const snapshot = await getTransport().call<GoalSnapshot>("create_goal", {
+        sessionId: targetSessionId,
+        objective,
+        completionCriteria: goalCriteria.trim(),
+      })
+      goalState.setSnapshot(snapshot)
+      setGoalObjective("")
+      setGoalCriteria("")
+      setGoalCreateOpen(false)
+      toast.success(t("workspace.goal.created", "已创建 Goal"))
+    } catch (e) {
+      logger.error("ui", "WorkflowRunsSection::createGoal", "Failed to create goal", e)
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setGoalSaving(false)
+    }
+  }, [ensureWorkflowSession, goalCriteria, goalObjective, goalState, incognito, t])
+
+  const runGoalAction = useCallback(
+    async (command: "pause_goal" | "resume_goal" | "clear_goal" | "evaluate_goal") => {
+      if (!activeGoal) return
+      const key = `${command}:${activeGoal.id}`
+      setGoalActionKey(key)
+      try {
+        const snapshot = await getTransport().call<GoalSnapshot>(command, { goalId: activeGoal.id })
+        goalState.setSnapshot(command === "clear_goal" ? null : snapshot)
+        if (command === "clear_goal") {
+          toast.success(t("workspace.goal.cleared", "Goal 已清除"))
+        } else if (command === "evaluate_goal") {
+          toast.success(t("workspace.goal.evaluated", "Goal audit 已更新"))
+        } else {
+          toast.success(t("workspace.goal.updated", "Goal 状态已更新"))
+        }
+        goalState.refresh()
+      } catch (e) {
+        logger.error("ui", "WorkflowRunsSection::goalAction", `Goal action failed: ${command}`, e)
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setGoalActionKey(null)
+      }
+    },
+    [activeGoal, goalState, t],
   )
 
   const clearDraftPreview = useCallback(() => {
@@ -2427,6 +2490,7 @@ ${repairPrompt}`
         budget: workflowBudgetForMode(draftMode),
         parentRunId: draftOrigin?.type === "repair" ? draftOrigin.runId : undefined,
         origin: draftOrigin?.type === "repair" ? "repair" : undefined,
+        goalId: activeGoal?.id ?? undefined,
         runImmediately: runImmediatelyForCreate,
       })
       setSelectedRunId(run.id)
@@ -2460,6 +2524,7 @@ ${repairPrompt}`
     draftRunImmediately,
     draftScript,
     ensureWorkflowSession,
+    activeGoal?.id,
     incognito,
     loadSnapshot,
     refresh,
@@ -2613,6 +2678,25 @@ ${repairPrompt}`
               saving={executionModeSaving}
               onChange={(mode) => void updateExecutionMode(mode)}
             />
+            <GoalControlStrip
+              snapshot={goalState.snapshot}
+              loading={goalState.loading}
+              error={goalState.error}
+              createOpen={goalCreateOpen}
+              objective={goalObjective}
+              criteria={goalCriteria}
+              saving={goalSaving}
+              actionKey={goalActionKey}
+              disabled={!canMaterializeSession}
+              onCreateOpenChange={setGoalCreateOpen}
+              onObjectiveChange={setGoalObjective}
+              onCriteriaChange={setGoalCriteria}
+              onCreate={() => void createGoalFromDraft()}
+              onPause={() => void runGoalAction("pause_goal")}
+              onResume={() => void runGoalAction("resume_goal")}
+              onClear={() => void runGoalAction("clear_goal")}
+              onEvaluate={() => void runGoalAction("evaluate_goal")}
+            />
             <WorkflowCreateComposer
               open={createOpen}
               disabled={!canMaterializeSession}
@@ -2636,6 +2720,7 @@ ${repairPrompt}`
               objective={draftObjective}
               script={draftScript}
               draftOrigin={draftOrigin}
+              linkedGoal={activeGoal}
               runImmediately={draftRunImmediately}
               onOpenChange={setCreateOpen}
               onKindChange={setDraftKind}
@@ -2942,6 +3027,7 @@ function WorkflowCreateComposer({
   objective,
   script,
   draftOrigin,
+  linkedGoal,
   runImmediately,
   onOpenChange,
   onKindChange,
@@ -2967,6 +3053,7 @@ function WorkflowCreateComposer({
   objective: string
   script: string
   draftOrigin?: WorkflowDraftOrigin | null
+  linkedGoal?: Goal | null
   runImmediately: boolean
   onOpenChange: (open: boolean) => void
   onKindChange: (kind: string) => void
@@ -3044,13 +3131,21 @@ function WorkflowCreateComposer({
                 />
               </div>
               <div className="mt-0.5 truncate opacity-80">
-                {t(
-                  "workspace.workflow.repairDraftOriginDetail",
-                  "将创建新的修复 run，不会覆盖原 run · {{kind}}",
-                  {
-                    kind: repairOrigin.runKind,
-                  },
-                )}
+                {linkedGoal
+                  ? t(
+                      "workspace.workflow.repairDraftGoalDetail",
+                      "将创建同一 Goal 下的修复 run，不会覆盖原 run · {{kind}}",
+                      {
+                        kind: repairOrigin.runKind,
+                      },
+                    )
+                  : t(
+                      "workspace.workflow.repairDraftOriginDetail",
+                      "将创建新的修复 run，不会覆盖原 run · {{kind}}",
+                      {
+                        kind: repairOrigin.runKind,
+                      },
+                    )}
               </div>
             </div>
           ) : null}
@@ -3476,6 +3571,355 @@ function WorkflowExecutionModeControl({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function goalStateLabel(t: ReturnType<typeof useTranslation>["t"], state: GoalState): string {
+  switch (state) {
+    case "active":
+      return t("workspace.goal.stateActive", "推进中")
+    case "paused":
+      return t("workspace.goal.statePaused", "已暂停")
+    case "evaluating":
+      return t("workspace.goal.stateEvaluating", "评估中")
+    case "completed":
+      return t("workspace.goal.stateCompleted", "已完成")
+    case "failed":
+      return t("workspace.goal.stateFailed", "失败")
+    case "cancelled":
+      return t("workspace.goal.stateCancelled", "已取消")
+    case "blocked":
+      return t("workspace.goal.stateBlocked", "已阻塞")
+  }
+}
+
+function goalStateTone(state: GoalState): StatusTone {
+  switch (state) {
+    case "completed":
+      return "good"
+    case "paused":
+    case "evaluating":
+      return "warn"
+    case "failed":
+    case "blocked":
+      return "danger"
+    case "active":
+      return "info"
+    case "cancelled":
+      return "muted"
+  }
+}
+
+function goalIsTerminal(state: GoalState): boolean {
+  return state === "completed" || state === "failed" || state === "cancelled"
+}
+
+function GoalControlStrip({
+  snapshot,
+  loading,
+  error,
+  createOpen,
+  objective,
+  criteria,
+  saving,
+  actionKey,
+  disabled,
+  onCreateOpenChange,
+  onObjectiveChange,
+  onCriteriaChange,
+  onCreate,
+  onPause,
+  onResume,
+  onClear,
+  onEvaluate,
+}: {
+  snapshot: GoalSnapshot | null
+  loading?: boolean
+  error?: string | null
+  createOpen: boolean
+  objective: string
+  criteria: string
+  saving?: boolean
+  actionKey?: string | null
+  disabled?: boolean
+  onCreateOpenChange: (open: boolean) => void
+  onObjectiveChange: (value: string) => void
+  onCriteriaChange: (value: string) => void
+  onCreate: () => void
+  onPause: () => void
+  onResume: () => void
+  onClear: () => void
+  onEvaluate: () => void
+}) {
+  const { t } = useTranslation()
+  const goal = snapshot?.goal ?? null
+  const audit = asRecord(goal?.finalEvidence)
+  const evidence = recordArrayField(audit, "evidence")
+  const achieved = arrayField(audit, "achieved").filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  )
+  const missing = arrayField(audit, "missing").filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  )
+  const blockers = arrayField(audit, "blockers").filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  )
+  const workflowCount = snapshot?.workflowRuns.length ?? 0
+  const taskCount = snapshot?.tasks.length ?? 0
+  const taskDone = snapshot?.tasks.filter((task) => task.status === "completed").length ?? 0
+  const isBusy = saving || Boolean(actionKey)
+  const canCreate = !disabled && !saving && objective.trim().length > 0
+
+  return (
+    <div className="rounded-md border border-border/55 bg-secondary/20">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-secondary/45 disabled:opacity-60"
+        disabled={disabled && !goal}
+        aria-expanded={goal ? true : createOpen}
+        onClick={() => {
+          if (!goal) onCreateOpenChange(!createOpen)
+        }}
+      >
+        <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">
+          {goal
+            ? truncateMiddle(goal.objective.replace(/\s+/g, " "), 96)
+            : t("workspace.goal.title", "Goal")}
+        </span>
+        {loading ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
+        {goal ? (
+          <StatusPill
+            label={goalStateLabel(t, goal.state)}
+            tone={goalStateTone(goal.state)}
+            loading={goal.state === "evaluating"}
+          />
+        ) : (
+          <StatusPill label={t("workspace.goal.noActive", "未设置")} tone="muted" />
+        )}
+        {!goal ? (
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+              createOpen && "rotate-90",
+            )}
+          />
+        ) : null}
+      </button>
+
+      {error ? (
+        <div className="border-t border-border/60 px-2 py-1.5 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : null}
+
+      {!goal ? (
+        <AnimatedCollapse open={createOpen}>
+          <form
+            className="space-y-2 border-t border-border/60 p-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (canCreate) onCreate()
+            }}
+          >
+            <div className="space-y-1">
+              <label className="block text-[10px] font-medium text-muted-foreground">
+                {t("workspace.goal.objective", "目标")}
+              </label>
+              <Textarea
+                value={objective}
+                disabled={saving}
+                onChange={(event) => onObjectiveChange(event.target.value)}
+                placeholder={t(
+                  "workspace.goal.objectivePlaceholder",
+                  "例如：完整实现 Goal 模式，并通过针对性检查",
+                )}
+                className="min-h-16 resize-y text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-medium text-muted-foreground">
+                {t("workspace.goal.criteria", "完成标准")}
+              </label>
+              <Textarea
+                value={criteria}
+                disabled={saving}
+                onChange={(event) => onCriteriaChange(event.target.value)}
+                placeholder={t(
+                  "workspace.goal.criteriaPlaceholder",
+                  "每行一个标准：功能完成、证据充分、风险可解释",
+                )}
+                className="min-h-16 resize-y text-xs"
+              />
+            </div>
+            <Button
+              type="submit"
+              size="sm"
+              className="h-8 w-full gap-1.5 text-xs"
+              disabled={!canCreate}
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">{t("workspace.goal.create", "创建 Goal")}</span>
+            </Button>
+          </form>
+        </AnimatedCollapse>
+      ) : (
+        <div className="space-y-2 border-t border-border/60 p-2">
+          {goal.completionCriteria.trim() ? (
+            <div className="rounded-md bg-background/45 px-2 py-1.5 text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground/80">
+                {t("workspace.goal.criteria", "完成标准")}
+              </span>
+              <span className="px-1 text-muted-foreground/45">·</span>
+              <span>{truncateMiddle(goal.completionCriteria.replace(/\s+/g, " "), 180)}</span>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-3 gap-1 text-[10px]">
+            <WorkflowMetric
+              label={t("workspace.goal.metricWorkflows", "Workflows")}
+              value={workflowCount.toString()}
+            />
+            <WorkflowMetric
+              label={t("workspace.goal.metricTasks", "Tasks")}
+              value={`${taskDone}/${taskCount}`}
+            />
+            <WorkflowMetric
+              label={t("workspace.goal.metricEvidence", "Evidence")}
+              value={evidence.length.toString()}
+            />
+          </div>
+
+          {goal.finalSummary ? (
+            <div
+              className={cn(
+                "rounded-md border px-2 py-1.5 text-[11px]",
+                goal.state === "completed"
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5 font-medium">
+                {goal.state === "completed" ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate">{goal.finalSummary}</span>
+              </div>
+              {goal.blockedReason ? (
+                <div className="mt-0.5 truncate opacity-80">{goal.blockedReason}</div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-md bg-background/45 px-2 py-1.5 text-[11px] text-muted-foreground">
+              {t("workspace.goal.noAudit", "还没有 final audit；workflow 完成后会自动评估，也可以手动评估。")}
+            </div>
+          )}
+
+          {blockers.length > 0 || missing.length > 0 || achieved.length > 0 ? (
+            <div className="space-y-1 text-[10px]">
+              {blockers.slice(0, 2).map((item) => (
+                <div
+                  key={`blocker:${item}`}
+                  className="truncate rounded-md bg-destructive/10 px-2 py-1 text-destructive"
+                >
+                  {item}
+                </div>
+              ))}
+              {missing.slice(0, 2).map((item) => (
+                <div
+                  key={`missing:${item}`}
+                  className="truncate rounded-md bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-300"
+                >
+                  {item}
+                </div>
+              ))}
+              {blockers.length === 0 && missing.length === 0
+                ? achieved.slice(0, 2).map((item) => (
+                    <div
+                      key={`achieved:${item}`}
+                      className="truncate rounded-md bg-emerald-500/10 px-2 py-1 text-emerald-700 dark:text-emerald-300"
+                    >
+                      {item}
+                    </div>
+                  ))
+                : null}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 min-w-0 gap-1.5 text-xs"
+              disabled={isBusy || goalIsTerminal(goal.state) || goal.state === "evaluating"}
+              onClick={onEvaluate}
+            >
+              {actionKey?.startsWith("evaluate_goal") ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">{t("workspace.goal.evaluate", "评估")}</span>
+            </Button>
+            {goal.state === "paused" || goal.state === "blocked" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                disabled={isBusy || goalIsTerminal(goal.state)}
+                onClick={onResume}
+              >
+                {actionKey?.startsWith("resume_goal") ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                <span className="truncate">{t("workspace.goal.resume", "恢复")}</span>
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                disabled={isBusy || goalIsTerminal(goal.state) || goal.state === "evaluating"}
+                onClick={onPause}
+              >
+                {actionKey?.startsWith("pause_goal") ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Pause className="h-3.5 w-3.5" />
+                )}
+                <span className="truncate">{t("workspace.goal.pause", "暂停")}</span>
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 min-w-0 gap-1.5 border-destructive/35 text-xs text-destructive hover:text-destructive"
+              disabled={isBusy || goalIsTerminal(goal.state)}
+              onClick={onClear}
+            >
+              {actionKey?.startsWith("clear_goal") ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <X className="h-3.5 w-3.5" />
+              )}
+              <span className="truncate">{t("workspace.goal.clear", "清除")}</span>
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -232,6 +232,7 @@ impl SlashCommandDef {
             "recap" => "Generate a deep analysis recap report",
             "context" => "Show context window breakdown",
             "workflow" => "Inspect and control workflow runs",
+            "goal" => "Set and audit the session goal",
             "mode" => "Set the persistent execution mode",
             "awareness" => "Toggle behavior awareness",
             "imreply" => "Set IM reply mode (split|final|preview)",

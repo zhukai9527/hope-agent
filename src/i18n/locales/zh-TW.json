@@ -4974,6 +4974,9 @@
     "workflow": {
       "description": "檢視和控制 Workflow run"
     },
+    "goal": {
+      "description": "設定並審計目前會話目標"
+    },
     "mode": {
       "description": "設定執行模式"
     },

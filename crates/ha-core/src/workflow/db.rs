@@ -28,11 +28,13 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             blocked_reason TEXT,
             parent_run_id TEXT,
             origin TEXT,
+            goal_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY (parent_run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL
+            FOREIGN KEY (parent_run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL,
+            FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE SET NULL
         );
 
         CREATE TABLE IF NOT EXISTS workflow_ops (
@@ -87,9 +89,19 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     {
         conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN origin TEXT;")?;
     }
+    if conn
+        .prepare("SELECT goal_id FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_id TEXT;")?;
+    }
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_workflow_runs_parent
             ON workflow_runs(parent_run_id);",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_runs_goal
+            ON workflow_runs(goal_id, updated_at DESC);",
     )?;
     Ok(())
 }
@@ -135,11 +147,43 @@ impl SessionDB {
                 ));
             }
         }
+        let goal_id = match input.goal_id {
+            Some(goal_id) => {
+                let goal_session_id: Option<String> = conn
+                    .query_row(
+                        "SELECT session_id FROM goals WHERE id = ?1",
+                        params![goal_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let goal_session_id =
+                    goal_session_id.ok_or_else(|| anyhow!("goal not found: {goal_id}"))?;
+                if goal_session_id != input.session_id {
+                    return Err(anyhow!(
+                        "goal {} belongs to session {}; expected {}",
+                        goal_id,
+                        goal_session_id,
+                        input.session_id
+                    ));
+                }
+                Some(goal_id)
+            }
+            None => conn
+                .query_row(
+                    "SELECT id FROM goals
+                     WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                     ORDER BY updated_at DESC
+                     LIMIT 1",
+                    params![input.session_id],
+                    |row| row.get(0),
+                )
+                .optional()?,
+        };
         conn.execute(
             "INSERT INTO workflow_runs (
                 id, session_id, kind, state, execution_mode, script_hash, script_source,
-                budget_json, cursor_seq, parent_run_id, origin, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?11)",
+                budget_json, cursor_seq, parent_run_id, origin, goal_id, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12, ?12)",
             params![
                 id,
                 input.session_id,
@@ -151,6 +195,7 @@ impl SessionDB {
                 budget_json,
                 input.parent_run_id,
                 input.origin,
+                goal_id,
                 now
             ],
         )?;
@@ -168,6 +213,7 @@ impl SessionDB {
                 "state": run.state,
                 "parentRunId": run.parent_run_id,
                 "origin": run.origin,
+                "goalId": run.goal_id,
             }),
         )?;
         if let Some(parent_run_id) = run.parent_run_id.as_deref() {
@@ -180,6 +226,24 @@ impl SessionDB {
             let _ =
                 self.append_workflow_event(parent_run_id, "run_derived_child_created", payload)?;
         }
+        if let Some(goal_id) = run.goal_id.as_deref() {
+            let _ = self.link_goal_target(
+                goal_id,
+                "workflow_run",
+                &run.id,
+                if run.origin.as_deref() == Some("repair") {
+                    "repair_run"
+                } else {
+                    "execution_run"
+                },
+                json!({
+                    "kind": run.kind,
+                    "state": run.state,
+                    "parentRunId": run.parent_run_id,
+                    "origin": run.origin,
+                }),
+            );
+        }
         let preview = super::preview::preview_workflow_run(self, &run);
         let _ = self.append_workflow_event(&run.id, "script_permission_preview", json!(preview))?;
         events::emit_run_changed("workflow:created", &run);
@@ -191,7 +255,7 @@ impl SessionDB {
         conn.query_row(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, created_at, updated_at, completed_at
+                    parent_run_id, origin, goal_id, created_at, updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
             params![run_id],
             row_to_run,
@@ -210,7 +274,7 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, created_at, updated_at, completed_at
+                    parent_run_id, origin, goal_id, created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE session_id = ?1
              ORDER BY updated_at DESC, created_at DESC
@@ -284,6 +348,38 @@ impl SessionDB {
             }),
         )?;
         events::emit_run_changed("workflow:updated", &run);
+        if next.is_terminal() {
+            if let Some(goal_id) = run.goal_id.as_deref() {
+                let relation = match next {
+                    WorkflowRunState::Completed => "workflow_completed",
+                    WorkflowRunState::Failed => "workflow_failed",
+                    WorkflowRunState::Cancelled => "workflow_cancelled",
+                    WorkflowRunState::Blocked => "workflow_blocked",
+                    _ => "workflow_terminal",
+                };
+                let _ = self.link_goal_target(
+                    goal_id,
+                    "workflow_run",
+                    &run.id,
+                    relation,
+                    json!({
+                        "kind": run.kind,
+                        "state": run.state,
+                        "blockedReason": run.blocked_reason,
+                        "completedAt": run.completed_at,
+                        "reason": reason,
+                    }),
+                );
+                if matches!(
+                    next,
+                    WorkflowRunState::Completed
+                        | WorkflowRunState::Failed
+                        | WorkflowRunState::Blocked
+                ) {
+                    let _ = self.evaluate_goal(goal_id);
+                }
+            }
+        }
         Ok(run)
     }
 
@@ -351,7 +447,7 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, created_at, updated_at, completed_at
+                    parent_run_id, origin, goal_id, created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE state = 'running' AND (primary_owner IS NULL OR primary_owner = '')
              ORDER BY updated_at ASC",
@@ -687,9 +783,10 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
         blocked_reason: row.get(10)?,
         parent_run_id: row.get(11)?,
         origin: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
-        completed_at: row.get(15)?,
+        goal_id: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        completed_at: row.get(16)?,
     })
 }
 

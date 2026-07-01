@@ -1,0 +1,219 @@
+# Goal 控制平面
+
+> 返回 [文档索引](../README.md) | 更新时间：2026-07-01
+
+Goal 是长任务的顶层完成语义：**我要最终达成什么，完成标准是什么，哪些证据证明已经完成**。它位于 Execution Mode 与 Workflow 之上，适用于通用长任务；coding 只是当前最强的使用场景。
+
+## 1. 定位
+
+```text
+Goal      = 最终目标、完成标准、预算、证据、最终审计
+Mode      = 本会话/目标以多主动、多深入的策略推进
+Workflow  = 一次具体、可恢复、可审批、可审计的执行 run
+Task      = 用户可见的进度事实
+Loop      = 未来的定时、重复触发或条件继续
+```
+
+Goal 不直接执行工具，不替代 Workflow，也不表示重复调度。Workflow run 会绑定当前 active Goal，并在终态后把执行结果写回 Goal 证据链。
+
+## 2. 模块边界
+
+| 层 | 代码 | 责任 |
+| --- | --- | --- |
+| 核心模型 | `crates/ha-core/src/goal/mod.rs` | Goal/GoalEvent/GoalLink 类型、状态机、建表、CRUD、审计器。 |
+| Workflow 集成 | `crates/ha-core/src/workflow/db.rs` | `workflow_runs.goal_id`、自动绑定 active Goal、终态后自动 link + audit。 |
+| 斜杠命令 | `crates/ha-core/src/slash_commands/handlers/goal.rs` | `/goal` 文本控制面。 |
+| Tauri owner API | `src-tauri/src/commands/goal.rs` | 桌面 owner 平面命令。 |
+| HTTP owner API | `crates/ha-server/src/routes/goal.rs` | Server/Web owner 平面端点。 |
+| GUI | `src/components/chat/workspace/useGoal.ts`、`WorkspacePanel.tsx` | Workflow Control Center 内 Goal strip、创建/暂停/恢复/清除/评估、证据摘要。 |
+
+红线：
+
+- Goal 逻辑必须在 `ha-core`；Tauri / HTTP 只做薄适配。
+- 第一版没有 agent 工具面直接改 Goal；模型可建议，owner 平面落地。
+- incognito session 禁止创建 durable Goal。
+- `label` 只用于展示；Goal 与 Workflow 的关系以 `goal_id` / `goal_links` 为准。
+
+## 3. 数据模型
+
+Goal 数据落在 `sessions.db`，跟随 session 级联删除。
+
+### `goals`
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | `goal_*` id。 |
+| `session_id` | 所属 session。 |
+| `objective` | 用户写下的最终目标。 |
+| `completion_criteria` | 用户写下的完成标准，多行文本。 |
+| `state` | `active` / `paused` / `evaluating` / `completed` / `failed` / `cancelled` / `blocked`。 |
+| `mode_snapshot` | 创建 Goal 时的 session `execution_mode` 快照。 |
+| `budget_token_limit` / `budget_time_limit_secs` / `budget_turn_limit` | 可选预算字段，第一版只持久化与展示，不做硬扣减。 |
+| `final_summary` | 最近一次 final audit 摘要。 |
+| `final_evidence_json` | 最近一次 audit 的结构化结果。 |
+| `blocked_reason` | `blocked` 原因。 |
+| `last_evaluator_result_json` | 最近 evaluator 原始结果，第一版与 `final_evidence_json` 同步。 |
+
+同一个 session 同时只允许一个 open Goal：
+
+```sql
+UNIQUE(session_id) WHERE state IN ('active','paused','evaluating','blocked')
+```
+
+### `goal_events`
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 自增 row id。 |
+| `goal_id` | 所属 Goal。 |
+| `seq` | Goal 内单调序号。 |
+| `kind` | `goal_created`、`goal_state_changed`、`goal_linked`、`goal_evaluated` 等。 |
+| `payload_json` | 事件载荷，超过 64KB 会截断为 preview。 |
+| `created_at` | 时间戳。 |
+
+### `goal_links`
+
+| 字段 | 说明 |
+| --- | --- |
+| `goal_id` | 所属 Goal。 |
+| `target_type` | 当前实现主要是 `workflow_run`；预留 `task` / `message` / `artifact` / `file` / `validation`。 |
+| `target_id` | 被关联对象 id。 |
+| `relation` | `execution_run`、`repair_run`、`workflow_completed`、`workflow_failed`、`workflow_blocked` 等。 |
+| `metadata_json` | 关联时的状态、kind、origin、blocked reason 等摘要。 |
+
+## 4. 状态机
+
+`GoalState::can_transition_to()` 是状态转换单一真相源。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    Active --> Paused
+    Active --> Evaluating
+    Active --> Completed
+    Active --> Failed
+    Active --> Cancelled
+    Active --> Blocked
+    Paused --> Active
+    Paused --> Evaluating
+    Paused --> Cancelled
+    Evaluating --> Active
+    Evaluating --> Completed
+    Evaluating --> Failed
+    Evaluating --> Cancelled
+    Evaluating --> Blocked
+    Blocked --> Active
+    Blocked --> Evaluating
+    Blocked --> Failed
+    Blocked --> Cancelled
+```
+
+`completed` / `failed` / `cancelled` 是终态。`blocked` 不是终态，用户可恢复或重新评估。
+
+## 5. Workflow 集成
+
+`workflow_runs` 增加 `goal_id TEXT`：
+
+- `create_workflow_run` 若显式传 `goal_id`，会校验它与 run 属于同一 session。
+- 若不传 `goal_id`，后端会自动绑定当前 session 的 open Goal。
+- 创建 run 后写 `goal_links(relation='execution_run' | 'repair_run')`。
+- run 进入终态后写 `workflow_completed` / `workflow_failed` / `workflow_cancelled` / `workflow_blocked` link。
+- run 进入 `completed` / `failed` / `blocked` 后 best-effort 触发 `evaluate_goal`。
+
+这保证 Goal 不依赖聊天文本反扫，而是通过 durable workflow snapshot、task 和 validation evidence 做审计。
+
+## 6. Final Audit
+
+第一版 evaluator 是保守规则引擎，输入为：
+
+- Goal objective。
+- completion criteria。
+- linked workflow runs。
+- session tasks。
+- workflow validation ops。
+- workflow blocked/failed/cancelled 状态。
+
+输出写入 `final_evidence_json`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `status` | `completed` 或 `blocked`。第一版不写 `partial`，避免 UI 和状态机语义漂移。 |
+| `summary` | 审计摘要。 |
+| `blockedReason` | `goal_evidence_incomplete` 或 `goal_blocked_by_evidence`。 |
+| `achieved` | 已达成项。 |
+| `missing` | 缺少证据或未完成项。 |
+| `blockers` | 明确阻塞项。 |
+| `evidence` | workflow / validation 证据。 |
+| `remainingRisk` | 剩余风险说明。 |
+
+判定原则：
+
+- 没有 workflow/task evidence → `blocked`。
+- linked workflow 失败、取消或阻塞 → `blocked`。
+- validation `ok=false` 或 op failed → `blocked`。
+- completion criteria 没有支撑证据 → `blocked`。
+- 无 blocker、无 missing 且有 evidence → `completed`。
+
+## 7. Owner API 与事件
+
+Tauri 与 HTTP 保持对齐：
+
+| Tauri command | HTTP |
+| --- | --- |
+| `get_active_goal` | `GET /api/sessions/{sessionId}/goal` |
+| `create_goal` | `POST /api/sessions/{sessionId}/goal` |
+| `get_goal` | `GET /api/goals/{goalId}` |
+| `pause_goal` | `POST /api/goals/{goalId}/pause` |
+| `resume_goal` | `POST /api/goals/{goalId}/resume` |
+| `clear_goal` | `POST /api/goals/{goalId}/clear` |
+| `evaluate_goal` | `POST /api/goals/{goalId}/evaluate` |
+
+EventBus：
+
+| 事件 | 来源 |
+| --- | --- |
+| `goal:created` | Goal 创建。 |
+| `goal:updated` | Goal 状态或 audit 更新。 |
+| `goal:event` | Goal event append。 |
+| `goal:link_updated` | Goal link upsert。 |
+
+前端 `useGoal` 监听 Goal 与 Workflow 事件，并做 250ms debounce refresh。
+
+## 8. 用户入口
+
+### Slash
+
+```text
+/goal <objective> --criteria <completion criteria>
+/goal
+/goal status
+/goal pause
+/goal resume
+/goal evaluate
+/goal clear
+```
+
+`/goal` 返回 markdown 状态卡，包含目标、完成标准、workflow 数、task 完成数、final audit 和 blocked reason。
+
+### GUI
+
+Workspace / Workflow Control Center 内有 Goal strip：
+
+- 无 active Goal：可直接创建 objective + completion criteria。
+- 有 active Goal：展示目标摘要、状态、workflow/task/evidence 指标。
+- audit 后展示 final summary、blocked reason、missing/blocker/achieved 摘要。
+- 操作按钮：评估、暂停/恢复、清除。
+- 新建 workflow 默认绑定当前 active Goal；repair draft 会提示“同一 Goal 下的修复 run”。
+
+## 9. 非目标
+
+当前 Goal 第一版不包含：
+
+- 真正 `/loop` 的定时、重复、轮询调度。
+- agent 工具面直接修改 Goal。
+- LLM side-query evaluator。
+- 独立 Goal detail 全屏页面。
+- budget 的硬扣减与自动停止。
+- Worktree / LSP / review engine 证据接入。
+
+这些后续仍在 `docs/roadmap/` 跟踪；实现稳定后再沉淀到对应 architecture 文档。

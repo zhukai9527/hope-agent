@@ -973,14 +973,14 @@ stop reason if any
 
 - `/mode off|guarded|deep|autonomous` 是会话级执行策略。
 - `/workflow` 是一次具体、可观察、可恢复的执行编排。
-- `/goal` 后续成为长期任务的顶层完成标准。
+- `/goal` 已成为长期任务的顶层完成标准，见 [Goal 控制平面](../architecture/goal.md)。
 - `/loop` 后续只用于定时、重复触发或条件轮询。
 
 同时明确：guarded repair stop guard 已在 Phase 2.5 / 2.6 范围内落地，不再作为下一阶段主线。
 
 ### Phase 2.7：`/goal` MVP
 
-状态：下一步。详细方案见 [Agent 控制平面路线图 §5](agent-control-plane-roadmap.md#5-phase-27goal-mvp下一步)。
+状态：已完成第一版。最终架构见 [Goal 控制平面](../architecture/goal.md)，路线设计见 [Agent 控制平面路线图](agent-control-plane-roadmap.md)。
 
 目标：
 
@@ -991,26 +991,26 @@ stop reason if any
 验收：
 
 - `/goal <objective and completion criteria>` 能创建 active goal。
-- `/goal status|pause|resume|clear` 可用。
+- `/goal status|pause|resume|evaluate|clear` 可用。
 - Goal 能 link workflow run、task、validation evidence。
 - Workflow 完成后可触发 goal evaluate。
 - Goal final audit 能解释达成项、未达成项、验证证据和剩余风险。
 
 ### Phase 2.8：Goal-driven Workflow
 
-状态：待 `/goal` MVP 后启动。详细方案见 [Agent 控制平面路线图 §6](agent-control-plane-roadmap.md#6-phase-28goal-driven-workflow)。
+状态：核心闭环已随 `/goal` 第一版部分落地，细粒度 evidence 和独立 timeline 后续增强。详细方案见 [Agent 控制平面路线图](agent-control-plane-roadmap.md)。
 
 目标：
 
 - 让 workflow run 归属 goal。
 - 失败 run 生成 repair run 时继承 goal。
-- Workflow trace、validation、task、diff evidence 回写 goal。
+- Workflow completion、validation、task evidence 回写 goal；diff/file artifact 细粒度 evidence 后续补。
 - Goal evaluator 基于 workflow snapshot 收口，而不是重新猜测聊天历史。
 
 验收：
 
 - `workflow_runs` 可选绑定 goal。
-- Goal detail 能展示 linked run timeline。
+- Goal strip 能展示 linked run/task/evidence 指标；独立 detail timeline 后续补。
 - Repair run 不丢 parent goal。
 - App 重启后 goal / workflow / task / evidence 关系仍可恢复。
 

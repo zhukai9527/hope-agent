@@ -1288,6 +1288,15 @@ fn build_router_with_cors(
             "/sessions/{sid}/execution-mode",
             post(routes::execution_mode::set_execution_mode),
         )
+        .route(
+            "/sessions/{sid}/goal",
+            get(routes::goal::get_active_goal).post(routes::goal::create_goal),
+        )
+        .route("/goals/{id}", get(routes::goal::get_goal))
+        .route("/goals/{id}/pause", post(routes::goal::pause_goal))
+        .route("/goals/{id}/resume", post(routes::goal::resume_goal))
+        .route("/goals/{id}/clear", post(routes::goal::clear_goal))
+        .route("/goals/{id}/evaluate", post(routes::goal::evaluate_goal))
         .route("/plan/{sid}/content", get(routes::plan::get_plan_content))
         .route("/plan/{sid}/content", put(routes::plan::save_plan_content))
         .route(

@@ -434,7 +434,7 @@ StopPolicy
 
 ### Phase 2.7：`/goal` MVP
 
-状态：下一步。详细方案见 [Agent 控制平面路线图](agent-control-plane-roadmap.md#5-phase-27goal-mvp下一步)。
+状态：已完成第一版。最终架构见 [Goal 控制平面](../architecture/goal.md)，路线设计见 [Agent 控制平面路线图](agent-control-plane-roadmap.md)。
 
 目标：补一等 Goal 对象，让长期任务有 objective、completion criteria、budget、evidence、status 和 final audit。
 
@@ -444,19 +444,19 @@ StopPolicy
 - 新增 `/goal <objective and completion criteria>` / `/goal status|pause|resume|clear`。
 - GUI 增加 active goal strip / detail。
 - Goal 记录 linked workflow runs、tasks、validation evidence。
-- Goal evaluator 输出 completed / partial / blocked，并给出 reason。
+- Goal evaluator 输出 completed / blocked，并给出 reason；`partial` 暂不写入状态机，避免状态语义漂移。
 - 无痕会话不持久化 goal。
 
 产物：
 
-- Goal MVP RFC / 实现。
+- Goal 实现与架构文档。
 - Goal owner API。
 - Goal UI detail / strip。
 - Goal evaluator 第一版。
 
 ### Phase 2.8：Goal-driven Workflow
 
-状态：待 Phase 2.7 后启动。详细方案见 [Agent 控制平面路线图](agent-control-plane-roadmap.md#6-phase-28goal-driven-workflow)。
+状态：核心闭环已随 Phase 2.7 落地，增强项继续排后续。详细方案见 [Agent 控制平面路线图](agent-control-plane-roadmap.md)。
 
 目标：让 Workflow 成为 Goal 的执行手段，而不是独立漂浮的 run。
 
@@ -464,14 +464,14 @@ StopPolicy
 
 - `workflow_runs` 增加可选 `goal_id`。
 - Workflow create / repair draft 继承当前 goal。
-- Workflow completion / validation / diff / task evidence 自动 link 到 goal。
-- Goal detail 展示 linked run timeline。
+- Workflow completion / validation / task evidence 进入 Goal audit；diff/file artifact 细粒度 link 留后续增强。
+- Goal strip 展示 linked run/task/evidence 指标；独立 detail timeline 留后续增强。
 - Goal evaluator 读取 workflow snapshot，而不是重扫散落消息。
 
 产物：
 
 - goal-workflow link 数据结构。
-- linked run timeline。
+- linked run 指标与后续 timeline 设计。
 - final audit。
 
 ### Phase 2.9：真正 `/loop`
@@ -575,13 +575,13 @@ StopPolicy
 
 2026-07-01 之后的首个里程碑不再是 ToolDefinition / workflow runtime foundation，它们已经进入 Phase 1 / Phase 2 已完成范围。新的 30 天目标是把控制平面补到可承载长任务：
 
-1. 落 `/goal` MVP：objective、completion criteria、state、budget、evidence、final audit。
-2. 在 GUI 中展示 active goal，不要求用户记 slash 命令才能掌控长期任务。
-3. 让 workflow run 可选绑定 goal，repair run 不丢 goal 归属。
-4. Workflow completion / validation / task / diff evidence 自动回写 goal。
-5. 做第一版 goal evaluator，能输出 completed / partial / blocked + reason。
-6. 更新 Phase 0 coding eval：新增 goal-driven 长任务场景，验证 goal evidence 与 final audit。
-7. 设计真正 `/loop`，但实现放在 Goal-driven Workflow 稳定之后。
+1. 已落 `/goal` 第一版：objective、completion criteria、state、budget 字段、evidence、final audit。
+2. 已在 GUI 中展示 active goal，不要求用户记 slash 命令才能掌控长期任务。
+3. 已让 workflow run 可选绑定 goal，repair run 不丢 goal 归属。
+4. 已让 workflow completion / validation / task evidence 回写 goal audit；diff/file artifact 细粒度 link 后续补。
+5. 已做第一版 goal evaluator，能输出 completed / blocked + reason。
+6. 后续更新 Phase 0 coding eval：新增 goal-driven 长任务场景，验证 goal evidence 与 final audit。
+7. 后续设计真正 `/loop`，但实现放在 Goal-driven Workflow 稳定之后。
 
 ## 验收指标
 
@@ -635,8 +635,8 @@ StopPolicy
 
 1. [Agent 控制平面路线图](agent-control-plane-roadmap.md)：`/goal`、`/workflow`、`/mode`、真 `/loop`、`/worktree` 的总顺序。
 2. [Goal / Mode / Workflow / Loop 语义收口](control-plane-semantics.md)：产品语言与命名红线。
-3. `docs/roadmap/goal-mvp.md`：Goal store、owner API、GUI、evaluator、evidence link。
-4. `docs/roadmap/goal-driven-workflow.md`：goal_id、repair run、workflow evidence、final audit。
+3. [Goal 控制平面](../architecture/goal.md)：Goal store、owner API、GUI、evaluator、evidence link。
+4. 后续 `docs/roadmap/goal-driven-workflow-v2.md`：细粒度 diff/file artifact evidence、独立 Goal detail timeline、LLM evaluator。
 5. `docs/roadmap/loop-schedules.md`：真正 `/loop` 的调度、预算、审批和 trace。
 6. `docs/roadmap/managed-worktree.md`：隔离工作区、handoff、UI、hooks。
 7. `docs/roadmap/lsp.md`：LSP manager、tools、diagnostics pipeline。

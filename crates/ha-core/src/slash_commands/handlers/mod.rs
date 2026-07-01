@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod awareness;
 pub mod context;
+pub mod goal;
 pub mod memory;
 pub mod model;
 pub mod plan;
@@ -124,6 +125,7 @@ pub async fn dispatch(
         "context" => context::handle_context(session_id, agent_id, args).await,
         "workflow" => workflow::handle_workflow(session_db()?, session_id, args),
         "mode" => workflow::handle_mode(session_db()?, session_id, args),
+        "goal" => goal::handle_goal(session_db()?, session_id, args),
         "awareness" => awareness::handle_awareness(args),
         "imreply" => utility::handle_imreply(session_id, args).await,
         // `reasoning` is a silent alias for `reason` (only `reason` is in the

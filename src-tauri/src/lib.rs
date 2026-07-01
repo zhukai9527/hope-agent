@@ -795,6 +795,14 @@ pub fn run() {
             // Execution mode policy
             commands::execution_mode::get_execution_mode,
             commands::execution_mode::set_execution_mode,
+            // Goals (top-level completion criteria and evidence)
+            commands::goal::get_active_goal,
+            commands::goal::get_goal,
+            commands::goal::create_goal,
+            commands::goal::pause_goal,
+            commands::goal::resume_goal,
+            commands::goal::clear_goal,
+            commands::goal::evaluate_goal,
             // Workflow runs (Phase 2 durable coding workflows)
             commands::workflow::list_workflow_runs,
             commands::workflow::get_workflow_run,

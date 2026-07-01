@@ -364,6 +364,15 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_execution_mode:            { method: "GET",    path: "/api/sessions/{sessionId}/execution-mode" },
   set_execution_mode:            { method: "POST",   path: "/api/sessions/{sessionId}/execution-mode" },
 
+  // -- Goals --
+  get_active_goal:                 { method: "GET",    path: "/api/sessions/{sessionId}/goal" },
+  create_goal:                     { method: "POST",   path: "/api/sessions/{sessionId}/goal" },
+  get_goal:                        { method: "GET",    path: "/api/goals/{goalId}" },
+  pause_goal:                      { method: "POST",   path: "/api/goals/{goalId}/pause" },
+  resume_goal:                     { method: "POST",   path: "/api/goals/{goalId}/resume" },
+  clear_goal:                      { method: "POST",   path: "/api/goals/{goalId}/clear" },
+  evaluate_goal:                   { method: "POST",   path: "/api/goals/{goalId}/evaluate" },
+
   // -- Workflow runs --
   list_workflow_runs:              { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs" },
   preview_workflow_script:         { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs/preview" },

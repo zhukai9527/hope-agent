@@ -2,7 +2,7 @@
 
 > 返回 [文档索引](../README.md) | 更新时间：2026-07-01
 
-本文记录已经实现的 durable workflow 子系统。Workflow 是一次具体、可观察、可恢复、可审批、可暂停/恢复/取消的执行编排；Execution Mode 是会话级推进策略。`/goal` 和真正的定时/重复 `/loop` 尚未实现，仍只存在于 `docs/roadmap/`。
+本文记录已经实现的 durable workflow 子系统。Workflow 是一次具体、可观察、可恢复、可审批、可暂停/恢复/取消的执行编排；Execution Mode 是会话级推进策略。Goal 已作为顶层目标与证据链落地，详见 [Goal 控制平面](goal.md)；真正的定时/重复 `/loop` 尚未实现，仍只存在于 `docs/roadmap/`。
 
 ## 1. 定位
 
@@ -18,7 +18,7 @@ workflow.js
   -> Workspace / Workflow Control Center
 ```
 
-它不负责长期目标本身。长期目标后续由 `/goal` 承载；真正 `/loop` 后续只负责定时、重复触发或条件轮询。
+它不负责长期目标本身。长期目标由 Goal 承载，workflow run 可绑定 `goal_id` 并在终态后回写 evidence；真正 `/loop` 后续只负责定时、重复触发或条件轮询。
 
 ## 2. 模块边界
 
@@ -62,6 +62,7 @@ Workflow 数据落在 `sessions.db`，跟随会话级联删除。
 | `blocked_reason` | `blocked` 终态原因。 |
 | `parent_run_id` | 修复 run 来源，外键到 `workflow_runs(id)`，删除父 run 时置空。 |
 | `origin` | run 来源，例如 `repair`。 |
+| `goal_id` | 可选 Goal 归属；不显式传时自动绑定当前 session 的 open Goal。 |
 | `created_at` / `updated_at` / `completed_at` | 时间戳。 |
 
 ### `workflow_ops`
@@ -329,6 +330,13 @@ EventBus：
 
 前端 `useWorkflowRuns` 同时监听这些事件，并在 active run 存在时低频 polling 兜底。
 
+Goal 集成：
+
+- `create_workflow_run` 可接收 `goalId`；省略时自动绑定当前 open Goal。
+- 创建 run 时写 `goal_links(relation='execution_run' | 'repair_run')`。
+- run 进入 `completed` / `failed` / `blocked` 后 best-effort 触发 Goal final audit。
+- run 进入任一终态都会写 workflow terminal relation，供 Goal 证据链展示。
+
 ## 13. GUI
 
 Workspace / Workflow Control Center 是主要用户面，不要求用户记 slash command。
@@ -336,6 +344,7 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 当前实现：
 
 - 标题栏 `Coding` 入口与 active / waiting / failed badge。
+- Goal strip：创建 active Goal、展示目标摘要/状态/证据指标、手动 audit、暂停/恢复/清除。
 - Execution Mode 常驻控制。
 - 无 run 空态展示 execution mode / working dir，并提供创建入口。
 - coding 目标驱动草稿：生成可预检 `workflow.js`，脚本编辑放高级区。
@@ -379,7 +388,6 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 
 当前已实现 workflow 不包含：
 
-- 一等 `/goal` 对象、Goal evaluator、Goal evidence store。
 - 真正 `/loop` 的定时/重复/轮询调度。
 - Managed worktree。
 - LSP diagnostics。

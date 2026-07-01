@@ -31,6 +31,7 @@ export interface WorkflowRun {
   blockedReason?: string | null
   parentRunId?: string | null
   origin?: string | null
+  goalId?: string | null
   createdAt: string
   updatedAt: string
   completedAt?: string | null

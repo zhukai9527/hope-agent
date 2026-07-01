@@ -97,6 +97,15 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 | `workflow:op_updated` | `workflow_ops` started/completed/failed | `WorkflowOp` 快照 |
 | `workflow:event` | `append_workflow_event` | `WorkflowEvent`；大 payload 已在落库前截断到 preview |
 
+### Goal
+
+| 事件名 | 触发点 | Payload 关键字段 |
+|---|---|---|
+| `goal:created` | `goal::create_goal` | `Goal` 快照 |
+| `goal:updated` | Goal 状态转换或 final audit 更新 | `Goal` 快照 |
+| `goal:event` | `append_goal_event` | `GoalEvent`；大 payload 已在落库前截断到 preview |
+| `goal:link_updated` | `link_goal_target` | `GoalLink` 快照 |
+
 ### 子代理与团队
 
 | 事件名 | 触发点 |
@@ -376,6 +385,20 @@ KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fall
 | `cancel_workflow_run` | `POST /api/workflow-runs/{runId}/cancel` | ✅ |
 
 Workflow owner API 管理 durable `workflow_runs`。`preview_workflow_script` 不落库，只返回 Script Gate + permission preview；`create_workflow_run` 会强制复用同一 preflight，Gate 不通过或 permission preview 有确定 deny 时拒绝创建。`run_workflow_run` / `approve_workflow_run` / `resume_workflow_run` 只改变 owner 管理状态并异步 kick primary runtime；`cancel_workflow_run` 会先转 `cancelled`，再 best-effort 取消 workflow-owned async tool / validation / subagent children。完整技术契约见 [Workflow 与 Execution Mode](workflow.md)。
+
+### Goals
+
+| Tauri Command | HTTP | 状态 |
+|---|---|---|
+| `get_active_goal` | `GET /api/sessions/{sessionId}/goal` | ✅ |
+| `create_goal` | `POST /api/sessions/{sessionId}/goal` | ✅ |
+| `get_goal` | `GET /api/goals/{goalId}` | ✅ |
+| `pause_goal` | `POST /api/goals/{goalId}/pause` | ✅ |
+| `resume_goal` | `POST /api/goals/{goalId}/resume` | ✅ |
+| `clear_goal` | `POST /api/goals/{goalId}/clear` | ✅ |
+| `evaluate_goal` | `POST /api/goals/{goalId}/evaluate` | ✅ |
+
+Goal owner API 管理 session-scoped 顶层目标。`create_goal` 会拒绝 incognito session，并保证同一 session 只有一个 open Goal；`evaluate_goal` 基于 linked workflow runs、tasks 和 validation ops 生成保守 final audit。`create_workflow_run` 可接收可选 `goalId`，省略时自动绑定当前 open Goal；workflow 终态会 best-effort 回写 Goal link 并触发 audit。完整契约见 [Goal 控制平面](goal.md)。
 
 `export_session_cmd` / `GET /api/sessions/{sessionId}/export` 是两端**形态不对称**的特例：Tauri 端走 IPC，由前端先弹原生 save dialog 拿到 `output_path` 再传进来，后端写盘后返回最终路径字符串；HTTP 端走 GET 直接返回二进制流（`Content-Type` + `Content-Disposition: attachment; filename*=UTF-8''<percent>`），浏览器用 `URL.createObjectURL` + `<a download>` 触发下载。两端共用 [`ha_core::session::export::export_session`](../../crates/ha-core/src/session/export.rs) 序列化器，Query 参数 `format ∈ {md,json,html}` / `includeThinking` / `includeTools` 与 Tauri 命令的字段一一对应。前端 Transport 抽象 [`exportSession`](../../src/lib/transport.ts) 是这一对端点的统一入口，调用方不需要分支。
 

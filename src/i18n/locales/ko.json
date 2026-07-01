@@ -4974,6 +4974,9 @@
     "workflow": {
       "description": "Inspect and control workflow runs"
     },
+    "goal": {
+      "description": "Set and audit the session goal"
+    },
     "mode": {
       "description": "Set execution mode"
     },

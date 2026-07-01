@@ -54,6 +54,7 @@ pub async fn create_workflow_run(
     budget: Option<Value>,
     parent_run_id: Option<String>,
     origin: Option<String>,
+    goal_id: Option<String>,
     run_immediately: Option<bool>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<WorkflowRun, CmdError> {
@@ -76,6 +77,7 @@ pub async fn create_workflow_run(
             budget: budget.unwrap_or_else(|| json!({})),
             parent_run_id,
             origin,
+            goal_id,
         })?;
     if run_immediately.unwrap_or(false) {
         ha_core::workflow::spawn_workflow_run_if_primary(

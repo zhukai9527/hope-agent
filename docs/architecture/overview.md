@@ -62,6 +62,7 @@ graph TD
         ChatEngine --> Memory["Memory"]
         ChatEngine --> Knowledge["Knowledge (知识空间)"]
         ChatEngine --> PlanMode["Plan Mode"]
+        ChatEngine --> Goal["Goal<br/>(objective + evidence)"]
         ChatEngine --> Project["Project / Working Dir"]
         EventBus["EventBus<br/>(broadcast)"]
         Channel["Channel (12 渠道)"]
@@ -148,8 +149,10 @@ graph LR
     ChatEngine --> ProjectCtx["Project / Working Dir"]
     ChatEngine --> Awareness["Behavior Awareness"]
     ChatEngine --> PlanMode["Plan Mode (5 态 FSM)"]
+    ChatEngine --> Goal["Goal<br/>(目标 + 证据链)"]
     ChatEngine --> Workflow["Workflow<br/>(durable script runs)"]
     PlanMode --> Subagent["Subagent (spawn + inject)"]
+    Goal --> Workflow
     Workflow --> Subagent
     Workflow --> AsyncJobs["Async Jobs"]
     Subagent --> Team["Agent Team"]
@@ -198,7 +201,7 @@ graph LR
 
 | 数据库 | 路径 | 用途 |
 |--------|------|------|
-| sessions.db | `~/.hope-agent/sessions.db` | 会话、消息、WorkflowRun/Op/Event、Subagent/ACP/Team 运行记录 |
+| sessions.db | `~/.hope-agent/sessions.db` | 会话、消息、Goal/Event/Link、WorkflowRun/Op/Event、Subagent/ACP/Team 运行记录 |
 | memory.db | `~/.hope-agent/memory.db` | 记忆条目 + FTS5 + vec0 向量 + embedding cache |
 | knowledge/index.db | `~/.hope-agent/knowledge/index.db` | 知识空间 chunk 索引（FTS5 + vec0），可重建缓存；笔记 `.md` 真相在 `knowledge/{id}/notes/` 或外部 vault，registry 在 sessions.db |
 | logs.db | `~/.hope-agent/logs.db` | 结构化日志（可查询/过滤） |

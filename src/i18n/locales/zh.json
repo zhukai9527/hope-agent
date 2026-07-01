@@ -4974,6 +4974,9 @@
     "workflow": {
       "description": "查看和控制 Workflow run"
     },
+    "goal": {
+      "description": "设置并审计当前会话目标"
+    },
     "mode": {
       "description": "设置执行模式"
     },

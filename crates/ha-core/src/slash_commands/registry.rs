@@ -326,6 +326,22 @@ pub fn all_commands() -> Vec<SlashCommandDef> {
             description_raw: None,
         },
         SlashCommandDef {
+            name: "goal".into(),
+            category: CommandCategory::Utility,
+            description_key: "slashCommands.goal.description".into(),
+            has_args: true,
+            args_optional: true,
+            arg_placeholder: Some("[status|pause|resume|evaluate|clear]".into()),
+            arg_options: Some(vec![
+                "status".into(),
+                "pause".into(),
+                "resume".into(),
+                "evaluate".into(),
+                "clear".into(),
+            ]),
+            description_raw: None,
+        },
+        SlashCommandDef {
             name: "mode".into(),
             category: CommandCategory::Utility,
             description_key: "slashCommands.mode.description".into(),
