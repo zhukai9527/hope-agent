@@ -2,6 +2,7 @@ pub mod agent;
 pub mod awareness;
 pub mod context;
 pub mod goal;
+pub mod loop_control;
 pub mod memory;
 pub mod model;
 pub mod plan;
@@ -124,6 +125,11 @@ pub async fn dispatch(
         "prompts" => Ok(utility::handle_prompts()),
         "context" => context::handle_context(session_id, agent_id, args).await,
         "workflow" => workflow::handle_workflow(session_db()?, session_id, args),
+        "loop" => {
+            let sid = session_id.ok_or_else(|| "No active session for /loop".to_string())?;
+            let cron_db = crate::require_cron_db().map_err(|e| e.to_string())?;
+            loop_control::handle_loop(session_db()?, cron_db, sid, args)
+        }
         "mode" => workflow::handle_mode(session_db()?, session_id, args),
         "goal" => goal::handle_goal(session_db()?, session_id, args),
         "awareness" => awareness::handle_awareness(args),

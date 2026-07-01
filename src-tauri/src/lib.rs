@@ -803,6 +803,13 @@ pub fn run() {
             commands::goal::resume_goal,
             commands::goal::clear_goal,
             commands::goal::evaluate_goal,
+            // Loop schedules (Phase 2.9 real recurrence control plane)
+            commands::loop_control::list_loop_schedules,
+            commands::loop_control::get_loop_schedule,
+            commands::loop_control::create_loop_schedule,
+            commands::loop_control::pause_loop_schedule,
+            commands::loop_control::resume_loop_schedule,
+            commands::loop_control::stop_loop_schedule,
             // Workflow runs (Phase 2 durable coding workflows)
             commands::workflow::list_workflow_runs,
             commands::workflow::get_workflow_run,

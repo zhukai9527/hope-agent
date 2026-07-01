@@ -2,7 +2,7 @@
 
 > 返回 [文档索引](../README.md) | 更新时间：2026-07-01
 
-本文记录已经实现的 durable workflow 子系统。Workflow 是一次具体、可观察、可恢复、可审批、可暂停/恢复/取消的执行编排；Execution Mode 是会话级推进策略。Goal 已作为顶层目标与证据链落地，详见 [Goal 控制平面](goal.md)；真正的定时/重复 `/loop` 尚未实现，仍只存在于 `docs/roadmap/`。
+本文记录已经实现的 durable workflow 子系统。Workflow 是一次具体、可观察、可恢复、可审批、可暂停/恢复/取消的执行编排；Execution Mode 是会话级推进策略。Goal 已作为顶层目标与证据链落地，详见 [Goal 控制平面](goal.md)；定时/重复触发由 [Loop 控制平面](loop.md) 承载。
 
 ## 1. 定位
 
@@ -18,7 +18,7 @@ workflow.js
   -> Workspace / Workflow Control Center
 ```
 
-它不负责长期目标本身。长期目标由 Goal 承载，workflow run 可绑定 `goal_id` 并在终态后回写 evidence；真正 `/loop` 后续只负责定时、重复触发或条件轮询。
+它不负责长期目标本身。长期目标由 Goal 承载，workflow run 可绑定 `goal_id` 并在终态后回写 evidence；`/loop` 只负责定时、重复触发或条件轮询，不改变 workflow 的执行语义。
 
 ## 2. 模块边界
 
@@ -390,7 +390,7 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 
 当前已实现 workflow 不包含：
 
-- 真正 `/loop` 的定时/重复/轮询调度。
+- `/loop` 的定时/重复/轮询调度，详见 [Loop 控制平面](loop.md)。
 - Managed worktree。
 - LSP diagnostics。
 - 独立 review engine。

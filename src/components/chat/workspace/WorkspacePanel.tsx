@@ -140,6 +140,12 @@ import {
   type GoalState,
   type GoalTimelineItem,
 } from "./useGoal"
+import {
+  useLoopSchedules,
+  type LoopSchedule,
+  type LoopState,
+  type LoopTriggerKind,
+} from "./useLoopSchedules"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
 import { PANEL_SCROLL_FADE } from "../right-panel/panelFade"
 import {
@@ -2092,6 +2098,206 @@ function workflowEventDetail(
     default:
       return truncateMiddle(compactJson(event.payload, event.eventType), 120)
   }
+}
+
+function loopStateLabel(t: ReturnType<typeof useTranslation>["t"], state: LoopState): string {
+  switch (state) {
+    case "active":
+      return t("workspace.loop.stateActive", "运行中")
+    case "paused":
+      return t("workspace.loop.statePaused", "已暂停")
+    case "completed":
+      return t("workspace.loop.stateCompleted", "已完成")
+    case "cancelled":
+      return t("workspace.loop.stateCancelled", "已停止")
+    case "blocked":
+      return t("workspace.loop.stateBlocked", "已阻塞")
+  }
+}
+
+function loopStateTone(state: LoopState): StatusTone {
+  switch (state) {
+    case "active":
+      return "info"
+    case "paused":
+      return "warn"
+    case "completed":
+      return "good"
+    case "blocked":
+      return "danger"
+    case "cancelled":
+      return "muted"
+  }
+}
+
+function isLoopTerminal(state: LoopState): boolean {
+  return state === "completed" || state === "cancelled"
+}
+
+function loopTriggerSummary(kind: LoopTriggerKind, spec: Record<string, unknown>): string {
+  if (kind === "interval") {
+    const secs = typeof spec.intervalSecs === "number" ? spec.intervalSecs : null
+    return secs ? `every ${formatLoopDuration(secs)}` : "interval"
+  }
+  if (kind === "condition") {
+    const condition = typeof spec.condition === "string" ? spec.condition : "condition"
+    return `until ${condition.length > 48 ? `${condition.slice(0, 48)}...` : condition}`
+  }
+  if (kind === "cron") return "cron"
+  return "event"
+}
+
+function formatLoopDuration(secs: number): string {
+  if (secs % 86_400 === 0) return `${secs / 86_400}d`
+  if (secs % 3600 === 0) return `${secs / 3600}h`
+  if (secs % 60 === 0) return `${secs / 60}m`
+  return `${secs}s`
+}
+
+function LoopSchedulesSection({
+  sessionId,
+  incognito,
+  turnActive,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  turnActive?: boolean
+}) {
+  const { t } = useTranslation()
+  const { schedules, activeCount, loading, error, refresh } = useLoopSchedules(sessionId, {
+    incognito,
+    turnActive,
+  })
+  const [actionId, setActionId] = useState<string | null>(null)
+
+  const runAction = useCallback(
+    async (loop: LoopSchedule, action: "pause" | "resume" | "stop") => {
+      setActionId(`${loop.id}:${action}`)
+      try {
+        await getTransport().call(`${action}_loop_schedule`, { loopId: loop.id })
+        refresh()
+      } catch (e) {
+        logger.error("ui", "LoopSchedulesSection::action", "Loop action failed", e)
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setActionId(null)
+      }
+    },
+    [refresh],
+  )
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.loop.title", "Loop")}
+      count={schedules.length}
+      icon={Radio}
+      meta={
+        activeCount > 0 ? (
+          <StatusPill
+            label={t("workspace.loop.activeCount", "{{count}} active", { count: activeCount })}
+            tone="info"
+          />
+        ) : undefined
+      }
+      defaultExpanded={activeCount > 0 || schedules.length > 0}
+    >
+      {loading && schedules.length === 0 ? (
+        <div className="flex items-center justify-center py-4 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </div>
+      ) : error ? (
+        <EmptyHint>{error}</EmptyHint>
+      ) : schedules.length === 0 ? (
+        <EmptyHint>
+          {incognito
+            ? t("workspace.loop.incognitoEmpty", "无痕会话不保存 loop")
+            : t("workspace.loop.empty", "暂无 loop")}
+        </EmptyHint>
+      ) : (
+        <div className="space-y-2">
+          {schedules.slice(0, 5).map((loop) => {
+            const isBusy = actionId?.startsWith(`${loop.id}:`)
+            return (
+              <div key={loop.id} className="rounded-md border border-border/70 bg-background/70 px-2.5 py-2">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <StatusPill label={loopStateLabel(t, loop.state)} tone={loopStateTone(loop.state)} />
+                      <span className="truncate text-xs font-medium text-foreground">
+                        {loopTriggerSummary(loop.triggerKind, loop.triggerSpec)}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{loop.prompt}</p>
+                    <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+                      <span>
+                        {t("workspace.loop.runs", "运行")} {loop.runCount}/{loop.maxRuns ?? "∞"}
+                      </span>
+                      {loop.maxRuntimeSecs ? (
+                        <span>
+                          {t("workspace.loop.maxRuntime", "最长")} {formatLoopDuration(loop.maxRuntimeSecs)}
+                        </span>
+                      ) : null}
+                      <span>{formatMessageTime(loop.updatedAt)}</span>
+                    </div>
+                    {loop.blockedReason ? (
+                      <p className="mt-1 text-[10px] text-destructive">{loop.blockedReason}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {loop.state === "active" ? (
+                      <IconTip label={t("workspace.loop.pause", "暂停")}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={isBusy}
+                          onClick={() => void runAction(loop, "pause")}
+                        >
+                          <Pause className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                    ) : loop.state === "paused" || loop.state === "blocked" ? (
+                      <IconTip label={t("workspace.loop.resume", "恢复")}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={isBusy}
+                          onClick={() => void runAction(loop, "resume")}
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                    ) : null}
+                    {!isLoopTerminal(loop.state) ? (
+                      <IconTip label={t("workspace.loop.stop", "停止")}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          disabled={isBusy}
+                          onClick={() => void runAction(loop, "stop")}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          {schedules.length > 5 ? (
+            <p className="px-1 text-[10px] text-muted-foreground">
+              {t("workspace.loop.more", "还有 {{count}} 个 loop，可用 /loop status 查看", {
+                count: schedules.length - 5,
+              })}
+            </p>
+          ) : null}
+        </div>
+      )}
+    </WorkspaceSection>
+  )
 }
 
 function WorkflowRunsSection({
@@ -5593,6 +5799,9 @@ export default function WorkspacePanel({
           onViewSubagentSession={onViewSubagentSession}
           workflowRunsState={workflowRunsState}
         />
+
+        {/* Loop — Phase 2.9 真正的定时/重复/条件触发控制面。 */}
+        <LoopSchedulesSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
         <BackgroundJobsSection

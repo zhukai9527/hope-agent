@@ -233,6 +233,7 @@ impl SlashCommandDef {
             "context" => "Show context window breakdown",
             "workflow" => "Inspect and control workflow runs",
             "goal" => "Set and audit the session goal",
+            "loop" => "Schedule recurring triggers for a goal or prompt",
             "mode" => "Set the persistent execution mode",
             "awareness" => "Toggle behavior awareness",
             "imreply" => "Set IM reply mode (split|final|preview)",

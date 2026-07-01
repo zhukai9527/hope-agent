@@ -1297,6 +1297,24 @@ fn build_router_with_cors(
         .route("/goals/{id}/resume", post(routes::goal::resume_goal))
         .route("/goals/{id}/clear", post(routes::goal::clear_goal))
         .route("/goals/{id}/evaluate", post(routes::goal::evaluate_goal))
+        .route(
+            "/sessions/{sid}/loops",
+            get(routes::loop_control::list_loop_schedules)
+                .post(routes::loop_control::create_loop_schedule),
+        )
+        .route("/loops/{id}", get(routes::loop_control::get_loop_schedule))
+        .route(
+            "/loops/{id}/pause",
+            post(routes::loop_control::pause_loop_schedule),
+        )
+        .route(
+            "/loops/{id}/resume",
+            post(routes::loop_control::resume_loop_schedule),
+        )
+        .route(
+            "/loops/{id}/stop",
+            post(routes::loop_control::stop_loop_schedule),
+        )
         .route("/plan/{sid}/content", get(routes::plan::get_plan_content))
         .route("/plan/{sid}/content", put(routes::plan::save_plan_content))
         .route(

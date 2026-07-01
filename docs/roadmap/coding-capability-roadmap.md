@@ -50,7 +50,7 @@ Phase 2 已经完成 Workflow + Execution Mode 的第一版产品化：长任务
 4. **Phase 2.9：真正 `/loop`**。只做定时、重复、轮询或条件触发，复用 cron / wakeup / automation。
 5. **Phase 3：coding-specific 能力**。再做 managed worktree、LSP、review engine、diagnostics、智能验证选择等。
 
-这次调整的核心不是降低 coding 优先级，而是把 coding 能力挂到更稳的控制平面上。`/goal` 负责最终完成标准，`/workflow` 负责一次具体执行，`/mode` 负责推进强度，未来 `/loop` 负责重复触发，`/worktree` 才是 coding 场景的隔离环境。
+这次调整的核心不是降低 coding 优先级，而是把 coding 能力挂到更稳的控制平面上。`/goal` 负责最终完成标准，`/workflow` 负责一次具体执行，`/mode` 负责推进强度，`/loop` 第一版负责重复触发，`/worktree` 才是 coding 场景的隔离环境。
 
 ## 背景
 
@@ -251,7 +251,7 @@ StopPolicy
 
 ### 五类 loop
 
-本节的 loop 指算法和任务闭环，不等同于产品命令 `/loop`。产品 `/loop` 后续只用于定时、重复触发或条件轮询。
+本节的 loop 指算法和任务闭环，不等同于产品命令 `/loop`。产品 `/loop` 已收口为定时、重复触发或条件轮询，第一版见 [Loop 控制平面](../architecture/loop.md)。
 
 1. **Agent Inner Loop**
 
@@ -479,7 +479,7 @@ StopPolicy
 
 ### Phase 2.9：真正 `/loop`
 
-状态：待 Goal 和 Goal-driven Workflow 稳定后启动。详细方案见 [Agent 控制平面路线图](agent-control-plane-roadmap.md#7-phase-29真正-loop)。
+状态：第一版已落地。最终架构见 [Loop 控制平面](../architecture/loop.md)，路线收口见 [Agent 控制平面路线图](agent-control-plane-roadmap.md#7-phase-29真正-loop)。
 
 目标：`/loop` 只表示按时间、事件或条件重复触发，不再表示执行强度。
 
@@ -487,7 +487,7 @@ StopPolicy
 
 - 复用 cron / wakeup / automation / async jobs，不另起调度系统。
 - 支持绑定 Goal 或明确 recurring prompt。
-- 每个 loop 有最大次数、最大运行时长、token/成本预算。
+- 每个 loop 有最大次数、最大运行时长、token 预算；成本预算字段保留并暂时拒绝创建，等待 provider cost ledger。
 - 每次触发都有 trace 和可审计结果。
 - 支持 status / pause / resume / stop。
 
@@ -496,6 +496,14 @@ StopPolicy
 - Loop schedule store。
 - `/loop every|until|status|pause|resume|stop`。
 - Loop run trace。
+- Workspace Loop 区块与 Tauri / HTTP owner API。
+
+后续增强：
+
+- Event-triggered loop 接入 EventBus / file watcher / CI。
+- 独立 Loop detail 页面展示完整 run trace、cron log 与消息范围。
+- 成本预算接入 provider cost ledger。
+- Loop trigger 直接生成/运行 Goal-driven Workflow draft。
 
 ### Phase 3：Coding-specific 能力起点：Managed Worktree 隔离与交接
 
@@ -584,7 +592,7 @@ StopPolicy
 4. 已让 workflow completion / validation / task evidence 回写 goal audit；validation / diff / file evidence 第一层结构化 link 已落地，artifact/review/diagnostic 接入后续补。
 5. 已做第一版 goal evaluator，能输出 completed / blocked + reason。
 6. 后续更新 Phase 0 coding eval：新增 goal-driven 长任务场景，验证 goal evidence 与 final audit。
-7. 后续设计真正 `/loop`，但实现放在 Goal-driven Workflow 稳定之后。
+7. `/loop` 第一版已落地；后续增强放到 Phase 3+ 或独立 RFC。
 
 ## 验收指标
 
@@ -640,7 +648,7 @@ StopPolicy
 2. [Goal / Mode / Workflow / Loop 语义收口](control-plane-semantics.md)：产品语言与命名红线。
 3. [Goal 控制平面](../architecture/goal.md)：Goal store、owner API、GUI、evaluator、evidence link。
 4. [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)：已落地 Goal detail、validation/diff/file evidence、Evaluator v2、Budget v2；继续跟踪 artifact/review/diagnostic evidence、可选 LLM auditor 和后续系统接入。
-5. `docs/roadmap/loop-schedules.md`：真正 `/loop` 的调度、预算、审批和 trace。
+5. [Loop 控制平面](../architecture/loop.md)：真正 `/loop` 的调度、预算、审批和 trace。
 6. `docs/roadmap/managed-worktree.md`：隔离工作区、handoff、UI、hooks。
 7. `docs/roadmap/lsp.md`：LSP manager、tools、diagnostics pipeline。
 8. `docs/roadmap/review-engine.md`：diff scan、candidate、verifier、inline finding。

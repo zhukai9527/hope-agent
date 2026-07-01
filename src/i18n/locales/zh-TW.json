@@ -4977,6 +4977,9 @@
     "goal": {
       "description": "設定並審計目前會話目標"
     },
+    "loop": {
+      "description": "為目標或提示詞設定重複觸發"
+    },
     "mode": {
       "description": "設定執行模式"
     },

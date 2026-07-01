@@ -11,7 +11,7 @@ Goal      = 最终目标、完成标准、预算、证据、最终审计
 Mode      = 本会话/目标以多主动、多深入的策略推进
 Workflow  = 一次具体、可恢复、可审批、可审计的执行 run
 Task      = 用户可见的进度事实
-Loop      = 未来的定时、重复触发或条件继续
+Loop      = 定时、重复触发或条件继续
 ```
 
 Goal 不直接执行工具，不替代 Workflow，也不表示重复调度。Workflow run 会绑定当前 active Goal，并在终态后把执行结果写回 Goal 证据链。
@@ -231,7 +231,7 @@ Workspace / Workflow Control Center 内有 Goal strip：
 
 当前 Goal 控制面仍不包含：
 
-- 真正 `/loop` 的定时、重复、轮询调度。
+- `/loop` 的定时、重复、轮询调度，详见 [Loop 控制平面](loop.md)。
 - agent 工具面直接修改 Goal。
 - LLM side-query evaluator。
 - 独立 Goal detail 全屏页面。

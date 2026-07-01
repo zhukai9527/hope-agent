@@ -373,6 +373,14 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   clear_goal:                      { method: "POST",   path: "/api/goals/{goalId}/clear" },
   evaluate_goal:                   { method: "POST",   path: "/api/goals/{goalId}/evaluate" },
 
+  // -- Loop schedules --
+  list_loop_schedules:             { method: "GET",    path: "/api/sessions/{sessionId}/loops" },
+  create_loop_schedule:            { method: "POST",   path: "/api/sessions/{sessionId}/loops" },
+  get_loop_schedule:               { method: "GET",    path: "/api/loops/{loopId}" },
+  pause_loop_schedule:             { method: "POST",   path: "/api/loops/{loopId}/pause" },
+  resume_loop_schedule:            { method: "POST",   path: "/api/loops/{loopId}/resume" },
+  stop_loop_schedule:              { method: "POST",   path: "/api/loops/{loopId}/stop" },
+
   // -- Workflow runs --
   list_workflow_runs:              { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs" },
   preview_workflow_script:         { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs/preview" },

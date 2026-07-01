@@ -1,0 +1,150 @@
+# Loop 控制平面
+
+> 返回 [文档索引](../README.md) | 更新时间：2026-07-01
+
+## 概述
+
+Loop 是 Phase 2.9 落地的真实 `/loop`：它只表示按时间、条件或后续事件重复触发，不表示执行强度。执行强度仍由 `/mode` / Execution Mode 控制；具体执行编排仍由 Workflow 承载；最终目标和完成标准仍由 Goal 承载。
+
+Loop 第一版复用现有 Cron 调度器，不另起 scheduler。每个 Loop schedule 都有一个受控 Cron job；Cron 负责可靠 tick、primary-only、并发上限、启动恢复、失败退避、无人值守权限面，Loop store 负责 session 归属、Goal 绑定、预算、次数、状态和可审计 trace。
+
+## 用户语义
+
+```text
+/loop every 10m: check CI and continue fixing if failing
+/loop until CI is green every 5m: inspect CI and fix the next failing issue
+/loop status
+/loop status <id>
+/loop pause <id>
+/loop resume <id>
+/loop stop <id>
+```
+
+支持的预算参数：
+
+- `--max-runs N`：最多触发次数。
+- `--max-runtime 2h`：Loop 从创建开始的最长运行窗口。
+- `--tokens N`：Loop token 预算，触发前 hard stop。
+- `--cost-micros` / `cost_budget_micros` 字段已预留；当前创建时会拒绝该预算，等待 provider cost ledger 接入后放开。
+
+创建 Loop 必须满足二者之一：绑定当前 open Goal，或提供明确 recurring prompt。无痕会话拒绝持久化 Loop。
+
+## 数据模型
+
+Loop 表落在 `sessions.db`，随 session 生命周期级联删除。
+
+```text
+loop_schedules
+  id
+  session_id
+  goal_id?
+  cron_job_id
+  prompt
+  trigger_kind: interval | cron | condition | event
+  trigger_spec_json
+  state: active | paused | completed | cancelled | blocked
+  max_runs
+  run_count
+  max_runtime_secs
+  token_budget
+  cost_budget_micros
+  approval_policy_snapshot_json
+  created_at / updated_at / completed_at
+  blocked_reason
+
+loop_runs
+  id
+  loop_id
+  cron_job_id
+  cron_run_log_id?
+  session_id
+  seq
+  state: running | queued | injected | succeeded | empty | failed | cancelled | skipped
+  trigger_reason
+  result_summary
+  error
+  trace_json
+  started_at / finished_at
+```
+
+Cron job 的 `CronPayload::SessionLoop` 保存 `loop_id`、原会话 `session_id`、prompt、agent、goal。普通 Cron `AgentTurn` 路径不变。
+
+## 执行链
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Slash as /loop
+    participant Loop as loop_control
+    participant Cron as Cron Scheduler
+    participant Inject as Parent Injection
+    participant Chat as Chat Engine
+
+    User->>Slash: /loop every 10m: prompt
+    Slash->>Loop: create_loop_schedule
+    Loop->>Cron: create CronJob(SessionLoop)
+    Cron-->>Loop: cron_job_id
+    Loop-->>User: loop id / status
+
+    Cron->>Loop: prepare_loop_cron_run
+    Loop-->>Cron: admit / reject
+    Cron->>Inject: inject loop trigger into original session
+    Inject->>Chat: run parent turn after idle gate
+    Chat-->>Inject: persisted assistant turn
+    Cron->>Loop: finish_loop_cron_run
+    Loop-->>User: loop:changed event / Workspace refresh
+```
+
+关键点：
+
+- Cron claim 仍是 slot-before-claim，并发上限和 primary-only 语义不变。
+- `SessionLoop` 不创建隔离 cron 会话，而是通过 `subagent::injection::inject_and_run_parent` 回到原会话。
+- 注入消息带 `<loop_trigger>` 信封，并写 `attachments_meta.loop_trigger`，前端可以识别为系统触发。
+- `condition` loop 注入时会带 `<condition>`，并要求 assistant 在条件满足时用 `LOOP_CONDITION_SATISFIED: <reason>` 开头；`finish_loop_cron_run` 识别该 marker 后把 Loop 置 `completed` 并暂停 Cron。
+- 若父会话正忙，注入沿用现有 idle gate；若被用户新 turn 抢占，进入 injection queue。
+- `loop_schedules.state != active`、达到 `max_runs`、超过 `max_runtime_secs`、Loop token budget exhausted、Goal budget exhausted 都会在触发前拒绝，并暂停背后的 Cron job。
+
+## Goal / Workflow / Mode 边界
+
+| 概念 | 职责 |
+| --- | --- |
+| Goal | 顶层目标、完成标准、证据链、budget hard stop |
+| Workflow | 一次具体执行编排，负责 op trace、审批、恢复、验证 |
+| Execution Mode | 后续 turn 的推进策略，控制观察/计划/验证/修复强度 |
+| Loop | 按时间/条件重复触发下一次推进 |
+| Cron | 底层可靠调度器 |
+
+Loop 绑定 Goal 时，每次 run 会写 `loop_run` evidence 到 Goal link/timeline。Loop 不绕过 Goal budget：触发前会调用 Goal budget 门禁，耗尽后 Loop 进入 `blocked` 并暂停 Cron。
+
+Loop 自身 token budget 也会在触发前按 parent session 自创建后的消息 usage 计算；达到上限后进入 `blocked` 并暂停 Cron。成本预算目前只保留字段，不接受创建，避免没有 cost ledger 时给用户错误安全感。
+
+## API / GUI
+
+Owner API：
+
+| Tauri Command | HTTP |
+| --- | --- |
+| `list_loop_schedules` | `GET /api/sessions/{sessionId}/loops` |
+| `create_loop_schedule` | `POST /api/sessions/{sessionId}/loops` |
+| `get_loop_schedule` | `GET /api/loops/{loopId}` |
+| `pause_loop_schedule` | `POST /api/loops/{loopId}/pause` |
+| `resume_loop_schedule` | `POST /api/loops/{loopId}/resume` |
+| `stop_loop_schedule` | `POST /api/loops/{loopId}/stop` |
+
+GUI：Workspace 面板新增 Loop 区块，展示本会话 loop 数量、状态、触发摘要、prompt、运行次数、最大运行时长、blocked reason，并提供 pause / resume / stop。
+
+## 安全与可靠性
+
+- 无痕会话拒绝 durable Loop。
+- Loop 不新增工具权限捷径；实际 turn 仍走原会话的 permission mode、sandbox、hooks、Project/KB access。
+- Loop 背后的 `CronPayload::SessionLoop` 是受控 Cron job；模型侧 `manage_cron` 不能 update / pause / resume / delete，必须走 Loop 控制面，避免 Loop store 与 Cron 状态分叉。
+- Cron 背景无人值守语义保持 fail-closed 或遵循显式 policy。
+- Loop 停止只把 Loop 置 `cancelled` 并暂停底层 Cron job；不会删除历史 trace。
+- EventBus 发 `loop:changed`，前端和 HTTP/WS 订阅可刷新状态。
+
+## 后续增强
+
+- Event-triggered loop：接入 EventBus / CI / file watcher，不只靠 interval/cron。
+- 独立 Loop detail 页面：展示 run trace、cron log、对应消息范围和 Goal evidence。
+- 成本预算精确统计：接入 provider cost ledger，并放开 `cost_budget_micros` 创建限制。
+- Workflow 自动创建：Loop trigger 可直接生成/运行 Goal-driven Workflow draft，而不仅是 parent-session continuation。

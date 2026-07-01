@@ -6,7 +6,7 @@
 >
 > 更新时间：2026-07-01
 >
-> 路线调整：Phase 2 已完成 Workflow + Execution Mode 第一版产品化；后续顺序以 [Agent 控制平面路线图](agent-control-plane-roadmap.md) 为准，先做 `/goal`，再做 Goal-driven Workflow，然后才是真正 `/loop` 与 Phase 3 coding-specific 能力。
+> 路线调整：Phase 2 已完成 Workflow + Execution Mode、`/goal`、Goal-driven Workflow 和真正 `/loop` 第一版；后续顺序以 [Agent 控制平面路线图](agent-control-plane-roadmap.md) 为准，进入 Phase 3 coding-specific 能力，并把 Loop 增强作为独立后续项。
 
 ## 0. 设计修订说明（2026-06-30 Review 收口）
 
@@ -974,7 +974,7 @@ stop reason if any
 - `/mode off|guarded|deep|autonomous` 是会话级执行策略。
 - `/workflow` 是一次具体、可观察、可恢复的执行编排。
 - `/goal` 已成为长期任务的顶层完成标准，见 [Goal 控制平面](../architecture/goal.md)。
-- `/loop` 后续只用于定时、重复触发或条件轮询。
+- `/loop` 只用于定时、重复触发或条件轮询。
 
 同时明确：guarded repair stop guard 已在 Phase 2.5 / 2.6 范围内落地，不再作为下一阶段主线。
 
@@ -1017,19 +1017,28 @@ stop reason if any
 
 ### Phase 2.9：真正 `/loop`
 
-状态：待 Goal-driven Workflow 稳定后启动。详细方案见 [Agent 控制平面路线图 §7](agent-control-plane-roadmap.md#7-phase-29真正-loop)。
+状态：第一版已落地。最终架构见 [Loop 控制平面](../architecture/loop.md)，详细路线见 [Agent 控制平面路线图 §7](agent-control-plane-roadmap.md#7-phase-29真正-loop)。
 
 目标：
 
 - `/loop` 只表示重复触发，不表示执行强度。
-- 复用 cron / wakeup / automation / async jobs，不新建平行调度器。
-- 每个 loop 必须有预算、最大次数、审批策略、trace 和 stop 控制。
+- 复用 Cron 作为可靠调度器，不新建平行 scheduler；SessionLoop 触发通过 parent injection 回到原会话。
+- 每个 loop 必须有最大次数/运行时长/token 预算、审批策略、trace 和 stop 控制；成本预算字段保留，等待 provider cost ledger。
 
 验收：
 
-- `/loop status` 能解释下一次触发、剩余预算和最近结果。
-- `/loop stop` 后不会再唤醒。
-- 无人值守审批不可用时 fail-closed 或按显式 policy proceed。
+- `/loop status` 能解释触发策略、次数预算和最近结果。
+- `/loop until` 注入 condition，并在 assistant 回应 `LOOP_CONDITION_SATISFIED` marker 后自动完成并停掉底层 Cron。
+- `/loop stop` 后会暂停底层 Cron job，不再唤醒。
+- token budget 已是触发前 hard stop；`cost_budget_micros` 创建时暂拒绝，后续接入 provider cost ledger 后放开。
+- 无人值守审批不可用时沿用原会话 permission / Cron unattended fail-closed 策略。
+
+后续增强：
+
+- Event-triggered loop 接入 EventBus / file watcher / CI。
+- 独立 Loop detail 页面展示完整 run trace、cron log 与消息范围。
+- 成本预算接入 provider cost ledger，并放开 `cost_budget_micros` 创建限制。
+- Loop trigger 直接生成/运行 Goal-driven Workflow draft。
 
 ## 15. MVP 示例场景
 
@@ -1164,4 +1173,4 @@ Phase 2 完成时，应满足：
 8. ~~补 Workflow Panel / `/workflow trace` / `/mode` 前端控制面~~ → 已接 Workspace Panel + `/workflow` slash + 持久化 `/mode` policy，并补 Trace / Validation / Agents tabs。
 9. **下一阶段：`/goal` MVP** → 目标、完成标准、预算、证据、状态、final audit。
 10. **随后：Goal-driven Workflow** → workflow run 归属 goal，repair run 继承 goal，workflow evidence 回写 goal。
-11. **再后：真正 `/loop`** → 定时、重复、轮询或条件触发，复用 cron / wakeup / automation。
+11. **已补齐：真正 `/loop` 第一版** → 定时、重复、轮询或条件触发，复用 cron / wakeup / automation。

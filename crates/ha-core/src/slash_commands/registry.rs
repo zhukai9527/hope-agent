@@ -342,6 +342,23 @@ pub fn all_commands() -> Vec<SlashCommandDef> {
             description_raw: None,
         },
         SlashCommandDef {
+            name: "loop".into(),
+            category: CommandCategory::Utility,
+            description_key: "slashCommands.loop.description".into(),
+            has_args: true,
+            args_optional: true,
+            arg_placeholder: Some("[every|until|status|pause|resume|stop]".into()),
+            arg_options: Some(vec![
+                "every".into(),
+                "until".into(),
+                "status".into(),
+                "pause".into(),
+                "resume".into(),
+                "stop".into(),
+            ]),
+            description_raw: None,
+        },
+        SlashCommandDef {
             name: "mode".into(),
             category: CommandCategory::Utility,
             description_key: "slashCommands.mode.description".into(),

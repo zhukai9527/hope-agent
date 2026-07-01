@@ -2,7 +2,7 @@
 
 > 返回 [路线图索引](README.md)
 >
-> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；Milestone D 是 `/loop`、worktree、LSP、review engine 等后续系统的接入边界。最终架构见 [Goal 控制平面](../architecture/goal.md)。
+> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；`/loop` 第一版已接入 Goal evidence，worktree、LSP、review engine 仍是后续系统接入边界。最终架构见 [Goal 控制平面](../architecture/goal.md)。
 >
 > 更新时间：2026-07-01
 
@@ -25,7 +25,7 @@ V2 的目标不是重做 Goal，而是把 **Goal <-> Workflow <-> Evidence <-> U
 2. Workflow 不只把 run 状态写回 Goal，还能把 diff / file / artifact / validation 级 evidence 结构化挂到 Goal。
 3. Evaluator 从“保守规则”升级为“规则引擎 + 可选 LLM 审计”，但不能让模型自说自话决定完成。
 4. Goal budget 从“持久化字段”升级为可观察、可扣减、可停止的运行约束。
-5. 后续 `/loop`、worktree、LSP、review engine 都能把结果作为 Goal evidence 接入，而不是各做各的总结。
+5. `/loop`、worktree、LSP、review engine 都能把结果作为 Goal evidence 接入，而不是各做各的总结；其中 `/loop` 第一版已落地。
 
 ## 非目标
 
@@ -195,7 +195,7 @@ Goal budget 不只保存字段，还要能解释：
 
 1. Budget observability：Goal detail 展示 token/time/turn 使用。
 2. Soft warning：接近上限时写 `goal_events(kind='budget_warning')`。
-3. Hard stop：超过 hard limit 后阻止新 workflow 继续绑定该 Goal；未来 `/loop` 接入时复用同一预算门禁。
+3. Hard stop：超过 hard limit 后阻止新 workflow 继续绑定该 Goal；`/loop` 触发前复用同一预算门禁。
 4. Audit integration：budget exhausted 进入 final audit blocker 或 remaining risk。
 
 ### 4.3 红线
@@ -228,7 +228,7 @@ Goal budget 不只保存字段，还要能解释：
 
 | 系统 | 接入方式 | 备注 |
 | --- | --- | --- |
-| `/loop` | `loop_runs.workflow_run_id` + `goal_id` | 每次触发结果成为 Goal timeline 事件。 |
+| `/loop` | `loop_runs` + `goal_id` | 第一版已落地：每次触发结果成为 Goal timeline 事件。 |
 | Managed Worktree | workflow run 绑定 worktree id | Goal detail 显示改动落点和 handoff 状态。 |
 | LSP Diagnostics | diagnostic evidence | 类型错误 / lint / symbol 风险进入 audit。 |
 | Review Engine | review finding evidence | P0/P1 unresolved finding 阻止 completed。 |
@@ -273,16 +273,16 @@ Goal budget 不只保存字段，还要能解释：
 - Goal budget ledger。
 - Goal detail budget card。
 - Soft warning event。
-- Hard stop 新 workflow run；未来 `/loop` 接入时复用同一预算门禁。
+- Hard stop 新 workflow run；`/loop` 触发前复用同一预算门禁。
 
 验收：
 
 - 超预算后新 workflow create 被拒或要求 owner 扩容。
 - final audit 能解释 budget exhausted 的影响。
 
-### Milestone D：Post-2.8 Future Integrations
+### Milestone D：Post-2.8 Integrations
 
-- `/loop` run evidence。
+- `/loop` run evidence（已落地第一版）。
 - worktree evidence。
 - LSP diagnostics evidence。
 - review finding evidence。
@@ -309,4 +309,4 @@ Goal budget 不只保存字段，还要能解释：
 - 更新 [Goal 控制平面](../architecture/goal.md)。
 - 更新 [Workflow 与 Execution Mode](../architecture/workflow.md) 的 Goal 集成章节。
 - 更新 [API 参考](../architecture/api-reference.md) 的新增 endpoints/events。
-- 若 `/loop` 接入完成，另建或更新 `docs/architecture/loop.md`。
+- `/loop` 接入已完成第一版，最终事实见 [Loop 控制平面](../architecture/loop.md)。

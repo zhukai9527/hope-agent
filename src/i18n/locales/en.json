@@ -4977,6 +4977,9 @@
     "goal": {
       "description": "Set and audit the session goal"
     },
+    "loop": {
+      "description": "Schedule recurring triggers for a goal or prompt"
+    },
     "mode": {
       "description": "Set execution mode"
     },
