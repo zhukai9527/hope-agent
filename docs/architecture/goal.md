@@ -131,6 +131,7 @@ stateDiagram-v2
 - `workflow.validate` op 结束后写 `validation_passed` / `validation_failed` evidence。
 - `workflow.diff` op 结束后写 `diff_snapshot`，并为最多 50 个 changed file 写 `file_changed` evidence。
 - Review Engine 完成后写 `review_passed` / `review_completed`；P0/P1 open finding 写 `review_finding`，finding 状态变更会刷新 link metadata。
+- Smart Verification 完成后写 `validation_passed` / `validation_failed` / `validation_completed`；只有 `validation_passed` 是 strong completion evidence，`validation_completed` 只表示已完成验证选择。
 - 创建新 workflow 前会检查绑定 Goal 的 budget；若 token/time/turn 任一正数上限已耗尽，拒绝创建新 run，并写一次 `budget_warning(level='exhausted')`。
 
 这保证 Goal 不依赖聊天文本反扫，而是通过 durable workflow snapshot、task 和 validation evidence 做审计。
@@ -143,7 +144,7 @@ Evaluator v2 是确定性规则门禁，输入为：
 - completion criteria。
 - linked workflow runs。
 - session tasks。
-- `goal_links` 中的 workflow / validation / diff / file evidence。
+- `goal_links` 中的 workflow / validation / diff / file / review evidence。
 - workflow blocked/failed/cancelled 状态。
 - budget snapshot。
 

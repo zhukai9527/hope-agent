@@ -97,6 +97,7 @@ pub mod ttl_cache;
 pub mod updater;
 pub mod url_preview;
 pub mod user_config;
+pub mod verification;
 pub mod wakeup;
 pub mod weather;
 #[cfg(target_os = "macos")]

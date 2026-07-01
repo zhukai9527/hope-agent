@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-01
 >
-> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；本文继续记录智能验证等后续推进顺序。
+> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；本文继续记录后续 coding-specific 能力推进顺序。
 
 ## 1. 路线调整结论
 
@@ -39,7 +39,7 @@ Phase 2.8  Goal-driven Workflow：goal 派生 workflow run，失败后 repair ru
 Phase 2.9  真正 /loop：定时、重复、轮询、条件触发，复用 cron / wakeup / automation（第一版已完成）
 Phase 3.1  Managed Worktree 隔离与交接（已完成）
 Phase 3.2  LSP / Diagnostics（已完成）
-Phase 3.3+ Coding-specific 深水能力：review engine、智能验证
+Phase 3.3+ Coding-specific 深水能力：review engine、智能验证（已完成第一版）
 ```
 
 旧主线里“Coding Mode -> Workflow/Loop -> Worktree/LSP/Review”的顺序需要改成：
@@ -234,6 +234,7 @@ Goal
 - 已落地：Goal evaluator 读取 workflow/evidence/budget snapshot，而不是重新扫散落消息；failed validation / budget exhausted 是 hard blocker。
 - 已落地：Goal budget 展示 token/time/turn 使用，接近上限写 warning event，耗尽后阻止新 workflow。
 - 已落地：Review Engine 写 `review_passed` / `review_completed` / `review_finding` evidence。
+- 已落地：Smart Verification 写 `validation_passed` / `validation_failed` / `validation_completed` evidence。
 - 后续增强：artifact / diagnostic 强类型 evidence 接入。
 - 后续增强：独立 Goal detail 全屏页面。
 - 后续增强：`/workflow` status 显示归属目标。
@@ -397,10 +398,23 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - Workflow host API：`workflow.review()`。
 - 修复后 focused re-review。
 
-### Phase 3.4 智能验证选择
+### Phase 3.4 智能验证选择（已完成）
 
-- 根据 touched files、AGENTS、历史 trace 推荐最小验证。
-- 避免默认全量测试。
+- `ha-core::verification` durable store：`verification_runs` / `verification_steps` / `verification_events`。
+- 根据 touched files 与 `AGENTS.md` / `CLAUDE.md` 项目规则推荐最小验证。
+- 低风险 step 后台执行；高风险 / 全量检查作为 gated suggestion，不默认跑。
+- Tauri + HTTP owner API 对齐：list/get/plan/run。
+- Workspace GUI “验证”区块：推荐、运行、统计、step 状态、失败输出摘要。
+- Goal evidence：`validation_passed` / `validation_failed` / `validation_completed`。
+- 重启时遗留 running verification run fail-closed 标记为 interrupted。
+- 最终架构见 [Smart Verification 控制平面](../architecture/verification-engine.md)。
+
+后续增强：
+
+- 历史 trace 成功率 / 耗时参与排序。
+- Test impact / owner map 级别的更细粒度选择。
+- 单条 gated step 用户批准后执行。
+- `workflow.verify()` host API。
 - 将验证选择质量纳入 eval。
 
 ### Phase 3.5 搜索增强后续
@@ -417,7 +431,7 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - 审批必须 fail-closed：无人能批时不能永久挂死，也不能默认越权。
 - GUI 不做命令行的薄皮：用户不应必须记 slash 命令才能掌控任务。
 - Prompt cache 要稳定：goal / mode / workflow 状态进入动态段，不破坏静态 prefix。
-- Coding-specific 能力必须挂到控制平面上：worktree / LSP / review 不是孤立工具堆叠。
+- Coding-specific 能力必须挂到控制平面上：worktree / LSP / review / verification 不是孤立工具堆叠。
 
 ## 10. 文档落点
 

@@ -1562,6 +1562,7 @@ fn is_goal_evidence_relation(relation: &str) -> bool {
             | "workflow_cancelled"
             | "validation_passed"
             | "validation_failed"
+            | "validation_completed"
             | "diff_snapshot"
             | "file_changed"
             | "artifact_created"
@@ -1605,6 +1606,7 @@ fn goal_link_title(link: &GoalLink) -> String {
         "workflow_cancelled" => "Workflow cancelled".to_string(),
         "validation_passed" => "Validation passed".to_string(),
         "validation_failed" => "Validation failed".to_string(),
+        "validation_completed" => "Validation completed".to_string(),
         "diff_snapshot" => {
             let files = metadata_u64(&link.metadata, "filesChanged").unwrap_or(0);
             format!(

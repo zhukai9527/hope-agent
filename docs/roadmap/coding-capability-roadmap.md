@@ -180,7 +180,7 @@ Hope 已经具备很多 coding agent 需要的基础能力：
 - `tool_search` 仍偏基础关键词匹配，缺少 search hint、alias、BM25、多来源 schema 组装。
 - Managed Worktree 创建、恢复、归档、交接已在 Phase 3.1 补齐；后续缺口转为 detail 页面、清理策略和 review/LSP evidence 接入。
 - LSP 语义代码工具和被动 diagnostics 注入已在 Phase 3.2 补齐；后续缺口是项目级配置、doctor 和 IDE context envelope。
-- 独立 `/review` engine、verifier 三态和 Workspace 审查区块已在 Phase 3.3 补齐；后续缺口是 LLM reviewer、profiles、Workflow review host API 和 focused re-review。
+- 独立 `/review` engine、verifier 三态和 Workspace 审查区块已在 Phase 3.3 补齐；Smart Verification 已在 Phase 3.4 补齐最小验证选择、后台低风险执行和 Goal validation evidence；后续缺口是 LLM reviewer、profiles、Workflow review/verify host API 和 focused re-review。
 - 缺少 coding eval harness 和系统级 improvement loop。
 - 内置 coding skills 还偏“说明书”，尚未产品化为稳定 workflow policy。
 
@@ -580,9 +580,35 @@ StopPolicy
 - Workflow host API：`workflow.review()`。
 - Auto-fix 后 focused re-review。
 
+### Phase 3.4：Smart Verification / 智能验证选择
+
+状态：已完成。最终架构见 [Smart Verification 控制平面](../architecture/verification-engine.md)。
+
+目标：把“应该跑什么验证”从人工经验升级为 durable、可观察、可回写 Goal evidence 的控制平面能力。
+
+已完成：
+
+- `ha-core::verification` durable store：`verification_runs` / `verification_steps` / `verification_events`。
+- Selector 读取当前 session diff、repo root、`AGENTS.md` / `CLAUDE.md` 项目规则。
+- 推荐最小验证：Rust package check、frontend typecheck、i18n check、diff whitespace sanity。
+- 全量 / 重检查作为 gated suggestion 展示，不默认自动执行。
+- `run_smart_verification` 后台执行低风险 step，请求返回后仍可靠事件/轮询更新。
+- Tauri + HTTP owner API：list/get/plan/run。
+- Workspace GUI “验证”区块：推荐验证、运行推荐、统计、step 状态、失败输出摘要。
+- Goal evidence：`validation_passed` / `validation_failed` / `validation_completed`。
+- 重启时遗留 running verification run fail-closed 标记为 interrupted。
+
+后续增强：
+
+- 历史 trace 成功率、耗时和失败模式参与排序。
+- 更细的 test impact / owner map / symbol 级验证选择。
+- GUI 支持批准并运行单条 gated step。
+- Workflow host API：`workflow.verify()`。
+- 验证选择质量进入 coding eval。
+
 ### Phase 5：Review 与 Verification Engine 后续增强
 
-目标：在 Phase 3.3 本地 Review Engine 的基础上，把 review 和 verification 组合成更强的闭环。
+目标：在 Phase 3.3 Review Engine 与 Phase 3.4 Smart Verification 的基础上，把 review 和 verification 组合成更强的闭环。
 
 任务：
 
@@ -592,12 +618,12 @@ StopPolicy
 - 去重后交给独立 verifier agent，输出 `CONFIRMED`、`PLAUSIBLE`、`REFUTED`。
 - 支持 review profiles：correctness、security、concurrency、frontend、accessibility、tests。
 - 支持 inline finding、可选 auto-fix、fix 后 re-review。
-- Verification executor 根据 AGENTS、任务类型、改动文件选择最小相关检查。
+- Verification selector 加入历史 trace、test impact、owner map 和 symbol 级影响分析。
 
 产物：
 
 - verifier prompt 与 result schema。
-- `workflow.review()` host API。
+- `workflow.review()` / `workflow.verify()` host API。
 - focused re-review 与 review catch-rate eval。
 
 ### Phase 6：Learning Loop 与技能沉淀
@@ -625,7 +651,7 @@ StopPolicy
 1. 已落 `/goal` 第一版：objective、completion criteria、state、budget 字段、evidence、final audit。
 2. 已在 GUI 中展示 active goal，不要求用户记 slash 命令才能掌控长期任务。
 3. 已让 workflow run 可选绑定 goal，repair run 不丢 goal 归属。
-4. 已让 workflow completion / validation / task evidence 回写 goal audit；validation / diff / file evidence 第一层结构化 link 已落地，Review Engine evidence 已落地，artifact/diagnostic 接入后续补。
+4. 已让 workflow completion / validation / task evidence 回写 goal audit；validation / diff / file evidence 第一层结构化 link 已落地，Review Engine evidence 与 Smart Verification evidence 已落地，artifact/diagnostic 接入后续补。
 5. 已做第一版 goal evaluator，能输出 completed / blocked + reason。
 6. 后续更新 Phase 0 coding eval：新增 goal-driven 长任务场景，验证 goal evidence 与 final audit。
 7. `/loop` 第一版已落地；后续增强放到 Phase 3+ 或独立 RFC。
@@ -688,6 +714,7 @@ StopPolicy
 6. [Managed Worktree 控制平面](../architecture/worktree.md)：已完成的隔离工作区、handoff、UI、hooks 架构。
 7. `docs/roadmap/lsp.md`：LSP manager、tools、diagnostics pipeline。
 8. [Review Engine 控制平面](../architecture/review-engine.md)：diff scan、candidate、verifier、inline finding 与 Goal evidence。
-9. `docs/roadmap/coding-improvement-loop.md`：retro、eval candidate、skill/guidance distillation。
+9. [Smart Verification 控制平面](../architecture/verification-engine.md)：最小验证选择、后台低风险执行、Goal validation evidence 与 Workspace 验证区块。
+10. `docs/roadmap/coding-improvement-loop.md`：retro、eval candidate、skill/guidance distillation。
 
 这些文档完成后，再进入逐项实现。实现顺序应优先保证可评测、可回滚、可审计，而不是先堆最显眼的 UI。

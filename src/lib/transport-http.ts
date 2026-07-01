@@ -390,6 +390,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   run_code_review:                 { method: "POST",   path: "/api/sessions/{sessionId}/review-runs" },
   get_review_run:                  { method: "GET",    path: "/api/review-runs/{runId}" },
   update_review_finding_status:    { method: "POST",   path: "/api/review-findings/{findingId}/status" },
+  list_verification_runs:          { method: "GET",    path: "/api/sessions/{sessionId}/verification-runs" },
+  plan_smart_verification:         { method: "POST",   path: "/api/sessions/{sessionId}/verification-runs/plan" },
+  run_smart_verification:          { method: "POST",   path: "/api/sessions/{sessionId}/verification-runs/run" },
+  get_verification_run:            { method: "GET",    path: "/api/verification-runs/{runId}" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

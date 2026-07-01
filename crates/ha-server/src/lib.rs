@@ -1393,6 +1393,23 @@ fn build_router_with_cors(
             "/review-findings/{id}/status",
             post(routes::review::update_review_finding_status),
         )
+        // Smart verification selector (Phase 3.4)
+        .route(
+            "/sessions/{sid}/verification-runs",
+            get(routes::verification::list_verification_runs),
+        )
+        .route(
+            "/sessions/{sid}/verification-runs/plan",
+            post(routes::verification::plan_smart_verification),
+        )
+        .route(
+            "/sessions/{sid}/verification-runs/run",
+            post(routes::verification::run_smart_verification),
+        )
+        .route(
+            "/verification-runs/{id}",
+            get(routes::verification::get_verification_run),
+        )
         // Workflow runs (Phase 2 durable coding workflows)
         .route(
             "/sessions/{sid}/workflow-runs",

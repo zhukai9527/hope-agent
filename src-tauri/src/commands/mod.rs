@@ -46,5 +46,6 @@ pub mod tasks;
 pub mod team;
 pub mod update_bridge;
 pub mod url_preview;
+pub mod verification;
 pub mod workflow;
 pub mod worktree;

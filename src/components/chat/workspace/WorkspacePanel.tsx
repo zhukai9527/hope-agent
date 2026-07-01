@@ -86,6 +86,10 @@ import type {
   ReviewRunSnapshot,
   ReviewSeverity,
   ReviewVerdict,
+  VerificationRisk,
+  VerificationRunSnapshot,
+  VerificationStep,
+  VerificationStepState,
   WorkspaceGitSnapshot,
 } from "@/lib/transport"
 import {
@@ -130,6 +134,7 @@ import { useSessionKnowledge } from "./useSessionKnowledge"
 import { useManagedWorktrees } from "./useManagedWorktrees"
 import { useLspDiagnostics } from "./useLspDiagnostics"
 import { useReviewRuns } from "./useReviewRuns"
+import { useVerificationRuns } from "./useVerificationRuns"
 import {
   useWorkflowRuns,
   type WorkflowEvent,
@@ -1949,6 +1954,319 @@ function ReviewSection({
               <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
                 {t("workspace.review.more", "还有 {{count}} 条", {
                   count: openFindings.length - visibleFindings.length,
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </WorkspaceSection>
+  )
+}
+
+function verificationStatsNumber(snapshot: VerificationRunSnapshot | null, key: string): number {
+  const value = snapshot?.run.stats?.[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function verificationStepTone(state: VerificationStepState): StatusTone {
+  switch (state) {
+    case "passed":
+      return "good"
+    case "failed":
+    case "timed_out":
+      return "danger"
+    case "running":
+      return "info"
+    case "skipped":
+      return "warn"
+    case "pending":
+      return "muted"
+  }
+}
+
+function verificationRiskTone(risk: VerificationRisk): StatusTone {
+  switch (risk) {
+    case "high":
+      return "danger"
+    case "medium":
+      return "warn"
+    case "low":
+      return "good"
+  }
+}
+
+function verificationStateLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  state: VerificationStepState,
+): string {
+  switch (state) {
+    case "pending":
+      return t("workspace.verification.stepPending", "待运行")
+    case "running":
+      return t("workspace.verification.stepRunning", "运行中")
+    case "passed":
+      return t("workspace.verification.stepPassed", "通过")
+    case "failed":
+      return t("workspace.verification.stepFailed", "失败")
+    case "skipped":
+      return t("workspace.verification.stepSkipped", "已跳过")
+    case "timed_out":
+      return t("workspace.verification.stepTimedOut", "超时")
+  }
+}
+
+function verificationRiskLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  risk: VerificationRisk,
+): string {
+  switch (risk) {
+    case "low":
+      return t("workspace.verification.riskLow", "低风险")
+    case "medium":
+      return t("workspace.verification.riskMedium", "中风险")
+    case "high":
+      return t("workspace.verification.riskHigh", "需确认")
+  }
+}
+
+function verificationDurationLabel(ms?: number | null): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`
+}
+
+function VerificationStepRow({
+  step,
+}: {
+  step: VerificationStep
+}) {
+  const { t } = useTranslation()
+  const duration = verificationDurationLabel(step.durationMs)
+  const output =
+    step.outputPreview && (step.state === "failed" || step.state === "timed_out")
+      ? truncateMiddle(step.outputPreview.replace(/\s+/g, " "), 220)
+      : null
+  return (
+    <IconTip label={step.cwd}>
+      <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {step.state === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />
+          ) : step.state === "passed" ? (
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+          ) : step.state === "failed" || step.state === "timed_out" ? (
+            <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+          ) : (
+            <Gauge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {step.title}
+          </span>
+          <StatusPill
+            label={verificationStateLabel(t, step.state)}
+            tone={verificationStepTone(step.state)}
+            loading={step.state === "running"}
+          />
+          <StatusPill
+            label={verificationRiskLabel(t, step.risk)}
+            tone={verificationRiskTone(step.risk)}
+          />
+        </div>
+        <div className="mt-1 min-w-0 truncate pl-5 font-mono text-[10px] text-muted-foreground/80">
+          {step.command}
+        </div>
+        <div className="mt-1 line-clamp-2 pl-5 text-[11px] leading-snug text-muted-foreground">
+          {step.reason}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted-foreground/65">
+          <span className="truncate">{step.category}</span>
+          {step.autoRun ? (
+            <span>{t("workspace.verification.autoRun", "自动运行")}</span>
+          ) : (
+            <span>{t("workspace.verification.gated", "需手动确认")}</span>
+          )}
+          {duration ? <span>{duration}</span> : null}
+          {typeof step.exitCode === "number" ? <span>exit {step.exitCode}</span> : null}
+        </div>
+        {output ? (
+          <div className="mt-1 rounded border border-border/50 bg-background/60 px-2 py-1 font-mono text-[10px] leading-snug text-muted-foreground">
+            {output}
+          </div>
+        ) : null}
+      </div>
+    </IconTip>
+  )
+}
+
+function VerificationSection({
+  sessionId,
+  incognito,
+  turnActive,
+  workingDir,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  turnActive?: boolean
+  workingDir?: string | null
+}) {
+  const { t } = useTranslation()
+  const {
+    runs,
+    snapshot,
+    loading,
+    planning,
+    running,
+    error,
+    refresh,
+    planVerification,
+    runVerification,
+  } = useVerificationRuns(sessionId, { incognito, turnActive })
+  const latest = snapshot?.run ?? runs[0]
+  const steps = snapshot?.steps ?? []
+  const visibleSteps = steps.slice(0, 6)
+  const failed = verificationStatsNumber(snapshot, "failed")
+  const passed = verificationStatsNumber(snapshot, "passed")
+  const runnable = verificationStatsNumber(snapshot, "runnable")
+  const gated = verificationStatsNumber(snapshot, "gated")
+  const active = running || latest?.state === "running"
+  const disabled = !sessionId || incognito || !workingDir || planning || active || loading
+
+  const meta = active ? (
+    <StatusPill label={t("workspace.verification.running", "验证中")} tone="info" loading />
+  ) : latest?.state === "failed" || failed > 0 ? (
+    <StatusPill label={t("workspace.verification.failed", "失败")} tone="danger" />
+  ) : latest?.state === "completed" ? (
+    <StatusPill label={t("workspace.verification.passed", "已验证")} tone="good" />
+  ) : latest?.state === "planned" ? (
+    <StatusPill label={t("workspace.verification.planned", "已推荐")} tone="info" />
+  ) : (
+    <StatusPill label={t("workspace.verification.idle", "待验证")} tone="muted" />
+  )
+
+  const handlePlan = async () => {
+    const next = await planVerification()
+    if (next) {
+      toast.success(
+        t("workspace.verification.planDone", "已推荐 {{count}} 条验证", {
+          count: next.steps.length,
+        }),
+      )
+    }
+  }
+
+  const handleRun = async () => {
+    const next = await runVerification()
+    if (next) {
+      toast.success(t("workspace.verification.runStarted", "验证已开始"))
+    }
+  }
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.verification.title", "验证")}
+      count={steps.length}
+      icon={CheckCircle2}
+      meta={meta}
+      defaultExpanded={active || failed > 0 || !!error}
+    >
+      <div className="space-y-2">
+        <div className="grid grid-cols-4 gap-1.5">
+          {[
+            [t("workspace.verification.runnable", "可跑"), runnable, "info" as StatusTone],
+            [t("workspace.verification.passedShort", "通过"), passed, "good" as StatusTone],
+            [t("workspace.verification.failedShort", "失败"), failed, "danger" as StatusTone],
+            [t("workspace.verification.gatedShort", "门控"), gated, "warn" as StatusTone],
+          ].map(([label, count, tone]) => (
+            <div
+              key={label as string}
+              className={cn(
+                "rounded-md border px-2 py-1.5",
+                STATUS_TONE_CLASS[tone as StatusTone],
+              )}
+            >
+              <div className="truncate text-[10px]">{label as string}</div>
+              <div className="text-xs font-semibold tabular-nums">{count as number}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handlePlan}
+            disabled={disabled}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {planning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Gauge className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.verification.plan", "推荐验证")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={disabled}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {active ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.verification.run", "运行推荐")}</span>
+          </button>
+          <IconTip label={t("workspace.verification.refresh", "刷新验证结果")}>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading || planning || active}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </IconTip>
+        </div>
+
+        {!workingDir ? (
+          <EmptyHint>{t("workspace.verification.noWorkspace", "选择工作目录后可生成验证建议")}</EmptyHint>
+        ) : incognito ? (
+          <EmptyHint>{t("workspace.verification.incognito", "无痕会话不持久化验证结果")}</EmptyHint>
+        ) : error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : latest ? (
+          <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+                {latest.summary || t("workspace.verification.summaryPending", "验证结果待生成")}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {latest.id.slice(0, 10)}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <EmptyHint>{t("workspace.verification.empty", "还没有验证记录")}</EmptyHint>
+        )}
+
+        {visibleSteps.length > 0 ? (
+          <div className="space-y-1">
+            {visibleSteps.map((step) => (
+              <VerificationStepRow key={step.id} step={step} />
+            ))}
+            {steps.length > visibleSteps.length ? (
+              <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
+                {t("workspace.verification.more", "还有 {{count}} 条", {
+                  count: steps.length - visibleSteps.length,
                 })}
               </div>
             ) : null}
@@ -6896,6 +7214,13 @@ export default function WorkspacePanel({
         <LspDiagnosticsSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
 
         <ReviewSection
+          sessionId={sessionId}
+          incognito={incognito}
+          turnActive={turnActive}
+          workingDir={effectiveWorkingDir}
+        />
+
+        <VerificationSection
           sessionId={sessionId}
           incognito={incognito}
           turnActive={turnActive}

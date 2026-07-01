@@ -362,6 +362,7 @@ impl SessionDB {
         crate::worktree::ensure_tables(&conn)?;
         crate::workflow::ensure_tables(&conn)?;
         crate::review::ensure_tables(&conn)?;
+        crate::verification::ensure_tables(&conn)?;
         crate::loop_control::ensure_tables(&conn)?;
 
         // Migration: fix FTS delete trigger — must match INSERT trigger's WHEN clause

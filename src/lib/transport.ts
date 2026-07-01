@@ -695,6 +695,61 @@ export interface ReviewRunSnapshot {
   events: ReviewEvent[];
 }
 
+export type VerificationRunState = "planned" | "running" | "completed" | "failed" | "cancelled";
+export type VerificationStepState = "pending" | "running" | "passed" | "failed" | "skipped" | "timed_out";
+export type VerificationRisk = "low" | "medium" | "high";
+
+export interface VerificationRun {
+  id: string;
+  sessionId: string;
+  scope: string;
+  state: VerificationRunState;
+  goalId?: string | null;
+  summary: string;
+  stats: Record<string, unknown>;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface VerificationStep {
+  id: string;
+  runId: string;
+  sessionId: string;
+  seq: number;
+  command: string;
+  cwd: string;
+  title: string;
+  reason: string;
+  category: string;
+  risk: VerificationRisk;
+  autoRun: boolean;
+  state: VerificationStepState;
+  exitCode?: number | null;
+  outputPreview?: string | null;
+  durationMs?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface VerificationEvent {
+  id: number;
+  runId: string;
+  seq: number;
+  kind: string;
+  payload: unknown;
+  createdAt: string;
+}
+
+export interface VerificationRunSnapshot {
+  run: VerificationRun;
+  steps: VerificationStep[];
+  events: VerificationEvent[];
+}
+
 export interface GitInfo {
   branch: string | null;
   worktrees: WorktreeInfo[];

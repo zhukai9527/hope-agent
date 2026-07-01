@@ -818,6 +818,11 @@ pub fn run() {
             commands::review::get_review_run,
             commands::review::run_code_review,
             commands::review::update_review_finding_status,
+            // Smart verification selector (Phase 3.4)
+            commands::verification::list_verification_runs,
+            commands::verification::get_verification_run,
+            commands::verification::plan_smart_verification,
+            commands::verification::run_smart_verification,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

@@ -2,7 +2,7 @@
 
 > 返回 [路线图索引](README.md)
 >
-> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；`/loop` 第一版已接入 Goal evidence，Managed Worktree 已在 Phase 3.1 落地 workflow 绑定；LSP / Diagnostics 已在 Phase 3.2 落地为语义诊断控制面，强类型 diagnostic evidence 仍属后续增强；Review Engine 已在 Phase 3.3 接入 Goal evidence。最终架构见 [Goal 控制平面](../architecture/goal.md) 与 [Review Engine 控制平面](../architecture/review-engine.md)。
+> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；`/loop` 第一版已接入 Goal evidence，Managed Worktree 已在 Phase 3.1 落地 workflow 绑定；LSP / Diagnostics 已在 Phase 3.2 落地为语义诊断控制面，强类型 diagnostic evidence 仍属后续增强；Review Engine 已在 Phase 3.3 接入 Goal evidence；Smart Verification 已在 Phase 3.4 接入 validation evidence。最终架构见 [Goal 控制平面](../architecture/goal.md)、[Review Engine 控制平面](../architecture/review-engine.md) 与 [Smart Verification 控制平面](../architecture/verification-engine.md)。
 >
 > 更新时间：2026-07-01
 
@@ -93,6 +93,7 @@ goal_evidence
 | Evidence | 来源 | 说明 |
 | --- | --- | --- |
 | `validation_passed/failed` | `workflow.validate` op | 已落地：包含 run id、op key、summary、results count、失败错误摘要。 |
+| `validation_completed` | Phase 3.4 Smart Verification | 已落地：表示已完成验证选择但没有可运行通过命令；不作为 strong completion evidence。 |
 | `diff_snapshot` | `workflow.diff` | 已落地：包含 changed files、行数统计、截断标记。 |
 | `file_changed` | `workflow.diff` changes | 已落地：关联具体文件路径、action、line delta、language；每个 diff op 最多 50 个文件。 |
 | `artifact_created` | canvas / report / generated file | 关联产物 id 或路径。 |
@@ -232,6 +233,7 @@ Goal budget 不只保存字段，还要能解释：
 | Managed Worktree | workflow run 绑定 worktree id | Goal detail 显示改动落点和 handoff 状态。 |
 | LSP Diagnostics | diagnostic evidence | 类型错误 / lint / symbol 风险进入 audit。 |
 | Review Engine | review finding evidence | P0/P1 unresolved finding 阻止 completed。 |
+| Smart Verification | validation evidence | 最小验证选择与低风险 step 结果进入 audit。 |
 | Coding Eval | goal-driven scenario | 验证 evidence 与 final audit 是否可信。 |
 
 ## 7. 实施顺序
