@@ -29,7 +29,7 @@ impl CodingTaskKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoopMode {
+pub(crate) enum TaskFlow {
     LightCoding,
     PlanImplement,
     EvidenceDebug,
@@ -38,7 +38,7 @@ pub(crate) enum LoopMode {
     WorkflowScript,
 }
 
-impl LoopMode {
+impl TaskFlow {
     fn as_str(self) -> &'static str {
         match self {
             Self::LightCoding => "light_coding",
@@ -54,7 +54,7 @@ impl LoopMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodingSessionProfile {
     pub task_kind: CodingTaskKind,
-    pub loop_mode: LoopMode,
+    pub task_flow: TaskFlow,
     pub requires_plan: bool,
     pub requires_script: bool,
     pub requires_task_truth: bool,
@@ -78,11 +78,12 @@ impl CodingSessionProfile {
                 "workflow script",
                 "dynamic workflow",
                 "durable replay",
-                "loop mode",
+                "execution mode",
+                "/mode",
+                "执行模式",
                 "工作流",
                 "动态工作流",
                 "工作流脚本",
-                "loop 模式",
             ],
         );
         if has_workflow {
@@ -193,7 +194,7 @@ impl CodingSessionProfile {
         match task_kind {
             CodingTaskKind::Review => Self {
                 task_kind,
-                loop_mode: LoopMode::ReviewOnly,
+                task_flow: TaskFlow::ReviewOnly,
                 requires_plan: false,
                 requires_script: false,
                 requires_task_truth: false,
@@ -208,7 +209,7 @@ impl CodingSessionProfile {
             },
             CodingTaskKind::Debug => Self {
                 task_kind,
-                loop_mode: LoopMode::EvidenceDebug,
+                task_flow: TaskFlow::EvidenceDebug,
                 requires_plan: false,
                 requires_script: false,
                 requires_task_truth: true,
@@ -223,7 +224,7 @@ impl CodingSessionProfile {
             },
             CodingTaskKind::Feature => Self {
                 task_kind,
-                loop_mode: LoopMode::PlanImplement,
+                task_flow: TaskFlow::PlanImplement,
                 requires_plan: true,
                 requires_script: false,
                 requires_task_truth: true,
@@ -238,7 +239,7 @@ impl CodingSessionProfile {
             },
             CodingTaskKind::WorkflowScript => Self {
                 task_kind,
-                loop_mode: LoopMode::WorkflowScript,
+                task_flow: TaskFlow::WorkflowScript,
                 requires_plan: true,
                 requires_script: true,
                 requires_task_truth: true,
@@ -248,12 +249,12 @@ impl CodingSessionProfile {
                 discipline: vec![
                     "Draft scripts as durable host-API orchestration, not raw fs/network/process code.",
                     "Use labels only for display; task updates must use handles and op identity must remain runtime-derived.",
-                    "Keep repair loops runtime-controlled with explicit stop conditions.",
+                    "Keep repair cycles runtime-controlled with explicit stop conditions.",
                 ],
             },
             CodingTaskKind::Verify => Self {
                 task_kind,
-                loop_mode: LoopMode::VerifyOnly,
+                task_flow: TaskFlow::VerifyOnly,
                 requires_plan: false,
                 requires_script: false,
                 requires_task_truth: false,
@@ -268,7 +269,7 @@ impl CodingSessionProfile {
             },
             CodingTaskKind::General => Self {
                 task_kind,
-                loop_mode: LoopMode::LightCoding,
+                task_flow: TaskFlow::LightCoding,
                 requires_plan: false,
                 requires_script: false,
                 requires_task_truth: true,
@@ -289,7 +290,7 @@ impl CodingSessionProfile {
         out.push_str("## Coding Session Profile\n\n");
         out.push_str("This is a per-turn coding policy hint. It does not override user instructions or project AGENTS.md.\n\n");
         out.push_str(&format!("- task_kind: {}\n", self.task_kind.as_str()));
-        out.push_str(&format!("- loop_mode: {}\n", self.loop_mode.as_str()));
+        out.push_str(&format!("- task_flow: {}\n", self.task_flow.as_str()));
         out.push_str(&format!("- requires_plan: {}\n", self.requires_plan));
         out.push_str(&format!("- requires_script: {}\n", self.requires_script));
         out.push_str(&format!(
@@ -325,13 +326,13 @@ fn has_any(text: &str, needles: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodingSessionProfile, CodingTaskKind, LoopMode};
+    use super::{CodingSessionProfile, CodingTaskKind, TaskFlow};
 
     #[test]
     fn review_request_is_review_only() {
         let p = CodingSessionProfile::classify("请检查我未提交的更改").unwrap();
         assert_eq!(p.task_kind, CodingTaskKind::Review);
-        assert_eq!(p.loop_mode, LoopMode::ReviewOnly);
+        assert_eq!(p.task_flow, TaskFlow::ReviewOnly);
         assert!(!p.requires_plan);
         assert!(p.render_prompt_block().contains("do not implement fixes"));
     }
@@ -354,7 +355,7 @@ mod tests {
 
     #[test]
     fn workflow_request_uses_script_profile() {
-        let p = CodingSessionProfile::classify("设计 workflow.js 的 loop 模式").unwrap();
+        let p = CodingSessionProfile::classify("设计 workflow.js 的执行模式").unwrap();
         assert_eq!(p.task_kind, CodingTaskKind::WorkflowScript);
         assert!(p.requires_script);
         assert!(p.render_prompt_block().contains("runtime-derived"));

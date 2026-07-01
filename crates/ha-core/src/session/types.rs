@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::coding_loop::CodingLoopMode;
+use crate::execution_mode::ExecutionMode;
 use crate::permission::{SandboxMode, SessionMode};
 use crate::plan::PlanModeState;
 
@@ -124,11 +124,11 @@ pub struct SessionMeta {
     /// matching the frontend's loose `string` type.
     #[serde(default)]
     pub plan_mode: PlanModeState,
-    /// Persistent coding loop policy for this session (`off` / `guarded` /
-    /// `deep` / `autonomous`). Injected into the system prompt so `/loop`
+    /// Persistent execution mode policy for this session (`off` / `guarded` /
+    /// `deep` / `autonomous`). Injected into the system prompt so `/mode`
     /// changes survive refreshes and affect every chat entry point.
     #[serde(default)]
-    pub coding_loop_mode: CodingLoopMode,
+    pub execution_mode: ExecutionMode,
     /// Per-session permission mode (`default` / `smart` / `yolo`).
     /// Persisted so the chat title bar's mode switcher is restored when
     /// switching back to a historical session. Serialized as a snake_case
@@ -570,7 +570,7 @@ mod tests {
             is_cron: false,
             parent_session_id: None,
             plan_mode: Default::default(),
-            coding_loop_mode: Default::default(),
+            execution_mode: Default::default(),
             permission_mode: Default::default(),
             sandbox_mode: Default::default(),
             project_id: None,

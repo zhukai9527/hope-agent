@@ -7,7 +7,7 @@ use super::helpers::truncate;
 use super::sections::*;
 use super::working_dir_instructions::collect_working_dir_instructions;
 use crate::agent_config::AgentDefinition;
-use crate::coding_loop::CodingLoopMode;
+use crate::execution_mode::ExecutionMode;
 use crate::memory::{MemoryBudgetConfig, MemoryEntry};
 use crate::permission::SessionMode;
 use crate::project::Project;
@@ -53,7 +53,7 @@ pub fn build(
     session_working_dir: Option<&str>,
     channel_info: Option<&crate::session::ChannelSessionInfo>,
     permission_mode: SessionMode,
-    coding_loop_mode: CodingLoopMode,
+    execution_mode: ExecutionMode,
 ) -> String {
     let mut sections: Vec<String> = Vec::new();
 
@@ -210,9 +210,9 @@ pub fn build(
     // flips from invalidating the larger static prefix cache.
     sections.push(build_permission_mode_guidance(permission_mode));
 
-    // ⑥c¹½ Coding loop policy. Session-scoped and intentionally near other
-    // dynamic execution controls so /loop flips do not churn the larger prefix.
-    if let Some(section) = coding_loop_mode.system_prompt_section() {
+    // ⑥c¹½ Execution mode policy. Session-scoped and intentionally near other
+    // dynamic execution controls so /mode flips do not churn the larger prefix.
+    if let Some(section) = execution_mode.system_prompt_section() {
         sections.push(section.to_string());
     }
 
@@ -859,7 +859,7 @@ mod memory_section_tests {
             Some("/srv/projects/demo"),
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             out.contains("# Working Directory"),
@@ -890,7 +890,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         let out_blank = build(
             &definition,
@@ -907,7 +907,7 @@ mod memory_section_tests {
             Some("   "),
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             !out_none.contains("# Working Directory"),
@@ -920,7 +920,7 @@ mod memory_section_tests {
     }
 
     #[test]
-    fn coding_loop_prompt_injected_only_when_enabled() {
+    fn execution_mode_prompt_injected_only_when_enabled() {
         let definition = mk_definition();
         let budget = MemoryBudgetConfig::default();
         let out_off = build(
@@ -938,7 +938,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         let out_guarded = build(
             &definition,
@@ -955,14 +955,14 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Guarded,
+            ExecutionMode::Guarded,
         );
 
         assert!(
-            !out_off.contains("# Coding Loop Mode"),
-            "off mode should not inject loop policy: {out_off}"
+            !out_off.contains("# Execution Mode"),
+            "off mode should not inject execution policy: {out_off}"
         );
-        assert!(out_guarded.contains("# Coding Loop Mode: Guarded"));
+        assert!(out_guarded.contains("# Execution Mode: Guarded"));
         assert!(out_guarded.contains("observe -> plan -> edit -> targeted validate -> report"));
         assert!(out_guarded.contains("Stop and ask the user"));
     }
@@ -1008,7 +1008,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             !out.contains("# File Path Formatting"),
@@ -1036,7 +1036,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             out.contains("Your avatar image is at: /Users/me/.hope-agent/avatars/foo.png"),
@@ -1064,7 +1064,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         definition.config.avatar = None;
         let out_none = build(
@@ -1082,7 +1082,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(!out_blank.contains("Your avatar image is at:"));
         assert!(!out_none.contains("Your avatar image is at:"));
@@ -1111,7 +1111,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             !out.contains("Your avatar image is at:"),
@@ -1140,7 +1140,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             !out.contains("Your avatar image is at:"),
@@ -1170,7 +1170,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
         assert!(
             out.contains("Your avatar image is at: https://example.com/a.png"),
@@ -1199,7 +1199,7 @@ mod memory_section_tests {
             None,
             None,
             SessionMode::Default,
-            CodingLoopMode::Off,
+            ExecutionMode::Off,
         );
 
         assert!(out.contains("# Incognito Session"));

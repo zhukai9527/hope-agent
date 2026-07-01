@@ -22,7 +22,7 @@ pub async fn list_workflow_runs(
 #[serde(rename_all = "camelCase")]
 pub struct CreateWorkflowRunBody {
     pub kind: Option<String>,
-    pub loop_mode: Option<String>,
+    pub execution_mode: Option<String>,
     pub script_source: String,
     pub budget: Option<Value>,
     pub parent_run_id: Option<String>,
@@ -34,7 +34,7 @@ pub struct CreateWorkflowRunBody {
 #[serde(rename_all = "camelCase")]
 pub struct PreviewWorkflowScriptBody {
     pub script_source: String,
-    pub loop_mode: Option<String>,
+    pub execution_mode: Option<String>,
 }
 
 pub async fn preview_workflow_script(
@@ -47,7 +47,7 @@ pub async fn preview_workflow_script(
             &db,
             &session_id,
             &body.script_source,
-            body.loop_mode.as_deref(),
+            body.execution_mode.as_deref(),
         ),
     ))
 }
@@ -56,9 +56,9 @@ pub async fn create_workflow_run(
     Path(session_id): Path<String>,
     Json(body): Json<CreateWorkflowRunBody>,
 ) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {
-    let mode = body.loop_mode.unwrap_or_else(|| "guarded".to_string());
-    let parsed_mode = ha_core::coding_loop::CodingLoopMode::from_str(&mode)
-        .ok_or_else(|| AppError::bad_request("Invalid coding loop mode"))?;
+    let mode = body.execution_mode.unwrap_or_else(|| "guarded".to_string());
+    let parsed_mode = ha_core::execution_mode::ExecutionMode::from_str(&mode)
+        .ok_or_else(|| AppError::bad_request("Invalid execution mode"))?;
     let db = session_db()?;
     let script_source = body.script_source;
     ha_core::workflow::ensure_workflow_script_can_create(
@@ -72,7 +72,7 @@ pub async fn create_workflow_run(
         .create_workflow_run(ha_core::workflow::CreateWorkflowRunInput {
             session_id,
             kind: body.kind.unwrap_or_else(|| "coding.workflow".to_string()),
-            loop_mode: parsed_mode.as_str().to_string(),
+            execution_mode: parsed_mode.as_str().to_string(),
             script_source,
             budget: body.budget.unwrap_or_else(|| json!({})),
             parent_run_id: body.parent_run_id,

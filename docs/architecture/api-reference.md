@@ -320,6 +320,8 @@ KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fall
 | `set_session_working_dir` | `PATCH /api/sessions/{sessionId}/working-dir` | ✅ |
 | `update_session_agent_cmd` | `PATCH /api/sessions/{sessionId}/agent` | ✅ |
 | `set_session_model` | `PATCH /api/sessions/{sessionId}/model` | ✅ |
+| `get_execution_mode` | `GET /api/sessions/{sessionId}/execution-mode` | ✅ |
+| `set_execution_mode` | `POST /api/sessions/{sessionId}/execution-mode` | ✅ |
 | `purge_session_if_incognito` | `POST /api/sessions/{sessionId}/purge-if-incognito` | ✅ |
 | `search_sessions_cmd` | `GET /api/sessions/search` | ✅ |
 | `search_session_messages_cmd` | `GET /api/sessions/{sessionId}/messages/search` | ✅ |
@@ -347,6 +349,8 @@ KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fall
 `update_session_agent_cmd` 接受 `{ agentId: string }`，后端在 SQL 层校验 `messages` 表中该 session 没有 `role IN ('user','assistant')` 的记录，否则返回 400。前端 `ChatTitleBar` 的 `AgentSwitcher` dropdown 在 `messages.length > 0` 时会把触发器降级为只读 `<span>`，作为 UX 防御层。
 
 `set_session_model` 接受 `{ providerId, modelId }`，把模型固定到当前会话（写 `sessions.provider_id` / `provider_name` / `model_id`），不写 `AppConfig.active_model`——v0.2.1 起这是「会话内切模型」的唯一合法入口。`get_active_model` / `POST /api/models/active` 仍然存在，但**只该被 Settings 「模型」面板 / onboarding wizard / 本地 LLM 安装路径**调用，用来修改应用全局默认；任何 chat 内或 IM 内的"切模型"语义都必须落到 session 级。chat_engine 解析优先级 `plan_model > 本轮 model_override > sessions.provider_id > agent.model.primary > AppConfig.active_model`（详见 [`provider-system.md` § 7.2](provider-system.md#72-模型链解析)）。写入后 emit `session:model_updated`，桌面 GUI 仅在 `sessionId == currentSessionId` 时同步 ModelPicker。
+
+`get_execution_mode` / `set_execution_mode` 是会话级执行模式入口，对应 `/mode off|guarded|deep|autonomous` 与 Workspace/Workflow 面板中的 Execution Mode 控件，写 `sessions.execution_mode`。该值会进入下一轮 system prompt 的动态段，控制长任务的观察、计划、验证、修复和停止策略；它不是 `/loop`，也不负责定时、重复触发或条件轮询。
 
 `export_session_cmd` / `GET /api/sessions/{sessionId}/export` 是两端**形态不对称**的特例：Tauri 端走 IPC，由前端先弹原生 save dialog 拿到 `output_path` 再传进来，后端写盘后返回最终路径字符串；HTTP 端走 GET 直接返回二进制流（`Content-Type` + `Content-Disposition: attachment; filename*=UTF-8''<percent>`），浏览器用 `URL.createObjectURL` + `<a download>` 触发下载。两端共用 [`ha_core::session::export::export_session`](../../crates/ha-core/src/session/export.rs) 序列化器，Query 参数 `format ∈ {md,json,html}` / `includeThinking` / `includeTools` 与 Tauri 命令的字段一一对应。前端 Transport 抽象 [`exportSession`](../../src/lib/transport.ts) 是这一对端点的统一入口，调用方不需要分支。
 

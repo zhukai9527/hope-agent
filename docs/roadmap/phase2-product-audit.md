@@ -25,7 +25,7 @@ Phase 2 的产品级定义不是"能跑一个命令"，而是：
 | --- | --- | --- | --- |
 | 我怎么知道有 coding workflow？ | 标题栏必须有显性入口，不能只靠 slash command。 | `ChatTitleBar` 支持 `workspaceWorkflowStatus`，`ChatScreen` 顶层订阅 `useWorkflowRuns` 后传入标题栏；`ChatTitleBar.test.tsx` 覆盖 `Coding` 入口和状态 badge。 | 通过 |
 | 长任务在等我吗？ | active / waiting / failed run 要在入口上显性提示。 | 标题栏 badge 汇总 active、attention、running；Workspace 共享同一份 `workflowRunsState`，避免面板内外状态分裂。 | 通过 |
-| 没有 run 时能不能直接开始？ | 空态必须有行动按钮、loop mode、工作目录状态。 | `WorkspacePanel.test.tsx` 覆盖无 run 空态、loop mode 切换、工作目录展示和创建入口。 | 通过 |
+| 没有 run 时能不能直接开始？ | 空态必须有行动按钮、execution mode、工作目录状态。 | `WorkspacePanel.test.tsx` 覆盖无 run 空态、execution mode 切换、工作目录展示和创建入口。 | 通过 |
 | 普通用户是否必须先懂脚本？ | 默认从 coding 目标生成草稿，脚本编辑放高级区。 | Workspace 创建流为 goal-driven draft；`advancedScript` 折叠高级脚本区；测试覆盖目标草稿与高级脚本。 | 通过 |
 | 创建前能否知道风险？ | GUI 预检必须展示 Script Gate 阻断项和 permission preview。 | `preview_workflow_script` 不落库；Tauri/HTTP `create_workflow_run` 强制复用同一 preflight；Workspace 测试覆盖 preflight 阻断与审批摘要。 | 通过 |
 | 运行中能不能操作？ | draft / approve / pause / resume / cancel 都要可操作，cancel 必须确认。 | Workspace 动作走 owner API；`approve` / `resume` 会 kick runtime；cancel 弹窗说明会停止 run 与 workflow-owned children，且终态刷新后禁用 stale cancel。 | 通过 |
@@ -46,7 +46,7 @@ Phase 2 的产品级定义不是"能跑一个命令"，而是：
 | pause / resume | pause 后不能继续启动新 op；resume 后不能被旧 owner 卡住。 | DB op guard 拒绝 paused run 新 op；pause 释放 `primary_owner`；resume 可被新 owner claim；`pause_` 测试覆盖。 | 通过 |
 | cancel | owner cancel 要停止 run，并 best-effort 取消 workflow-owned children。 | `cancel_workflow_run_with_children` 取消 async tool / validation / subagent child，并写 `run_child_cancel_requested` trace event；测试覆盖。 | 通过 |
 | output token budget | 长 fan-out 不能无界消耗模型输出。 | GUI goal-driven 草稿写 `maxOutputTokens`；子 Agent usage 持久化；runtime 在 `waitAll` 后写 `budget_usage`，耗尽后阻断新 LLM op 并 `Blocked`。 | 通过 |
-| guarded repair stop guard | 不能无限重复修复。 | validation failure 写 repair event；重复 fingerprint 或无有效 diff 进展转 Blocked；`loop_mode=off` 不误拦。 | 通过 |
+| guarded repair stop guard | 不能无限重复修复。 | validation failure 写 repair event；重复 fingerprint 或无有效 diff 进展转 Blocked；`execution_mode=off` 不误拦。 | 通过 |
 | askUser / unattended | headless/autonomous 不能无限等用户。 | `workflow.askUser` 复用 `evaluate_approval_surface`，无人值守按策略 fail-closed/proceed；测试覆盖默认 deny 和配置 proceed。 | 通过 |
 | incognito | durable workflow 不能破坏关闭即焚。 | incognito 会话拒绝持久 workflow；GUI 显示 fail-closed 提示。 | 通过 |
 
@@ -56,7 +56,7 @@ Phase 2 的产品级定义不是"能跑一个命令"，而是：
 | --- | --- | --- | --- |
 | Tauri owner API | 桌面 GUI 需要完整 owner 控制面。 | `src-tauri/src/commands/workflow.rs` 提供 list / get / preview / create / run / approve / pause / resume / cancel。 | 通过 |
 | HTTP owner API | server / Web GUI 与桌面能力一致。 | `crates/ha-server/src/routes/workflow.rs` 提供同等路由；`src/lib/transport-http.ts` 绑定 REST path。 | 通过 |
-| Slash command | 命令仍可作为高级入口，但不能成为唯一入口。 | `/workflow status|trace|approve|pause|resume|cancel` 与 `/loop off|guarded|deep|autonomous` 已接入；GUI 是主交互面。 | 通过 |
+| Slash command | 命令仍可作为高级入口，但不能成为唯一入口。 | `/workflow status|trace|approve|pause|resume|cancel` 与 `/mode off|guarded|deep|autonomous` 已接入；GUI 是主交互面。 | 通过 |
 | Event / refresh | UI 不能只靠单次请求。 | `useWorkflowRuns` 支持 `workflow:*` 事件刷新、visibility refresh、active run 低频 polling；外层状态复用避免双订阅。 | 通过 |
 | Dev-only smoke | GUI smoke 不能进入生产功能入口。 | `src/main.tsx` 只在 `window=workflow-smoke && import.meta.env.DEV` 动态导入；`pnpm build` 后 `dist` 无 `Workflow GUI Smoke` / `workflow-smoke` 匹配。 | 通过 |
 
@@ -80,7 +80,7 @@ Phase 2 的产品级定义不是"能跑一个命令"，而是：
 - `pnpm build`
 - `rg "Workflow GUI Smoke|workflow-smoke" dist`
 - `git diff --check`
-- Dev-only browser smoke：临时 Vite + `http://localhost:1420/?window=workflow-smoke`，使用真实 `WorkspacePanel` 和 fake transport，验证 approval / running / failed 场景；390px 移动宽度与 1280px 桌面宽度均无页面级水平溢出，approval 场景可见 Coding Loop / 待批准焦点 / 授权清单 / 批准 / 取消，running 场景可见正在执行焦点 / 暂停 / 取消，failed 场景可见验证失败 / 生成修复草稿 / 复制修复提示。
+- Dev-only browser smoke：临时 Vite + `http://localhost:1420/?window=workflow-smoke`，使用真实 `WorkspacePanel` 和 fake transport，验证 approval / running / failed 场景；390px 移动宽度与 1280px 桌面宽度均无页面级水平溢出，approval 场景可见 Execution Mode / 待批准焦点 / 授权清单 / 批准 / 取消，running 场景可见正在执行焦点 / 暂停 / 取消，failed 场景可见验证失败 / 生成修复草稿 / 复制修复提示。
 
 验证边界：
 

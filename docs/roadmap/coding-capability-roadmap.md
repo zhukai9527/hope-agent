@@ -12,7 +12,7 @@
 - [参考资料与调研线索](#参考资料与调研线索)
 - [现状判断](#现状判断)
 - [能力模型](#能力模型)
-- [Dynamic Workflow 与 Loop 模式](#dynamic-workflow-与-loop-模式)
+- [Dynamic Workflow、Execution Mode 与 Loop 边界](#dynamic-workflowexecution-mode-与-loop-边界)
 - [阶段计划](#阶段计划)
 - [30 天首个里程碑](#30-天首个里程碑)
 - [验收指标](#验收指标)
@@ -178,7 +178,9 @@ Coding 能力拆成 8 层建设：
 | L7 Workflow Loop | observe-plan-act-validate-review-repair | 让任务闭环完成 |
 | L8 Improvement | trace、eval、retro、skill/guidance 更新 | 让系统越用越强 |
 
-## Dynamic Workflow 与 Loop 模式
+## Dynamic Workflow、Execution Mode 与 Loop 边界
+
+语义收口详见 [Goal / Mode / Workflow / Loop 语义收口](control-plane-semantics.md)。当前 Phase 2 已落的是 `/mode` execution mode 与 `/workflow`，不是一等公民 `/goal`，也不是真正的定时/重复 `/loop`。
 
 ### 核心原则
 
@@ -201,7 +203,7 @@ WorkflowRun
   kind: coding.fix_bug | coding.feature | coding.review | coding.debug | research | maintenance
   state
   current_node
-  loop_policy
+  execution_policy
   budget
   artifacts
   trace
@@ -216,7 +218,7 @@ WorkflowEdge
   human-gated edge
   hook-gated edge
 
-LoopPolicy
+StopPolicy
   max_iterations
   max_repair_attempts
   max_minutes
@@ -227,6 +229,8 @@ LoopPolicy
 ```
 
 ### 五类 loop
+
+本节的 loop 指算法和任务闭环，不等同于产品命令 `/loop`。产品 `/loop` 后续只用于定时、重复触发或条件轮询。
 
 1. **Agent Inner Loop**
 
@@ -291,10 +295,10 @@ LoopPolicy
 ```text
 /workflow
 /workflow trace
-/loop off
-/loop guarded
-/loop deep
-/loop autonomous
+/mode off
+/mode guarded
+/mode deep
+/mode autonomous
 ```
 
 语义：
@@ -347,7 +351,7 @@ LoopPolicy
 
 ### Phase 2：Coding Mode 与原生 Skills
 
-状态：详细方案见 [Phase 2 Coding Mode 与 Script-first Dynamic Workflow 方案](phase2-coding-mode-dynamic-workflow.md)，收口清单见 [Phase 2 完整目标与验收清单](phase2-completion-checklist.md)。2026-07-01 已完成 durable store/state machine 与 QuickJS runtime foundation；首批 host API（`task.create/update`、`fileSearch`、`tool/read/grep`、`workflow.map`、`spawnAgent/waitAll`、async job backed `validate`、`askUser`、`diff`、`trace`、`finish`）已可通过 Script Gate 后执行并 durable replay，`workflow.map` 已物化 fan-out 列表并生成嵌套位置 op-key，`spawnAgent` / `validate` / 显式 async `workflow.tool` 已具备 child_handle attach，`workflow.spawnAgent` 已补真实 subagent tool 路径 E2E（同 run id 预分配、`subagent_runs` 与 `background_jobs` 投影）和 mock-provider 回复型 fan-out E2E（两个子 Agent 真实跑过 child `run_chat_engine` + OpenAI Chat provider adapter 后由 `waitAll` 汇总），`askUser` 已复用无人值守 fail-closed 判定；permission preview / user approval 第一版已落，Draft script 会在执行前产出 preview，动态工具调用先进入 `awaiting_approval`，owner approve 后才继续；Workspace Panel 已升级为 Workflow Control Center v2，常驻 session loop mode 控制，并提供目标驱动草稿入口（coding 目标 → 观察 / 子 Agent 实现 / waitAll / 单点验证 / diff / finish 的可预检 `workflow.js`）、脚本高级编辑、创建前 Script Gate + permission preview 预检、run 总览、授权清单、审批焦点、Trace timeline、Validation 命令明细、Agents 三视图、失败恢复建议和 run draft / approve / pause / resume / cancel 操作；Tauri/HTTP owner API 已支持 preview / create / run，create 强制复用同一 preflight，approve/resume 会异步 kick runtime；`/workflow` 控制命令已接入，`/loop` 已升级为持久化 `coding_loop_mode` 并注入 system prompt；guarded repair runtime stop guard 已落地（重复 validation fingerprint / 无有效 diff 进展 → Blocked）。外部真实 provider smoke 只作为体验抽检，不再是实现完成的唯一证据。
+状态：详细方案见 [Phase 2 Coding Mode 与 Script-first Dynamic Workflow 方案](phase2-coding-mode-dynamic-workflow.md)，收口清单见 [Phase 2 完整目标与验收清单](phase2-completion-checklist.md)。2026-07-01 已完成 durable store/state machine 与 QuickJS runtime foundation；首批 host API（`task.create/update`、`fileSearch`、`tool/read/grep`、`workflow.map`、`spawnAgent/waitAll`、async job backed `validate`、`askUser`、`diff`、`trace`、`finish`）已可通过 Script Gate 后执行并 durable replay，`workflow.map` 已物化 fan-out 列表并生成嵌套位置 op-key，`spawnAgent` / `validate` / 显式 async `workflow.tool` 已具备 child_handle attach，`workflow.spawnAgent` 已补真实 subagent tool 路径 E2E（同 run id 预分配、`subagent_runs` 与 `background_jobs` 投影）和 mock-provider 回复型 fan-out E2E（两个子 Agent 真实跑过 child `run_chat_engine` + OpenAI Chat provider adapter 后由 `waitAll` 汇总），`askUser` 已复用无人值守 fail-closed 判定；permission preview / user approval 第一版已落，Draft script 会在执行前产出 preview，动态工具调用先进入 `awaiting_approval`，owner approve 后才继续；Workspace Panel 已升级为 Workflow Control Center v2，常驻 session execution mode 控制，并提供目标驱动草稿入口（coding 目标 → 观察 / 子 Agent 实现 / waitAll / 单点验证 / diff / finish 的可预检 `workflow.js`）、脚本高级编辑、创建前 Script Gate + permission preview 预检、run 总览、授权清单、审批焦点、Trace timeline、Validation 命令明细、Agents 三视图、失败恢复建议和 run draft / approve / pause / resume / cancel 操作；Tauri/HTTP owner API 已支持 preview / create / run，create 强制复用同一 preflight，approve/resume 会异步 kick runtime；`/workflow` 控制命令已接入，`/mode` 已升级为持久化 `execution_mode` 并注入 system prompt；guarded repair runtime stop guard 已落地（重复 validation fingerprint / 无有效 diff 进展 → Blocked）。外部真实 provider smoke 只作为体验抽检，不再是实现完成的唯一证据。
 
 目标：把已有 Plan、Task、Subagent、Async Jobs、Hooks、Permission 组合成 coding-first 体验，同时不把第三方移植 skills 直接作为核心策略。
 
@@ -370,7 +374,7 @@ LoopPolicy
 - workflow policy registry。
 - Plan quality gate。
 
-### Phase 2.5：Script-first Dynamic Workflow + Loop Engine
+### Phase 2.5：Script-first Dynamic Workflow + Execution Policy
 
 状态：详细方案见 [Phase 2 Coding Mode 与 Script-first Dynamic Workflow 方案](phase2-coding-mode-dynamic-workflow.md)。
 
@@ -385,13 +389,13 @@ LoopPolicy
 - 脚本执行前做 lint / budget / permission preview / user approval（第一版已落，Workspace Panel 与 `/workflow` 控制面已接入）。
 - `task_create/update` 与 workflow op 自动绑定。
 - validation 失败自动生成 structured feedback，作为下一轮 repair 输入。
-- 增加 `/workflow`、`/workflow trace`、`/workflow pause|resume|cancel`、`/loop` 控制面。
+- 增加 `/workflow`、`/workflow trace`、`/workflow pause|resume|cancel`、`/mode` 控制面。
 
 产物：
 
 - script-first workflow runtime RFC。
 - workflow trace viewer。
-- loop policy 配置。
+- execution policy 配置。
 
 ### Phase 3：Managed Worktree 隔离与交接
 
@@ -534,7 +538,7 @@ LoopPolicy
 2. `docs/roadmap/tool-definition-v2.md`：工具元数据、迁移策略、兼容层。
 3. `docs/roadmap/tool-search-v2.md`：搜索排序、schema 返回、deferred 策略。
 4. `docs/roadmap/coding-mode.md`：任务分类、profile、Plan quality gate、Skill policy。
-5. `docs/roadmap/workflow.md`：WorkflowRun、节点、边、loop policy、trace。
+5. `docs/roadmap/workflow.md`：WorkflowRun、节点、边、execution policy、trace。
 6. `docs/roadmap/managed-worktree.md`：隔离工作区、handoff、UI、hooks。
 7. `docs/roadmap/lsp.md`：LSP manager、tools、diagnostics pipeline。
 8. `docs/roadmap/review-engine.md`：diff scan、candidate、verifier、inline finding。

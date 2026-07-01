@@ -81,11 +81,11 @@ pub fn preview_workflow_script_for_session(
     db: &SessionDB,
     session_id: &str,
     script: &str,
-    loop_mode: Option<&str>,
+    execution_mode: Option<&str>,
 ) -> WorkflowScriptPreview {
     let gate = check_workflow_script_draft(
         script,
-        script_gate_options_for_loop_mode(loop_mode.unwrap_or("guarded")),
+        script_gate_options_for_execution_mode(execution_mode.unwrap_or("guarded")),
     );
     let gate_passed = gate.passed();
     let gate_feedback = gate.render_feedback("Workflow Script Gate");
@@ -111,9 +111,9 @@ pub fn ensure_workflow_script_can_create(
     db: &SessionDB,
     session_id: &str,
     script: &str,
-    loop_mode: Option<&str>,
+    execution_mode: Option<&str>,
 ) -> Result<WorkflowScriptPreview> {
-    let preview = preview_workflow_script_for_session(db, session_id, script, loop_mode);
+    let preview = preview_workflow_script_for_session(db, session_id, script, execution_mode);
     if !preview.gate_passed {
         return Err(anyhow!(preview.gate_feedback.clone()));
     }
@@ -125,9 +125,9 @@ pub fn ensure_workflow_script_can_create(
     Ok(preview)
 }
 
-pub(crate) fn script_gate_options_for_loop_mode(loop_mode: &str) -> ScriptGateOptions {
+pub(crate) fn script_gate_options_for_execution_mode(execution_mode: &str) -> ScriptGateOptions {
     ScriptGateOptions {
-        autonomous: loop_mode == "autonomous",
+        autonomous: execution_mode == "autonomous",
     }
 }
 

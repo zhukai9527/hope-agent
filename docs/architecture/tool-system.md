@@ -88,7 +88,7 @@ impl ToolDefinition {
 这样做有两个约束：
 
 - **全工具覆盖**：所有内置工具、动态 MCP 工具都能拿到 v2 metadata，不要求每个工具定义点重复手填完整字段。
-- **不改变执行语义**：metadata 服务于 `tool_search`、UI、workflow/review/loop 规划和未来策略判断；执行期安全边界仍然是 `permission::engine`、`ToolExecContext::is_tool_visible`、Plan/Skill/KB 等 live gate。
+- **不改变执行语义**：metadata 服务于 `tool_search`、UI、workflow/review 规划和未来策略判断；执行期安全边界仍然是 `permission::engine`、`ToolExecContext::is_tool_visible`、Plan/Skill/KB 等 live gate。
 
 `ToolMetadata` 当前包含：
 
@@ -105,7 +105,7 @@ impl ToolDefinition {
 | `validation` | strict schema、required 参数、参数 alias 提示 |
 | `render` | 结果形态和主资源提示，如 file diff、search results、URL content、task list |
 | `search_text` | 已拼好的搜索语料，供 `tool_search` / 调试复用 |
-| `auto_classifier_input` / `classifier_tags` | 面向 workflow/review/loop 的分类输入 |
+| `auto_classifier_input` / `classifier_tags` | 面向 workflow/review 的分类输入 |
 
 `to_api_metadata()` 会返回 `metadata` 字段，因此 Tauri / HTTP 的工具列表与 `tool_search` 使用同一套 v2 语义。
 

@@ -45,7 +45,7 @@ workflow_runs
   session_id      TEXT          -- 归属会话（incognito 会话不允许建 run）
   kind            TEXT          -- coding.fix_bug | coding.feature | coding.review | coding.debug | ...
   state           TEXT          -- 见 §3.2 run 状态机
-  loop_mode       TEXT          -- off | guarded | deep | autonomous
+  execution_mode       TEXT          -- off | guarded | deep | autonomous
   script_hash     TEXT          -- 脚本源码 BLAKE3
   script_source   TEXT          -- 脚本正文（也可外置文件，DB 为准）
   budget_json     TEXT          -- 见 §9
@@ -236,7 +236,7 @@ for each run where state == Running and primary_owner is stale/empty:   // 仅 P
 
 - 脚本执行线程在 `waitAll` / `spawnAgent` 等待期间**绝不持有** `async_jobs::slots` 槽或前台 idle guard。否则父占槽等子、子抢不到槽 = 死锁（async_jobs 已有"parked 持槽"同类陷阱）。
 - 子任务照走既有两域配额：subagent 走 `subagent::queue`（R7.2），tool job 走 `async_jobs::slots`（R7.1）。workflow runtime 只发起请求 + 记 handle + 等终态，**不维护平行池**。
-- `waitAll({concurrency: N})` 支持有界并发：runtime 只控制"同时发起多少 spawn 请求"，实际执行仍受底层队列配额裁决。默认 concurrency 取 loop_mode 的 max_subagents 与底层 per-session 配额的较小值。
+- `waitAll({concurrency: N})` 支持有界并发：runtime 只控制"同时发起多少 spawn 请求"，实际执行仍受底层队列配额裁决。默认 concurrency 取 execution_mode 的 max_subagents 与底层 per-session 配额的较小值。
 - 长扇出"等齐"优先用**完成注入合并**（对齐 background-jobs 的 Group join-all-settle）而非脚本里长 `waitAll` 死等——降低 coordinator 挂起时长。
 
 ## 9. 预算（含 token/cost）
@@ -317,7 +317,7 @@ bundled 模板就是"被 release 信任的脚本"，与通用引擎共用同一 
 
 ## 14. 实现里程碑与可测性
 
-状态：2026-06-30 已完成第 1 项 durable store/state machine、第 3 项 Primary-only startup recovery runner，并完成第 4 项的 runtime foundation 子集：QuickJS/rquickjs 受控执行、Script Gate 执行前阻断、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 op-key、`task.create/update` / `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent/waitAll` / async job backed `validate` / `askUser` / `diff` / `trace` / `finish`、Completed op replay 无重复副作用、Started non-idempotent op fail-closed Blocked。第 2 项 fan-out 物化已落地：`workflow.map` 冻结输入列表并给 callback 内 host call 生成 `map/item#i/op#N` 嵌套位置键；`spawnAgent` child_handle attach 与 replay 单测已覆盖，并新增真实工具路径 E2E：`workflow.spawnAgent` 经 `subagent` 工具预分配同一个 run id，落 `subagent_runs` 与 `background_jobs` 投影（测试用并发上限稳定停在 Queued，证明 durable spawn / projection），同时新增 mock-provider 回复型 fan-out E2E：两个 `workflow.spawnAgent` 子 Agent 真实跑过 child `run_chat_engine` + OpenAI Chat provider adapter 后由 `workflow.waitAll` 汇总完成；`workflow.validate` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle，started replay 可 attach 既有 job / 缺 row 同 job id 重试；startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；permission preview / user approval 第一版已落：创建 run 写 `script_permission_preview`，Draft 执行前静态 host call 复用 permission engine，动态工具调用进入 `awaiting_approval`，owner approve 后继续；`/loop` 已持久化为 `sessions.coding_loop_mode` 并注入 system prompt；guarded repair stop guard 已落：validation failure 写结构化 repair event，重复失败 fingerprint 或无有效 diff 进展会 Blocked；Workspace Panel 已补 Trace / Validation / Agents 三视图。外部真实 provider smoke 只作为体验抽检，不再是实现完成的唯一证据。
+状态：2026-06-30 已完成第 1 项 durable store/state machine、第 3 项 Primary-only startup recovery runner，并完成第 4 项的 runtime foundation 子集：QuickJS/rquickjs 受控执行、Script Gate 执行前阻断、`Date.now` / `new Date()` / `Math.random` runtime throw、位置化 op-key、`task.create/update` / `fileSearch` / `tool/read/grep` / `workflow.map` / `spawnAgent/waitAll` / async job backed `validate` / `askUser` / `diff` / `trace` / `finish`、Completed op replay 无重复副作用、Started non-idempotent op fail-closed Blocked。第 2 项 fan-out 物化已落地：`workflow.map` 冻结输入列表并给 callback 内 host call 生成 `map/item#i/op#N` 嵌套位置键；`spawnAgent` child_handle attach 与 replay 单测已覆盖，并新增真实工具路径 E2E：`workflow.spawnAgent` 经 `subagent` 工具预分配同一个 run id，落 `subagent_runs` 与 `background_jobs` 投影（测试用并发上限稳定停在 Queued，证明 durable spawn / projection），同时新增 mock-provider 回复型 fan-out E2E：两个 `workflow.spawnAgent` 子 Agent 真实跑过 child `run_chat_engine` + OpenAI Chat provider adapter 后由 `workflow.waitAll` 汇总完成；`workflow.validate` 预分配 async job child_handle，started replay 可 attach / 缺 row 同 job id 重试；显式 `workflow.tool({ args: { run_in_background: true } })` 预分配 async job child_handle，started replay 可 attach 既有 job / 缺 row 同 job id 重试；startup-like 单测覆盖 async job replay 标 interrupted 后 workflow recovery 继续完成且不重复 task；permission preview / user approval 第一版已落：创建 run 写 `script_permission_preview`，Draft 执行前静态 host call 复用 permission engine，动态工具调用进入 `awaiting_approval`，owner approve 后继续；`/mode` 已持久化为 `sessions.execution_mode` 并注入 system prompt；guarded repair stop guard 已落：validation failure 写结构化 repair event，重复失败 fingerprint 或无有效 diff 进展会 Blocked；Workspace Panel 已补 Trace / Validation / Agents 三视图。外部真实 provider smoke 只作为体验抽检，不再是实现完成的唯一证据。
 
 对齐上层方案 Phase 2.4 / 2.5，补可测断言：
 

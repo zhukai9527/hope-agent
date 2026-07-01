@@ -34,14 +34,14 @@ pub async fn get_workflow_run(
 pub async fn preview_workflow_script(
     session_id: String,
     script_source: String,
-    loop_mode: Option<String>,
+    execution_mode: Option<String>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<WorkflowScriptPreview, CmdError> {
     Ok(ha_core::workflow::preview_workflow_script_for_session(
         &app_state.session_db,
         &session_id,
         &script_source,
-        loop_mode.as_deref(),
+        execution_mode.as_deref(),
     ))
 }
 
@@ -50,16 +50,16 @@ pub async fn create_workflow_run(
     session_id: String,
     script_source: String,
     kind: Option<String>,
-    loop_mode: Option<String>,
+    execution_mode: Option<String>,
     budget: Option<Value>,
     parent_run_id: Option<String>,
     origin: Option<String>,
     run_immediately: Option<bool>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<WorkflowRun, CmdError> {
-    let mode = loop_mode.unwrap_or_else(|| "guarded".to_string());
-    let parsed_mode = ha_core::coding_loop::CodingLoopMode::from_str(&mode)
-        .ok_or_else(|| CmdError::msg("Invalid coding loop mode"))?;
+    let mode = execution_mode.unwrap_or_else(|| "guarded".to_string());
+    let parsed_mode = ha_core::execution_mode::ExecutionMode::from_str(&mode)
+        .ok_or_else(|| CmdError::msg("Invalid execution mode"))?;
     ha_core::workflow::ensure_workflow_script_can_create(
         &app_state.session_db,
         &session_id,
@@ -71,7 +71,7 @@ pub async fn create_workflow_run(
         .create_workflow_run(CreateWorkflowRunInput {
             session_id,
             kind: kind.unwrap_or_else(|| "coding.workflow".to_string()),
-            loop_mode: parsed_mode.as_str().to_string(),
+            execution_mode: parsed_mode.as_str().to_string(),
             script_source,
             budget: budget.unwrap_or_else(|| json!({})),
             parent_run_id,

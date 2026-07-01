@@ -145,7 +145,7 @@ impl ToolDefinition {
     }
 
     /// Rich v2 metadata used by tool search, UI metadata, workflow planning, and
-    /// future review/loop policies. This is intentionally derived as a sidecar
+    /// future review/workflow policies. This is intentionally derived as a sidecar
     /// instead of a required struct literal field so every existing built-in and
     /// dynamic MCP tool receives v2 metadata without forcing noisy definition
     /// churn or changing execution/permission behavior.

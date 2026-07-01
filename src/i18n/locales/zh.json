@@ -4974,8 +4974,8 @@
     "workflow": {
       "description": "查看和控制 Workflow run"
     },
-    "loop": {
-      "description": "设置 Coding loop 模式"
+    "mode": {
+      "description": "设置执行模式"
     },
     "export": {
       "description": "导出为 Markdown"
@@ -5485,16 +5485,16 @@
       "updated": "更新",
       "loadingTrace": "加载 trace",
       "emptyTrace": "暂无 trace",
-      "loopOff": "关闭",
-      "loopGuarded": "守护",
-      "loopDeep": "深入",
-      "loopAutonomous": "自主",
-      "loopOffHint": "普通对话",
-      "loopGuardedHint": "编辑后验证",
-      "loopDeepHint": "更强排查",
-      "loopAutonomousHint": "长任务持续",
-      "loopModeSaved": "Coding loop 已切换为 {{mode}}",
-      "loopMode": "Coding Loop",
+      "executionOff": "关闭",
+      "executionGuarded": "守护",
+      "executionDeep": "深入",
+      "executionAutonomous": "自主",
+      "executionOffHint": "普通对话",
+      "executionGuardedHint": "编辑后验证",
+      "executionDeepHint": "更强排查",
+      "executionAutonomousHint": "长任务持续",
+      "executionModeSaved": "执行模式已切换为 {{mode}}",
+      "executionMode": "执行模式",
       "metricOps": "Ops",
       "metricDone": "完成",
       "metricValidate": "验证",
@@ -5579,7 +5579,7 @@
       "sessionAutoCreateHint": "预检时会自动创建并切换到一个新会话",
       "sessionCreateFailed": "创建 workflow 会话失败",
       "createKind": "Kind",
-      "createMode": "Loop mode",
+      "createMode": "执行模式",
       "createScript": "脚本",
       "createScriptPlaceholder": "粘贴或编辑 workflow.js",
       "runImmediately": "创建后立即运行",

@@ -4974,8 +4974,8 @@
     "workflow": {
       "description": "檢視和控制 Workflow run"
     },
-    "loop": {
-      "description": "設定 Coding loop 模式"
+    "mode": {
+      "description": "設定執行模式"
     },
     "export": {
       "description": "導出為 Markdown"
@@ -5485,16 +5485,16 @@
       "updated": "更新",
       "loadingTrace": "載入 trace",
       "emptyTrace": "暫無 trace",
-      "loopOff": "關閉",
-      "loopGuarded": "守護",
-      "loopDeep": "深入",
-      "loopAutonomous": "自主",
-      "loopOffHint": "一般對話",
-      "loopGuardedHint": "編輯後驗證",
-      "loopDeepHint": "更強排查",
-      "loopAutonomousHint": "長任務持續",
-      "loopModeSaved": "Coding loop 已切換為 {{mode}}",
-      "loopMode": "Coding Loop",
+      "executionOff": "關閉",
+      "executionGuarded": "守護",
+      "executionDeep": "深入",
+      "executionAutonomous": "自主",
+      "executionOffHint": "一般對話",
+      "executionGuardedHint": "編輯後驗證",
+      "executionDeepHint": "更強排查",
+      "executionAutonomousHint": "長任務持續",
+      "executionModeSaved": "執行模式已切換為 {{mode}}",
+      "executionMode": "執行模式",
       "metricOps": "Ops",
       "metricDone": "完成",
       "metricValidate": "驗證",
@@ -5569,7 +5569,7 @@
       "runStarted": "已啟動 workflow",
       "createTitle": "新建 Workflow",
       "createKind": "Kind",
-      "createMode": "Loop mode",
+      "createMode": "執行模式",
       "createScript": "腳本",
       "createScriptPlaceholder": "貼上或編輯 workflow.js",
       "runImmediately": "建立後立即執行",

@@ -1234,7 +1234,7 @@ const WORKFLOW_EVENT_PREVIEW = 4
 const WORKFLOW_OP_PREVIEW = 6
 const WORKFLOW_FOCUS_OP_PREVIEW = 4
 
-type CodingLoopMode = "off" | "guarded" | "deep" | "autonomous"
+type ExecutionMode = "off" | "guarded" | "deep" | "autonomous"
 type WorkflowDetailTab = "trace" | "validation" | "agents"
 
 const WORKFLOW_KIND_DEFAULT = "coding.workflow"
@@ -1261,7 +1261,7 @@ const WORKFLOW_SCRIPT_TEMPLATE = `export default async function main(workflow) {
   });
   await workflow.validate({
     commands: ["pnpm typecheck"],
-    reason: "targeted validation before finish; repair budget is bounded by loop mode",
+    reason: "targeted validation before finish; repair budget is bounded by execution mode",
     label: "targeted-validation",
   });
   await workflow.task.update({ task: validate, status: "completed" });
@@ -1289,7 +1289,7 @@ ${target}
 Work in the current workspace. First inspect the relevant files, then make the smallest coherent code change, and finish with a concise summary of changed files, validation performed, and residual risk. Follow the repository AGENTS.md instructions: run targeted validation only; do not run the full pre-push suite unless explicitly requested.`)
 
   return `export default async function main(workflow) {
-  // Budget: owner create request sets maxScriptSecs/maxOps/maxOutputTokens by loop mode; waitAll and validation stay bounded.
+  // Budget: owner create request sets maxScriptSecs/maxOps/maxOutputTokens by execution mode; waitAll and validation stay bounded.
   const observe = await workflow.task.create({
     title: "Understand target",
     label: "observe",
@@ -1349,7 +1349,7 @@ Work in the current workspace. First inspect the relevant files, then make the s
 `
 }
 
-function workflowBudgetForMode(mode: CodingLoopMode): Record<string, number> {
+function workflowBudgetForMode(mode: ExecutionMode): Record<string, number> {
   switch (mode) {
     case "autonomous":
       return { maxScriptSecs: 300, maxOps: 32, maxOutputTokens: 24000 }
@@ -1362,7 +1362,7 @@ function workflowBudgetForMode(mode: CodingLoopMode): Record<string, number> {
   }
 }
 
-const WORKFLOW_MODE_OPTIONS: Array<{ mode: CodingLoopMode; icon: LucideIcon }> = [
+const WORKFLOW_MODE_OPTIONS: Array<{ mode: ExecutionMode; icon: LucideIcon }> = [
   { mode: "off", icon: X },
   { mode: "guarded", icon: Shield },
   { mode: "deep", icon: Brain },
@@ -1446,7 +1446,7 @@ function workflowRunIsLive(state: WorkflowRunState): boolean {
   )
 }
 
-function normalizeCodingLoopMode(value: unknown): CodingLoopMode {
+function normalizeExecutionMode(value: unknown): ExecutionMode {
   const raw = typeof value === "string" ? value : stringField(asRecord(value), "mode")
   return raw === "guarded" || raw === "deep" || raw === "autonomous" ? raw : "off"
 }
@@ -1563,35 +1563,35 @@ function workflowOpSummary(t: ReturnType<typeof useTranslation>["t"], ops: Workf
   })
 }
 
-function codingLoopModeLabel(
+function executionModeLabel(
   t: ReturnType<typeof useTranslation>["t"],
-  mode: CodingLoopMode,
+  mode: ExecutionMode,
 ): string {
   switch (mode) {
     case "off":
-      return t("workspace.workflow.loopOff", "关闭")
+      return t("workspace.workflow.executionOff", "关闭")
     case "guarded":
-      return t("workspace.workflow.loopGuarded", "守护")
+      return t("workspace.workflow.executionGuarded", "守护")
     case "deep":
-      return t("workspace.workflow.loopDeep", "深入")
+      return t("workspace.workflow.executionDeep", "深入")
     case "autonomous":
-      return t("workspace.workflow.loopAutonomous", "自主")
+      return t("workspace.workflow.executionAutonomous", "自主")
   }
 }
 
-function codingLoopModeHint(
+function executionModeHint(
   t: ReturnType<typeof useTranslation>["t"],
-  mode: CodingLoopMode,
+  mode: ExecutionMode,
 ): string {
   switch (mode) {
     case "off":
-      return t("workspace.workflow.loopOffHint", "普通对话")
+      return t("workspace.workflow.executionOffHint", "普通对话")
     case "guarded":
-      return t("workspace.workflow.loopGuardedHint", "编辑后验证")
+      return t("workspace.workflow.executionGuardedHint", "编辑后验证")
     case "deep":
-      return t("workspace.workflow.loopDeepHint", "更强排查")
+      return t("workspace.workflow.executionDeepHint", "更强排查")
     case "autonomous":
-      return t("workspace.workflow.loopAutonomousHint", "长任务持续")
+      return t("workspace.workflow.executionAutonomousHint", "长任务持续")
   }
 }
 
@@ -1888,7 +1888,7 @@ function buildWorkflowRepairPrompt(
     `- id: ${run.id}`,
     `- kind: ${run.kind}`,
     `- state: ${run.state}`,
-    `- loopMode: ${run.loopMode}`,
+    `- executionMode: ${run.executionMode}`,
     `- scriptHash: ${run.scriptHash}`,
   ]
 
@@ -2111,9 +2111,9 @@ function WorkflowRunsSection({
   const [snapshot, setSnapshot] = useState<WorkflowRunSnapshot | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
   const [actionKey, setActionKey] = useState<string | null>(null)
-  const [loopMode, setLoopMode] = useState<CodingLoopMode>("off")
-  const [loopLoading, setLoopLoading] = useState(false)
-  const [loopSaving, setLoopSaving] = useState<CodingLoopMode | null>(null)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>("off")
+  const [executionModeLoading, setExecutionModeLoading] = useState(false)
+  const [executionModeSaving, setExecutionModeSaving] = useState<ExecutionMode | null>(null)
   const [detailTab, setDetailTab] = useState<WorkflowDetailTab>("trace")
   const [createOpen, setCreateOpen] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
@@ -2121,7 +2121,7 @@ function WorkflowRunsSection({
   const [draftPreviewLoading, setDraftPreviewLoading] = useState(false)
   const [draftPreviewError, setDraftPreviewError] = useState<string | null>(null)
   const [draftKind, setDraftKind] = useState(WORKFLOW_KIND_DEFAULT)
-  const [draftMode, setDraftMode] = useState<CodingLoopMode>("guarded")
+  const [draftMode, setDraftMode] = useState<ExecutionMode>("guarded")
   const [draftRunImmediately, setDraftRunImmediately] = useState(false)
   const [draftObjective, setDraftObjective] = useState("")
   const [draftScript, setDraftScript] = useState(WORKFLOW_SCRIPT_TEMPLATE)
@@ -2129,7 +2129,7 @@ function WorkflowRunsSection({
   const [showAllRuns, setShowAllRuns] = useState(false)
   const [pendingCancelRun, setPendingCancelRun] = useState<WorkflowRun | null>(null)
   const snapshotReqRef = useRef(0)
-  const loopModeReqRef = useRef(0)
+  const executionModeReqRef = useRef(0)
   const previewReqRef = useRef(0)
   const autoDetailTabRunRef = useRef<string | null>(null)
   const ensureSessionRef = useRef<Promise<string | null> | null>(null)
@@ -2203,32 +2203,32 @@ function WorkflowRunsSection({
       })
   }, [])
 
-  const loadLoopMode = useCallback(() => {
+  const loadExecutionMode = useCallback(() => {
     if (!sessionId || incognito) {
-      loopModeReqRef.current += 1
-      setLoopMode("off")
-      setLoopLoading(false)
-      setLoopSaving(null)
+      executionModeReqRef.current += 1
+      setExecutionMode("off")
+      setExecutionModeLoading(false)
+      setExecutionModeSaving(null)
       return
     }
-    const req = ++loopModeReqRef.current
-    setLoopLoading(true)
+    const req = ++executionModeReqRef.current
+    setExecutionModeLoading(true)
     getTransport()
-      .call<unknown>("get_coding_loop_mode", { sessionId })
+      .call<unknown>("get_execution_mode", { sessionId })
       .then((next) => {
-        if (loopModeReqRef.current !== req) return
-        setLoopMode(normalizeCodingLoopMode(next))
-        setLoopLoading(false)
+        if (executionModeReqRef.current !== req) return
+        setExecutionMode(normalizeExecutionMode(next))
+        setExecutionModeLoading(false)
       })
       .catch((e) => {
-        if (loopModeReqRef.current !== req) return
+        if (executionModeReqRef.current !== req) return
         logger.error(
           "ui",
-          "WorkflowRunsSection::loadLoopMode",
-          "Failed to load coding loop mode",
+          "WorkflowRunsSection::loadExecutionMode",
+          "Failed to load execution mode",
           e,
         )
-        setLoopLoading(false)
+        setExecutionModeLoading(false)
       })
   }, [incognito, sessionId])
 
@@ -2243,38 +2243,38 @@ function WorkflowRunsSection({
   }, [incognito, loadSnapshot, selectedRun?.state, selectedRun?.updatedAt, selectedRunId])
 
   useEffect(() => {
-    loadLoopMode()
-  }, [loadLoopMode])
+    loadExecutionMode()
+  }, [loadExecutionMode])
 
-  const updateLoopMode = useCallback(
-    async (nextMode: CodingLoopMode) => {
-      if (!sessionId || incognito || nextMode === loopMode) return
-      setLoopSaving(nextMode)
+  const updateExecutionMode = useCallback(
+    async (nextMode: ExecutionMode) => {
+      if (!sessionId || incognito || nextMode === executionMode) return
+      setExecutionModeSaving(nextMode)
       try {
-        const next = await getTransport().call<unknown>("set_coding_loop_mode", {
+        const next = await getTransport().call<unknown>("set_execution_mode", {
           sessionId,
           mode: nextMode,
         })
-        const saved = normalizeCodingLoopMode(next)
-        setLoopMode(saved)
+        const saved = normalizeExecutionMode(next)
+        setExecutionMode(saved)
         toast.success(
-          t("workspace.workflow.loopModeSaved", "Coding loop 已切换为 {{mode}}", {
-            mode: codingLoopModeLabel(t, saved),
+          t("workspace.workflow.executionModeSaved", "Execution mode 已切换为 {{mode}}", {
+            mode: executionModeLabel(t, saved),
           }),
         )
       } catch (e) {
         logger.error(
           "ui",
-          "WorkflowRunsSection::updateLoopMode",
-          "Failed to update coding loop mode",
+          "WorkflowRunsSection::updateExecutionMode",
+          "Failed to update execution mode",
           e,
         )
         toast.error(e instanceof Error ? e.message : String(e))
       } finally {
-        setLoopSaving(null)
+        setExecutionModeSaving(null)
       }
     },
-    [incognito, loopMode, sessionId, t],
+    [incognito, executionMode, sessionId, t],
   )
 
   const clearDraftPreview = useCallback(() => {
@@ -2287,7 +2287,7 @@ function WorkflowRunsSection({
   const previewWorkflowScriptSource = useCallback(
     async (
       scriptSource: string,
-      mode: CodingLoopMode,
+      mode: ExecutionMode,
       toastMessages: { passed?: string; blocked?: string } = {},
     ) => {
       if (incognito) return null
@@ -2308,7 +2308,7 @@ function WorkflowRunsSection({
           {
             sessionId: targetSessionId,
             scriptSource: script,
-            loopMode: mode,
+            executionMode: mode,
           },
         )
         if (previewReqRef.current !== req) return null
@@ -2363,7 +2363,7 @@ function WorkflowRunsSection({
 
   const generateRepairDraft = useCallback(
     (repairPrompt: string, run: WorkflowRun) => {
-      const sourceMode = normalizeCodingLoopMode(run.loopMode)
+      const sourceMode = normalizeExecutionMode(run.executionMode)
       const nextMode = sourceMode === "off" ? "guarded" : sourceMode
       const objective = `继续修复失败的 workflow run ${run.id}。
 
@@ -2422,7 +2422,7 @@ ${repairPrompt}`
       const run = await getTransport().call<WorkflowRun>("create_workflow_run", {
         sessionId: targetSessionId,
         kind: draftKind.trim() || WORKFLOW_KIND_DEFAULT,
-        loopMode: draftMode,
+        executionMode: draftMode,
         scriptSource: script,
         budget: workflowBudgetForMode(draftMode),
         parentRunId: draftOrigin?.type === "repair" ? draftOrigin.runId : undefined,
@@ -2607,11 +2607,11 @@ ${repairPrompt}`
           <EmptyHint>{t("workspace.workflow.incognito", "无痕会话不持久化 workflow")}</EmptyHint>
         ) : (
           <div className="space-y-2">
-            <WorkflowLoopModeControl
-              mode={loopMode}
-              loading={loopLoading}
-              saving={loopSaving}
-              onChange={(mode) => void updateLoopMode(mode)}
+            <WorkflowExecutionModeControl
+              mode={executionMode}
+              loading={executionModeLoading}
+              saving={executionModeSaving}
+              onChange={(mode) => void updateExecutionMode(mode)}
             />
             <WorkflowCreateComposer
               open={createOpen}
@@ -2662,7 +2662,7 @@ ${repairPrompt}`
               <EmptyHint>{error}</EmptyHint>
             ) : runs.length === 0 ? (
               <WorkflowEmptyState
-                mode={loopMode}
+                mode={executionMode}
                 workspaceReady={!!workingDir}
                 disabled={!canMaterializeSession}
                 onCreate={() => setCreateOpen(true)}
@@ -2693,7 +2693,7 @@ ${repairPrompt}`
                           <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
                             {run.kind}
                             <span className="px-1 text-muted-foreground/50">·</span>
-                            {run.loopMode}
+                            {run.executionMode}
                             {rowBudget ? (
                               <>
                                 <span className="px-1 text-muted-foreground/50">·</span>
@@ -2885,7 +2885,7 @@ function WorkflowEmptyState({
   disabled,
   onCreate,
 }: {
-  mode: CodingLoopMode
+  mode: ExecutionMode
   workspaceReady: boolean
   disabled?: boolean
   onCreate: () => void
@@ -2898,12 +2898,12 @@ function WorkflowEmptyState({
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
           {t("workspace.workflow.emptyTitle", "准备开始 Coding run")}
         </span>
-        <StatusPill label={codingLoopModeLabel(t, mode)} tone={mode === "off" ? "muted" : "info"} />
+        <StatusPill label={executionModeLabel(t, mode)} tone={mode === "off" ? "muted" : "info"} />
       </div>
       <div className="mt-2 grid grid-cols-2 gap-1 text-[10px]">
         <WorkflowMetric
-          label={t("workspace.workflow.emptyMode", "Loop")}
-          value={codingLoopModeLabel(t, mode)}
+          label={t("workspace.workflow.emptyMode", "模式")}
+          value={executionModeLabel(t, mode)}
         />
         <WorkflowMetric
           label={t("workspace.workflow.emptyWorkspace", "工作目录")}
@@ -2963,14 +2963,14 @@ function WorkflowCreateComposer({
   previewLoading?: boolean
   previewError?: string | null
   kind: string
-  mode: CodingLoopMode
+  mode: ExecutionMode
   objective: string
   script: string
   draftOrigin?: WorkflowDraftOrigin | null
   runImmediately: boolean
   onOpenChange: (open: boolean) => void
   onKindChange: (kind: string) => void
-  onModeChange: (mode: CodingLoopMode) => void
+  onModeChange: (mode: ExecutionMode) => void
   onObjectiveChange: (objective: string) => void
   onScriptChange: (script: string) => void
   onClearDraftOrigin: () => void
@@ -3111,7 +3111,7 @@ function WorkflowCreateComposer({
 
           <div className="space-y-1">
             <div className="text-[10px] font-medium text-muted-foreground">
-              {t("workspace.workflow.createMode", "Loop mode")}
+              {t("workspace.workflow.createMode", "Execution mode")}
             </div>
             <div className="grid grid-cols-2 gap-1">
               {WORKFLOW_MODE_OPTIONS.map((option) => {
@@ -3132,7 +3132,7 @@ function WorkflowCreateComposer({
                     onClick={() => onModeChange(option.mode)}
                   >
                     <Icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="min-w-0 truncate">{codingLoopModeLabel(t, option.mode)}</span>
+                    <span className="min-w-0 truncate">{executionModeLabel(t, option.mode)}</span>
                   </button>
                 )
               })}
@@ -3411,19 +3411,19 @@ function WorkflowGateIssueRow({ issue }: { issue: WorkflowGateIssue }) {
   )
 }
 
-function WorkflowLoopModeControl({
+function WorkflowExecutionModeControl({
   mode,
   loading,
   saving,
   onChange,
 }: {
-  mode: CodingLoopMode
+  mode: ExecutionMode
   loading?: boolean
-  saving?: CodingLoopMode | null
-  onChange: (mode: CodingLoopMode) => void
+  saving?: ExecutionMode | null
+  onChange: (mode: ExecutionMode) => void
 }) {
   const { t } = useTranslation()
-  const options: Array<{ mode: CodingLoopMode; icon: LucideIcon }> = [
+  const options: Array<{ mode: ExecutionMode; icon: LucideIcon }> = [
     { mode: "off", icon: X },
     { mode: "guarded", icon: Shield },
     { mode: "deep", icon: Brain },
@@ -3436,7 +3436,7 @@ function WorkflowLoopModeControl({
       <div className="mb-1.5 flex min-w-0 items-center gap-2">
         <Gauge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
-          {t("workspace.workflow.loopMode", "Coding Loop")}
+          {t("workspace.workflow.executionMode", "Execution Mode")}
         </span>
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
       </div>
@@ -3466,11 +3466,11 @@ function WorkflowLoopModeControl({
                   <Icon className="h-3.5 w-3.5 shrink-0" />
                 )}
                 <span className="truncate text-[11px] font-medium">
-                  {codingLoopModeLabel(t, option.mode)}
+                  {executionModeLabel(t, option.mode)}
                 </span>
               </span>
               <span className="mt-0.5 block truncate text-[10px] opacity-70">
-                {codingLoopModeHint(t, option.mode)}
+                {executionModeHint(t, option.mode)}
               </span>
             </button>
           )
@@ -3531,7 +3531,7 @@ function WorkflowRunOverview({
           </div>
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
             <span className="truncate">
-              {codingLoopModeLabel(t, normalizeCodingLoopMode(run.loopMode))}
+              {executionModeLabel(t, normalizeExecutionMode(run.executionMode))}
             </span>
             <span className="text-muted-foreground/45">·</span>
             <span className="truncate">
@@ -4769,7 +4769,7 @@ export default function WorkspacePanel({
           </WorkspaceSection>
         )}
 
-        {/* Workflow — 动态脚本 / loop run 的可观察、可暂停、可批准控制面。 */}
+        {/* Workflow — 动态脚本 run 的可观察、可暂停、可批准控制面。 */}
         <WorkflowRunsSection
           sessionId={sessionId}
           incognito={incognito}

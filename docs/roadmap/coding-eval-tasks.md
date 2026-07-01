@@ -333,7 +333,7 @@ title: 给 loop 模式控制设计前端状态入口草案
 status: draft
 source: roadmap
 prompt: |
-  只做前端方案设计：如果未来支持 /loop off|guarded|deep|autonomous，前端状态和设置入口应该放在哪里？
+  只做前端方案设计：如果未来支持 /mode off|guarded|deep|autonomous，前端状态和设置入口应该放在哪里？
   请阅读现有 chat controls 和 settings 结构，输出方案，不写代码。
 expected_behavior:
   - 找到现有控件和设置模式

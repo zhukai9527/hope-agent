@@ -31,7 +31,7 @@ fn create_run(db: &SessionDB) -> (String, String) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.feature".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: "export default async function main(workflow) {}".to_string(),
             budget: json!({ "max_runtime_secs": 300, "max_ops": 12 }),
             parent_run_id: None,
@@ -47,7 +47,7 @@ fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, Strin
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script_source.to_string(),
             budget: json!({ "max_script_secs": 10, "max_ops": 12 }),
             parent_run_id: None,
@@ -278,7 +278,7 @@ fn workflow_run_rejects_incognito_sessions() {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id,
             kind: "coding.review".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: "export default async function main(workflow) {}".to_string(),
             budget: json!({}),
             parent_run_id: None,
@@ -337,7 +337,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session_id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: child_script.to_string(),
             budget: json!({ "max_script_secs": 10, "max_ops": 12 }),
             parent_run_id: Some(parent_run_id.clone()),
@@ -1185,7 +1185,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1273,7 +1273,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1360,7 +1360,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1459,7 +1459,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.feature".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10, "max_ops": 8 }),
             parent_run_id: None,
@@ -1546,7 +1546,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1620,7 +1620,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1688,7 +1688,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -1712,7 +1712,7 @@ export default async function main(workflow) {
 }
 
 #[test]
-fn runtime_loop_mode_off_does_not_apply_repair_guard() {
+fn runtime_execution_mode_off_does_not_apply_repair_guard() {
     let _async_guard = async_jobs_test_guard();
     ensure_async_jobs_db();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1739,7 +1739,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "off".to_string(),
+            execution_mode: "off".to_string(),
             script_source: script.to_string(),
             budget: json!({ "max_script_secs": 10 }),
             parent_run_id: None,
@@ -2265,7 +2265,7 @@ export default async function main(workflow) {
             .create_workflow_run(CreateWorkflowRunInput {
                 session_id: parent.id.clone(),
                 kind: "coding.workflow".to_string(),
-                loop_mode: "guarded".to_string(),
+                execution_mode: "guarded".to_string(),
                 script_source: script.to_string(),
                 budget: json!({ "max_script_secs": 10, "max_ops": 8 }),
                 parent_run_id: None,
@@ -2408,7 +2408,7 @@ export default async function main(workflow) {{
             .create_workflow_run(CreateWorkflowRunInput {
                 session_id: parent.id.clone(),
                 kind: "coding.workflow".to_string(),
-                loop_mode: "guarded".to_string(),
+                execution_mode: "guarded".to_string(),
                 script_source: script,
                 budget: json!({ "max_script_secs": 15, "max_ops": 10 }),
                 parent_run_id: None,
@@ -2554,7 +2554,7 @@ export default async function main(workflow) {
         .create_workflow_run(CreateWorkflowRunInput {
             session_id: session.id.clone(),
             kind: "coding.workflow".to_string(),
-            loop_mode: "guarded".to_string(),
+            execution_mode: "guarded".to_string(),
             script_source: script.to_string(),
             budget: json!({
                 "max_script_secs": 10,

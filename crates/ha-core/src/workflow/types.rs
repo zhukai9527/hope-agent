@@ -161,7 +161,7 @@ pub struct WorkflowRun {
     pub session_id: String,
     pub kind: String,
     pub state: WorkflowRunState,
-    pub loop_mode: String,
+    pub execution_mode: String,
     pub script_hash: String,
     pub script_source: String,
     pub budget: Value,
@@ -218,8 +218,8 @@ pub struct WorkflowEvent {
 pub struct CreateWorkflowRunInput {
     pub session_id: String,
     pub kind: String,
-    #[serde(default = "default_loop_mode")]
-    pub loop_mode: String,
+    #[serde(default = "default_execution_mode")]
+    pub execution_mode: String,
     pub script_source: String,
     #[serde(default)]
     pub budget: Value,
@@ -229,7 +229,7 @@ pub struct CreateWorkflowRunInput {
     pub origin: Option<String>,
 }
 
-fn default_loop_mode() -> String {
+fn default_execution_mode() -> String {
     "guarded".to_string()
 }
 

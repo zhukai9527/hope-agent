@@ -19,7 +19,7 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             session_id TEXT NOT NULL,
             kind TEXT NOT NULL,
             state TEXT NOT NULL,
-            loop_mode TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
             script_hash TEXT NOT NULL,
             script_source TEXT NOT NULL,
             budget_json TEXT NOT NULL DEFAULT '{}',
@@ -137,7 +137,7 @@ impl SessionDB {
         }
         conn.execute(
             "INSERT INTO workflow_runs (
-                id, session_id, kind, state, loop_mode, script_hash, script_source,
+                id, session_id, kind, state, execution_mode, script_hash, script_source,
                 budget_json, cursor_seq, parent_run_id, origin, created_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?11)",
             params![
@@ -145,7 +145,7 @@ impl SessionDB {
                 input.session_id,
                 input.kind,
                 WorkflowRunState::Draft.as_str(),
-                input.loop_mode,
+                input.execution_mode,
                 script_hash,
                 input.script_source,
                 budget_json,
@@ -189,7 +189,7 @@ impl SessionDB {
     pub fn get_workflow_run(&self, run_id: &str) -> Result<Option<WorkflowRun>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.query_row(
-            "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
+            "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
                     parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
@@ -208,7 +208,7 @@ impl SessionDB {
         let limit = limit.clamp(1, 200) as i64;
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
+            "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
                     parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs
@@ -349,7 +349,7 @@ impl SessionDB {
     pub fn list_recoverable_workflow_runs(&self) -> Result<Vec<WorkflowRun>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, kind, state, loop_mode, script_hash, script_source,
+            "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
                     parent_run_id, origin, created_at, updated_at, completed_at
              FROM workflow_runs
@@ -678,7 +678,7 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
         session_id: row.get(1)?,
         kind: row.get(2)?,
         state: parse_run_state_sql(&state)?,
-        loop_mode: row.get(4)?,
+        execution_mode: row.get(4)?,
         script_hash: row.get(5)?,
         script_source: row.get(6)?,
         budget: json_from_sql(&budget_json)?,

@@ -413,9 +413,9 @@ pub fn build_system_prompt_with_session(
             .as_ref()
             .map(|m| m.permission_mode)
             .unwrap_or_default();
-        let coding_loop_mode = session_meta
+        let execution_mode = session_meta
             .as_ref()
-            .map(|m| m.coding_loop_mode)
+            .map(|m| m.execution_mode)
             .unwrap_or_default();
         let channel_info = session_meta.as_ref().and_then(|m| m.channel_info.as_ref());
         return crate::system_prompt::build(
@@ -433,7 +433,7 @@ pub fn build_system_prompt_with_session(
             session_working_dir.as_deref(),
             channel_info,
             permission_mode,
-            coding_loop_mode,
+            execution_mode,
         );
     }
     // Fallback: legacy prompt

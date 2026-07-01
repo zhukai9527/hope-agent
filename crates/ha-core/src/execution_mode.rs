@@ -2,20 +2,20 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CodingLoopMode {
+pub enum ExecutionMode {
     Off,
     Guarded,
     Deep,
     Autonomous,
 }
 
-impl Default for CodingLoopMode {
+impl Default for ExecutionMode {
     fn default() -> Self {
         Self::Off
     }
 }
 
-impl CodingLoopMode {
+impl ExecutionMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
@@ -59,8 +59,8 @@ impl CodingLoopMode {
 }
 
 const GUARDED_PROMPT: &str = concat!(
-    "# Coding Loop Mode: Guarded\n\n",
-    "This session has persistent coding loop mode `guarded` enabled.\n",
+    "# Execution Mode: Guarded\n\n",
+    "This session has persistent execution mode `guarded` enabled.\n",
     "- Treat non-trivial coding work as observe -> plan -> edit -> targeted validate -> report.\n",
     "- Use task progress as the visible source of truth when the work spans multiple steps.\n",
     "- Prefer workflow scripts or subagents only when they make the task more stable or observable.\n",
@@ -70,8 +70,8 @@ const GUARDED_PROMPT: &str = concat!(
 );
 
 const DEEP_PROMPT: &str = concat!(
-    "# Coding Loop Mode: Deep\n\n",
-    "This session has persistent coding loop mode `deep` enabled.\n",
+    "# Execution Mode: Deep\n\n",
+    "This session has persistent execution mode `deep` enabled.\n",
     "- For substantial coding work, spend extra effort on repository reconnaissance, invariants, and regression risk before editing.\n",
     "- Prefer script-first workflows for durable multi-step work, and use read-only subagents for independent review or analysis when useful.\n",
     "- Keep user-facing progress explicit through tasks, workflow trace, or concise status updates.\n",
@@ -81,8 +81,8 @@ const DEEP_PROMPT: &str = concat!(
 );
 
 const AUTONOMOUS_PROMPT: &str = concat!(
-    "# Coding Loop Mode: Autonomous\n\n",
-    "This session has persistent coding loop mode `autonomous` enabled.\n",
+    "# Execution Mode: Autonomous\n\n",
+    "This session has persistent execution mode `autonomous` enabled.\n",
     "- Continue safe, bounded coding progress without waiting for user confirmation between ordinary observe/edit/validate steps.\n",
     "- Keep all normal permission, hook, sandbox, project, and approval policies intact; this mode never bypasses approval gates.\n",
     "- Use durable workflow scripts for long-running or multi-agent work so progress can be inspected, paused, resumed, and recovered.\n",

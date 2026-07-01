@@ -22,7 +22,7 @@ export interface WorkflowRun {
   sessionId: string
   kind: string
   state: WorkflowRunState
-  loopMode: string
+  executionMode: string
   scriptHash: string
   scriptSource: string
   budget: unknown

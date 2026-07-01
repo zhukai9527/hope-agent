@@ -361,8 +361,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_ask_user_question_timeout:   { method: "GET",    path: "/api/config/ask-user-question-timeout" },
   set_ask_user_question_timeout_enabled: { method: "POST", path: "/api/config/ask-user-question-timeout-enabled" },
   get_ask_user_question_timeout_enabled: { method: "GET",  path: "/api/config/ask-user-question-timeout-enabled" },
-  get_coding_loop_mode:            { method: "GET",    path: "/api/sessions/{sessionId}/coding-loop-mode" },
-  set_coding_loop_mode:            { method: "POST",   path: "/api/sessions/{sessionId}/coding-loop-mode" },
+  get_execution_mode:            { method: "GET",    path: "/api/sessions/{sessionId}/execution-mode" },
+  set_execution_mode:            { method: "POST",   path: "/api/sessions/{sessionId}/execution-mode" },
 
   // -- Workflow runs --
   list_workflow_runs:              { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs" },

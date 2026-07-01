@@ -4974,8 +4974,8 @@
     "workflow": {
       "description": "Inspect and control workflow runs"
     },
-    "loop": {
-      "description": "Set coding loop mode"
+    "mode": {
+      "description": "Set execution mode"
     },
     "export": {
       "description": "Export as Markdown"
@@ -5485,16 +5485,16 @@
       "updated": "Updated",
       "loadingTrace": "Loading trace",
       "emptyTrace": "No trace yet",
-      "loopOff": "Off",
-      "loopGuarded": "Guarded",
-      "loopDeep": "Deep",
-      "loopAutonomous": "Autonomous",
-      "loopOffHint": "Plain chat",
-      "loopGuardedHint": "Validate after edits",
-      "loopDeepHint": "Deeper diagnosis",
-      "loopAutonomousHint": "Sustained long tasks",
-      "loopModeSaved": "Coding loop switched to {{mode}}",
-      "loopMode": "Coding Loop",
+      "executionOff": "Off",
+      "executionGuarded": "Guarded",
+      "executionDeep": "Deep",
+      "executionAutonomous": "Autonomous",
+      "executionOffHint": "Plain chat",
+      "executionGuardedHint": "Validate after edits",
+      "executionDeepHint": "Deeper diagnosis",
+      "executionAutonomousHint": "Sustained long tasks",
+      "executionModeSaved": "Execution mode switched to {{mode}}",
+      "executionMode": "Execution Mode",
       "metricOps": "Ops",
       "metricDone": "Done",
       "metricValidate": "Validation",
@@ -5579,7 +5579,7 @@
       "sessionAutoCreateHint": "A new session will be created and selected during preflight",
       "sessionCreateFailed": "Failed to create workflow session",
       "createKind": "Kind",
-      "createMode": "Loop mode",
+      "createMode": "Execution mode",
       "createScript": "Script",
       "createScriptPlaceholder": "Paste or edit workflow.js",
       "runImmediately": "Run after create",

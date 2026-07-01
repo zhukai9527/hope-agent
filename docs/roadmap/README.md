@@ -13,6 +13,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [Coding 能力强化总纲](coding-capability-roadmap.md) | 面向 coding-first 的总体路线：调研线索、能力模型、动态 workflow / loop、阶段计划与验收指标 |
+| [Goal / Mode / Workflow / Loop 语义收口](control-plane-semantics.md) | 统一 `/goal`、`/mode`、`/workflow`、`/task`、`/worktree`、未来真正 `/loop` 的产品语义和实现边界 |
 | [Coding Eval 体系方案](coding-eval.md) | Phase 0 评测体系：任务 schema、trace、指标、失败分类、人工试跑流程 |
 | [Coding Eval 首批 Gold Tasks](coding-eval-tasks.md) | 首批 20 个 coding eval 任务草案，用于人工试跑和指标校准 |
 | [Coding Eval Phase 0 完成报告](coding-eval-phase0-report.md) | Phase 0 完成审计：5 个校准试跑、schema 修订、失败分类补充与 Phase 1 决策 |

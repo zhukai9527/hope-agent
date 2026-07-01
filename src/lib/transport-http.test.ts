@@ -83,7 +83,7 @@ test("HttpTransport.try_restore_session unwraps HTTP restored payload", async ()
   expect(restored).toBe(true)
 })
 
-test("HttpTransport maps coding loop and workflow owner commands", async () => {
+test("HttpTransport maps execution mode and workflow owner commands", async () => {
   const transport = new HttpTransport("http://localhost:8420")
 
   fetchMock.mockImplementation(() =>
@@ -95,17 +95,17 @@ test("HttpTransport maps coding loop and workflow owner commands", async () => {
     ),
   )
 
-  await transport.call("get_coding_loop_mode", { sessionId: "s1" })
+  await transport.call("get_execution_mode", { sessionId: "s1" })
 
   expect(fetchMock).toHaveBeenLastCalledWith(
-    "http://localhost:8420/api/sessions/s1/coding-loop-mode",
+    "http://localhost:8420/api/sessions/s1/execution-mode",
     expect.objectContaining({ method: "GET", body: undefined }),
   )
 
-  await transport.call("set_coding_loop_mode", { sessionId: "s1", mode: "deep" })
+  await transport.call("set_execution_mode", { sessionId: "s1", mode: "deep" })
 
   expect(fetchMock).toHaveBeenLastCalledWith(
-    "http://localhost:8420/api/sessions/s1/coding-loop-mode",
+    "http://localhost:8420/api/sessions/s1/execution-mode",
     expect.objectContaining({ method: "POST", body: JSON.stringify({ mode: "deep" }) }),
   )
 
@@ -119,7 +119,7 @@ test("HttpTransport maps coding loop and workflow owner commands", async () => {
   await transport.call("preview_workflow_script", {
     sessionId: "s1",
     scriptSource: "export default async function main(workflow) {}",
-    loopMode: "guarded",
+    executionMode: "guarded",
   })
 
   expect(fetchMock).toHaveBeenLastCalledWith(
@@ -128,7 +128,7 @@ test("HttpTransport maps coding loop and workflow owner commands", async () => {
       method: "POST",
       body: JSON.stringify({
         scriptSource: "export default async function main(workflow) {}",
-        loopMode: "guarded",
+        executionMode: "guarded",
       }),
     }),
   )
@@ -136,7 +136,7 @@ test("HttpTransport maps coding loop and workflow owner commands", async () => {
   await transport.call("create_workflow_run", {
     sessionId: "s1",
     kind: "coding.workflow",
-    loopMode: "guarded",
+    executionMode: "guarded",
     scriptSource: "export default async function main(workflow) {}",
     budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
     parentRunId: "wf-parent",
@@ -150,7 +150,7 @@ test("HttpTransport maps coding loop and workflow owner commands", async () => {
       method: "POST",
       body: JSON.stringify({
         kind: "coding.workflow",
-        loopMode: "guarded",
+        executionMode: "guarded",
         scriptSource: "export default async function main(workflow) {}",
         budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
         parentRunId: "wf-parent",

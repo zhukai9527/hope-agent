@@ -176,7 +176,7 @@ function workflowRun(patch: Partial<WorkflowRun> = {}): WorkflowRun {
     sessionId: "s1",
     kind: "coding.feature",
     state: "awaiting_approval",
-    loopMode: "guarded",
+    executionMode: "guarded",
     scriptHash: "abcdef123456",
     scriptSource: "export default async function main() {}",
     budget: {},
@@ -370,7 +370,7 @@ describe("WorkspacePanel workflow section", () => {
   it("shows an actionable coding empty state before any workflow run exists", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -388,10 +388,10 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByLabelText("从 coding 目标开始")).toBeTruthy()
   })
 
-  it("lets the user change the session coding loop mode from the workspace", async () => {
+  it("lets the user change the session execution mode from the workspace", async () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
-      if (name === "set_coding_loop_mode") return Promise.resolve({ mode: args?.mode })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "set_execution_mode") return Promise.resolve({ mode: args?.mode })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -401,12 +401,12 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("Coding Loop")).toBeTruthy()
+    expect(await screen.findByText("Execution Mode")).toBeTruthy()
 
     fireEvent.click(screen.getByText("深入"))
 
     await waitFor(() => {
-      expect(transportMock.call).toHaveBeenCalledWith("set_coding_loop_mode", {
+      expect(transportMock.call).toHaveBeenCalledWith("set_execution_mode", {
         sessionId: "s1",
         mode: "deep",
       })
@@ -418,7 +418,7 @@ describe("WorkspacePanel workflow section", () => {
     const snapshot = workflowSnapshot(run)
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
       if (name === "create_workflow_run") return Promise.resolve(run)
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
@@ -451,7 +451,7 @@ describe("WorkspacePanel workflow section", () => {
       expect(transportMock.call).toHaveBeenCalledWith("preview_workflow_script", {
         sessionId: "s1",
         scriptSource: script,
-        loopMode: "guarded",
+        executionMode: "guarded",
       })
     })
     expect(await screen.findByText("预检通过")).toBeTruthy()
@@ -463,7 +463,7 @@ describe("WorkspacePanel workflow section", () => {
       expect(transportMock.call).toHaveBeenCalledWith("create_workflow_run", {
         sessionId: "s1",
         kind: "coding.workflow",
-        loopMode: "guarded",
+        executionMode: "guarded",
         scriptSource: script,
         budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
         runImmediately: true,
@@ -477,7 +477,7 @@ describe("WorkspacePanel workflow section", () => {
     let previewedScript = ""
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") {
         previewedScript = String(args?.scriptSource ?? "")
         return Promise.resolve(workflowScriptPreview())
@@ -505,7 +505,7 @@ describe("WorkspacePanel workflow section", () => {
         "preview_workflow_script",
         expect.objectContaining({
           sessionId: "s1",
-          loopMode: "guarded",
+          executionMode: "guarded",
         }),
       )
     })
@@ -524,7 +524,7 @@ describe("WorkspacePanel workflow section", () => {
         expect.objectContaining({
           sessionId: "s1",
           kind: "coding.workflow",
-          loopMode: "guarded",
+          executionMode: "guarded",
           budget: { maxScriptSecs: 180, maxOps: 24, maxOutputTokens: 10000 },
           runImmediately: true,
         }),
@@ -571,7 +571,7 @@ describe("WorkspacePanel workflow section", () => {
         "preview_workflow_script",
         expect.objectContaining({
           sessionId: "s-created",
-          loopMode: "guarded",
+          executionMode: "guarded",
         }),
       )
     })
@@ -592,7 +592,7 @@ describe("WorkspacePanel workflow section", () => {
   it("keeps goal-driven workflow drafts stopped when no working directory is set", async () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
       if (name === "create_workflow_run") return Promise.resolve(workflowRun({ state: "draft" }))
       if (name === "get_background_job") return Promise.resolve(null)
@@ -634,7 +634,7 @@ describe("WorkspacePanel workflow section", () => {
   it("blocks workflow creation when script preflight fails", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") {
         return Promise.resolve(
           workflowScriptPreview({
@@ -683,7 +683,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -738,7 +738,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -760,7 +760,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -828,7 +828,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -848,7 +848,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "run_workflow_run") return Promise.resolve({ ...run, state: "running" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
@@ -888,7 +888,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -908,7 +908,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "cancel_workflow_run") return Promise.resolve({ ...run, state: "cancelled" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
@@ -941,7 +941,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([currentRun])
       if (name === "get_workflow_run") return Promise.resolve(workflowSnapshot(currentRun))
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "cancel_workflow_run") return Promise.resolve({ ...currentRun, state: "cancelled" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
@@ -990,7 +990,7 @@ describe("WorkspacePanel workflow section", () => {
         return Promise.resolve([currentRun])
       }
       if (name === "get_workflow_run") return Promise.resolve(workflowSnapshot(currentRun))
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -1081,7 +1081,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "list_workflow_runs") return Promise.resolve([run])
       if (name === "get_workflow_run") return Promise.resolve(snapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") {
         previewedRepairScript = String(args?.scriptSource ?? "")
         return Promise.resolve(workflowScriptPreview())
@@ -1132,7 +1132,7 @@ describe("WorkspacePanel workflow section", () => {
         "preview_workflow_script",
         expect.objectContaining({
           sessionId: "s1",
-          loopMode: "guarded",
+          executionMode: "guarded",
         }),
       )
     })
@@ -1160,7 +1160,7 @@ describe("WorkspacePanel workflow section", () => {
         expect.objectContaining({
           sessionId: "s1",
           kind: "coding.workflow",
-          loopMode: "guarded",
+          executionMode: "guarded",
           parentRunId: "wf-1",
           origin: "repair",
           runImmediately: false,
@@ -1193,7 +1193,7 @@ describe("WorkspacePanel workflow section", () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([child])
       if (name === "get_workflow_run") return Promise.resolve(childSnapshot)
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -1245,7 +1245,7 @@ describe("WorkspacePanel workflow section", () => {
       if (name === "get_workflow_run") {
         return Promise.resolve(snapshots.get(String(args?.runId)) ?? snapshotFor(oldRun))
       }
-      if (name === "get_coding_loop_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "preview_workflow_script") return Promise.resolve(workflowScriptPreview())
       if (name === "create_workflow_run") {
         return Promise.resolve(

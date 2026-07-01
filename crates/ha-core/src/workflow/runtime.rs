@@ -349,12 +349,12 @@ pub async fn run_workflow_script_async(
 
     let gate = check_workflow_script_draft(
         &run.script_source,
-        super::preview::script_gate_options_for_loop_mode(&run.loop_mode),
+        super::preview::script_gate_options_for_execution_mode(&run.execution_mode),
     );
     if !gate.passed() {
         return Err(anyhow!(gate.render_feedback("Workflow Script Gate")));
     }
-    if run.loop_mode == "autonomous" && !has_required_autonomous_budget(&run) {
+    if run.execution_mode == "autonomous" && !has_required_autonomous_budget(&run) {
         let _ = db.append_workflow_event(
             run_id,
             "workflow_budget_required",
@@ -461,7 +461,7 @@ fn execute_script(
             db.clone(),
             run.id.clone(),
             run.session_id.clone(),
-            run.loop_mode.clone(),
+            run.execution_mode.clone(),
             session_context.clone(),
             tokio_handle.clone(),
         )));
@@ -886,7 +886,7 @@ struct WorkflowRuntimeHost {
     db: Arc<SessionDB>,
     run_id: String,
     session_id: String,
-    loop_mode: String,
+    execution_mode: String,
     session_context: WorkflowSessionContext,
     tokio_handle: TokioHandle,
     op_scopes: Vec<WorkflowOpScope>,
@@ -909,7 +909,7 @@ impl WorkflowRuntimeHost {
         db: Arc<SessionDB>,
         run_id: String,
         session_id: String,
-        loop_mode: String,
+        execution_mode: String,
         session_context: WorkflowSessionContext,
         tokio_handle: TokioHandle,
     ) -> Self {
@@ -917,7 +917,7 @@ impl WorkflowRuntimeHost {
             db,
             run_id,
             session_id,
-            loop_mode,
+            execution_mode,
             session_context,
             tokio_handle,
             op_scopes: vec![WorkflowOpScope {
@@ -1529,7 +1529,7 @@ impl WorkflowRuntimeHost {
     }
 
     fn repair_guard_enabled(&self) -> bool {
-        !matches!(self.loop_mode.as_str(), "off")
+        !matches!(self.execution_mode.as_str(), "off")
     }
 
     fn repair_event_exists_for_op(&self, op_key: &str) -> Result<bool> {

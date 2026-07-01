@@ -1281,12 +1281,12 @@ fn build_router_with_cors(
         .route("/plan/{sid}/mode", get(routes::plan::get_plan_mode))
         .route("/plan/{sid}/mode", post(routes::plan::set_plan_mode))
         .route(
-            "/sessions/{sid}/coding-loop-mode",
-            get(routes::coding_loop::get_coding_loop_mode),
+            "/sessions/{sid}/execution-mode",
+            get(routes::execution_mode::get_execution_mode),
         )
         .route(
-            "/sessions/{sid}/coding-loop-mode",
-            post(routes::coding_loop::set_coding_loop_mode),
+            "/sessions/{sid}/execution-mode",
+            post(routes::execution_mode::set_execution_mode),
         )
         .route("/plan/{sid}/content", get(routes::plan::get_plan_content))
         .route("/plan/{sid}/content", put(routes::plan::save_plan_content))

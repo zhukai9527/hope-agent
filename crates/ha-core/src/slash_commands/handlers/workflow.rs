@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::coding_loop::CodingLoopMode;
+use crate::execution_mode::ExecutionMode;
 use crate::session::SessionDB;
 use crate::slash_commands::types::{CommandAction, CommandResult};
 use crate::workflow::{WorkflowOp, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState};
@@ -36,7 +36,7 @@ pub fn handle_workflow(
     }
 }
 
-pub fn handle_loop(
+pub fn handle_mode(
     session_db: &Arc<SessionDB>,
     session_id: Option<&str>,
     args: &str,
@@ -46,28 +46,28 @@ pub fn handle_loop(
     match mode {
         "" | "status" => {
             let current = session_db
-                .get_session_coding_loop_mode(sid)
+                .get_session_execution_mode(sid)
                 .map_err(|e| e.to_string())?
                 .unwrap_or_default();
             Ok(display_only(format!(
-                "Current coding loop mode: **{}** (`{}`).\n\nModes: `off`, `guarded`, `deep`, `autonomous`.\nUse `/loop guarded` to persist a guarded coding loop policy for this session.",
+                "Current execution mode: **{}** (`{}`).\n\nModes: `off`, `guarded`, `deep`, `autonomous`.\nUse `/mode guarded` to persist a guarded execution policy for this session.",
                 current.label(),
                 current.as_str()
             )))
         }
         "off" | "guarded" | "deep" | "autonomous" => {
-            let parsed = CodingLoopMode::from_str(mode)
-                .ok_or_else(|| "Usage: /loop [off|guarded|deep|autonomous|status]".to_string())?;
+            let parsed = ExecutionMode::from_str(mode)
+                .ok_or_else(|| "Usage: /mode [off|guarded|deep|autonomous|status]".to_string())?;
             session_db
-                .update_session_coding_loop_mode(sid, parsed)
+                .update_session_execution_mode(sid, parsed)
                 .map_err(|e| e.to_string())?;
             Ok(display_only(format!(
-                "Coding loop mode for this session is now **{}** (`{}`).\n\nThe policy is persisted and will be injected into subsequent system prompts.",
+                "Execution mode for this session is now **{}** (`{}`).\n\nThe policy is persisted and will be injected into subsequent system prompts.",
                 parsed.label(),
                 parsed.as_str()
             )))
         }
-        _ => Err("Usage: /loop [off|guarded|deep|autonomous|status]".into()),
+        _ => Err("Usage: /mode [off|guarded|deep|autonomous|status]".into()),
     }
 }
 
@@ -124,7 +124,7 @@ fn render_workflow_list(session_db: &Arc<SessionDB>, sid: &str) -> Result<Comman
             "- `{}` · **{}** · `{}` · {} · updated `{}`{}",
             short_id(&run.id),
             run.state.as_str(),
-            run.loop_mode,
+            run.execution_mode,
             run.kind,
             run.updated_at,
             run.blocked_reason
@@ -144,11 +144,11 @@ fn render_workflow_trace(
 ) -> Result<CommandResult, String> {
     let snapshot = resolve_workflow_snapshot(session_db, sid, run_id)?;
     let mut lines = vec![format!(
-        "## Workflow trace `{}`\n\nState: **{}** · kind: `{}` · loop: `{}` · updated `{}`",
+        "## Workflow trace `{}`\n\nState: **{}** · kind: `{}` · mode: `{}` · updated `{}`",
         short_id(&snapshot.run.id),
         snapshot.run.state.as_str(),
         snapshot.run.kind,
-        snapshot.run.loop_mode,
+        snapshot.run.execution_mode,
         snapshot.run.updated_at
     )];
 
