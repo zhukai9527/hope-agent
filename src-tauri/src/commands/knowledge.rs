@@ -14,9 +14,11 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceImportInput,
-    KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput,
-    ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource,
+    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup,
+    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
+    RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -130,8 +132,51 @@ pub async fn kb_source_import_browser_cmd(
 }
 
 #[tauri::command]
+pub async fn kb_source_import_batch_cmd(
+    kb_id: String,
+    input: KnowledgeSourceImportBatchInput,
+) -> Result<KnowledgeSourceImportRunDetail, CmdError> {
+    service::source_import_batch(&kb_id, input)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn kb_source_list_cmd(kb_id: String) -> Result<Vec<KnowledgeSource>, CmdError> {
     service::source_list(&kb_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_import_runs_list_cmd(
+    kb_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<KnowledgeSourceImportRun>, CmdError> {
+    service::source_import_runs_list(&kb_id, limit).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_import_run_detail_cmd(
+    kb_id: String,
+    run_id: String,
+) -> Result<KnowledgeSourceImportRunDetail, CmdError> {
+    service::source_import_run_detail(&kb_id, &run_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_import_retry_failed_cmd(
+    kb_id: String,
+    run_id: String,
+) -> Result<KnowledgeSourceImportRunDetail, CmdError> {
+    service::source_import_retry_failed(&kb_id, &run_id)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn kb_source_similarity_groups_cmd(
+    kb_id: String,
+) -> Result<Vec<KnowledgeSourceSimilarityGroup>, CmdError> {
+    service::source_similarity_groups(&kb_id).map_err(Into::into)
 }
 
 #[tauri::command]

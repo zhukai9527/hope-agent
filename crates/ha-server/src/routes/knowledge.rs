@@ -27,9 +27,11 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceImportInput,
-    KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput,
-    ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource,
+    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup,
+    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
+    RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -206,6 +208,18 @@ pub struct KbBrowserSourceImportBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct KbSourceImportBatchBody {
+    pub input: KnowledgeSourceImportBatchInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbSourceImportRunsQuery {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct KbCompileStartBody {
     pub input: CompileStartInput,
 }
@@ -356,6 +370,47 @@ pub async fn kb_source_import_browser(
     Ok(Json(
         service::source_import_browser(&kb_id, body.input).await?,
     ))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/batch`
+pub async fn kb_source_import_batch(
+    Path(kb_id): Path<String>,
+    Json(body): Json<KbSourceImportBatchBody>,
+) -> Result<Json<KnowledgeSourceImportRunDetail>, AppError> {
+    Ok(Json(
+        service::source_import_batch(&kb_id, body.input).await?,
+    ))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/import-runs`
+pub async fn kb_source_import_runs_list(
+    Path(kb_id): Path<String>,
+    Query(query): Query<KbSourceImportRunsQuery>,
+) -> Result<Json<Vec<KnowledgeSourceImportRun>>, AppError> {
+    Ok(Json(service::source_import_runs_list(&kb_id, query.limit)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/import-runs/{run_id}`
+pub async fn kb_source_import_run_detail(
+    Path((kb_id, run_id)): Path<(String, String)>,
+) -> Result<Json<KnowledgeSourceImportRunDetail>, AppError> {
+    Ok(Json(service::source_import_run_detail(&kb_id, &run_id)?))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/import-runs/{run_id}/retry-failed`
+pub async fn kb_source_import_retry_failed(
+    Path((kb_id, run_id)): Path<(String, String)>,
+) -> Result<Json<KnowledgeSourceImportRunDetail>, AppError> {
+    Ok(Json(
+        service::source_import_retry_failed(&kb_id, &run_id).await?,
+    ))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/similar`
+pub async fn kb_source_similarity_groups(
+    Path(kb_id): Path<String>,
+) -> Result<Json<Vec<KnowledgeSourceSimilarityGroup>>, AppError> {
+    Ok(Json(service::source_similarity_groups(&kb_id)?))
 }
 
 /// `GET /api/knowledge/{kb_id}/sources`

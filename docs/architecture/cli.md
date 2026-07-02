@@ -16,7 +16,7 @@ hope-agent [GLOBAL_FLAGS] [SUBCOMMAND] [OPTIONS]
 | -------------- | ------------ | ------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------ |
 | **桌面 GUI**       | 长驻进程     | 无子命令（默认）                      | `run_child` / `run_guardian` | Tauri WebView。生产构建经 Guardian 监督子进程；dev / 用户禁用 Guardian 时直接跑              |
 | **HTTP/WS 服务器** | 长驻进程     | `hope-agent server [...]`             | `run_server`           | axum 守护进程，内嵌 Web GUI；浏览器访问 `http://<bind>` 即得完整 React UI                  |
-| **Knowledge MCP stdio** | 长驻进程 | `hope-agent knowledge-mcp [...]` | `run_knowledge_mcp` | Phase 7 外部 agent 出口，把知识空间 Agent Access API 暴露为 stdio MCP tools |
+| **Knowledge MCP stdio** | 长驻进程 | `hope-agent knowledge-mcp [...]` | `run_knowledge_mcp` | 外部 agent 出口，把知识空间 Agent Access API 暴露为 stdio MCP tools |
 | **ACP stdio**      | 长驻进程     | `hope-agent acp [...]`                | `run_acp_server`       | NDJSON over stdio，给 IDE / 外部客户端直连核心协议用                                      |
 | **Auth 一次性命令** | 短命令       | `hope-agent auth <provider> [...]`    | [`cli_auth::run`](../../src-tauri/src/cli_auth.rs) | 终端环境下完成 OAuth（目前仅 Codex / ChatGPT），登录成功落 token + 写 Provider 后退出     |
 
@@ -28,7 +28,7 @@ hope-agent [GLOBAL_FLAGS] [SUBCOMMAND] [OPTIONS]
 hope-agent knowledge-mcp [OPTIONS]
 ```
 
-由 `run_knowledge_mcp` 处理，是 Phase 7 给 Claude Desktop / Cursor / Codex / Claude Code 等外部 MCP host 的知识空间出口。协议是 newline-delimited JSON-RPC over stdio，stdout 只输出 MCP 消息，日志和错误走 stderr。
+由 `run_knowledge_mcp` 处理，是给 Claude Desktop / Cursor / Codex / Claude Code 等外部 MCP host 的知识空间出口。协议是 newline-delimited JSON-RPC over stdio，stdout 只输出 MCP 消息，日志和错误走 stderr。
 
 | 参数 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |

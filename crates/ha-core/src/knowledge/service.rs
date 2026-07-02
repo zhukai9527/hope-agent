@@ -13,9 +13,10 @@ use super::index;
 use super::types::{
     Backlink, CompileProposal, CompileProposalStatus, CompileRun, CompileStartInput,
     CreateKnowledgeBaseInput, KbAccess, KbAttachInput, KbChatThread, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceImportInput,
-    KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput,
-    ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup, Note, NoteReadResult, NoteSearchHit,
+    NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -63,9 +64,51 @@ pub async fn source_import_browser(
     super::source::import_browser_capture(kb_id, input).await
 }
 
+/// Owner import: run a durable multi-item import pipeline with per-item status.
+pub async fn source_import_batch(
+    kb_id: &str,
+    input: KnowledgeSourceImportBatchInput,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    super::source::import_source_batch(kb_id, input).await
+}
+
+/// Owner retry: create a new run from failed items in a previous import run.
+pub async fn source_import_retry_failed(
+    kb_id: &str,
+    run_id: &str,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    super::source::retry_failed_source_imports(kb_id, run_id).await
+}
+
 /// Owner list: raw sources in newest-first order.
 pub fn source_list(kb_id: &str) -> Result<Vec<KnowledgeSource>> {
     super::source::list_sources(kb_id)
+}
+
+/// Owner history: recent import runs with aggregate counts.
+pub fn source_import_runs_list(
+    kb_id: &str,
+    limit: Option<usize>,
+) -> Result<Vec<KnowledgeSourceImportRun>> {
+    super::source::list_source_import_runs(kb_id, limit)
+}
+
+/// Owner history detail: a run plus all item statuses.
+pub fn source_import_run_detail(
+    kb_id: &str,
+    run_id: &str,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    let detail = super::source::source_import_run_detail(run_id)?
+        .ok_or_else(|| anyhow!("source import run not found: {run_id}"))?;
+    if detail.run.kb_id != kb_id {
+        bail!("source import run does not belong to knowledge base: {kb_id}");
+    }
+    Ok(detail)
+}
+
+/// Owner source governance: exact duplicate and near-similar source groups.
+pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
+    super::source::source_similarity_groups(kb_id)
 }
 
 /// Owner read: source metadata + stored snapshot text.

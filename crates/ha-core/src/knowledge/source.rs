@@ -10,14 +10,17 @@ use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use super::types::{
     KnowledgeBrowserCaptureMode, KnowledgeBrowserSourceImportInput, KnowledgeSource,
-    KnowledgeSourceChunk, KnowledgeSourceImportInput, KnowledgeSourceKind,
-    KnowledgeSourceReadResult, KnowledgeSourceStatus,
+    KnowledgeSourceChunk, KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput,
+    KnowledgeSourceImportItemStatus, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportRunStatus, KnowledgeSourceKind, KnowledgeSourceReadResult,
+    KnowledgeSourceSimilarityGroup, KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus,
 };
 
 const MAX_DIRECT_SOURCE_BYTES: usize = 5 * 1024 * 1024;
@@ -26,6 +29,10 @@ const MAX_DIRECT_SOURCE_BYTES: usize = 5 * 1024 * 1024;
 /// product limit.
 pub const MAX_BINARY_SOURCE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_BROWSER_CAPTURE_CHARS: usize = 200_000;
+const MAX_SOURCE_IMPORT_BATCH_ITEMS: usize = 50;
+const MAX_SOURCE_SIMILARITY_SCAN: usize = 200;
+const MAX_SOURCE_SIMILARITY_GROUPS: usize = 25;
+const SOURCE_SIMILARITY_THRESHOLD: f32 = 0.84;
 const MAX_URL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const SOURCE_CHUNK_CHARS: usize = 4_000;
 const USER_AGENT: &str =
@@ -112,12 +119,28 @@ fn registry() -> Result<&'static std::sync::Arc<super::KnowledgeRegistry>> {
     crate::get_knowledge_db().ok_or_else(|| anyhow!("knowledge db not initialized"))
 }
 
+struct ImportedSourceOutcome {
+    source: KnowledgeSource,
+    duplicate_of_id: Option<String>,
+}
+
 /// Import one raw source into a KB. Exactly one of `content`, `dataBase64`, or
 /// `url` is used.
 pub async fn import_source(
     kb_id: &str,
     input: KnowledgeSourceImportInput,
 ) -> Result<KnowledgeSource> {
+    let outcome = import_source_with_outcome(kb_id, input).await?;
+    if outcome.duplicate_of_id.is_none() {
+        emit(kb_id, "source_import");
+    }
+    Ok(outcome.source)
+}
+
+async fn import_source_with_outcome(
+    kb_id: &str,
+    input: KnowledgeSourceImportInput,
+) -> Result<ImportedSourceOutcome> {
     // Ensure the KB exists up front so a source import cannot create orphan
     // files in an arbitrary id-shaped directory.
     let kb = registry()?
@@ -127,7 +150,7 @@ pub async fn import_source(
         bail!("cannot import source into archived knowledge base: {kb_id}");
     }
 
-    let imported = match normalize_import_input(input)? {
+    Ok(match normalize_import_input(input)? {
         NormalizedImport::Url { url, title } => import_url_snapshot(kb_id, &url, title).await?,
         NormalizedImport::Content {
             kind,
@@ -142,10 +165,7 @@ pub async fn import_source(
             mime_type,
             bytes,
         } => import_file_snapshot(kb_id, kind, title, file_name, mime_type, bytes)?,
-    };
-
-    emit(kb_id, "source_import");
-    Ok(imported)
+    })
 }
 
 /// Capture the active controlled browser tab into the raw-source inbox. This is
@@ -199,7 +219,8 @@ pub async fn import_browser_capture(
         .unwrap_or_else(|| active.url.clone())
         .trim()
         .to_string();
-    if let Some(existing) = find_duplicate_browser_capture(kb_id, &url, capture_mode, &text)? {
+    let text_hash = stable_text_hash(&text);
+    if let Some(existing) = registry()?.find_source_by_extracted_text_hash(kb_id, &text_hash)? {
         return Ok(existing);
     }
     let extracted_title = normalize_optional_owned(Some(capture.title))
@@ -213,21 +234,164 @@ pub async fn import_browser_capture(
     snapshot.push_str(&text);
     snapshot.push('\n');
 
-    let imported = persist_source(
+    let outcome = persist_source(
         kb_id,
         KnowledgeSourceKind::BrowserSnapshot,
         title,
         Some(url),
         "md",
         snapshot,
+        Some(&text),
     )?;
-    emit(kb_id, "source_import");
-    Ok(imported)
+    if outcome.duplicate_of_id.is_none() {
+        emit(kb_id, "source_import");
+    }
+    Ok(outcome.source)
+}
+
+pub async fn import_source_batch(
+    kb_id: &str,
+    input: KnowledgeSourceImportBatchInput,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    run_import_batch(kb_id, input.items).await
+}
+
+pub async fn retry_failed_source_imports(
+    kb_id: &str,
+    run_id: &str,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    ensure_kb_open(kb_id)?;
+    let failed_items = registry()?.failed_source_import_items(kb_id, run_id)?;
+    if failed_items.is_empty() {
+        let detail = source_import_run_detail(run_id)?
+            .ok_or_else(|| anyhow!("source import run not found: {run_id}"))?;
+        if detail.run.kb_id != kb_id {
+            bail!("source import run does not belong to knowledge base: {kb_id}");
+        }
+        return Ok(detail);
+    }
+    let mut items = Vec::with_capacity(failed_items.len());
+    for stored in failed_items {
+        let input = serde_json::from_str(&stored.input_json).map_err(|e| {
+            anyhow!(
+                "source import retry input for item {} is invalid: {e}",
+                stored.item.id
+            )
+        })?;
+        items.push(super::types::KnowledgeSourceImportBatchItemInput {
+            client_id: stored.item.client_id,
+            label: stored.item.label,
+            input,
+        });
+    }
+    run_import_batch(kb_id, items).await
+}
+
+async fn run_import_batch(
+    kb_id: &str,
+    items: Vec<super::types::KnowledgeSourceImportBatchItemInput>,
+) -> Result<KnowledgeSourceImportRunDetail> {
+    ensure_kb_open(kb_id)?;
+    if items.is_empty() {
+        bail!("source import batch requires at least one item");
+    }
+    if items.len() > MAX_SOURCE_IMPORT_BATCH_ITEMS {
+        bail!(
+            "source import batch accepts at most {} items",
+            MAX_SOURCE_IMPORT_BATCH_ITEMS
+        );
+    }
+
+    let run = registry()?.create_source_import_run(kb_id, items.len())?;
+    let mut queued = Vec::with_capacity(items.len());
+    for (idx, item) in items.into_iter().enumerate() {
+        let kind = infer_input_kind(&item.input);
+        let input_json = serde_json::to_string(&item.input)?;
+        let row = registry()?.insert_source_import_item(
+            &run.id,
+            kb_id,
+            idx as u32,
+            normalize_optional(item.client_id.as_deref()),
+            normalize_optional(item.label.as_deref()),
+            &input_json,
+            kind,
+        )?;
+        queued.push((row, item.input));
+    }
+
+    let mut imported = 0usize;
+    let mut duplicate = 0usize;
+    let mut failed = 0usize;
+    for (item, input) in queued {
+        registry()?.set_source_import_item_running(item.id)?;
+        match import_source_with_outcome(kb_id, input).await {
+            Ok(outcome) => {
+                let status = if outcome.duplicate_of_id.is_some() {
+                    duplicate += 1;
+                    KnowledgeSourceImportItemStatus::Duplicate
+                } else {
+                    imported += 1;
+                    KnowledgeSourceImportItemStatus::Imported
+                };
+                registry()?.finish_source_import_item(
+                    item.id,
+                    status,
+                    Some(&outcome.source.id),
+                    outcome.duplicate_of_id.as_deref(),
+                    None,
+                )?;
+            }
+            Err(e) => {
+                failed += 1;
+                let error = crate::truncate_utf8(&e.to_string(), 600).to_string();
+                registry()?.finish_source_import_item(
+                    item.id,
+                    KnowledgeSourceImportItemStatus::Failed,
+                    None,
+                    None,
+                    Some(&error),
+                )?;
+            }
+        }
+    }
+
+    let status = if failed == 0 {
+        KnowledgeSourceImportRunStatus::Completed
+    } else if imported == 0 && duplicate == 0 {
+        KnowledgeSourceImportRunStatus::Failed
+    } else {
+        KnowledgeSourceImportRunStatus::CompletedWithErrors
+    };
+    registry()?.finish_source_import_run(&run.id, status)?;
+    emit(kb_id, "source_import_batch");
+    source_import_run_detail(&run.id)?.ok_or_else(|| anyhow!("source import run disappeared"))
 }
 
 pub fn list_sources(kb_id: &str) -> Result<Vec<KnowledgeSource>> {
     ensure_kb_exists(kb_id)?;
     registry()?.list_sources(kb_id)
+}
+
+pub fn list_source_import_runs(
+    kb_id: &str,
+    limit: Option<usize>,
+) -> Result<Vec<super::types::KnowledgeSourceImportRun>> {
+    ensure_kb_exists(kb_id)?;
+    registry()?.list_source_import_runs(kb_id, limit.unwrap_or(20))
+}
+
+pub fn source_import_run_detail(run_id: &str) -> Result<Option<KnowledgeSourceImportRunDetail>> {
+    let Some(run) = registry()?.get_source_import_run(run_id)? else {
+        return Ok(None);
+    };
+    let items = registry()?.list_source_import_items(run_id)?;
+    Ok(Some(KnowledgeSourceImportRunDetail { run, items }))
+}
+
+pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
+    ensure_kb_exists(kb_id)?;
+    let sources = registry()?.list_sources(kb_id)?;
+    build_source_similarity_groups(kb_id, sources)
 }
 
 pub fn read_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadResult> {
@@ -282,7 +446,7 @@ fn import_text_snapshot(
     title: Option<String>,
     file_name: Option<String>,
     content: String,
-) -> Result<KnowledgeSource> {
+) -> Result<ImportedSourceOutcome> {
     if content.as_bytes().len() > MAX_DIRECT_SOURCE_BYTES {
         bail!(
             "source is too large ({} bytes, max {})",
@@ -298,7 +462,15 @@ fn import_text_snapshot(
         | KnowledgeSourceKind::BrowserSnapshot => "md",
         KnowledgeSourceKind::Text | KnowledgeSourceKind::UrlSnapshot => "txt",
     };
-    persist_source(kb_id, kind, title, None, ext, content)
+    persist_source(
+        kb_id,
+        kind,
+        title,
+        None,
+        ext,
+        content.clone(),
+        Some(&content),
+    )
 }
 
 fn import_file_snapshot(
@@ -308,7 +480,7 @@ fn import_file_snapshot(
     file_name: Option<String>,
     mime_type: Option<String>,
     bytes: Vec<u8>,
-) -> Result<KnowledgeSource> {
+) -> Result<ImportedSourceOutcome> {
     if bytes.len() > MAX_BINARY_SOURCE_BYTES {
         bail!(
             "source file is too large ({} bytes, max {})",
@@ -343,6 +515,7 @@ fn import_file_snapshot(
                 Some(format!("local-file:{file_name}")),
                 "md",
                 snapshot,
+                Some(&extracted),
             )
         }
         KnowledgeSourceKind::UrlSnapshot => bail!("url_snapshot source imports require url"),
@@ -402,49 +575,15 @@ fn normalize_capture_text(text: &str) -> Result<String> {
     }
 }
 
-fn find_duplicate_browser_capture(
-    kb_id: &str,
-    url: &str,
-    capture_mode: &str,
-    text: &str,
-) -> Result<Option<KnowledgeSource>> {
-    let expected_body = text.trim();
-    for source in registry()?.list_sources(kb_id)? {
-        if source.kind != KnowledgeSourceKind::BrowserSnapshot
-            || source.origin_uri.as_deref() != Some(url)
-        {
-            continue;
-        }
-        let path = source_path(kb_id, &source.stored_path)?;
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        if browser_snapshot_capture_mode(&content).as_deref() == Some(capture_mode)
-            && browser_snapshot_body(&content) == expected_body
-        {
-            return Ok(Some(source));
-        }
-    }
-    Ok(None)
+fn stable_text_hash(text: &str) -> String {
+    super::blake3_hex(text.trim().as_bytes())
 }
 
-fn browser_snapshot_body(content: &str) -> &str {
+fn source_snapshot_body(content: &str) -> &str {
     content
         .split_once("\n---\n\n")
         .map(|(_, body)| body.trim())
         .unwrap_or_else(|| content.trim())
-}
-
-fn browser_snapshot_capture_mode(content: &str) -> Option<String> {
-    for line in content.lines() {
-        if line.trim() == "---" {
-            return None;
-        }
-        if let Some(mode) = line.strip_prefix("Capture-Mode:") {
-            return normalize_optional(Some(mode)).map(str::to_string);
-        }
-    }
-    None
 }
 
 fn normalize_import_input(input: KnowledgeSourceImportInput) -> Result<NormalizedImport> {
@@ -563,7 +702,7 @@ async fn import_url_snapshot(
     kb_id: &str,
     url: &str,
     requested_title: Option<String>,
-) -> Result<KnowledgeSource> {
+) -> Result<ImportedSourceOutcome> {
     let cfg = crate::config::cached_config();
     let ssrf_cfg = cfg.ssrf.clone();
     let web_cfg = cfg.web_fetch.clone();
@@ -660,6 +799,7 @@ async fn import_url_snapshot(
         Some(final_url),
         "md",
         snapshot,
+        Some(&text),
     )
 }
 
@@ -670,7 +810,21 @@ fn persist_source(
     origin_uri: Option<String>,
     ext: &str,
     content: String,
-) -> Result<KnowledgeSource> {
+    extracted_text: Option<&str>,
+) -> Result<ImportedSourceOutcome> {
+    let extracted_text_hash = extracted_text
+        .and_then(|text| normalize_optional(Some(text)).map(stable_text_hash))
+        .unwrap_or_else(|| super::blake3_hex(content.as_bytes()));
+    if let Some(existing) =
+        registry()?.find_source_by_extracted_text_hash(kb_id, &extracted_text_hash)?
+    {
+        let duplicate_of_id = existing.id.clone();
+        return Ok(ImportedSourceOutcome {
+            source: existing,
+            duplicate_of_id: Some(duplicate_of_id),
+        });
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
     let stored_path = format!("{id}.{}", sanitize_ext(ext));
     let dir = source_dir(kb_id)?;
@@ -688,7 +842,7 @@ fn persist_source(
         origin_uri,
         stored_path,
         content_hash,
-        extracted_text_hash: Some(super::blake3_hex(content.as_bytes())),
+        extracted_text_hash: Some(extracted_text_hash),
         status: KnowledgeSourceStatus::Ready,
         compiled_at: None,
         created_at: now,
@@ -708,7 +862,10 @@ fn persist_source(
         }
         return Err(e);
     }
-    Ok(source)
+    Ok(ImportedSourceOutcome {
+        source,
+        duplicate_of_id: None,
+    })
 }
 
 fn build_chunks(source_id: &str, content: &str) -> Vec<KnowledgeSourceChunk> {
@@ -767,11 +924,28 @@ fn source_path(kb_id: &str, stored_path: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+fn ensure_kb_open(kb_id: &str) -> Result<()> {
+    let kb = registry()?
+        .get(kb_id)?
+        .ok_or_else(|| anyhow!("knowledge base not found: {kb_id}"))?;
+    if kb.archived {
+        bail!("cannot import source into archived knowledge base: {kb_id}");
+    }
+    Ok(())
+}
+
 fn ensure_kb_exists(kb_id: &str) -> Result<()> {
     registry()?
         .get(kb_id)?
         .map(|_| ())
         .ok_or_else(|| anyhow!("knowledge base not found: {kb_id}"))
+}
+
+fn infer_input_kind(input: &KnowledgeSourceImportInput) -> Option<KnowledgeSourceKind> {
+    if normalize_optional(input.url.as_deref()).is_some() {
+        return Some(KnowledgeSourceKind::UrlSnapshot);
+    }
+    input.kind.or_else(|| Some(infer_kind(&input.file_name)))
 }
 
 fn infer_kind(file_name: &Option<String>) -> KnowledgeSourceKind {
@@ -907,6 +1081,186 @@ fn strip_html_tags(html: &str) -> String {
     stripped.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn build_source_similarity_groups(
+    kb_id: &str,
+    sources: Vec<KnowledgeSource>,
+) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
+    let mut groups = Vec::new();
+    let mut exact_by_hash: BTreeMap<String, Vec<KnowledgeSource>> = BTreeMap::new();
+    for source in &sources {
+        if let Some(hash) = normalize_optional(source.extracted_text_hash.as_deref()) {
+            exact_by_hash
+                .entry(hash.to_string())
+                .or_default()
+                .push(source.clone());
+        }
+    }
+    for (hash, mut items) in exact_by_hash {
+        if items.len() < 2 {
+            continue;
+        }
+        items.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        groups.push(KnowledgeSourceSimilarityGroup {
+            id: format!("exact-{}", short_hash(&hash)),
+            kind: KnowledgeSourceSimilarityGroupKind::ExactDuplicate,
+            similarity: 1.0,
+            fingerprint: hash,
+            sources: items,
+        });
+        if groups.len() >= MAX_SOURCE_SIMILARITY_GROUPS {
+            return Ok(groups);
+        }
+    }
+
+    let mut candidates = Vec::new();
+    for source in sources.into_iter().take(MAX_SOURCE_SIMILARITY_SCAN) {
+        let path = source_path(kb_id, &source.stored_path)?;
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let body = source_snapshot_body(&content);
+        let signature = similarity_signature(body);
+        if signature.len() < 8 {
+            continue;
+        }
+        candidates.push((source, signature));
+    }
+    let len = candidates.len();
+    let mut parent: Vec<usize> = (0..len).collect();
+    let mut cluster_similarity: HashMap<usize, f32> = HashMap::new();
+    for i in 0..len {
+        for j in (i + 1)..len {
+            if candidates[i].0.extracted_text_hash == candidates[j].0.extracted_text_hash {
+                continue;
+            }
+            let similarity = jaccard(&candidates[i].1, &candidates[j].1);
+            if similarity >= SOURCE_SIMILARITY_THRESHOLD {
+                let root = union(&mut parent, i, j);
+                cluster_similarity
+                    .entry(root)
+                    .and_modify(|s| *s = (*s).max(similarity))
+                    .or_insert(similarity);
+            }
+        }
+    }
+
+    let mut by_root: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for idx in 0..len {
+        let root = find_root(&mut parent, idx);
+        by_root.entry(root).or_default().push(idx);
+    }
+    for (root, indexes) in by_root {
+        if indexes.len() < 2 {
+            continue;
+        }
+        let mut items: Vec<KnowledgeSource> = indexes
+            .iter()
+            .map(|idx| candidates[*idx].0.clone())
+            .collect();
+        items.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let fingerprint = super::blake3_hex(
+            items
+                .iter()
+                .map(|s| s.extracted_text_hash.as_deref().unwrap_or(&s.content_hash))
+                .collect::<Vec<_>>()
+                .join(":")
+                .as_bytes(),
+        );
+        groups.push(KnowledgeSourceSimilarityGroup {
+            id: format!("similar-{}", short_hash(&fingerprint)),
+            kind: KnowledgeSourceSimilarityGroupKind::Similar,
+            similarity: *cluster_similarity
+                .get(&root)
+                .unwrap_or(&SOURCE_SIMILARITY_THRESHOLD),
+            fingerprint,
+            sources: items,
+        });
+        if groups.len() >= MAX_SOURCE_SIMILARITY_GROUPS {
+            break;
+        }
+    }
+    Ok(groups)
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(12).collect()
+}
+
+fn similarity_signature(text: &str) -> BTreeSet<String> {
+    let mut terms = BTreeSet::new();
+    let mut current = String::new();
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            current.push(ch);
+        } else {
+            if current.chars().count() >= 3 {
+                terms.insert(current.clone());
+            }
+            current.clear();
+        }
+    }
+    if current.chars().count() >= 3 {
+        terms.insert(current);
+    }
+    if terms.len() >= 8 {
+        return terms.into_iter().take(600).collect();
+    }
+
+    let chars: Vec<char> = text
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
+        .collect();
+    for window in chars.windows(3) {
+        terms.insert(window.iter().copied().collect());
+        if terms.len() >= 600 {
+            break;
+        }
+    }
+    terms
+}
+
+fn jaccard(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let intersection = a.intersection(b).count() as f32;
+    let union = a.union(b).count() as f32;
+    if union <= 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
+
+fn find_root(parent: &mut [usize], idx: usize) -> usize {
+    if parent[idx] != idx {
+        parent[idx] = find_root(parent, parent[idx]);
+    }
+    parent[idx]
+}
+
+fn union(parent: &mut [usize], a: usize, b: usize) -> usize {
+    let root_a = find_root(parent, a);
+    let root_b = find_root(parent, b);
+    if root_a == root_b {
+        root_a
+    } else {
+        let root = root_a.min(root_b);
+        let child = root_a.max(root_b);
+        parent[child] = root;
+        root
+    }
+}
+
 fn emit(kb_id: &str, op: &str) {
     if let Some(bus) = crate::get_event_bus() {
         let _ = bus.emit(
@@ -919,7 +1273,7 @@ fn emit(kb_id: &str, op: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::engine::general_purpose;
 
     fn input() -> KnowledgeSourceImportInput {
         KnowledgeSourceImportInput {
@@ -996,14 +1350,10 @@ mod tests {
     }
 
     #[test]
-    fn browser_snapshot_helpers_read_mode_and_body() {
+    fn source_snapshot_body_reads_body_after_metadata() {
         let content = "# Example\n\nSource: https://example.com\nCapture-Mode: selection\nSelected: true\n\n---\n\n selected text \n";
 
-        assert_eq!(
-            browser_snapshot_capture_mode(content).as_deref(),
-            Some("selection")
-        );
-        assert_eq!(browser_snapshot_body(content), "selected text");
+        assert_eq!(source_snapshot_body(content), "selected text");
     }
 
     #[test]

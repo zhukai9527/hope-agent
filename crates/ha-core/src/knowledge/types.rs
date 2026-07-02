@@ -303,6 +303,22 @@ pub struct KnowledgeSourceImportInput {
     pub url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportBatchItemInput {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub input: KnowledgeSourceImportInput,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportBatchInput {
+    pub items: Vec<KnowledgeSourceImportBatchItemInput>,
+}
+
 /// Raw source metadata for inbox lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +351,149 @@ pub struct KnowledgeSourceReadResult {
     #[serde(flatten)]
     pub source: KnowledgeSource,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceImportRunStatus {
+    Running,
+    Completed,
+    CompletedWithErrors,
+    Failed,
+}
+
+impl KnowledgeSourceImportRunStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeSourceImportRunStatus::Running => "running",
+            KnowledgeSourceImportRunStatus::Completed => "completed",
+            KnowledgeSourceImportRunStatus::CompletedWithErrors => "completed_with_errors",
+            KnowledgeSourceImportRunStatus::Failed => "failed",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> KnowledgeSourceImportRunStatus {
+        match s {
+            "completed" => KnowledgeSourceImportRunStatus::Completed,
+            "completed_with_errors" | "completedWithErrors" => {
+                KnowledgeSourceImportRunStatus::CompletedWithErrors
+            }
+            "failed" => KnowledgeSourceImportRunStatus::Failed,
+            _ => KnowledgeSourceImportRunStatus::Running,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceImportItemStatus {
+    Pending,
+    Running,
+    Imported,
+    Duplicate,
+    Failed,
+}
+
+impl KnowledgeSourceImportItemStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeSourceImportItemStatus::Pending => "pending",
+            KnowledgeSourceImportItemStatus::Running => "running",
+            KnowledgeSourceImportItemStatus::Imported => "imported",
+            KnowledgeSourceImportItemStatus::Duplicate => "duplicate",
+            KnowledgeSourceImportItemStatus::Failed => "failed",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> KnowledgeSourceImportItemStatus {
+        match s {
+            "running" => KnowledgeSourceImportItemStatus::Running,
+            "imported" => KnowledgeSourceImportItemStatus::Imported,
+            "duplicate" => KnowledgeSourceImportItemStatus::Duplicate,
+            "failed" => KnowledgeSourceImportItemStatus::Failed,
+            _ => KnowledgeSourceImportItemStatus::Pending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportItem {
+    pub id: i64,
+    pub run_id: String,
+    pub kb_id: String,
+    pub position: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<KnowledgeSourceKind>,
+    pub status: KnowledgeSourceImportItemStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_of_source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportRun {
+    pub id: String,
+    pub kb_id: String,
+    pub status: KnowledgeSourceImportRunStatus,
+    pub total_count: u32,
+    pub imported_count: u32,
+    pub duplicate_count: u32,
+    pub failed_count: u32,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<i64>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportRunDetail {
+    #[serde(flatten)]
+    pub run: KnowledgeSourceImportRun,
+    pub items: Vec<KnowledgeSourceImportItem>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceSimilarityGroupKind {
+    ExactDuplicate,
+    Similar,
+}
+
+impl KnowledgeSourceSimilarityGroupKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeSourceSimilarityGroupKind::ExactDuplicate => "exact_duplicate",
+            KnowledgeSourceSimilarityGroupKind::Similar => "similar",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceSimilarityGroup {
+    pub id: String,
+    pub kind: KnowledgeSourceSimilarityGroupKind,
+    pub similarity: f32,
+    pub fingerprint: String,
+    pub sources: Vec<KnowledgeSource>,
 }
 
 /// Separate chunk rows for raw sources. They never share `note_chunk`, keeping

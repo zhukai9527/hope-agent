@@ -92,6 +92,16 @@ export interface KnowledgeSourceImportInput {
   url?: string | null
 }
 
+export interface KnowledgeSourceImportBatchItemInput {
+  clientId?: string | null
+  label?: string | null
+  input: KnowledgeSourceImportInput
+}
+
+export interface KnowledgeSourceImportBatchInput {
+  items: KnowledgeSourceImportBatchItemInput[]
+}
+
 export interface KnowledgeBrowserSourceImportInput {
   mode?: KnowledgeBrowserCaptureMode
   title?: string | null
@@ -116,6 +126,65 @@ export interface KnowledgeSource {
 
 export interface KnowledgeSourceReadResult extends KnowledgeSource {
   content: string
+}
+
+export type KnowledgeSourceImportRunStatus =
+  | "running"
+  | "completed"
+  | "completed_with_errors"
+  | "failed"
+
+export type KnowledgeSourceImportItemStatus =
+  | "pending"
+  | "running"
+  | "imported"
+  | "duplicate"
+  | "failed"
+
+export interface KnowledgeSourceImportItem {
+  id: number
+  runId: string
+  kbId: string
+  position: number
+  clientId?: string | null
+  label?: string | null
+  kind?: KnowledgeSourceKind | null
+  status: KnowledgeSourceImportItemStatus
+  sourceId?: string | null
+  duplicateOfSourceId?: string | null
+  error?: string | null
+  createdAt: number
+  startedAt?: number | null
+  finishedAt?: number | null
+  updatedAt: number
+}
+
+export interface KnowledgeSourceImportRun {
+  id: string
+  kbId: string
+  status: KnowledgeSourceImportRunStatus
+  totalCount: number
+  importedCount: number
+  duplicateCount: number
+  failedCount: number
+  createdAt: number
+  startedAt?: number | null
+  finishedAt?: number | null
+  updatedAt: number
+}
+
+export interface KnowledgeSourceImportRunDetail extends KnowledgeSourceImportRun {
+  items: KnowledgeSourceImportItem[]
+}
+
+export type KnowledgeSourceSimilarityGroupKind = "exact_duplicate" | "similar"
+
+export interface KnowledgeSourceSimilarityGroup {
+  id: string
+  kind: KnowledgeSourceSimilarityGroupKind
+  similarity: number
+  fingerprint: string
+  sources: KnowledgeSource[]
 }
 
 export interface SchemaPageTypeSpec {

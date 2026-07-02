@@ -287,6 +287,28 @@ fn build_router_with_cors(
             post(routes::knowledge::kb_source_import_browser),
         )
         .route(
+            "/knowledge/{kb_id}/sources/batch",
+            post(routes::knowledge::kb_source_import_batch).layer(DefaultBodyLimit::max(
+                (ha_core::knowledge::source::MAX_BINARY_SOURCE_BYTES * 4 / 3 * 3) + 4 * 1024 * 1024,
+            )),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/import-runs",
+            get(routes::knowledge::kb_source_import_runs_list),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/import-runs/{run_id}",
+            get(routes::knowledge::kb_source_import_run_detail),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/import-runs/{run_id}/retry-failed",
+            post(routes::knowledge::kb_source_import_retry_failed),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/similar",
+            get(routes::knowledge::kb_source_similarity_groups),
+        )
+        .route(
             "/knowledge/{kb_id}/sources/{source_id}",
             get(routes::knowledge::kb_source_read).delete(routes::knowledge::kb_source_delete),
         )

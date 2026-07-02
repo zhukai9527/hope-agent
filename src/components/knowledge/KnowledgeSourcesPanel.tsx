@@ -2,10 +2,13 @@ import {
   Check,
   FileText,
   Globe,
+  History,
+  Layers,
   Link2,
   Loader2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Trash2,
   Upload,
@@ -41,9 +44,13 @@ import type {
   KnowledgeBrowserCaptureMode,
   KnowledgeBrowserSourceImportInput,
   KnowledgeSource,
+  KnowledgeSourceImportBatchInput,
+  KnowledgeSourceImportRun,
+  KnowledgeSourceImportRunDetail,
   KnowledgeSourceImportInput,
   KnowledgeSourceKind,
   KnowledgeSourceReadResult,
+  KnowledgeSourceSimilarityGroup,
 } from "@/types/knowledge"
 
 import KnowledgeCompilePanel from "./KnowledgeCompilePanel"
@@ -66,9 +73,15 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [sources, setSources] = useState<KnowledgeSource[]>([])
+  const [importRuns, setImportRuns] = useState<KnowledgeSourceImportRun[]>([])
+  const [runDetail, setRunDetail] = useState<KnowledgeSourceImportRunDetail | null>(null)
+  const [similarGroups, setSimilarGroups] = useState<KnowledgeSourceSimilarityGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [similarOpen, setSimilarOpen] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [retryingRunId, setRetryingRunId] = useState<string | null>(null)
   const [mode, setMode] = useState<ImportMode>("url")
   const [title, setTitle] = useState("")
   const [url, setUrl] = useState("")
@@ -86,6 +99,8 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   const reload = useCallback(async () => {
     if (!kbId) {
       setSources([])
+      setImportRuns([])
+      setSimilarGroups([])
       return
     }
     setLoading(true)
@@ -97,6 +112,24 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     } finally {
       setLoading(false)
     }
+    try {
+      const runs = await getTransport().call<KnowledgeSourceImportRun[]>(
+        "kb_source_import_runs_list_cmd",
+        { kbId, limit: 8 },
+      )
+      setImportRuns(runs)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::reload", "source import runs failed", e)
+    }
+    try {
+      const groups = await getTransport().call<KnowledgeSourceSimilarityGroup[]>(
+        "kb_source_similarity_groups_cmd",
+        { kbId },
+      )
+      setSimilarGroups(groups)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::reload", "source groups failed", e)
+    }
   }, [kbId])
 
   useEffect(() => {
@@ -106,6 +139,9 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   useEffect(() => {
     setSelectedSourceIds(new Set())
     setCompileSourceIds([])
+    setRunDetail(null)
+    setImportRuns([])
+    setSimilarGroups([])
   }, [kbId])
 
   useEffect(() => {
@@ -138,6 +174,37 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
+  function showImportRunToast(detail: KnowledgeSourceImportRunDetail) {
+    const imported = detail.importedCount
+    const duplicate = detail.duplicateCount
+    const failed = detail.failedCount
+    if (failed > 0) {
+      toast.error(
+        t("knowledge.sources.importRunPartial", {
+          defaultValue: "Imported {{imported}}, skipped {{duplicate}} duplicate, failed {{failed}}",
+          imported,
+          duplicate,
+          failed,
+        }),
+      )
+    } else if (duplicate > 0) {
+      toast.success(
+        t("knowledge.sources.importRunDeduped", {
+          defaultValue: "Imported {{imported}}, skipped {{duplicate}} duplicate",
+          imported,
+          duplicate,
+        }),
+      )
+    } else {
+      toast.success(
+        t("knowledge.sources.importedCount", {
+          defaultValue: "Imported {{count}} sources",
+          count: imported,
+        }),
+      )
+    }
+  }
+
   async function importSource() {
     if (!kbId || !canImport) return
     setImporting(true)
@@ -152,35 +219,26 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
         setImportOpen(false)
         resetImport()
       } else if (mode === "file") {
-        const failed: SourceFileDraft[] = []
-        let imported = 0
         const singleTitle = fileDrafts.length === 1 ? title.trim() || null : null
-        for (const draft of fileDrafts) {
-          try {
-            const input = await inputForFileDraft(draft, singleTitle)
-            await getTransport().call<KnowledgeSource>("kb_source_import_cmd", { kbId, input })
-            imported += 1
-          } catch (e) {
-            logger.warn("knowledge", "KnowledgeSourcesPanel::import", "source file import failed", e)
-            failed.push(draft)
-          }
-        }
-        if (imported > 0) {
-          toast.success(
-            t("knowledge.sources.importedCount", {
-              defaultValue: "Imported {{count}} sources",
-              count: imported,
-            }),
-          )
-        }
+        const items = await Promise.all(
+          fileDrafts.map(async (draft, idx) => ({
+            clientId: `${draft.file.name}-${draft.file.lastModified}-${draft.file.size}-${idx}`,
+            label: draft.file.name,
+            input: await inputForFileDraft(draft, singleTitle),
+          })),
+        )
+        const detail = await getTransport().call<KnowledgeSourceImportRunDetail>(
+          "kb_source_import_batch_cmd",
+          { kbId, input: { items } satisfies KnowledgeSourceImportBatchInput },
+        )
+        setRunDetail(detail)
+        showImportRunToast(detail)
+        const failedPositions = new Set(
+          detail.items.filter((item) => item.status === "failed").map((item) => item.position),
+        )
+        const failed = fileDrafts.filter((_, idx) => failedPositions.has(idx))
         if (failed.length > 0) {
           setFileDrafts(failed)
-          toast.error(
-            t("knowledge.sources.importFailedCount", {
-              defaultValue: "Couldn't import {{count}} sources",
-              count: failed.length,
-            }),
-          )
         } else {
           setImportOpen(false)
           resetImport()
@@ -194,10 +252,26 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                 title: title.trim() || null,
                 kind: "text",
               }
-        await getTransport().call<KnowledgeSource>("kb_source_import_cmd", { kbId, input })
-        toast.success(t("knowledge.sources.imported", "Source imported"))
-        setImportOpen(false)
-        resetImport()
+        const detail = await getTransport().call<KnowledgeSourceImportRunDetail>(
+          "kb_source_import_batch_cmd",
+          {
+            kbId,
+            input: {
+              items: [
+                {
+                  label: title.trim() || (mode === "url" ? url.trim() : null),
+                  input,
+                },
+              ],
+            } satisfies KnowledgeSourceImportBatchInput,
+          },
+        )
+        setRunDetail(detail)
+        showImportRunToast(detail)
+        if (detail.failedCount === 0) {
+          setImportOpen(false)
+          resetImport()
+        }
       }
       await reload()
     } catch (e) {
@@ -205,6 +279,40 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
       toast.error(t("knowledge.sources.importFailed", "Couldn't import source"))
     } finally {
       setImporting(false)
+    }
+  }
+
+  async function openRunDetail(run: KnowledgeSourceImportRun) {
+    if (!kbId) return
+    try {
+      const detail = await getTransport().call<KnowledgeSourceImportRunDetail>(
+        "kb_source_import_run_detail_cmd",
+        { kbId, runId: run.id },
+      )
+      setRunDetail(detail)
+      setHistoryOpen(true)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::runDetail", "source run detail failed", e)
+      toast.error(t("knowledge.sources.importHistoryFailed", "Couldn't open import history"))
+    }
+  }
+
+  async function retryFailed(run: KnowledgeSourceImportRun) {
+    if (!kbId || retryingRunId) return
+    setRetryingRunId(run.id)
+    try {
+      const detail = await getTransport().call<KnowledgeSourceImportRunDetail>(
+        "kb_source_import_retry_failed_cmd",
+        { kbId, runId: run.id },
+      )
+      setRunDetail(detail)
+      showImportRunToast(detail)
+      await reload()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::retryFailed", "source retry failed", e)
+      toast.error(t("knowledge.sources.retryFailed", "Couldn't retry failed imports"))
+    } finally {
+      setRetryingRunId(null)
     }
   }
 
@@ -288,6 +396,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     .filter((source) => selectedSourceIds.has(source.id))
     .map((source) => source.id)
   const selectedCount = selectedIdsInOrder.length
+  const latestRun = importRuns[0]
 
   if (!kbId) {
     return (
@@ -304,6 +413,33 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
           {t("knowledge.sources.title", "Sources")}
         </span>
         <div className="flex items-center gap-1">
+          <IconTip label={t("knowledge.sources.importHistory", "Import history")} side="bottom">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => setHistoryOpen(true)}
+              disabled={importRuns.length === 0}
+            >
+              <History className="h-3 w-3" />
+            </Button>
+          </IconTip>
+          <IconTip label={t("knowledge.sources.similarGroups", "Similar sources")} side="bottom">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative h-6 w-6"
+              onClick={() => setSimilarOpen(true)}
+              disabled={similarGroups.length === 0}
+            >
+              <Layers className="h-3 w-3" />
+              {similarGroups.length > 0 ? (
+                <span className="absolute -right-1 -top-1 rounded-full bg-amber-500 px-1 text-[9px] leading-3 text-white">
+                  {similarGroups.length}
+                </span>
+              ) : null}
+            </Button>
+          </IconTip>
           <IconTip
             label={t("knowledge.sources.compileSelected", "Compile selected sources")}
             side="bottom"
@@ -346,6 +482,32 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
           </IconTip>
         </div>
       </div>
+
+      {latestRun || similarGroups.length > 0 ? (
+        <div className="border-b border-border-soft/50 px-2 py-1 text-[10px] text-muted-foreground">
+          {latestRun ? (
+            <button
+              type="button"
+              className="mr-2 rounded-sm px-1 py-0.5 hover:bg-muted/60"
+              onClick={() => void openRunDetail(latestRun)}
+            >
+              {formatDate(latestRun.createdAt)} · +{latestRun.importedCount} · ={latestRun.duplicateCount} · !{latestRun.failedCount}
+            </button>
+          ) : null}
+          {similarGroups.length > 0 ? (
+            <button
+              type="button"
+              className="rounded-sm px-1 py-0.5 text-amber-600 hover:bg-muted/60 dark:text-amber-400"
+              onClick={() => setSimilarOpen(true)}
+            >
+              {t("knowledge.sources.similarCount", {
+                defaultValue: "{{count}} similar groups",
+                count: similarGroups.length,
+              })}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex-1 overflow-auto py-0.5">
         {sources.length === 0 && !loading ? (
@@ -579,6 +741,159 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
         </DialogContent>
       </Dialog>
 
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t("knowledge.sources.importHistory", "Import history")}</DialogTitle>
+          </DialogHeader>
+          <div className="grid max-h-[70vh] gap-3 overflow-auto md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.2fr)]">
+            <div className="space-y-2">
+              {importRuns.length === 0 ? (
+                <div className="rounded-md border border-border-soft/60 p-3 text-xs text-muted-foreground">
+                  {t("knowledge.sources.noImportRuns", "No import runs yet.")}
+                </div>
+              ) : null}
+              {importRuns.map((run) => (
+                <div
+                  key={run.id}
+                  className={cn(
+                    "rounded-md border border-border-soft/60 p-2 text-xs",
+                    runDetail?.id === run.id && "border-primary/60 bg-primary/5",
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="w-full rounded-sm text-left hover:bg-muted/50"
+                    onClick={() => void openRunDetail(run)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{runStatusLabel(run.status)}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatDateTime(run.createdAt)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                      <span>{run.totalCount}</span>
+                      <span>·</span>
+                      <span>+{run.importedCount}</span>
+                      <span>·</span>
+                      <span>={run.duplicateCount}</span>
+                      <span>·</span>
+                      <span>!{run.failedCount}</span>
+                    </div>
+                  </button>
+                  {run.failedCount > 0 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-6 gap-1 px-2 text-[10px]"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void retryFailed(run)
+                      }}
+                      disabled={!!retryingRunId}
+                    >
+                      {retryingRunId === run.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3 w-3" />
+                      )}
+                      {t("knowledge.sources.retryFailedAction", "Retry failed")}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="min-w-0 rounded-md border border-border-soft/60">
+              {runDetail ? (
+                <div className="divide-y divide-border-soft/50">
+                  {runDetail.items.map((item) => (
+                    <div key={item.id} className="p-2 text-xs">
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="truncate font-medium">
+                          {item.label || item.sourceId || `#${item.position + 1}`}
+                        </span>
+                        <span className={cn("shrink-0 text-[10px]", item.status === "failed" && "text-destructive")}>
+                          {itemStatusLabel(item.status)}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                        {item.kind ? <span>{sourceKindLabel(item.kind)}</span> : null}
+                        {item.sourceId ? (
+                          <>
+                            <span>·</span>
+                            <span className="font-mono">{item.sourceId.slice(0, 8)}</span>
+                          </>
+                        ) : null}
+                        {item.duplicateOfSourceId ? (
+                          <>
+                            <span>·</span>
+                            <span className="font-mono">={item.duplicateOfSourceId.slice(0, 8)}</span>
+                          </>
+                        ) : null}
+                      </div>
+                      {item.error ? (
+                        <div className="mt-1 rounded bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
+                          {item.error}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-3 text-xs text-muted-foreground">
+                  {t("knowledge.sources.selectImportRun", "Select an import run.")}
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={similarOpen} onOpenChange={setSimilarOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t("knowledge.sources.similarGroups", "Similar sources")}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[70vh] space-y-2 overflow-auto">
+            {similarGroups.length === 0 ? (
+              <div className="rounded-md border border-border-soft/60 p-3 text-xs text-muted-foreground">
+                {t("knowledge.sources.noSimilarGroups", "No similar source groups.")}
+              </div>
+            ) : null}
+            {similarGroups.map((group) => (
+              <div key={group.id} className="rounded-md border border-border-soft/60 p-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{groupKindLabel(group.kind)}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {Math.round(group.similarity * 100)}%
+                  </span>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {group.sources.map((source) => (
+                    <button
+                      key={source.id}
+                      type="button"
+                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1 text-left hover:bg-muted/60"
+                      onClick={() => {
+                        setSimilarOpen(false)
+                        void openSource(source)
+                      }}
+                    >
+                      <span className="min-w-0 truncate">{source.title}</span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {sourceKindLabel(source.kind)} · {formatBytes(source.size)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeader>
@@ -681,6 +996,46 @@ function sourceKindLabel(kind: KnowledgeSourceKind): string {
   }
 }
 
+function runStatusLabel(status: KnowledgeSourceImportRun["status"]): string {
+  switch (status) {
+    case "completed":
+      return "Completed"
+    case "completed_with_errors":
+      return "Completed with errors"
+    case "failed":
+      return "Failed"
+    case "running":
+    default:
+      return "Running"
+  }
+}
+
+function itemStatusLabel(status: KnowledgeSourceImportRunDetail["items"][number]["status"]): string {
+  switch (status) {
+    case "imported":
+      return "Imported"
+    case "duplicate":
+      return "Duplicate"
+    case "failed":
+      return "Failed"
+    case "running":
+      return "Running"
+    case "pending":
+    default:
+      return "Pending"
+  }
+}
+
+function groupKindLabel(kind: KnowledgeSourceSimilarityGroup["kind"]): string {
+  switch (kind) {
+    case "exact_duplicate":
+      return "Exact duplicate"
+    case "similar":
+    default:
+      return "Similar"
+  }
+}
+
 function stripExt(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, "")
 }
@@ -691,6 +1046,20 @@ function formatDate(ms: number): string {
     return new Intl.DateTimeFormat(undefined, {
       month: "short",
       day: "numeric",
+    }).format(new Date(ms))
+  } catch {
+    return ""
+  }
+}
+
+function formatDateTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return ""
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     }).format(new Date(ms))
   } catch {
     return ""

@@ -13,8 +13,10 @@ use std::sync::Arc;
 use super::types::{
     CompileProposal, CompileProposalAction, CompileProposalKind, CompileProposalStatus, CompileRun,
     CompileRunStatus, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KnowledgeBase,
-    KnowledgeBaseMeta, KnowledgeSource, KnowledgeSourceChunk, KnowledgeSourceKind,
-    KnowledgeSourceStatus, NewCompileProposal, SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeBaseMeta, KnowledgeSource, KnowledgeSourceChunk, KnowledgeSourceImportItem,
+    KnowledgeSourceImportItemStatus, KnowledgeSourceImportRun, KnowledgeSourceImportRunStatus,
+    KnowledgeSourceKind, KnowledgeSourceStatus, NewCompileProposal, SchemaProfile,
+    UpdateKnowledgeBaseInput,
 };
 use crate::session::SessionDB;
 
@@ -22,6 +24,11 @@ use crate::session::SessionDB;
 /// connection (the tables live in `sessions.db`).
 pub struct KnowledgeRegistry {
     session_db: Arc<SessionDB>,
+}
+
+pub struct StoredSourceImportItem {
+    pub item: KnowledgeSourceImportItem,
+    pub input_json: String,
 }
 
 impl KnowledgeRegistry {
@@ -160,6 +167,8 @@ impl KnowledgeRegistry {
                 ON knowledge_sources(kb_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_knowledge_sources_hash
                 ON knowledge_sources(kb_id, content_hash);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_sources_extracted_hash
+                ON knowledge_sources(kb_id, extracted_text_hash);
 
             CREATE TABLE IF NOT EXISTS knowledge_source_chunks (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +182,45 @@ impl KnowledgeRegistry {
             );
             CREATE INDEX IF NOT EXISTS idx_knowledge_source_chunks_source
                 ON knowledge_source_chunks(source_id, chunk_index);
+
+            -- Knowledge Compiler Phase 10: durable source import pipeline.
+            -- Runs/items make large imports observable and retriable. The input
+            -- JSON is retained only for failed-item retry; API responses never
+            -- echo it back to avoid surfacing large base64 payloads.
+            CREATE TABLE IF NOT EXISTS knowledge_source_import_runs (
+                id          TEXT PRIMARY KEY,
+                kb_id       TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                status      TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                started_at  INTEGER,
+                finished_at INTEGER,
+                updated_at  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_knowledge_source_import_runs_kb
+                ON knowledge_source_import_runs(kb_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS knowledge_source_import_items (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id                 TEXT NOT NULL REFERENCES knowledge_source_import_runs(id) ON DELETE CASCADE,
+                kb_id                  TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                position               INTEGER NOT NULL,
+                client_id              TEXT,
+                label                  TEXT,
+                input_json             TEXT NOT NULL,
+                kind                   TEXT,
+                status                 TEXT NOT NULL,
+                source_id              TEXT REFERENCES knowledge_sources(id) ON DELETE SET NULL,
+                duplicate_of_source_id TEXT REFERENCES knowledge_sources(id) ON DELETE SET NULL,
+                error                  TEXT,
+                created_at             INTEGER NOT NULL,
+                started_at             INTEGER,
+                finished_at            INTEGER,
+                updated_at             INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_knowledge_source_import_items_run
+                ON knowledge_source_import_items(run_id, position);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_source_import_items_kb_status
+                ON knowledge_source_import_items(kb_id, status, updated_at DESC);
 
             -- Knowledge Compiler Phase 2: owner-reviewed compile runs and
             -- proposals. Runs are truth-source state. Proposals are durable
@@ -881,6 +929,34 @@ impl KnowledgeRegistry {
         .map_err(Into::into)
     }
 
+    pub fn find_source_by_extracted_text_hash(
+        &self,
+        kb_id: &str,
+        extracted_text_hash: &str,
+    ) -> Result<Option<KnowledgeSource>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
+                    s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
+                    s.created_at, s.updated_at, s.size,
+                    COUNT(c.id) AS chunk_count
+             FROM knowledge_sources s
+             LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
+             WHERE s.kb_id = ?1 AND s.extracted_text_hash = ?2
+             GROUP BY s.id
+             ORDER BY s.created_at ASC, s.id ASC
+             LIMIT 1",
+            params![kb_id, extracted_text_hash],
+            row_to_source,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn delete_source(&self, kb_id: &str, source_id: &str) -> Result<Option<String>> {
         let mut conn = self
             .session_db
@@ -984,6 +1060,255 @@ impl KnowledgeRegistry {
             )?;
         }
         Ok(())
+    }
+
+    pub fn create_source_import_run(
+        &self,
+        kb_id: &str,
+        total_count: usize,
+    ) -> Result<KnowledgeSourceImportRun> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "INSERT INTO knowledge_source_import_runs
+                (id, kb_id, status, created_at, started_at, finished_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?4)",
+            params![
+                id,
+                kb_id,
+                KnowledgeSourceImportRunStatus::Running.as_str(),
+                now,
+            ],
+        )?;
+        Ok(KnowledgeSourceImportRun {
+            id,
+            kb_id: kb_id.to_string(),
+            status: KnowledgeSourceImportRunStatus::Running,
+            total_count: total_count as u32,
+            imported_count: 0,
+            duplicate_count: 0,
+            failed_count: 0,
+            created_at: now,
+            started_at: Some(now),
+            finished_at: None,
+            updated_at: now,
+        })
+    }
+
+    pub fn insert_source_import_item(
+        &self,
+        run_id: &str,
+        kb_id: &str,
+        position: u32,
+        client_id: Option<&str>,
+        label: Option<&str>,
+        input_json: &str,
+        kind: Option<KnowledgeSourceKind>,
+    ) -> Result<KnowledgeSourceImportItem> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "INSERT INTO knowledge_source_import_items
+                (run_id, kb_id, position, client_id, label, input_json, kind, status,
+                 source_id, duplicate_of_source_id, error, created_at, started_at,
+                 finished_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, ?9, NULL, NULL, ?9)",
+            params![
+                run_id,
+                kb_id,
+                position as i64,
+                client_id,
+                label,
+                input_json,
+                kind.map(|k| k.as_str().to_string()),
+                KnowledgeSourceImportItemStatus::Pending.as_str(),
+                now,
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        Ok(KnowledgeSourceImportItem {
+            id,
+            run_id: run_id.to_string(),
+            kb_id: kb_id.to_string(),
+            position,
+            client_id: client_id.map(str::to_string),
+            label: label.map(str::to_string),
+            kind,
+            status: KnowledgeSourceImportItemStatus::Pending,
+            source_id: None,
+            duplicate_of_source_id: None,
+            error: None,
+            created_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+        })
+    }
+
+    pub fn set_source_import_item_running(&self, item_id: i64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_items
+             SET status = ?2, started_at = COALESCE(started_at, ?3), updated_at = ?3
+             WHERE id = ?1",
+            params![
+                item_id,
+                KnowledgeSourceImportItemStatus::Running.as_str(),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_source_import_item(
+        &self,
+        item_id: i64,
+        status: KnowledgeSourceImportItemStatus,
+        source_id: Option<&str>,
+        duplicate_of_source_id: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_items
+             SET status = ?2,
+                 source_id = ?3,
+                 duplicate_of_source_id = ?4,
+                 error = ?5,
+                 started_at = COALESCE(started_at, ?6),
+                 finished_at = ?6,
+                 updated_at = ?6
+             WHERE id = ?1",
+            params![
+                item_id,
+                status.as_str(),
+                source_id,
+                duplicate_of_source_id,
+                error,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_source_import_run(
+        &self,
+        run_id: &str,
+        status: KnowledgeSourceImportRunStatus,
+    ) -> Result<Option<KnowledgeSourceImportRun>> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_runs
+             SET status = ?2, finished_at = ?3, updated_at = ?3
+             WHERE id = ?1",
+            params![run_id, status.as_str(), now],
+        )?;
+        drop(conn);
+        self.get_source_import_run(run_id)
+    }
+
+    pub fn list_source_import_runs(
+        &self,
+        kb_id: &str,
+        limit: usize,
+    ) -> Result<Vec<KnowledgeSourceImportRun>> {
+        let limit = limit.clamp(1, 100) as i64;
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(SOURCE_IMPORT_RUN_SELECT)?;
+        let rows = stmt.query_map(params![kb_id, limit], row_to_source_import_run)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_source_import_run(&self, run_id: &str) -> Result<Option<KnowledgeSourceImportRun>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            SOURCE_IMPORT_RUN_BY_ID_SELECT,
+            params![run_id],
+            row_to_source_import_run,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn list_source_import_items(&self, run_id: &str) -> Result<Vec<KnowledgeSourceImportItem>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, kb_id, position, client_id, label, kind, status,
+                    source_id, duplicate_of_source_id, error, created_at, started_at,
+                    finished_at, updated_at
+             FROM knowledge_source_import_items
+             WHERE run_id = ?1
+             ORDER BY position ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![run_id], row_to_source_import_item)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn failed_source_import_items(
+        &self,
+        kb_id: &str,
+        run_id: &str,
+    ) -> Result<Vec<StoredSourceImportItem>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, kb_id, position, client_id, label, input_json, kind, status,
+                    source_id, duplicate_of_source_id, error, created_at, started_at,
+                    finished_at, updated_at
+             FROM knowledge_source_import_items
+             WHERE kb_id = ?1 AND run_id = ?2 AND status = 'failed'
+             ORDER BY position ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![kb_id, run_id], |row| {
+            let input_json: String = row.get(6)?;
+            Ok(StoredSourceImportItem {
+                item: row_to_source_import_item_with_offset(row, 1)?,
+                input_json,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     // ── Knowledge Compiler runs/proposals (Phase 2) ─────────────
@@ -1623,6 +1948,91 @@ fn row_to_source(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSource> {
         updated_at: row.get(11)?,
         size: row.get::<_, i64>(12).unwrap_or(0),
         chunk_count: chunk_count.max(0) as u32,
+    })
+}
+
+const SOURCE_IMPORT_RUN_SELECT: &str = "
+    SELECT r.id, r.kb_id, r.status, r.created_at, r.started_at, r.finished_at, r.updated_at,
+           COUNT(i.id) AS total_count,
+           SUM(CASE WHEN i.status = 'imported' THEN 1 ELSE 0 END) AS imported_count,
+           SUM(CASE WHEN i.status = 'duplicate' THEN 1 ELSE 0 END) AS duplicate_count,
+           SUM(CASE WHEN i.status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+    FROM knowledge_source_import_runs r
+    LEFT JOIN knowledge_source_import_items i ON i.run_id = r.id
+    WHERE r.kb_id = ?1
+    GROUP BY r.id
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT ?2";
+
+const SOURCE_IMPORT_RUN_BY_ID_SELECT: &str = "
+    SELECT r.id, r.kb_id, r.status, r.created_at, r.started_at, r.finished_at, r.updated_at,
+           COUNT(i.id) AS total_count,
+           SUM(CASE WHEN i.status = 'imported' THEN 1 ELSE 0 END) AS imported_count,
+           SUM(CASE WHEN i.status = 'duplicate' THEN 1 ELSE 0 END) AS duplicate_count,
+           SUM(CASE WHEN i.status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+    FROM knowledge_source_import_runs r
+    LEFT JOIN knowledge_source_import_items i ON i.run_id = r.id
+    WHERE r.id = ?1
+    GROUP BY r.id";
+
+fn row_to_source_import_run(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSourceImportRun> {
+    let status_s: String = row.get(2)?;
+    let total_count: i64 = row.get(7).unwrap_or(0);
+    let imported_count: i64 = row.get(8).unwrap_or(0);
+    let duplicate_count: i64 = row.get(9).unwrap_or(0);
+    let failed_count: i64 = row.get(10).unwrap_or(0);
+    Ok(KnowledgeSourceImportRun {
+        id: row.get(0)?,
+        kb_id: row.get(1)?,
+        status: KnowledgeSourceImportRunStatus::from_str_lenient(&status_s),
+        created_at: row.get(3)?,
+        started_at: row.get::<_, Option<i64>>(4).unwrap_or(None),
+        finished_at: row.get::<_, Option<i64>>(5).unwrap_or(None),
+        updated_at: row.get(6)?,
+        total_count: total_count.max(0) as u32,
+        imported_count: imported_count.max(0) as u32,
+        duplicate_count: duplicate_count.max(0) as u32,
+        failed_count: failed_count.max(0) as u32,
+    })
+}
+
+fn row_to_source_import_item(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSourceImportItem> {
+    row_to_source_import_item_with_offset(row, 0)
+}
+
+fn row_to_source_import_item_with_offset(
+    row: &rusqlite::Row,
+    offset_after_label: usize,
+) -> rusqlite::Result<KnowledgeSourceImportItem> {
+    let shifted = |idx: usize| {
+        if idx >= 6 {
+            idx + offset_after_label
+        } else {
+            idx
+        }
+    };
+    let kind = row
+        .get::<_, Option<String>>(shifted(6))
+        .unwrap_or(None)
+        .map(|s| KnowledgeSourceKind::from_str_lenient(&s));
+    let status_s: String = row.get(shifted(7))?;
+    let position: i64 = row.get(3)?;
+    Ok(KnowledgeSourceImportItem {
+        id: row.get(0)?,
+        run_id: row.get(1)?,
+        kb_id: row.get(2)?,
+        position: position.max(0) as u32,
+        client_id: row.get::<_, Option<String>>(4).unwrap_or(None),
+        label: row.get::<_, Option<String>>(5).unwrap_or(None),
+        kind,
+        status: KnowledgeSourceImportItemStatus::from_str_lenient(&status_s),
+        source_id: row.get::<_, Option<String>>(shifted(8)).unwrap_or(None),
+        duplicate_of_source_id: row.get::<_, Option<String>>(shifted(9)).unwrap_or(None),
+        error: row.get::<_, Option<String>>(shifted(10)).unwrap_or(None),
+        created_at: row.get(shifted(11))?,
+        started_at: row.get::<_, Option<i64>>(shifted(12)).unwrap_or(None),
+        finished_at: row.get::<_, Option<i64>>(shifted(13)).unwrap_or(None),
+        updated_at: row.get(shifted(14))?,
     })
 }
 

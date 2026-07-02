@@ -233,7 +233,7 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 
 ### Knowledge Base（知识空间）
 
-**Owner / 管理平面**——全局 API key 持有者 = owner-equivalent，看自己全部 KB，**不经 `effective_kb_access`**（那是 agent `note_*` 工具平面）。Phase 7 的 Knowledge Agent read token 只允许下表中的 `knowledge_agent_{search,read,expand,sources}_cmd` HTTP 路由，不能访问 compile/propose 或任何管理端点。详见 [knowledge-base.md](./knowledge-base.md)（实现 + 设计契约 D1–D20）。
+**Owner / 管理平面**——全局 API key 持有者 = owner-equivalent，看自己全部 KB，**不经 `effective_kb_access`**（那是 agent `note_*` 工具平面）。Knowledge Agent read token 只允许下表中的 `knowledge_agent_{search,read,expand,sources}_cmd` HTTP 路由，不能访问 compile/propose 或任何管理端点。详见 [knowledge-base.md](./knowledge-base.md)（实现 + 设计契约 D1–D20）。
 
 | Tauri 命令 | HTTP 路由 | 对齐 |
 |---|---|---|
@@ -293,19 +293,24 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 | `kb_sprite_observe_cmd` | `POST /api/knowledge/sprite/observe` | ✅ (精灵编辑空闲触发，fire-and-forget；节流 + side_query 后建议经 `sprite:suggestion` 事件返回) |
 | `sprite_config_get_cmd` | `GET /api/knowledge/sprite/config` | ✅ (读精灵配置，GUI 面板；也可经 `get_settings(sprite)` 读) |
 | `sprite_config_set_cmd` | `POST /api/knowledge/sprite/config` | ✅ (写精灵配置，clamp 后返回) |
+| `kb_source_import_batch_cmd` | `POST /api/knowledge/{kbId}/sources/batch` | ✅ (资料舱批量导入：文本 / Markdown / PDF / DOCX / URL，返回 import run + item 状态；重复内容标 `duplicate`) |
+| `kb_source_import_runs_list_cmd` | `GET /api/knowledge/{kbId}/sources/import-runs?limit=` | ✅ (导入历史，limit 默认 20、钳 1..=200) |
+| `kb_source_import_run_detail_cmd` | `GET /api/knowledge/{kbId}/sources/import-runs/{runId}` | ✅ (导入 run 明细 + item 状态，不回显原始 `input_json`) |
+| `kb_source_import_retry_failed_cmd` | `POST /api/knowledge/{kbId}/sources/import-runs/{runId}/retry-failed` | ✅ (重试 failed item，校验 run 属于目标 KB，复用原 input_json) |
+| `kb_source_similarity_groups_cmd` | `GET /api/knowledge/{kbId}/sources/similar` | ✅ (确定性 shingle/Jaccard 相似 source 分组，用于资料去重治理) |
 | `kb_note_read_ref_cmd` | `GET /api/knowledge/{kbId}/note/resolve?reference=` | ✅ (WS2 transclusion：按 `[[ ]]` ref 经 resolver 取目标 `NoteReadResult`，broken 返回 `null`；Batch G 起按 ref 的 `#anchor` 切片——`^id`→块、heading→标题段，未命中降级整篇) |
 | `kb_search_cmd` | `GET /api/knowledge/search?query=&kbId=&limit=` | ✅ (FTS+向量混合) |
-| `knowledge_agent_search_cmd` | `POST /api/knowledge/agent/search` | ✅ (Phase 6/7 `knowledge.search`；body 可为 `{input}` 或裸 input；notes-first，返回 `truncated`；read token 允许；`includeSources=true` 时 raw source 单独返回且必须传 `kbId`) |
-| `knowledge_agent_read_cmd` | `POST /api/knowledge/agent/read` | ✅ (Phase 6/7 `knowledge.read`；read token 允许；`path`/`reference` 二选一，返回全文 + links/tags/source refs + `kind`) |
-| `knowledge_agent_expand_cmd` | `POST /api/knowledge/agent/expand` | ✅ (Phase 6/7 `knowledge.expand`；read token 允许；读取 note + related notes) |
-| `knowledge_agent_sources_cmd` | `POST /api/knowledge/agent/sources` | ✅ (Phase 6/7 `knowledge.sources`；read token 允许；list 默认 metadata/snippet，返回 `truncated`；只有显式 `sourceId + includeContent` 返回 source 全文) |
-| `knowledge_agent_compile_propose_cmd` | `POST /api/knowledge/agent/compile/propose` | ✅ (Phase 6/7 `knowledge.compile.propose`；owner API key required，read token 禁止；启动 compile run，仅产 Review Diff proposals，不直接写 `.md`) |
+| `knowledge_agent_search_cmd` | `POST /api/knowledge/agent/search` | ✅ (`knowledge.search`；body 可为 `{input}` 或裸 input；notes-first，返回 `truncated`；read token 允许；`includeSources=true` 时 raw source 单独返回且必须传 `kbId`) |
+| `knowledge_agent_read_cmd` | `POST /api/knowledge/agent/read` | ✅ (`knowledge.read`；read token 允许；`path`/`reference` 二选一，返回全文 + links/tags/source refs + `kind`) |
+| `knowledge_agent_expand_cmd` | `POST /api/knowledge/agent/expand` | ✅ (`knowledge.expand`；read token 允许；读取 note + related notes) |
+| `knowledge_agent_sources_cmd` | `POST /api/knowledge/agent/sources` | ✅ (`knowledge.sources`；read token 允许；list 默认 metadata/snippet，返回 `truncated`；只有显式 `sourceId + includeContent` 返回 source 全文) |
+| `knowledge_agent_compile_propose_cmd` | `POST /api/knowledge/agent/compile/propose` | ✅ (`knowledge.compile.propose`；owner API key required，read token 禁止；启动 compile run，仅产 Review Diff proposals，不直接写 `.md`) |
 | `kb_file_read_cmd` | `GET /api/knowledge/{kbId}/files/read?path=` | ✅ (纯 owner 平面 + scope contains) |
 | `kb_file_extract_cmd` | `GET /api/knowledge/{kbId}/files/extract?path=` | ✅ |
 | `kb_file_resolve_cmd` | —（Tauri-only，`convertFileSrc`） | N/A |
 | —（HTTP-only raw serve） | `GET /api/knowledge/{kbId}/files/raw?path=&download=` | N/A |
 
-KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fallback**——与 `/api/sessions/{id}/files/*` 物理隔离，不放宽其判定。外部绑定 vault Phase 1 只读（写经 `WorkspaceScope::resolve_writable` 拒绝 + HTTP `allow_remote_writes` 闸门双拒）。agent 读笔记不经此端点，走 `note_*` 工具（`effective_kb_access` 校验）。`knowledge:changed` 事件 `{ kbId, op }` 经 EventBus fan-out 到两端前端。
+KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fallback**——与 `/api/sessions/{id}/files/*` 物理隔离，不放宽其判定。外部绑定 vault 默认只读（写经 `WorkspaceScope::resolve_writable` 拒绝 + HTTP `allow_remote_writes` 闸门双拒）。agent 读笔记不经此端点，走 `note_*` 工具（`effective_kb_access` 校验）。`knowledge:changed` 事件 `{ kbId, op }` 经 EventBus fan-out 到两端前端。
 
 **preview-by-path（文件操作统一）**：`preview_read_text` / `preview_extract` 按**绝对路径**读取，供 Markdown 链接 / 下挂文件 / 工作台产物文件统一预览。桌面信任本机路径直接读；HTTP 经 `/api/sessions/{id}/files/{read,extract}`，与既有 `/files/by-path` 共用授权 `authorized_canonical_file_path` = **被会话 tool 消息引用 ∪ 落在会话工作目录内**，二者皆非的主机任意路径一律 403。详见 [file-operations.md](./file-operations.md)。
 
@@ -313,7 +318,7 @@ KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fall
 
 `Project` 支持 `workingDir: string | null` 字段，作为该项目下会话的默认工作目录。运行时合并优先级 `session.working_dir > project 显式 working_dir > 默认 workspace`，lazy ensure 创建——编辑项目工作目录后未单独设置的已有会话立即跟随。详见 [`AGENTS.md`](../../AGENTS.md) 「项目（Project）容器」段与 [project.md](./project.md)。
 
-**Project ↔ IM Channel 反向认领已废弃**（Phase A1）。`Project.boundChannel` / `BoundChannel` 类型 + `projects.bound_channel_id` / `bound_channel_account_id` DB 列 + `idx_projects_bound_channel` 索引 + `find_by_bound_channel` API 全部删除；`UpdateProjectInput` 不再有 `boundChannel` 字段。IM 入站消息不再自动归属项目，新会话以 `project_id = NULL` 创建。要把会话归项目，从 IM chat 内 `/project <id>` 显式触发：handler 检测 `session.channel_info` 后发 `AssignProject` action，channel worker 调 `SessionDB::set_session_project` 直接 UPDATE 现有 `sessions.project_id`，**不创建新 session**。详见 [im-channel.md](./im-channel.md) 「Session 路由」章节。
+**Project ↔ IM Channel 反向认领已废弃**。`Project.boundChannel` / `BoundChannel` 类型 + `projects.bound_channel_id` / `bound_channel_account_id` DB 列 + `idx_projects_bound_channel` 索引 + `find_by_bound_channel` API 全部删除；`UpdateProjectInput` 不再有 `boundChannel` 字段。IM 入站消息不再自动归属项目，新会话以 `project_id = NULL` 创建。要把会话归项目，从 IM chat 内 `/project <id>` 显式触发：handler 检测 `session.channel_info` 后发 `AssignProject` action，channel worker 调 `SessionDB::set_session_project` 直接 UPDATE 现有 `sessions.project_id`，**不创建新 session**。详见 [im-channel.md](./im-channel.md) 「Session 路由」章节。
 
 ### Sessions
 
