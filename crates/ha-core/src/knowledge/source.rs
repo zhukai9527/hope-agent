@@ -17,6 +17,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use crate::agent::Attachment;
+use crate::async_jobs::{JobManager, JobStatus};
 use crate::stt::{AudioPayload, Transcript};
 
 use super::types::{
@@ -24,12 +25,15 @@ use super::types::{
     KnowledgeSourceAsset, KnowledgeSourceAssetKind, KnowledgeSourceAssetLink,
     KnowledgeSourceAssets, KnowledgeSourceChunk, KnowledgeSourceDiff, KnowledgeSourceDiffLine,
     KnowledgeSourceDiffLineKind, KnowledgeSourceExternalRawSyncResult,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportItemStatus,
+    KnowledgeSourceImportBatchInput, KnowledgeSourceImportBatchItemInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportItem, KnowledgeSourceImportItemStatus,
     KnowledgeSourceImportRunDetail, KnowledgeSourceImportRunStatus,
     KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceKind, KnowledgeSourceReadResult,
     KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
     KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus, KnowledgeSourceVersionHistory,
 };
+
+type QueuedSourceImport = (KnowledgeSourceImportItem, KnowledgeSourceImportInput);
 
 const MAX_DIRECT_SOURCE_BYTES: usize = 5 * 1024 * 1024;
 /// Decoded bytes accepted for uploaded PDF/DOCX source imports. HTTP routes
@@ -336,7 +340,7 @@ pub async fn import_source_batch(
     kb_id: &str,
     input: KnowledgeSourceImportBatchInput,
 ) -> Result<KnowledgeSourceImportRunDetail> {
-    run_import_batch(kb_id, input.items).await
+    start_import_batch(kb_id, input.items).await
 }
 
 pub async fn retry_failed_source_imports(
@@ -344,13 +348,16 @@ pub async fn retry_failed_source_imports(
     run_id: &str,
 ) -> Result<KnowledgeSourceImportRunDetail> {
     ensure_kb_open(kb_id)?;
+    let detail = source_import_run_detail(run_id)?
+        .ok_or_else(|| anyhow!("source import run not found: {run_id}"))?;
+    if detail.run.kb_id != kb_id {
+        bail!("source import run does not belong to knowledge base: {kb_id}");
+    }
+    if detail.run.status == KnowledgeSourceImportRunStatus::Running {
+        bail!("source import run is still running: {run_id}");
+    }
     let failed_items = registry()?.failed_source_import_items(kb_id, run_id)?;
     if failed_items.is_empty() {
-        let detail = source_import_run_detail(run_id)?
-            .ok_or_else(|| anyhow!("source import run not found: {run_id}"))?;
-        if detail.run.kb_id != kb_id {
-            bail!("source import run does not belong to knowledge base: {kb_id}");
-        }
         return Ok(detail);
     }
     let mut items = Vec::with_capacity(failed_items.len());
@@ -366,18 +373,18 @@ pub async fn retry_failed_source_imports(
                 stored.item.id
             )
         })?;
-        items.push(super::types::KnowledgeSourceImportBatchItemInput {
+        items.push(KnowledgeSourceImportBatchItemInput {
             client_id: stored.item.client_id,
             label: stored.item.label,
             input,
         });
     }
-    run_import_batch(kb_id, items).await
+    start_import_batch(kb_id, items).await
 }
 
-async fn run_import_batch(
+async fn start_import_batch(
     kb_id: &str,
-    items: Vec<super::types::KnowledgeSourceImportBatchItemInput>,
+    items: Vec<KnowledgeSourceImportBatchItemInput>,
 ) -> Result<KnowledgeSourceImportRunDetail> {
     ensure_kb_open(kb_id)?;
     if items.is_empty() {
@@ -407,12 +414,74 @@ async fn run_import_batch(
         queued.push((row, item.input));
     }
 
+    let mut job_id = JobManager::spawn_knowledge_import(kb_id, &run.id, run.total_count);
+    if let Some(job_id_value) = job_id.clone() {
+        if let Err(e) =
+            registry()?.set_source_import_run_background_job_id(&run.id, Some(&job_id_value))
+        {
+            let error = crate::truncate_utf8(&e.to_string(), 600).to_string();
+            crate::app_warn!(
+                "knowledge",
+                "source_import_batch",
+                "Failed to attach background job {} to source import run {}: {}",
+                job_id_value,
+                run.id,
+                error
+            );
+            JobManager::finish_knowledge_import(
+                &job_id_value,
+                JobStatus::Failed,
+                None,
+                Some(&error),
+            );
+            job_id = None;
+        }
+    }
+
+    let run_id = run.id.clone();
+    spawn_source_import_run(kb_id.to_string(), run_id.clone(), queued, job_id);
+    source_import_run_detail(&run_id)?.ok_or_else(|| anyhow!("source import run disappeared"))
+}
+
+fn spawn_source_import_run(
+    kb_id: String,
+    run_id: String,
+    queued: Vec<QueuedSourceImport>,
+    job_id: Option<String>,
+) {
+    tokio::spawn(async move {
+        let result = process_import_run(kb_id.clone(), run_id.clone(), queued).await;
+        match result {
+            Ok(detail) => finish_source_import_job(job_id.as_deref(), Some(&detail), None),
+            Err(e) => {
+                let error = crate::truncate_utf8(&e.to_string(), 600).to_string();
+                if let Err(mark_err) = mark_source_import_run_failed(&kb_id, &run_id, &error) {
+                    crate::app_warn!(
+                        "knowledge",
+                        "source_import_batch",
+                        "Failed to mark source import run {} failed: {}",
+                        run_id,
+                        mark_err
+                    );
+                }
+                emit(&kb_id, "source_import_batch");
+                finish_source_import_job(job_id.as_deref(), None, Some(&error));
+            }
+        }
+    });
+}
+
+async fn process_import_run(
+    kb_id: String,
+    run_id: String,
+    queued: Vec<QueuedSourceImport>,
+) -> Result<KnowledgeSourceImportRunDetail> {
     let mut imported = 0usize;
     let mut duplicate = 0usize;
     let mut failed = 0usize;
     for (item, input) in queued {
         registry()?.set_source_import_item_running(item.id)?;
-        match import_source_with_outcome(kb_id, input).await {
+        match import_source_with_outcome(&kb_id, input).await {
             Ok(outcome) => {
                 let status = if outcome.duplicate_of_id.is_some() {
                     duplicate += 1;
@@ -450,9 +519,45 @@ async fn run_import_batch(
     } else {
         KnowledgeSourceImportRunStatus::CompletedWithErrors
     };
-    registry()?.finish_source_import_run(&run.id, status)?;
-    emit(kb_id, "source_import_batch");
-    source_import_run_detail(&run.id)?.ok_or_else(|| anyhow!("source import run disappeared"))
+    registry()?.finish_source_import_run(&run_id, status)?;
+    emit(&kb_id, "source_import_batch");
+    source_import_run_detail(&run_id)?.ok_or_else(|| anyhow!("source import run disappeared"))
+}
+
+fn mark_source_import_run_failed(kb_id: &str, run_id: &str, error: &str) -> Result<()> {
+    registry()?.fail_active_source_import_items(kb_id, run_id, error)?;
+    registry()?.finish_source_import_run(run_id, KnowledgeSourceImportRunStatus::Failed)?;
+    Ok(())
+}
+
+fn finish_source_import_job(
+    job_id: Option<&str>,
+    detail: Option<&KnowledgeSourceImportRunDetail>,
+    error: Option<&str>,
+) {
+    let Some(job_id) = job_id else {
+        return;
+    };
+    if let Some(detail) = detail {
+        let status = match detail.run.status {
+            KnowledgeSourceImportRunStatus::Failed => JobStatus::Failed,
+            KnowledgeSourceImportRunStatus::Running
+            | KnowledgeSourceImportRunStatus::Completed
+            | KnowledgeSourceImportRunStatus::CompletedWithErrors => JobStatus::Completed,
+        };
+        let preview = format!(
+            "Knowledge source import finished: imported {}, skipped {} duplicate, failed {}",
+            detail.run.imported_count, detail.run.duplicate_count, detail.run.failed_count
+        );
+        let job_error = if status == JobStatus::Failed {
+            Some(preview.as_str())
+        } else {
+            None
+        };
+        JobManager::finish_knowledge_import(job_id, status, Some(&preview), job_error);
+    } else {
+        JobManager::finish_knowledge_import(job_id, JobStatus::Failed, None, error);
+    }
 }
 
 fn persistable_import_input_json(input: &KnowledgeSourceImportInput) -> Result<String> {

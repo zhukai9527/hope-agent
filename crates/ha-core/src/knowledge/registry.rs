@@ -311,13 +311,14 @@ impl KnowledgeRegistry {
             -- JSON is retained only for failed-item retry; API responses never
             -- echo it back to avoid surfacing large base64 payloads.
             CREATE TABLE IF NOT EXISTS knowledge_source_import_runs (
-                id          TEXT PRIMARY KEY,
-                kb_id       TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-                status      TEXT NOT NULL,
-                created_at  INTEGER NOT NULL,
-                started_at  INTEGER,
-                finished_at INTEGER,
-                updated_at  INTEGER NOT NULL
+                id                TEXT PRIMARY KEY,
+                kb_id             TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                status            TEXT NOT NULL,
+                background_job_id TEXT,
+                created_at        INTEGER NOT NULL,
+                started_at        INTEGER,
+                finished_at       INTEGER,
+                updated_at        INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_knowledge_source_import_runs_kb
                 ON knowledge_source_import_runs(kb_id, created_at DESC);
@@ -443,6 +444,17 @@ impl KnowledgeRegistry {
                  ADD COLUMN external_raw_path TEXT;",
             )?;
         }
+        let has_source_import_background_job_id = conn
+            .prepare("SELECT background_job_id FROM knowledge_source_import_runs LIMIT 1")
+            .is_ok();
+        if !has_source_import_background_job_id {
+            conn.execute_batch(
+                "ALTER TABLE knowledge_source_import_runs
+                 ADD COLUMN background_job_id TEXT;",
+            )?;
+        }
+        drop(conn);
+        self.interrupt_running_source_import_runs("interrupted by application restart")?;
 
         Ok(())
     }
@@ -1747,8 +1759,9 @@ impl KnowledgeRegistry {
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
         conn.execute(
             "INSERT INTO knowledge_source_import_runs
-                (id, kb_id, status, created_at, started_at, finished_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?4)",
+                (id, kb_id, status, background_job_id, created_at, started_at,
+                 finished_at, updated_at)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?4, NULL, ?4)",
             params![
                 id,
                 kb_id,
@@ -1760,6 +1773,7 @@ impl KnowledgeRegistry {
             id,
             kb_id: kb_id.to_string(),
             status: KnowledgeSourceImportRunStatus::Running,
+            background_job_id: None,
             total_count: total_count as u32,
             imported_count: 0,
             duplicate_count: 0,
@@ -1769,6 +1783,26 @@ impl KnowledgeRegistry {
             finished_at: None,
             updated_at: now,
         })
+    }
+
+    pub fn set_source_import_run_background_job_id(
+        &self,
+        run_id: &str,
+        background_job_id: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_runs
+             SET background_job_id = ?2, updated_at = ?3
+             WHERE id = ?1",
+            params![run_id, background_job_id, now],
+        )?;
+        Ok(())
     }
 
     pub fn insert_source_import_item(
@@ -1900,6 +1934,74 @@ impl KnowledgeRegistry {
         )?;
         drop(conn);
         self.get_source_import_run(run_id)
+    }
+
+    pub fn interrupt_running_source_import_runs(&self, reason: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_items
+             SET status = ?1,
+                 error = COALESCE(error, ?2),
+                 started_at = COALESCE(started_at, ?3),
+                 finished_at = COALESCE(finished_at, ?3),
+                 updated_at = ?3
+             WHERE status IN ('pending', 'running')
+               AND run_id IN (
+                 SELECT id FROM knowledge_source_import_runs WHERE status = 'running'
+               )",
+            params![
+                KnowledgeSourceImportItemStatus::Failed.as_str(),
+                reason,
+                now
+            ],
+        )?;
+        conn.execute(
+            "UPDATE knowledge_source_import_runs
+             SET status = ?1,
+                 finished_at = COALESCE(finished_at, ?2),
+                 updated_at = ?2
+             WHERE status = 'running'",
+            params![KnowledgeSourceImportRunStatus::Failed.as_str(), now],
+        )?;
+        Ok(())
+    }
+
+    pub fn fail_active_source_import_items(
+        &self,
+        kb_id: &str,
+        run_id: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE knowledge_source_import_items
+             SET status = ?3,
+                 error = COALESCE(error, ?4),
+                 started_at = COALESCE(started_at, ?5),
+                 finished_at = COALESCE(finished_at, ?5),
+                 updated_at = ?5
+             WHERE kb_id = ?1
+               AND run_id = ?2
+               AND status IN ('pending', 'running')",
+            params![
+                kb_id,
+                run_id,
+                KnowledgeSourceImportItemStatus::Failed.as_str(),
+                reason,
+                now,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn list_source_import_runs(
@@ -2785,7 +2887,8 @@ fn source_asset_stored_paths_tx(
 }
 
 const SOURCE_IMPORT_RUN_SELECT: &str = "
-    SELECT r.id, r.kb_id, r.status, r.created_at, r.started_at, r.finished_at, r.updated_at,
+    SELECT r.id, r.kb_id, r.status, r.background_job_id,
+           r.created_at, r.started_at, r.finished_at, r.updated_at,
            COUNT(i.id) AS total_count,
            SUM(CASE WHEN i.status = 'imported' THEN 1 ELSE 0 END) AS imported_count,
            SUM(CASE WHEN i.status = 'duplicate' THEN 1 ELSE 0 END) AS duplicate_count,
@@ -2798,7 +2901,8 @@ const SOURCE_IMPORT_RUN_SELECT: &str = "
     LIMIT ?2";
 
 const SOURCE_IMPORT_RUN_BY_ID_SELECT: &str = "
-    SELECT r.id, r.kb_id, r.status, r.created_at, r.started_at, r.finished_at, r.updated_at,
+    SELECT r.id, r.kb_id, r.status, r.background_job_id,
+           r.created_at, r.started_at, r.finished_at, r.updated_at,
            COUNT(i.id) AS total_count,
            SUM(CASE WHEN i.status = 'imported' THEN 1 ELSE 0 END) AS imported_count,
            SUM(CASE WHEN i.status = 'duplicate' THEN 1 ELSE 0 END) AS duplicate_count,
@@ -2810,18 +2914,19 @@ const SOURCE_IMPORT_RUN_BY_ID_SELECT: &str = "
 
 fn row_to_source_import_run(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSourceImportRun> {
     let status_s: String = row.get(2)?;
-    let total_count: i64 = row.get(7).unwrap_or(0);
-    let imported_count: i64 = row.get(8).unwrap_or(0);
-    let duplicate_count: i64 = row.get(9).unwrap_or(0);
-    let failed_count: i64 = row.get(10).unwrap_or(0);
+    let total_count: i64 = row.get(8).unwrap_or(0);
+    let imported_count: i64 = row.get(9).unwrap_or(0);
+    let duplicate_count: i64 = row.get(10).unwrap_or(0);
+    let failed_count: i64 = row.get(11).unwrap_or(0);
     Ok(KnowledgeSourceImportRun {
         id: row.get(0)?,
         kb_id: row.get(1)?,
         status: KnowledgeSourceImportRunStatus::from_str_lenient(&status_s),
-        created_at: row.get(3)?,
-        started_at: row.get::<_, Option<i64>>(4).unwrap_or(None),
-        finished_at: row.get::<_, Option<i64>>(5).unwrap_or(None),
-        updated_at: row.get(6)?,
+        background_job_id: row.get::<_, Option<String>>(3).unwrap_or(None),
+        created_at: row.get(4)?,
+        started_at: row.get::<_, Option<i64>>(5).unwrap_or(None),
+        finished_at: row.get::<_, Option<i64>>(6).unwrap_or(None),
+        updated_at: row.get(7)?,
         total_count: total_count.max(0) as u32,
         imported_count: imported_count.max(0) as u32,
         duplicate_count: duplicate_count.max(0) as u32,

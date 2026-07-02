@@ -271,6 +271,7 @@ export interface KnowledgeSourceImportRun {
   id: string
   kbId: string
   status: KnowledgeSourceImportRunStatus
+  backgroundJobId?: string | null
   totalCount: number
   importedCount: number
   duplicateCount: number

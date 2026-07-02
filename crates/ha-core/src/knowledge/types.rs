@@ -774,6 +774,8 @@ pub struct KnowledgeSourceImportRun {
     pub id: String,
     pub kb_id: String,
     pub status: KnowledgeSourceImportRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_job_id: Option<String>,
     pub total_count: u32,
     pub imported_count: u32,
     pub duplicate_count: u32,

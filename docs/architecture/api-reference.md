@@ -295,7 +295,7 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 | `kb_sprite_observe_cmd` | `POST /api/knowledge/sprite/observe` | ✅ (精灵编辑空闲触发，fire-and-forget；节流 + side_query 后建议经 `sprite:suggestion` 事件返回) |
 | `sprite_config_get_cmd` | `GET /api/knowledge/sprite/config` | ✅ (读精灵配置，GUI 面板；也可经 `get_settings(sprite)` 读) |
 | `sprite_config_set_cmd` | `POST /api/knowledge/sprite/config` | ✅ (写精灵配置，clamp 后返回) |
-| `kb_source_import_batch_cmd` | `POST /api/knowledge/{kbId}/sources/batch` | ✅ (资料舱批量导入：文本 / Markdown / PDF / DOCX / 音视频转录 / 图片 OCR / URL，返回 import run + item 状态；重复内容标 `duplicate`) |
+| `kb_source_import_batch_cmd` | `POST /api/knowledge/{kbId}/sources/batch` | ✅ (资料舱批量导入：文本 / Markdown / PDF / DOCX / 音视频转录 / 图片 OCR / URL，创建 import run + item 后返回 `running` run；后台执行，重复内容标 `duplicate`) |
 | `kb_source_import_session_attachment_cmd` | `POST /api/knowledge/{kbId}/sources/session-attachment` | ✅ (把已落到会话附件目录的聊天 / IM 附件归档为 raw source；后端校验 `sessionId + path` 位于该 session attachments dir，再复用文本 / PDF / DOCX / STT / OCR 导入链路) |
 | `kb_source_asset_link_cmd` | `GET /api/knowledge/{kbId}/sources/{sourceId}/assets/{original\|thumbnail}/link` | ✅ (返回 retained source asset metadata + owner-plane local path；文件流走同路径去掉 `/link`，可加 `?download=1`) |
 | `kb_source_import_runs_list_cmd` | `GET /api/knowledge/{kbId}/sources/import-runs?limit=` | ✅ (导入历史，limit 默认 20、钳 1..=200) |

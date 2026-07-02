@@ -182,6 +182,52 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     return getTransport().listen("knowledge:changed", () => void reload())
   }, [reload])
 
+  const activeRunId = runDetail?.status === "running" ? runDetail.id : null
+
+  useEffect(() => {
+    if (!kbId || !activeRunId) return
+    let cancelled = false
+    const refreshRun = async () => {
+      try {
+        const detail = await getTransport().call<KnowledgeSourceImportRunDetail>(
+          "kb_source_import_run_detail_cmd",
+          { kbId, runId: activeRunId },
+        )
+        if (cancelled) return
+        setRunDetail(detail)
+        setImportRuns((prev) =>
+          prev.map((run) =>
+            run.id === detail.id
+              ? {
+                  ...run,
+                  status: detail.status,
+                  backgroundJobId: detail.backgroundJobId,
+                  totalCount: detail.totalCount,
+                  importedCount: detail.importedCount,
+                  duplicateCount: detail.duplicateCount,
+                  failedCount: detail.failedCount,
+                  startedAt: detail.startedAt,
+                  finishedAt: detail.finishedAt,
+                  updatedAt: detail.updatedAt,
+                }
+              : run,
+          ),
+        )
+        if (detail.status !== "running") {
+          await reload()
+        }
+      } catch (e) {
+        logger.warn("knowledge", "KnowledgeSourcesPanel::pollRun", "source run poll failed", e)
+      }
+    }
+    void refreshRun()
+    const timer = window.setInterval(() => void refreshRun(), 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeRunId, kbId, reload])
+
   const canImport = useMemo(() => {
     if (!kbId || importing) return false
     if (mode === "url") return url.trim().length > 0
@@ -202,6 +248,15 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   }
 
   function showImportRunToast(detail: KnowledgeSourceImportRunDetail) {
+    if (detail.status === "running") {
+      toast.info(
+        t("knowledge.sources.importRunStarted", {
+          defaultValue: "Import started for {{count}} source(s)",
+          count: detail.totalCount,
+        }),
+      )
+      return
+    }
     const imported = detail.importedCount
     const duplicate = detail.duplicateCount
     const failed = detail.failedCount
@@ -264,7 +319,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
           detail.items.filter((item) => item.status === "failed").map((item) => item.position),
         )
         const failed = fileDrafts.filter((_, idx) => failedPositions.has(idx))
-        if (failed.length > 0) {
+        if (detail.status !== "running" && failed.length > 0) {
           setFileDrafts(failed)
         } else {
           setImportOpen(false)
@@ -295,7 +350,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
         )
         setRunDetail(detail)
         showImportRunToast(detail)
-        if (detail.failedCount === 0) {
+        if (detail.status === "running" || detail.failedCount === 0) {
           setImportOpen(false)
           resetImport()
         }
@@ -1136,7 +1191,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                       <span>!{run.failedCount}</span>
                     </div>
                   </button>
-                  {run.failedCount > 0 ? (
+                  {run.status !== "running" && run.failedCount > 0 ? (
                     <Button
                       type="button"
                       variant="outline"
