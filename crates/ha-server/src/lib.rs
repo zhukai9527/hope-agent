@@ -1422,6 +1422,10 @@ fn build_router_with_cors(
             "/coding-eval/gold-tasks/run",
             post(routes::coding_eval::run_coding_eval_gold_task_pack),
         )
+        .route(
+            "/coding-eval/strategy-effects/evaluate",
+            post(routes::coding_eval::evaluate_coding_eval_strategy_effect),
+        )
         // Coding trend report, improvement proposals, distillation, and promotion loop (Phase 3.11-4.4)
         .route(
             "/sessions/{sid}/coding-trend",

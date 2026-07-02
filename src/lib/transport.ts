@@ -1191,6 +1191,85 @@ export interface CodingEvalGoldTaskCaseRunReport {
   error?: string | null;
 }
 
+export interface CodingEvalStrategyEffectInput {
+  strategyType?: string | null;
+  baselineLabel?: string | null;
+  candidateLabel?: string | null;
+  baseline: CodingEvalGoldTaskPackReport;
+  candidate: CodingEvalGoldTaskPackReport;
+}
+
+export interface CodingEvalStrategyEffectReport {
+  strategyType: string;
+  baselineLabel: string;
+  candidateLabel: string;
+  verdict: string;
+  comparedCases: number;
+  baselineOnlyCases: string[];
+  candidateOnlyCases: string[];
+  summary: CodingEvalStrategyEffectSummary;
+  dimensions: CodingEvalStrategyEffectDimension[];
+  cases: CodingEvalStrategyCaseComparison[];
+  regressions: string[];
+  improvements: string[];
+}
+
+export interface CodingEvalStrategyEffectSummary {
+  baselinePassRate: number;
+  candidatePassRate: number;
+  passRateDelta: number;
+  baselineAverageScore: number;
+  candidateAverageScore: number;
+  averageScoreDelta: number;
+  baselineContextRecall: number;
+  candidateContextRecall: number;
+  contextRecallDelta: number;
+  baselineValidationViolations: number;
+  candidateValidationViolations: number;
+  validationViolationDelta: number;
+  baselineScopeCreep: number;
+  candidateScopeCreep: number;
+  scopeCreepDelta: number;
+  baselineExecutionFailures: number;
+  candidateExecutionFailures: number;
+  executionFailureDelta: number;
+}
+
+export interface CodingEvalStrategyEffectDimension {
+  name: string;
+  direction: "higher" | "lower" | string;
+  baseline: number;
+  candidate: number;
+  delta: number;
+  verdict: string;
+  detail: string;
+}
+
+export interface CodingEvalStrategyCaseComparison {
+  id: string;
+  title: string;
+  verdict: string;
+  baselineStatus: string;
+  candidateStatus: string;
+  baselinePassed: boolean;
+  candidatePassed: boolean;
+  baselineOutcome?: string | null;
+  candidateOutcome?: string | null;
+  baselineScore: number;
+  candidateScore: number;
+  scoreDelta: number;
+  baselineContextRecall: number;
+  candidateContextRecall: number;
+  contextRecallDelta: number;
+  baselineValidationViolations: number;
+  candidateValidationViolations: number;
+  baselineScopeCreep: number;
+  candidateScopeCreep: number;
+  baselineExecutionFailed: boolean;
+  candidateExecutionFailed: boolean;
+  notes: string[];
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

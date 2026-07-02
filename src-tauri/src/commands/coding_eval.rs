@@ -1,7 +1,7 @@
 use crate::commands::CmdError;
 use ha_core::coding_eval::{
     self, CodingEvalFixture, FixtureReport, GoldTaskPackReport, GoldTaskPackRunInput,
-    GoldTaskPackSummary,
+    GoldTaskPackSummary, StrategyEffectEvalInput, StrategyEffectReport,
 };
 
 #[tauri::command]
@@ -27,4 +27,11 @@ pub async fn run_coding_eval_gold_task_pack(
     coding_eval::run_gold_task_pack(app_state.session_db.clone(), input)
         .await
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn evaluate_coding_eval_strategy_effect(
+    input: StrategyEffectEvalInput,
+) -> Result<StrategyEffectReport, CmdError> {
+    Ok(coding_eval::evaluate_strategy_effect(input))
 }

@@ -6,7 +6,7 @@
 //! Project validation commands only run when a fixture explicitly opts into
 //! workflow validation.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -70,7 +70,7 @@ pub struct GoldTaskPackRunInput {
     pub evaluate_goal: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoldTaskPackSummary {
     pub pack_id: String,
@@ -81,7 +81,7 @@ pub struct GoldTaskPackSummary {
     pub cases: Vec<GoldTaskCaseSummary>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoldTaskCaseSummary {
     pub id: String,
@@ -100,7 +100,7 @@ pub struct GoldTaskCaseSummary {
     pub success_criteria: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoldTaskPackReport {
     pub pack_id: String,
@@ -115,7 +115,7 @@ pub struct GoldTaskPackReport {
     pub cases: Vec<GoldTaskCaseRunReport>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoldTaskCaseRunReport {
     pub case: GoldTaskCaseSummary,
@@ -126,6 +126,100 @@ pub struct GoldTaskCaseRunReport {
     pub report: Option<FixtureReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyEffectEvalInput {
+    #[serde(default)]
+    pub strategy_type: Option<String>,
+    #[serde(default)]
+    pub baseline_label: Option<String>,
+    #[serde(default)]
+    pub candidate_label: Option<String>,
+    pub baseline: GoldTaskPackReport,
+    pub candidate: GoldTaskPackReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyEffectReport {
+    pub strategy_type: String,
+    pub baseline_label: String,
+    pub candidate_label: String,
+    pub verdict: String,
+    pub compared_cases: usize,
+    pub baseline_only_cases: Vec<String>,
+    pub candidate_only_cases: Vec<String>,
+    pub summary: StrategyEffectSummary,
+    pub dimensions: Vec<StrategyEffectDimension>,
+    pub cases: Vec<StrategyCaseComparison>,
+    pub regressions: Vec<String>,
+    pub improvements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyEffectSummary {
+    pub baseline_pass_rate: f64,
+    pub candidate_pass_rate: f64,
+    pub pass_rate_delta: f64,
+    pub baseline_average_score: f64,
+    pub candidate_average_score: f64,
+    pub average_score_delta: f64,
+    pub baseline_context_recall: f64,
+    pub candidate_context_recall: f64,
+    pub context_recall_delta: f64,
+    pub baseline_validation_violations: usize,
+    pub candidate_validation_violations: usize,
+    pub validation_violation_delta: isize,
+    pub baseline_scope_creep: usize,
+    pub candidate_scope_creep: usize,
+    pub scope_creep_delta: isize,
+    pub baseline_execution_failures: usize,
+    pub candidate_execution_failures: usize,
+    pub execution_failure_delta: isize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyEffectDimension {
+    pub name: String,
+    pub direction: String,
+    pub baseline: f64,
+    pub candidate: f64,
+    pub delta: f64,
+    pub verdict: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyCaseComparison {
+    pub id: String,
+    pub title: String,
+    pub verdict: String,
+    pub baseline_status: String,
+    pub candidate_status: String,
+    pub baseline_passed: bool,
+    pub candidate_passed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidate_outcome: Option<String>,
+    pub baseline_score: f64,
+    pub candidate_score: f64,
+    pub score_delta: f64,
+    pub baseline_context_recall: f64,
+    pub candidate_context_recall: f64,
+    pub context_recall_delta: f64,
+    pub baseline_validation_violations: usize,
+    pub candidate_validation_violations: usize,
+    pub baseline_scope_creep: usize,
+    pub candidate_scope_creep: usize,
+    pub baseline_execution_failed: bool,
+    pub candidate_execution_failed: bool,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -576,14 +670,14 @@ pub struct AgentExecutionCheck {
     pub error_contains: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckOutcome {
     pub name: String,
     pub passed: bool,
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EvalMetrics {
     pub context_precision: Option<f64>,
     pub critical_context_recall: Option<f64>,
@@ -607,7 +701,7 @@ pub struct EvalMetrics {
     pub task_constraint_violations: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureReport {
     pub name: String,
     pub metrics: EvalMetrics,
@@ -648,7 +742,7 @@ struct EvalRunArtifacts {
     goal_evaluated: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentExecutionEvalReport {
     pub mode: String,
@@ -667,7 +761,7 @@ pub struct AgentExecutionEvalReport {
     pub diff_bytes: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskEvalReport {
     pub task_id: String,
@@ -686,7 +780,7 @@ pub struct CodingTaskEvalReport {
     pub metrics: Value,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskDiffSummary {
     pub changed_files: Vec<String>,
@@ -696,7 +790,7 @@ pub struct CodingTaskDiffSummary {
     pub diff_bytes: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskValidationSummary {
     pub commands: Vec<String>,
@@ -705,7 +799,7 @@ pub struct CodingTaskValidationSummary {
     pub disallowed_commands: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskReviewSummary {
     pub requested: bool,
@@ -713,7 +807,7 @@ pub struct CodingTaskReviewSummary {
     pub blocking_findings: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskContextSummary {
     pub requested: bool,
@@ -722,7 +816,7 @@ pub struct CodingTaskContextSummary {
     pub required_context_recall: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskGoalSummary {
     pub requested: bool,
@@ -732,7 +826,7 @@ pub struct CodingTaskGoalSummary {
     pub evidence_relations: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingTaskEvalCheckResult {
     pub name: String,
@@ -847,6 +941,479 @@ pub async fn run_gold_task_pack(
         passed: failed_cases == 0 && automated_cases > 0,
         cases,
     })
+}
+
+pub fn evaluate_strategy_effect(input: StrategyEffectEvalInput) -> StrategyEffectReport {
+    let strategy_type = input
+        .strategy_type
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "strategy".to_string());
+    let baseline_label = input
+        .baseline_label
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "baseline".to_string());
+    let candidate_label = input
+        .candidate_label
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "candidate".to_string());
+    let baseline_map = input
+        .baseline
+        .cases
+        .iter()
+        .map(|case| (case.case.id.clone(), case))
+        .collect::<HashMap<_, _>>();
+    let candidate_map = input
+        .candidate
+        .cases
+        .iter()
+        .map(|case| (case.case.id.clone(), case))
+        .collect::<HashMap<_, _>>();
+
+    let mut baseline_only_cases = Vec::new();
+    let mut candidate_only_cases = candidate_map
+        .keys()
+        .filter(|id| !baseline_map.contains_key(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidate_only_cases.sort();
+
+    let mut comparisons = Vec::new();
+    let mut baseline_metrics = Vec::new();
+    let mut candidate_metrics = Vec::new();
+    for baseline_case in &input.baseline.cases {
+        let id = &baseline_case.case.id;
+        let Some(candidate_case) = candidate_map.get(id) else {
+            baseline_only_cases.push(id.clone());
+            continue;
+        };
+        let baseline = strategy_case_metrics(baseline_case);
+        let candidate = strategy_case_metrics(candidate_case);
+        baseline_metrics.push(baseline.clone());
+        candidate_metrics.push(candidate.clone());
+        comparisons.push(compare_strategy_case(&baseline, &candidate));
+    }
+    baseline_only_cases.sort();
+    comparisons.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let baseline_aggregate = aggregate_strategy_metrics(&baseline_metrics);
+    let candidate_aggregate = aggregate_strategy_metrics(&candidate_metrics);
+    let summary = StrategyEffectSummary {
+        baseline_pass_rate: baseline_aggregate.pass_rate(),
+        candidate_pass_rate: candidate_aggregate.pass_rate(),
+        pass_rate_delta: round3(candidate_aggregate.pass_rate() - baseline_aggregate.pass_rate()),
+        baseline_average_score: baseline_aggregate.average_score(),
+        candidate_average_score: candidate_aggregate.average_score(),
+        average_score_delta: round3(
+            candidate_aggregate.average_score() - baseline_aggregate.average_score(),
+        ),
+        baseline_context_recall: baseline_aggregate.average_context_recall(),
+        candidate_context_recall: candidate_aggregate.average_context_recall(),
+        context_recall_delta: round3(
+            candidate_aggregate.average_context_recall()
+                - baseline_aggregate.average_context_recall(),
+        ),
+        baseline_validation_violations: baseline_aggregate.validation_violations,
+        candidate_validation_violations: candidate_aggregate.validation_violations,
+        validation_violation_delta: candidate_aggregate.validation_violations as isize
+            - baseline_aggregate.validation_violations as isize,
+        baseline_scope_creep: baseline_aggregate.scope_creep,
+        candidate_scope_creep: candidate_aggregate.scope_creep,
+        scope_creep_delta: candidate_aggregate.scope_creep as isize
+            - baseline_aggregate.scope_creep as isize,
+        baseline_execution_failures: baseline_aggregate.execution_failures,
+        candidate_execution_failures: candidate_aggregate.execution_failures,
+        execution_failure_delta: candidate_aggregate.execution_failures as isize
+            - baseline_aggregate.execution_failures as isize,
+    };
+    let dimensions = strategy_effect_dimensions(&summary);
+    let mut regressions = Vec::new();
+    let mut improvements = Vec::new();
+    for case in &comparisons {
+        match case.verdict.as_str() {
+            "regressed" => regressions.push(format!("{}: {}", case.id, case.notes.join("; "))),
+            "improved" => improvements.push(format!("{}: {}", case.id, case.notes.join("; "))),
+            "mixed" => {
+                regressions.push(format!("{}: {}", case.id, case.notes.join("; ")));
+                improvements.push(format!("{}: {}", case.id, case.notes.join("; ")));
+            }
+            _ => {}
+        }
+    }
+    for id in &baseline_only_cases {
+        regressions.push(format!("{id}: candidate report is missing a baseline case"));
+    }
+    let verdict = derive_strategy_verdict(&comparisons, &baseline_only_cases);
+
+    StrategyEffectReport {
+        strategy_type,
+        baseline_label,
+        candidate_label,
+        verdict,
+        compared_cases: comparisons.len(),
+        baseline_only_cases,
+        candidate_only_cases,
+        summary,
+        dimensions,
+        cases: comparisons,
+        regressions,
+        improvements,
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct StrategyCaseMetrics {
+    id: String,
+    title: String,
+    status: String,
+    passed: bool,
+    outcome: Option<String>,
+    score: f64,
+    context_recall: f64,
+    validation_violations: usize,
+    scope_creep: usize,
+    execution_failed: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct StrategyAggregate {
+    cases: usize,
+    passed: usize,
+    score_sum: f64,
+    context_recall_sum: f64,
+    validation_violations: usize,
+    scope_creep: usize,
+    execution_failures: usize,
+}
+
+impl StrategyAggregate {
+    fn pass_rate(&self) -> f64 {
+        if self.cases == 0 {
+            0.0
+        } else {
+            round3(self.passed as f64 / self.cases as f64)
+        }
+    }
+
+    fn average_score(&self) -> f64 {
+        if self.cases == 0 {
+            0.0
+        } else {
+            round3(self.score_sum / self.cases as f64)
+        }
+    }
+
+    fn average_context_recall(&self) -> f64 {
+        if self.cases == 0 {
+            0.0
+        } else {
+            round3(self.context_recall_sum / self.cases as f64)
+        }
+    }
+}
+
+fn strategy_case_metrics(case: &GoldTaskCaseRunReport) -> StrategyCaseMetrics {
+    let report = case.report.as_ref();
+    let task = report.and_then(|report| report.task.as_ref());
+    let passed = case.status == "passed" && report.is_some_and(FixtureReport::passed);
+    let outcome = task.map(|task| task.outcome.clone());
+    let score = task
+        .map(|task| task.score)
+        .or_else(|| report.and_then(|report| report.metrics.task_score))
+        .unwrap_or(if passed { 1.0 } else { 0.0 });
+    let context_recall = task
+        .and_then(|task| task.context.required_context_recall)
+        .or_else(|| report.and_then(|report| report.metrics.critical_context_recall))
+        .unwrap_or(0.0);
+    let validation_violations = task
+        .map(|task| task.validation.disallowed_commands.len())
+        .unwrap_or(0);
+    let scope_creep = report
+        .map(|report| report.metrics.task_constraint_violations)
+        .unwrap_or_else(|| {
+            task.map(|task| {
+                task.checks
+                    .iter()
+                    .filter(|check| {
+                        !check.passed
+                            && matches!(check.category.as_str(), "scope_creep" | "policy_violation")
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+        });
+    let execution_failed = case.status == "error"
+        || report
+            .and_then(|report| report.execution.as_ref())
+            .is_some_and(|execution| execution.status != "completed")
+        || report
+            .and_then(|report| report.metrics.execution_status.as_deref())
+            .is_some_and(|status| status == "failed");
+
+    StrategyCaseMetrics {
+        id: case.case.id.clone(),
+        title: case.case.title.clone(),
+        status: case.status.clone(),
+        passed,
+        outcome,
+        score: round3(score),
+        context_recall: round3(context_recall),
+        validation_violations,
+        scope_creep,
+        execution_failed,
+    }
+}
+
+fn compare_strategy_case(
+    baseline: &StrategyCaseMetrics,
+    candidate: &StrategyCaseMetrics,
+) -> StrategyCaseComparison {
+    let mut improved = false;
+    let mut regressed = false;
+    let mut notes = Vec::new();
+    let score_delta = round3(candidate.score - baseline.score);
+    let context_recall_delta = round3(candidate.context_recall - baseline.context_recall);
+
+    if !baseline.passed && candidate.passed {
+        improved = true;
+        notes.push("pass status improved".to_string());
+    } else if baseline.passed && !candidate.passed {
+        regressed = true;
+        notes.push("pass status regressed".to_string());
+    }
+
+    if baseline.execution_failed && !candidate.execution_failed {
+        improved = true;
+        notes.push("execution failure cleared".to_string());
+    } else if !baseline.execution_failed && candidate.execution_failed {
+        regressed = true;
+        notes.push("execution failure introduced".to_string());
+    }
+
+    if score_delta > 0.001 {
+        improved = true;
+        notes.push(format!("task score +{score_delta:.3}"));
+    } else if score_delta < -0.001 {
+        regressed = true;
+        notes.push(format!("task score {score_delta:.3}"));
+    }
+
+    if context_recall_delta > 0.001 {
+        improved = true;
+        notes.push(format!("context recall +{context_recall_delta:.3}"));
+    } else if context_recall_delta < -0.001 {
+        regressed = true;
+        notes.push(format!("context recall {context_recall_delta:.3}"));
+    }
+
+    match candidate
+        .validation_violations
+        .cmp(&baseline.validation_violations)
+    {
+        std::cmp::Ordering::Less => {
+            improved = true;
+            notes.push(format!(
+                "validation violations {} -> {}",
+                baseline.validation_violations, candidate.validation_violations
+            ));
+        }
+        std::cmp::Ordering::Greater => {
+            regressed = true;
+            notes.push(format!(
+                "validation violations {} -> {}",
+                baseline.validation_violations, candidate.validation_violations
+            ));
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+
+    match candidate.scope_creep.cmp(&baseline.scope_creep) {
+        std::cmp::Ordering::Less => {
+            improved = true;
+            notes.push(format!(
+                "scope creep {} -> {}",
+                baseline.scope_creep, candidate.scope_creep
+            ));
+        }
+        std::cmp::Ordering::Greater => {
+            regressed = true;
+            notes.push(format!(
+                "scope creep {} -> {}",
+                baseline.scope_creep, candidate.scope_creep
+            ));
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+
+    let verdict = if improved && regressed {
+        "mixed"
+    } else if regressed {
+        "regressed"
+    } else if improved {
+        "improved"
+    } else {
+        "unchanged"
+    };
+    if notes.is_empty() {
+        notes.push("no material metric change".to_string());
+    }
+
+    StrategyCaseComparison {
+        id: baseline.id.clone(),
+        title: baseline.title.clone(),
+        verdict: verdict.to_string(),
+        baseline_status: baseline.status.clone(),
+        candidate_status: candidate.status.clone(),
+        baseline_passed: baseline.passed,
+        candidate_passed: candidate.passed,
+        baseline_outcome: baseline.outcome.clone(),
+        candidate_outcome: candidate.outcome.clone(),
+        baseline_score: baseline.score,
+        candidate_score: candidate.score,
+        score_delta,
+        baseline_context_recall: baseline.context_recall,
+        candidate_context_recall: candidate.context_recall,
+        context_recall_delta,
+        baseline_validation_violations: baseline.validation_violations,
+        candidate_validation_violations: candidate.validation_violations,
+        baseline_scope_creep: baseline.scope_creep,
+        candidate_scope_creep: candidate.scope_creep,
+        baseline_execution_failed: baseline.execution_failed,
+        candidate_execution_failed: candidate.execution_failed,
+        notes,
+    }
+}
+
+fn aggregate_strategy_metrics(metrics: &[StrategyCaseMetrics]) -> StrategyAggregate {
+    let mut aggregate = StrategyAggregate {
+        cases: metrics.len(),
+        ..Default::default()
+    };
+    for metric in metrics {
+        if metric.passed {
+            aggregate.passed += 1;
+        }
+        aggregate.score_sum += metric.score;
+        aggregate.context_recall_sum += metric.context_recall;
+        aggregate.validation_violations += metric.validation_violations;
+        aggregate.scope_creep += metric.scope_creep;
+        if metric.execution_failed {
+            aggregate.execution_failures += 1;
+        }
+    }
+    aggregate
+}
+
+fn strategy_effect_dimensions(summary: &StrategyEffectSummary) -> Vec<StrategyEffectDimension> {
+    vec![
+        strategy_dimension(
+            "passRate",
+            "higher",
+            summary.baseline_pass_rate,
+            summary.candidate_pass_rate,
+            summary.pass_rate_delta,
+            "candidate pass rate versus baseline",
+        ),
+        strategy_dimension(
+            "averageTaskScore",
+            "higher",
+            summary.baseline_average_score,
+            summary.candidate_average_score,
+            summary.average_score_delta,
+            "average task-level score across common cases",
+        ),
+        strategy_dimension(
+            "contextRecall",
+            "higher",
+            summary.baseline_context_recall,
+            summary.candidate_context_recall,
+            summary.context_recall_delta,
+            "average required context recall across common cases",
+        ),
+        strategy_dimension(
+            "validationViolations",
+            "lower",
+            summary.baseline_validation_violations as f64,
+            summary.candidate_validation_violations as f64,
+            summary.validation_violation_delta as f64,
+            "disallowed validation commands across common cases",
+        ),
+        strategy_dimension(
+            "scopeCreep",
+            "lower",
+            summary.baseline_scope_creep as f64,
+            summary.candidate_scope_creep as f64,
+            summary.scope_creep_delta as f64,
+            "scope or policy violations across common cases",
+        ),
+        strategy_dimension(
+            "executionFailures",
+            "lower",
+            summary.baseline_execution_failures as f64,
+            summary.candidate_execution_failures as f64,
+            summary.execution_failure_delta as f64,
+            "agent execution failures across common cases",
+        ),
+    ]
+}
+
+fn strategy_dimension(
+    name: &str,
+    direction: &str,
+    baseline: f64,
+    candidate: f64,
+    delta: f64,
+    detail: &str,
+) -> StrategyEffectDimension {
+    let verdict = if delta.abs() <= 0.001 {
+        "unchanged"
+    } else if (direction == "higher" && delta > 0.0) || (direction == "lower" && delta < 0.0) {
+        "improved"
+    } else {
+        "regressed"
+    };
+    StrategyEffectDimension {
+        name: name.to_string(),
+        direction: direction.to_string(),
+        baseline: round3(baseline),
+        candidate: round3(candidate),
+        delta: round3(delta),
+        verdict: verdict.to_string(),
+        detail: detail.to_string(),
+    }
+}
+
+fn derive_strategy_verdict(
+    comparisons: &[StrategyCaseComparison],
+    baseline_only_cases: &[String],
+) -> String {
+    if comparisons.is_empty() {
+        return if baseline_only_cases.is_empty() {
+            "inconclusive".to_string()
+        } else {
+            "regressed".to_string()
+        };
+    }
+    let has_missing_baseline_case = !baseline_only_cases.is_empty();
+    let has_regression = has_missing_baseline_case
+        || comparisons
+            .iter()
+            .any(|case| matches!(case.verdict.as_str(), "regressed" | "mixed"));
+    let has_improvement = comparisons
+        .iter()
+        .any(|case| matches!(case.verdict.as_str(), "improved" | "mixed"));
+    if has_regression && has_improvement {
+        "mixed".to_string()
+    } else if has_regression {
+        "regressed".to_string()
+    } else if has_improvement {
+        "improved".to_string()
+    } else {
+        "unchanged".to_string()
+    }
+}
+
+fn round3(value: f64) -> f64 {
+    (value * 1000.0).round() / 1000.0
 }
 
 pub async fn evaluate(db: Arc<SessionDB>, fixture: &CodingEvalFixture) -> Result<FixtureReport> {
@@ -3798,5 +4365,112 @@ mod tests {
         assert_eq!(report.skipped_cases, 1);
         assert_eq!(report.failed_cases, 0);
         assert_eq!(report.cases[0].status, "skipped");
+    }
+
+    #[tokio::test]
+    async fn strategy_effect_flags_candidate_regression() {
+        let dir = tempfile::tempdir().expect("temp db dir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel db migration");
+        let baseline = run_gold_task_pack(
+            db,
+            GoldTaskPackRunInput {
+                ids: vec!["CE-TEST-004".to_string()],
+                record_eval_runs: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run baseline gold task pack");
+        let mut candidate = baseline.clone();
+        candidate.passed = false;
+        candidate.passed_cases = 0;
+        candidate.failed_cases = 1;
+        let case = candidate.cases.first_mut().expect("candidate case");
+        case.status = "failed".to_string();
+        let fixture_report = case.report.as_mut().expect("fixture report");
+        fixture_report.metrics.task_score = Some(0.5);
+        fixture_report.metrics.task_constraint_violations += 1;
+        let task_report = fixture_report.task.as_mut().expect("task report");
+        task_report.outcome = "fail".to_string();
+        task_report.score = 0.5;
+        task_report
+            .validation
+            .disallowed_commands
+            .push("cargo test --all".to_string());
+
+        let effect = evaluate_strategy_effect(StrategyEffectEvalInput {
+            strategy_type: Some("workflow_policy".to_string()),
+            baseline_label: Some("before".to_string()),
+            candidate_label: Some("after".to_string()),
+            baseline,
+            candidate,
+        });
+
+        assert_eq!(effect.strategy_type, "workflow_policy");
+        assert_eq!(effect.verdict, "regressed");
+        assert_eq!(effect.compared_cases, 1);
+        assert!(effect.summary.pass_rate_delta < 0.0);
+        assert!(effect.summary.average_score_delta < 0.0);
+        assert!(effect.summary.validation_violation_delta > 0);
+        assert!(effect.summary.scope_creep_delta > 0);
+        assert_eq!(effect.cases[0].verdict, "regressed");
+        assert!(!effect.regressions.is_empty());
+    }
+
+    #[test]
+    fn strategy_effect_treats_missing_baseline_case_as_regression() {
+        let case = gold_task_pack_summary()
+            .cases
+            .into_iter()
+            .find(|case| case.id == "CE-TEST-004")
+            .expect("gold task case");
+        let baseline = GoldTaskPackReport {
+            pack_id: GOLD_TASK_PACK_ID.to_string(),
+            source_doc: GOLD_TASK_SOURCE_DOC.to_string(),
+            selected_cases: 1,
+            automated_cases: 1,
+            skipped_cases: 0,
+            passed_cases: 1,
+            failed_cases: 0,
+            total_checks: 1,
+            passed: true,
+            cases: vec![GoldTaskCaseRunReport {
+                case,
+                status: "passed".to_string(),
+                fixture_name: Some("gold_task_ce_test_004_repair_loop_stop".to_string()),
+                report: None,
+                error: None,
+            }],
+        };
+        let candidate = GoldTaskPackReport {
+            selected_cases: 0,
+            automated_cases: 0,
+            skipped_cases: 0,
+            passed_cases: 0,
+            failed_cases: 0,
+            total_checks: 0,
+            passed: false,
+            cases: Vec::new(),
+            ..baseline.clone()
+        };
+
+        let effect = evaluate_strategy_effect(StrategyEffectEvalInput {
+            strategy_type: None,
+            baseline_label: None,
+            candidate_label: None,
+            baseline,
+            candidate,
+        });
+
+        assert_eq!(effect.verdict, "regressed");
+        assert_eq!(effect.compared_cases, 0);
+        assert_eq!(effect.baseline_only_cases, vec!["CE-TEST-004".to_string()]);
+        assert!(effect
+            .regressions
+            .iter()
+            .any(|item| item.contains("missing a baseline case")));
     }
 }

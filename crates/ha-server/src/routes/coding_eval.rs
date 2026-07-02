@@ -1,7 +1,7 @@
 use axum::Json;
 use ha_core::coding_eval::{
     self, CodingEvalFixture, FixtureReport, GoldTaskPackReport, GoldTaskPackRunInput,
-    GoldTaskPackSummary,
+    GoldTaskPackSummary, StrategyEffectEvalInput, StrategyEffectReport,
 };
 use serde::Deserialize;
 
@@ -18,6 +18,12 @@ pub struct RunCodingTaskEvalFixtureBody {
 #[serde(rename_all = "camelCase")]
 pub struct RunCodingEvalGoldTaskPackBody {
     pub input: GoldTaskPackRunInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluateCodingEvalStrategyEffectBody {
+    pub input: StrategyEffectEvalInput,
 }
 
 pub async fn run_coding_task_eval_fixture(
@@ -42,4 +48,10 @@ pub async fn run_coding_eval_gold_task_pack(
         .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
+}
+
+pub async fn evaluate_coding_eval_strategy_effect(
+    Json(body): Json<EvaluateCodingEvalStrategyEffectBody>,
+) -> Result<Json<StrategyEffectReport>, AppError> {
+    Ok(Json(coding_eval::evaluate_strategy_effect(body.input)))
 }

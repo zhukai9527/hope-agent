@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-02
 >
-> 状态：Phase 0 人工评测体系已完成；Phase 3.7 自动化控制面评测、Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner 与 Phase 5.3 Gold Task Pack v1 已落地，最终架构见 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
+> 状态：Phase 0 人工评测体系已完成；Phase 3.7 自动化控制面评测、Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1 与 Phase 5.4 strategy effect evaluator 已落地，最终架构见 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
 
 ## 目录
 
@@ -279,6 +279,7 @@ Phase 3.7 已先落地一层确定性控制面 eval。它不替代 20 个人工 
 - Phase 5.1 新增 task-level runner：按任务 schema 检查候选 diff、必须/禁止改动、验证命令、review/context/goal 证据，并写入 `coding_eval_runs`。
 - Phase 5.2 新增 agent execution runner：`mode=agent` 真实调用 chat engine，`mode=fixture_patch` 做无模型回归替身，两者都进入同一个 scorer。
 - Phase 5.3 新增 Gold Task Pack v1：5 个 active gold tasks 可批量 materialize / run，默认走 `fixture_patch`，不访问外部模型。
+- Phase 5.4 新增 strategy effect evaluator：比较 baseline / candidate 两份 pack report 的 pass rate、task score、context recall、validation violations、scope creep 和 execution failures。
 - 不默认执行真实验证命令；真实验证命令只在 fixture 显式 `workflow.validate()` 时执行。
 
 已实现入口见 [Coding Eval 控制面评测](../architecture/coding-eval.md)；当前回归命令：
@@ -312,3 +313,4 @@ Phase 0 完成的最低标准：
 - [x] Phase 5.1：落地 task-level eval runner，把候选 diff 判分、Goal/Review/Verification/Context evidence 和 eval-run 记录接入同一 harness。
 - [x] Phase 5.2：落地 agent execution runner，把真实 chat engine 执行、执行报告和 task scorer 接到同一 harness。
 - [x] Phase 5.3：落地 Gold Task Pack v1，把 5 个 active gold tasks 自动 materialize 成可批量运行的 fixture pack，并接通 Tauri / HTTP / Transport。
+- [x] Phase 5.4：落地 strategy effect evaluator，把策略改动前后的 pack report 对比接通 Tauri / HTTP / Transport。

@@ -834,6 +834,7 @@ pub fn run() {
             commands::coding_eval::run_coding_task_eval_fixture,
             commands::coding_eval::list_coding_eval_gold_tasks,
             commands::coding_eval::run_coding_eval_gold_task_pack,
+            commands::coding_eval::evaluate_coding_eval_strategy_effect,
             // Coding quality trend, improvement proposals, distillation, and promotion loop (Phase 3.11-4.4)
             commands::coding_improvement::get_coding_trend_report,
             commands::coding_improvement::list_coding_improvement_proposals,
