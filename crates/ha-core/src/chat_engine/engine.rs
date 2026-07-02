@@ -425,6 +425,7 @@ pub async fn compact_session_now(
         &mut agent,
         &agent_id,
         &session_id,
+        session_db.clone(),
         resolved_temperature,
         None,
         &[],
@@ -977,6 +978,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                             &mut agent,
                             &agent_id_owned,
                             &session_id_owned,
+                            db_owned.clone(),
                             resolved_temperature,
                             extra_ctx_owned.as_deref(),
                             &skill_tools_owned,
@@ -1518,6 +1520,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                         &mut compact_agent,
                         &agent_id,
                         &session_id,
+                        db.clone(),
                         resolved_temperature,
                         extra_system_context.as_deref(),
                         &skill_allowed_tools,
@@ -1943,6 +1946,7 @@ fn configure_agent(
     agent: &mut crate::agent::AssistantAgent,
     agent_id: &str,
     session_id: &str,
+    session_db: Arc<session::SessionDB>,
     temperature: Option<f64>,
     extra_system_context: Option<&str>,
     skill_allowed_tools: &[String],
@@ -1959,6 +1963,7 @@ fn configure_agent(
     channel_kb_context: Option<crate::knowledge::ChannelKbContext>,
 ) {
     agent.set_agent_id(agent_id);
+    agent.set_session_db(session_db);
     agent.set_session_id(session_id);
     agent.set_chat_source(kb_access_source(source));
     agent.set_origin_chat_source(kb_origin);

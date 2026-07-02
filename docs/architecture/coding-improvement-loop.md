@@ -295,6 +295,8 @@ Phase 5.3 为同一 harness 增加 Gold Task Pack v1；Phase 5.5 已把首批 20
 
 Phase 5.4 为 pack report 增加策略效果评估：两份 `GoldTaskPackReport` 可通过纯函数 owner API 生成 `StrategyEffectReport`，按共同 case 比较 pass rate、task score、context recall、validation violations、scope creep 和 execution failures。该层暂不新增表；它为 workflow policy、skill/guidance、tool contract 改动提供 review-time 质量闸，后续再把 report history 纳入 Dashboard 趋势。
 
+Phase 5.6 为 agent execution runner 增加稳定 mock tool-call 基线与 `toolCalls` 指标。mock Responses provider 会驱动真实 `write` 工具修改临时 repo，再由 task scorer 判断候选 diff 是否完成任务；`FixtureReport.metrics.execution_tool_calls` 让 Improvement Loop 可以区分“模型调用了错误工具 / 没有调用工具”和“工具调用成功但 diff 质量不达标”。该层仍不新增表；后续策略效果趋势持久化再把 pack / strategy report history 纳入 Dashboard。
+
 ## 红线
 
 - 不依赖 LLM：report、proposal generation 和 transcript distillation 全部规则式。

@@ -177,6 +177,10 @@ pub struct AssistantAgent {
     pub(super) token_calibrator: std::sync::Mutex<crate::context_compact::TokenEstimateCalibrator>,
     /// Current session ID (for sub-agent context)
     pub(super) session_id: Option<String>,
+    /// Session database backing the current chat-engine turn. Most runtime
+    /// paths use the global DB, but deterministic/eval runners can provide an
+    /// isolated DB; agent-side session lookups must honor that source first.
+    pub(super) session_db: Option<std::sync::Arc<crate::session::SessionDB>>,
     /// Cached `sessions.incognito` flag for the current session. Refreshed at
     /// each turn boundary (`reset_chat_flags`) and on `set_session_id`; allows
     /// hot-path guards to avoid a SQLite round-trip per call.

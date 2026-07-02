@@ -50,7 +50,7 @@ Phase 2 已经完成 Workflow + Execution Mode 的第一版产品化：长任务
 4. **Phase 2.9：真正 `/loop`**。只做定时、重复、轮询或条件触发，复用 cron / wakeup / automation。
 5. **Phase 3：coding-specific 能力**。Managed Worktree、LSP、Review Engine、Smart Verification、Context Retrieval v2、Actionable Context Loop、Coding Eval、Workflow review/verify、Repair Loop 自动化、Deep Review / Profiles / IDE Context、Trend Report / Improvement Loop 已完成。
 6. **Phase 4：Learning Loop / Skill & Guidance 沉淀**。Phase 4.1 Proposal-to-Action、Phase 4.2 Draft Promotion + Workflow Retro、Phase 4.3 Dashboard 全局学习视图、Phase 4.4 Transcript Distillation + Failure Feedback 已完成：改进 proposal 可预览、应用成 eval / workflow / guidance / skill 草稿产物，并可显式晋升为正式 fixture / project guidance / active skill；Dashboard 可看全局 / 项目级 workflow、eval、review、verification、proposal、retro 趋势；Workspace 可显式从 transcript / workflow / failure feedback 提炼更高质量候选。
-7. **Phase 5：任务级评测与策略效果评估**。Phase 5.1 Task-level Eval Runner、Phase 5.2 Agent Execution Runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 Strategy Effect Evaluator 与 Phase 5.5 Gold Task Pack 全量自动化已完成：可以从 task prompt 触发真实 chat engine execution，或用 deterministic fixture patch 做无模型回归，再调用真实 Review / Smart Verification / Context Retrieval / Goal evaluator，并按任务 schema 判分和记录 eval run；20 个 active gold tasks 已可批量 materialize / run，策略改动前后的 pack report 已可确定性对比，后续继续补稳定模型基线、mock tool-call fixture 和策略效果趋势持久化。
+7. **Phase 5：任务级评测与策略效果评估**。Phase 5.1 Task-level Eval Runner、Phase 5.2 Agent Execution Runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 Strategy Effect Evaluator、Phase 5.5 Gold Task Pack 全量自动化与 Phase 5.6 mock tool-call 基线已完成：可以从 task prompt 触发真实 chat engine execution，或用 deterministic fixture patch 做无模型回归，再调用真实 Review / Smart Verification / Context Retrieval / Goal evaluator，并按任务 schema 判分和记录 eval run；20 个 active gold tasks 已可批量 materialize / run，mock Responses provider 可驱动真实 `write` 工具产出 candidate diff，策略改动前后的 pack report 已可确定性对比，后续继续补策略效果趋势持久化、Dashboard 和外部真实模型基线。
 
 这次调整的核心不是降低 coding 优先级，而是把 coding 能力挂到更稳的控制平面上。`/goal` 负责最终完成标准，`/workflow` 负责一次具体执行，`/mode` 负责推进强度，`/loop` 第一版负责重复触发，`/worktree` 才是 coding 场景的隔离环境。
 
@@ -183,7 +183,7 @@ Hope 已经具备很多 coding agent 需要的基础能力：
 - Managed Worktree 创建、恢复、归档、交接已在 Phase 3.1 补齐；后续缺口转为 detail 页面、清理策略和 review/LSP evidence 接入。
 - LSP 语义代码工具和被动 diagnostics 注入已在 Phase 3.2 补齐；后续缺口是项目级配置和 doctor。
 - 独立 `/review` engine、verifier 三态和 Workspace 审查区块已在 Phase 3.3 补齐；Smart Verification 已在 Phase 3.4 补齐最小验证选择、后台低风险执行和 Goal validation evidence；Context Retrieval v2 已在 Phase 3.5 补齐任务感知上下文推荐、file search v2 + LSP symbols + diff/artifact/review/verification 聚合；Phase 3.6 已补齐 workflow/task/goal evidence 关联召回和候选行 focused review / focused verification；Phase 3.7 已补齐确定性 coding control-plane eval harness；Phase 3.8 已补齐 Workflow review/verify host API 与 Goal-aware eval；Phase 3.9 已补齐 bounded repair loop 自动化、受控 block 停机和 repair-loop eval；Phase 3.10 已补齐 LLM reviewer、review profiles、IDE/ACP 当前文件信号、symbol-context evidence 和 profile/IDE eval；Phase 3.11/4.1/4.2/4.3/4.4 已补齐趋势报告、proposal queue、proposal-to-action、retro、promotion、Dashboard 全局学习视图、transcript distillation 和 failure feedback。
-- 已有第一层 coding eval harness、Phase 5.1 task-level scorer、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator 与 Phase 5.5 Gold Task Pack 全量自动化；仍缺稳定模型基线、mock tool-call fixture 和跨项目学习泛化。
+- 已有第一层 coding eval harness、Phase 5.1 task-level scorer、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator、Phase 5.5 Gold Task Pack 全量自动化与 Phase 5.6 mock tool-call 基线；仍缺策略效果趋势持久化、外部真实模型基线和跨项目学习泛化。
 - 内置 coding skills 还偏“说明书”，尚未产品化为稳定 workflow policy。
 
 ## 能力模型
@@ -658,7 +658,7 @@ StopPolicy
 
 - 增加 LSP diagnostics、Goal final audit / repair blocked fixture。
 - 输出可选 JSON/HTML eval 报告和趋势 dashboard。
-- Phase 5.1 已把候选 diff 的 task-level 成功率与确定性控制面指标串联成 improvement loop；Phase 5.2 已把 agent execution stage 接到 scorer 前；Phase 5.3 已把首批 active gold tasks 接成可批量运行的 Gold Task Pack v1；Phase 5.4 已把策略效果对比接成纯函数 owner API；Phase 5.5 已把 20 个 gold tasks 全量自动化；后续补稳定模型基线、mock tool-call fixture 和策略效果趋势持久化。
+- Phase 5.1 已把候选 diff 的 task-level 成功率与确定性控制面指标串联成 improvement loop；Phase 5.2 已把 agent execution stage 接到 scorer 前；Phase 5.3 已把首批 active gold tasks 接成可批量运行的 Gold Task Pack v1；Phase 5.4 已把策略效果对比接成纯函数 owner API；Phase 5.5 已把 20 个 gold tasks 全量自动化；Phase 5.6 已补 mock tool-call 写文件基线与 `toolCalls` 指标；后续补策略效果趋势持久化、Dashboard 与外部真实模型基线。
 
 ### Phase 3.8：Workflow Review/Verify Host API 与 Goal-aware Eval
 
@@ -763,9 +763,9 @@ StopPolicy
 
 ### 后续池：Learning Loop 与技能沉淀
 
-状态：Phase 4.4 Transcript Distillation + Failure Feedback 已完成；Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator 与 Phase 5.5 Gold Task Pack 全量自动化已完成；更高质量的跨项目通用化、稳定模型基线、mock tool-call fixture 和策略效果趋势持久化仍属后续增强。
+状态：Phase 4.4 Transcript Distillation + Failure Feedback 已完成；Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator、Phase 5.5 Gold Task Pack 全量自动化与 Phase 5.6 mock tool-call 基线已完成；更高质量的跨项目通用化、外部真实模型基线和策略效果趋势持久化仍属后续增强。
 
-目标：让每次 coding session 都能让系统变强；eval backlog、workflow / skill / guidance proposal 已作为 Phase 3.11 的接口先落一层，Phase 4.1 已补上从 proposal 到草稿产物的安全落地动作，Phase 4.2 已补上 terminal workflow retro 与人工显式 promotion，Phase 4.3 已补上全局 / 项目级学习 Dashboard，Phase 4.4 已补上显式 transcript/workflow/failure feedback 蒸馏，Phase 5.1 已补上候选 diff 的任务级判分，Phase 5.2 已补上从 task prompt 到候选结果的 agent execution 阶段，Phase 5.3 已补上 active gold task pack 的批量回放入口，Phase 5.4 已补上策略效果对比，Phase 5.5 已补上 20 个 gold tasks 全量自动化，后续继续增强跨项目泛化、稳定模型基线和策略效果趋势持久化。
+目标：让每次 coding session 都能让系统变强；eval backlog、workflow / skill / guidance proposal 已作为 Phase 3.11 的接口先落一层，Phase 4.1 已补上从 proposal 到草稿产物的安全落地动作，Phase 4.2 已补上 terminal workflow retro 与人工显式 promotion，Phase 4.3 已补上全局 / 项目级学习 Dashboard，Phase 4.4 已补上显式 transcript/workflow/failure feedback 蒸馏，Phase 5.1 已补上候选 diff 的任务级判分，Phase 5.2 已补上从 task prompt 到候选结果的 agent execution 阶段，Phase 5.3 已补上 active gold task pack 的批量回放入口，Phase 5.4 已补上策略效果对比，Phase 5.5 已补上 20 个 gold tasks 全量自动化，Phase 5.6 已补上 mock tool-call 写文件基线，后续继续增强跨项目泛化、外部真实模型基线和策略效果趋势持久化。
 
 已落地：
 
@@ -788,13 +788,15 @@ StopPolicy
 - `task_level_eval_runner` fixture 覆盖任务级 scorer：changed files、required / forbidden diff、验证命令、review/context/goal 证据和 eval run 记录。
 - `agent_execution_runner_fixture_patch` fixture 覆盖 execution stage 先产出 candidate diff，再进入 review / verification / context / task scoring / eval-run recording。
 - mock-provider 单测覆盖 `mode="agent"` 真实调用 chat engine、创建 turn 并记录 response。
+- mock Responses tool-call 单测覆盖真实 `write` 工具写入临时 repo、记录 `toolCalls` 并产出 candidate diff。
 - Gold Task Pack 覆盖 20 个 active gold tasks：可通过 `list_coding_eval_gold_tasks` 查看 registry，通过 `run_coding_eval_gold_task_pack` 批量 materialize / run；case 覆盖 docs/design、Rust、TS、i18n、多文件 diff 与 review-seeded 场景。
 - Strategy Effect Evaluator 覆盖策略改动前后两份 pack report 的 pass rate、task score、context recall、validation violations、scope creep 和 execution failures 对比；可通过 `evaluate_coding_eval_strategy_effect` / `POST /api/coding-eval/strategy-effects/evaluate` 调用。
 - `dashboard::coding_improvement` 单元测试覆盖项目 rollup 与 incognito 排除。
 
 后续任务：
 
-- 稳定模型基线 / mock tool-call fixture：覆盖真实写文件工具调用而不依赖外部服务。
+- Phase 5.7：策略效果趋势持久化与 Dashboard，把 pack / strategy report history 纳入可视化质量闸。
+- 外部真实模型基线：在受控环境记录真实 provider 成功率，不把 mock 结果冒充真实模型能力。
 - 成功 transcript 可抽取更高质量 workflow skill 草稿。
 - 常见 failure mode 反哺工具描述、workflow policy、project guidance。
 - Dashboard 继续补 review catch rate、slow tools、cache invalidators、approval stalls 等更细诊断。
@@ -802,7 +804,7 @@ StopPolicy
 产物：
 
 - [Coding Improvement Loop](../architecture/coding-improvement-loop.md) 架构文档已落地；后续补更强 distillation 设计、failure feedback 反哺设计与策略效果趋势持久化。
-- [Coding Eval 控制面评测](../architecture/coding-eval.md) 已记录 Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator 与 Phase 5.5 Gold Task Pack 全量自动化。
+- [Coding Eval 控制面评测](../architecture/coding-eval.md) 已记录 Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator、Phase 5.5 Gold Task Pack 全量自动化与 Phase 5.6 mock tool-call 基线。
 - eval / workflow / guidance / skill draft generator。
 
 ### Phase 5.1：Task-level Eval Runner（已完成）
@@ -826,7 +828,7 @@ StopPolicy
 
 当前后续：
 
-- Phase 5.6：稳定模型基线与 mock tool-call fixture，覆盖真实写文件工具调用但不依赖外部服务。
+- Phase 5.6 已补齐 mock tool-call fixture；后续转向 Phase 5.7 策略效果趋势持久化与 Dashboard。
 
 ### Phase 5.2：Agent Execution Runner（已完成）
 
@@ -861,7 +863,7 @@ StopPolicy
 
 后续已完成：
 
-- Phase 5.5：Gold Task Pack 全量自动化，把更多 Phase 0 任务纳入自动化，并为真实模型基线 / mock tool-call fixture 打底。
+- Phase 5.5：Gold Task Pack 全量自动化，把更多 Phase 0 任务纳入自动化；Phase 5.6 已补 mock tool-call 基线，后续为外部真实模型基线打底。
 
 ### Phase 5.4：Strategy Effect Evaluator（已完成）
 
@@ -883,7 +885,7 @@ StopPolicy
 
 下一步：
 
-- Phase 5.6：稳定模型基线与 mock tool-call fixture，覆盖真实写文件工具调用但不依赖外部服务。
+- Phase 5.7：策略效果趋势持久化与 Dashboard。
 
 ### Phase 5.5：Gold Task Pack 全量自动化（已完成）
 
@@ -904,7 +906,29 @@ StopPolicy
 
 下一步：
 
-- Phase 5.6：稳定模型基线与 mock tool-call fixture，覆盖真实写文件工具调用但不依赖外部服务。
+- Phase 5.7：策略效果趋势持久化与 Dashboard。
+
+### Phase 5.6：Mock Tool-call 基线与执行指标（已完成）
+
+目标：让 agent execution runner 不只验证“模型能回文本”，还要验证真实 tool-call loop 能在隔离临时 repo 内写入候选 diff，并把工具调用事实进入 eval report。
+
+已落地：
+
+- `AgentExecutionEvalReport.toolCalls` 与 `FixtureReport.metrics.execution_tool_calls`，从真实 tool message 提取工具名。
+- `checks.execution.expectedToolCalls` / `minToolCalls`，可断言模型至少调用了指定工具。
+- 本地 mock OpenAI Responses SSE fixture：第一轮返回 `function_call(write, { path, content })`，第二轮返回最终文本，不访问外部服务。
+- 端到端单测覆盖真实 `run_chat_engine`、tool dispatch、`write` 工具写入临时 repo、candidate diff snapshot 和 task-level scorer。
+- `ChatEngineParams.session_db` 绑定到 `AssistantAgent`，agent-side session meta lookup 优先使用本轮 DB，避免 eval/headless 隔离 DB 的 working dir 被全局 DB 覆盖；incognito 缺行仍 fail-closed。
+- coding eval 临时 DB 统一执行 `ChannelDB::migrate()`，保证 `get_session()` 的 metadata join 与生产 schema 一致。
+
+明确不包含：
+
+- 不把 mock provider 成功率冒充真实外部模型成功率。
+- 不新增 strategy effect report history 表；趋势持久化进入 Phase 5.7。
+
+下一步：
+
+- Phase 5.7：策略效果趋势持久化与 Dashboard。
 
 ## 30 天首个里程碑
 
@@ -915,7 +939,7 @@ StopPolicy
 3. 已让 workflow run 可选绑定 goal，repair run 不丢 goal 归属。
 4. 已让 workflow completion / validation / task evidence 回写 goal audit；validation / diff / file evidence 第一层结构化 link 已落地，Review Engine evidence 与 Smart Verification evidence 已落地，artifact/diagnostic 接入后续补。
 5. 已做第一版 goal evaluator，能输出 completed / blocked + reason。
-6. 已更新 Coding Eval：Phase 3.7 验证 review / verification / context / goal / task / workflow 协同，Phase 5.1 增加 task-level scorer，Phase 5.2 增加 agent execution runner，Phase 5.3 增加 Gold Task Pack v1 批量回放入口，Phase 5.4 增加 strategy effect evaluator，Phase 5.5 增加 20 个 gold tasks 全量自动化。
+6. 已更新 Coding Eval：Phase 3.7 验证 review / verification / context / goal / task / workflow 协同，Phase 5.1 增加 task-level scorer，Phase 5.2 增加 agent execution runner，Phase 5.3 增加 Gold Task Pack v1 批量回放入口，Phase 5.4 增加 strategy effect evaluator，Phase 5.5 增加 20 个 gold tasks 全量自动化，Phase 5.6 增加 mock tool-call 写文件基线与 `toolCalls` 指标。
 7. `/loop` 第一版已落地；后续增强放到 Phase 3+ 或独立 RFC。
 
 ## 验收指标
@@ -979,7 +1003,7 @@ StopPolicy
 8. [Review Engine 控制平面](../architecture/review-engine.md)：diff scan、candidate、verifier、inline finding 与 Goal evidence。
 9. [Smart Verification 控制平面](../architecture/verification-engine.md)：最小验证选择、后台低风险执行、Goal validation evidence 与 Workspace 验证区块。
 10. [Context Retrieval v2](../architecture/context-retrieval.md)：任务感知上下文推荐与行动入口、file search v2、LSP symbols、diff/artifact/review/verification/goal/task/workflow 聚合、focused review / verification。
-11. [Coding Eval 控制面评测](../architecture/coding-eval.md)：Phase 3.7 deterministic fixture harness、context precision / critical recall、控制面回归、Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator 与 Phase 5.5 Gold Task Pack 全量自动化。
-12. [Coding Improvement Loop](../architecture/coding-improvement-loop.md)：已落地 trend report、failure taxonomy、proposal 队列、proposal-to-action、workflow retro、draft promotion、Dashboard 全局学习视图、Transcript Distillation 与 Failure Feedback；后续继续设计跨项目学习泛化、稳定模型基线和策略效果趋势持久化。
+11. [Coding Eval 控制面评测](../architecture/coding-eval.md)：Phase 3.7 deterministic fixture harness、context precision / critical recall、控制面回归、Phase 5.1 task-level eval runner、Phase 5.2 agent execution runner、Phase 5.3 Gold Task Pack v1、Phase 5.4 strategy effect evaluator、Phase 5.5 Gold Task Pack 全量自动化与 Phase 5.6 mock tool-call 基线。
+12. [Coding Improvement Loop](../architecture/coding-improvement-loop.md)：已落地 trend report、failure taxonomy、proposal 队列、proposal-to-action、workflow retro、draft promotion、Dashboard 全局学习视图、Transcript Distillation 与 Failure Feedback；后续继续设计跨项目学习泛化、外部真实模型基线和策略效果趋势持久化。
 
 这些文档完成后，再进入逐项实现。实现顺序应优先保证可评测、可回滚、可审计，而不是先堆最显眼的 UI。

@@ -28,7 +28,7 @@ use crate::context_retrieval::{self, ContextCandidate, ContextCandidateKind};
 use crate::goal::CreateGoalInput;
 use crate::provider::{ActiveModel, ProviderConfig};
 use crate::review::{self, RunReviewInput};
-use crate::session::{NewMessage, SessionDB, SessionIdeContext, TaskStatus};
+use crate::session::{MessageRole, NewMessage, SessionDB, SessionIdeContext, TaskStatus};
 use crate::verification::{self, PlanVerificationInput};
 use crate::workflow::{
     self, CreateWorkflowRunInput, UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowRunState,
@@ -663,6 +663,10 @@ pub struct AgentExecutionCheck {
     #[serde(default)]
     pub forbidden_changed_files: Vec<String>,
     #[serde(default)]
+    pub expected_tool_calls: Vec<String>,
+    #[serde(default)]
+    pub min_tool_calls: Option<usize>,
+    #[serde(default)]
     pub require_turn: Option<bool>,
     #[serde(default)]
     pub response_contains: Vec<String>,
@@ -689,6 +693,8 @@ pub struct EvalMetrics {
     pub execution_mode: Option<String>,
     #[serde(default)]
     pub execution_changed_files: Vec<String>,
+    #[serde(default)]
+    pub execution_tool_calls: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_outcome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -757,6 +763,8 @@ pub struct AgentExecutionEvalReport {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_used: Option<ActiveModel>,
+    #[serde(default)]
+    pub tool_calls: Vec<String>,
     pub changed_files: Vec<String>,
     pub diff_bytes: usize,
 }
@@ -1691,6 +1699,7 @@ async fn run_agent_execution_eval(
                 response: Some("fixture patch applied".to_string()),
                 error: None,
                 model_used: None,
+                tool_calls: Vec::new(),
                 changed_files,
                 diff_bytes,
             })
@@ -1707,6 +1716,7 @@ async fn run_agent_execution_eval(
                     response: None,
                     error: Some("agent execution requires a task prompt".to_string()),
                     model_used: None,
+                    tool_calls: Vec::new(),
                     changed_files,
                     diff_bytes,
                 });
@@ -1725,6 +1735,7 @@ async fn run_agent_execution_eval(
                             .to_string(),
                     ),
                     model_used: None,
+                    tool_calls: Vec::new(),
                     changed_files,
                     diff_bytes,
                 });
@@ -1783,6 +1794,7 @@ async fn run_agent_execution_eval(
 
             let result = chat_engine::run_chat_engine(params).await;
             let (changed_files, diff_bytes) = execution_diff_snapshot(repo_root)?;
+            let tool_calls = execution_tool_calls(db, session_id)?;
             match result {
                 Ok(result) => Ok(AgentExecutionEvalReport {
                     mode: mode.to_string(),
@@ -1793,6 +1805,7 @@ async fn run_agent_execution_eval(
                     response: Some(result.response),
                     error: None,
                     model_used: result.model_used,
+                    tool_calls,
                     changed_files,
                     diff_bytes,
                 }),
@@ -1805,6 +1818,7 @@ async fn run_agent_execution_eval(
                     response: None,
                     error: Some(err),
                     model_used: None,
+                    tool_calls,
                     changed_files,
                     diff_bytes,
                 }),
@@ -1823,11 +1837,21 @@ async fn run_agent_execution_eval(
                     "unsupported coding eval execution mode {other:?}; expected agent or fixture_patch"
                 )),
                 model_used: None,
+                tool_calls: Vec::new(),
                 changed_files,
                 diff_bytes,
             })
         }
     }
+}
+
+fn execution_tool_calls(db: &SessionDB, session_id: &str) -> Result<Vec<String>> {
+    Ok(db
+        .load_session_messages(session_id)?
+        .into_iter()
+        .filter(|message| message.role == MessageRole::Tool)
+        .filter_map(|message| message.tool_name)
+        .collect())
 }
 
 fn execution_diff_snapshot(repo_root: &Path) -> Result<(Vec<String>, usize)> {
@@ -1923,6 +1947,7 @@ fn build_task_eval_report(
                 "status": &execution.status,
                 "turnId": &execution.turn_id,
                 "modelUsed": &execution.model_used,
+                "toolCalls": &execution.tool_calls,
                 "changedFiles": &execution.changed_files,
                 "diffBytes": execution.diff_bytes,
             })),
@@ -2509,6 +2534,7 @@ fn check_execution(
     report.metrics.execution_status = Some(execution.status.clone());
     report.metrics.execution_mode = Some(execution.mode.clone());
     report.metrics.execution_changed_files = execution.changed_files.clone();
+    report.metrics.execution_tool_calls = execution.tool_calls.clone();
 
     if let Some(check) = check {
         if let Some(expected) = check.expected_mode.as_deref() {
@@ -2558,6 +2584,23 @@ fn check_execution(
                 format!("execution.forbidden_file.{suffix}"),
                 !found,
                 format!("changedFiles={:?}", execution.changed_files),
+            );
+        }
+        if let Some(min) = check.min_tool_calls {
+            push_check(
+                report,
+                "execution.min_tool_calls",
+                execution.tool_calls.len() >= min,
+                format!("toolCalls={:?}, min={min}", execution.tool_calls),
+            );
+        }
+        for expected in &check.expected_tool_calls {
+            let found = execution.tool_calls.iter().any(|tool| tool == expected);
+            push_check(
+                report,
+                format!("execution.tool_call.{expected}"),
+                found,
+                format!("toolCalls={:?}", execution.tool_calls),
             );
         }
         for needle in &check.response_contains {
@@ -4737,12 +4780,54 @@ mod tests {
         }
     }
 
+    fn sse_json_string(value: &str) -> String {
+        serde_json::to_string(value).expect("serialize SSE JSON string")
+    }
+
     fn responses_sse_text(text: &str) -> String {
         format!(
-            "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"{}\"}}\n\n\
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n\
              data: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}}}\n\n",
-            text
+            sse_json_string(text)
         )
+    }
+
+    fn responses_sse_tool_call(name: &str, args: Value) -> String {
+        let args = serde_json::to_string(&args).expect("serialize tool args");
+        let args_json = sse_json_string(&args);
+        format!(
+            "data: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":{},\"arguments\":\"\"}}}}\n\n\
+             data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":{},\"arguments\":{}}}}}\n\n\
+             data: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}}}\n\n",
+            sse_json_string(name),
+            sse_json_string(name),
+            args_json
+        )
+    }
+
+    fn mock_responses_provider(
+        base_url: String,
+        provider_id: &str,
+        model_id: &str,
+    ) -> ProviderConfig {
+        let mut provider = ProviderConfig::new(
+            "Coding Eval Mock Responses".to_string(),
+            ApiType::OpenaiResponses,
+            base_url,
+            "test-key".to_string(),
+        );
+        provider.id = provider_id.to_string();
+        provider.models.push(model_config(model_id));
+        provider
+    }
+
+    fn temp_session_db() -> (tempfile::TempDir, Arc<SessionDB>) {
+        let dir = tempfile::tempdir().expect("temp db dir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel db migration");
+        (dir, db)
     }
 
     #[tokio::test]
@@ -4758,14 +4843,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut provider = ProviderConfig::new(
-            "Coding Eval Mock Responses".to_string(),
-            ApiType::OpenaiResponses,
-            server.uri(),
-            "test-key".to_string(),
-        );
-        provider.id = "coding-eval-mock-provider".to_string();
-        provider.models.push(model_config("mock-model"));
+        let provider =
+            mock_responses_provider(server.uri(), "coding-eval-mock-provider", "mock-model");
 
         let fixture = CodingEvalFixture {
             name: "agent_execution_calls_chat_engine".to_string(),
@@ -4804,8 +4883,7 @@ mod tests {
             },
         };
 
-        let dir = tempfile::tempdir().expect("temp db dir");
-        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        let (_dir, db) = temp_session_db();
         let report = evaluate(db, &fixture).await.expect("evaluate fixture");
         assert!(
             report.passed(),
@@ -4820,6 +4898,156 @@ mod tests {
             execution.response.as_deref(),
             Some("agent execution completed")
         );
+    }
+
+    #[tokio::test]
+    async fn agent_execution_mock_tool_call_writes_candidate_diff() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(responses_sse_tool_call(
+                        "write",
+                        json!({
+                            "path": "src/lib.rs",
+                            "content": "pub fn answer() -> i32 {\n    42\n}\n",
+                        }),
+                    )),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(responses_sse_text("Wrote src/lib.rs via write.")),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let provider =
+            mock_responses_provider(server.uri(), "coding-eval-tool-mock", "mock-tool-model");
+
+        let fixture = CodingEvalFixture {
+            name: "agent_execution_mock_tool_call_writes_candidate_diff".to_string(),
+            description: "agent execution tool-call baseline".to_string(),
+            task: Some(CodingTaskEvalSpec {
+                id: "CE-MOCK-TOOL-001".to_string(),
+                task_type: "mock_tool_call".to_string(),
+                title: "Write candidate file through tool loop".to_string(),
+                source: "synthetic".to_string(),
+                prompt: "Use the write tool to update src/lib.rs so answer returns 42.".to_string(),
+                execution_mode: "agent".to_string(),
+                expected_behavior: vec!["Use the write tool".to_string()],
+                forbidden_behavior: vec!["Do not only describe the change".to_string()],
+                likely_files: vec!["src/lib.rs".to_string()],
+                expected_artifacts: vec!["diff".to_string()],
+                requires_seeded_state: false,
+                allowed_validation: Vec::new(),
+                success_criteria: vec![
+                    "src/lib.rs is changed by a real tool call".to_string(),
+                    "answer returns 42".to_string(),
+                ],
+                failure_notes: Vec::new(),
+            }),
+            repo: RepoFixture {
+                files: vec![FileFixture {
+                    path: "src/lib.rs".to_string(),
+                    text: "pub fn answer() -> i32 {\n    0\n}\n".to_string(),
+                }],
+                changes: Vec::new(),
+            },
+            setup: FixtureSetup::default(),
+            runs: FixtureRuns {
+                execution: Some(AgentExecutionEvalRun {
+                    mode: "agent".to_string(),
+                    prompt: Some(
+                        "Use the write tool to update src/lib.rs so answer returns 42.".to_string(),
+                    ),
+                    providers: vec![provider],
+                    model_chain: vec![ActiveModel {
+                        provider_id: "coding-eval-tool-mock".to_string(),
+                        model_id: "mock-tool-model".to_string(),
+                    }],
+                    auto_approve_tools: true,
+                    ..Default::default()
+                }),
+                task: Some(TaskLevelEvalRun {
+                    record_eval_run: false,
+                    evaluate_goal: false,
+                }),
+                ..Default::default()
+            },
+            checks: FixtureChecks {
+                execution: Some(AgentExecutionCheck {
+                    expected_mode: Some("agent".to_string()),
+                    expected_status: Some("completed".to_string()),
+                    expected_changed_files: vec!["src/lib.rs".to_string()],
+                    expected_tool_calls: vec!["write".to_string()],
+                    min_tool_calls: Some(1),
+                    require_turn: Some(true),
+                    response_contains: vec!["Wrote src/lib.rs".to_string()],
+                    ..Default::default()
+                }),
+                task: Some(TaskLevelCheck {
+                    expected_outcome: Some("pass".to_string()),
+                    min_score: Some(1.0),
+                    expected_changed_files: vec!["src/lib.rs".to_string()],
+                    required_diff_contains: vec!["42".to_string()],
+                    max_changed_files: Some(1),
+                    require_review: Some(false),
+                    require_verification: Some(false),
+                    require_context: Some(false),
+                    require_goal_evaluation: Some(false),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        };
+
+        let (_dir, db) = temp_session_db();
+        let report = evaluate(db.clone(), &fixture)
+            .await
+            .expect("evaluate fixture");
+        let tool_rows = report
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.turn_id.as_deref())
+            .and_then(|turn_id| db.get_chat_turn(turn_id).expect("load chat turn"))
+            .map(|turn| {
+                db.load_session_messages(&turn.session_id)
+                    .expect("load messages")
+                    .into_iter()
+                    .filter(|message| message.role == MessageRole::Tool)
+                    .map(|message| {
+                        format!(
+                            "{} => {:?}",
+                            message.tool_name.unwrap_or_default(),
+                            message.tool_result
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert!(
+            report.passed(),
+            "expected mock tool-call fixture to pass: {:?}; tool rows: {:?}",
+            report.outcomes,
+            tool_rows
+        );
+        let execution = report.execution.expect("execution report");
+        assert_eq!(execution.tool_calls, vec!["write".to_string()]);
+        assert!(execution
+            .changed_files
+            .iter()
+            .any(|path| path == "src/lib.rs"));
+        assert_eq!(report.task.expect("task report").outcome, "pass");
     }
 
     #[test]
@@ -4837,11 +5065,7 @@ mod tests {
 
     #[tokio::test]
     async fn gold_task_pack_runs_fixture_patch_subset() {
-        let dir = tempfile::tempdir().expect("temp db dir");
-        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
-        crate::channel::ChannelDB::new(db.clone())
-            .migrate()
-            .expect("channel db migration");
+        let (_dir, db) = temp_session_db();
         let report = run_gold_task_pack(
             db,
             GoldTaskPackRunInput {
@@ -4868,11 +5092,7 @@ mod tests {
 
     #[tokio::test]
     async fn gold_task_pack_runs_former_draft_case() {
-        let dir = tempfile::tempdir().expect("temp db dir");
-        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
-        crate::channel::ChannelDB::new(db.clone())
-            .migrate()
-            .expect("channel db migration");
+        let (_dir, db) = temp_session_db();
         let report = run_gold_task_pack(
             db,
             GoldTaskPackRunInput {
@@ -4894,11 +5114,7 @@ mod tests {
 
     #[tokio::test]
     async fn gold_task_pack_runs_all_automated_cases() {
-        let dir = tempfile::tempdir().expect("temp db dir");
-        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
-        crate::channel::ChannelDB::new(db.clone())
-            .migrate()
-            .expect("channel db migration");
+        let (_dir, db) = temp_session_db();
         let report = run_gold_task_pack(
             db,
             GoldTaskPackRunInput {
@@ -4923,11 +5139,7 @@ mod tests {
 
     #[tokio::test]
     async fn strategy_effect_flags_candidate_regression() {
-        let dir = tempfile::tempdir().expect("temp db dir");
-        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
-        crate::channel::ChannelDB::new(db.clone())
-            .migrate()
-            .expect("channel db migration");
+        let (_dir, db) = temp_session_db();
         let baseline = run_gold_task_pack(
             db,
             GoldTaskPackRunInput {

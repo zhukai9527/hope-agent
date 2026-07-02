@@ -126,6 +126,7 @@ impl AssistantAgent {
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
             session_id: None,
+            session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
             chat_source: None,
@@ -184,6 +185,7 @@ impl AssistantAgent {
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
             session_id: None,
+            session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
             chat_source: None,
@@ -367,6 +369,7 @@ impl AssistantAgent {
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
             session_id: None,
+            session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
             subagent_depth: 0,
             chat_source: None,
@@ -438,7 +441,32 @@ impl AssistantAgent {
     /// can read the flag without hitting SQLite every time. Safe no-op when
     /// `session_id` is `None`.
     fn refresh_incognito_cache(&self) {
-        let incognito = crate::session::is_session_incognito(self.session_id.as_deref());
+        let Some(sid) = self.session_id.as_deref() else {
+            self.incognito_cached
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            return;
+        };
+        let incognito = if let Some(db) = &self.session_db {
+            match db.get_session(sid) {
+                Ok(Some(meta)) => meta.incognito,
+                // Match session::is_session_incognito fail-closed semantics:
+                // if a bound session row disappeared, trailing work must not
+                // persist sidecars for a potentially burned incognito session.
+                Ok(None) => true,
+                Err(e) => {
+                    crate::app_warn!(
+                        "session",
+                        "agent_incognito_cache",
+                        "meta lookup for {} failed, treating as non-incognito: {}",
+                        sid,
+                        e
+                    );
+                    false
+                }
+            }
+        } else {
+            crate::session::is_session_incognito(Some(sid))
+        };
         self.incognito_cached
             .store(incognito, std::sync::atomic::Ordering::Relaxed);
     }
@@ -483,6 +511,40 @@ impl AssistantAgent {
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
         self.active_memory_state.invalidate_config();
+    }
+
+    /// Bind this agent to the session database used by the active chat-engine
+    /// turn. This is usually the global DB, but eval/headless callers can pass
+    /// an isolated DB and still get correct working-dir / permission metadata.
+    pub(crate) fn set_session_db(&mut self, db: Arc<crate::session::SessionDB>) {
+        self.session_db = Some(db);
+        *self
+            .kb_access_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        if self.session_id.is_some() {
+            self.refresh_incognito_cache();
+        }
+    }
+
+    fn lookup_session_meta(&self) -> Option<crate::session::SessionMeta> {
+        let sid = self.session_id.as_deref()?;
+        if let Some(db) = &self.session_db {
+            return match db.get_session(sid) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    crate::app_warn!(
+                        "session",
+                        "agent_session_meta",
+                        "bound meta lookup for {} failed: {}",
+                        sid,
+                        e
+                    );
+                    None
+                }
+            };
+        }
+        crate::session::lookup_session_meta(Some(sid))
     }
 
     /// Return cached per-session snapshot of the fields used from `agent.json`
@@ -545,7 +607,11 @@ impl AssistantAgent {
             *slot = None;
             return;
         }
-        let Some(db) = crate::get_session_db() else {
+        let Some(db) = self
+            .session_db
+            .clone()
+            .or_else(|| crate::get_session_db().cloned())
+        else {
             return;
         };
         let cfg = crate::awareness::resolve_for_session(sid, &db);
@@ -821,9 +887,7 @@ impl AssistantAgent {
                 channel_info = Some(ci);
             }
         }
-        let project_id = crate::get_session_db()
-            .and_then(|db| db.get_session(&sid).ok().flatten())
-            .and_then(|s| s.project_id);
+        let project_id = self.lookup_session_meta().and_then(|s| s.project_id);
         let actx = crate::knowledge::KnowledgeAccessContext::resolve(
             Some(sid),
             project_id,
@@ -1712,8 +1776,10 @@ impl AssistantAgent {
             }
         }
         if !self.session_is_incognito() {
-            let working_dir =
-                crate::session::effective_session_working_dir(self.session_id.as_deref());
+            let working_dir = self
+                .lookup_session_meta()
+                .as_ref()
+                .and_then(crate::session::effective_working_dir_for_meta);
             if let Some(suffix) = crate::lsp::diagnostics_prompt_suffix(
                 self.session_id.as_deref(),
                 working_dir.as_deref(),
@@ -1745,7 +1811,7 @@ impl AssistantAgent {
         // Pull working_dir / permission_mode / project_id from a single
         // SessionMeta lookup — avoids 3 separate SQLite roundtrips per
         // tool round.
-        let meta = crate::session::lookup_session_meta(self.session_id.as_deref());
+        let meta = self.lookup_session_meta();
         // Single source of truth: session-level dir → project's explicit dir →
         // project's lazily-created default workspace.
         let session_working_dir = meta

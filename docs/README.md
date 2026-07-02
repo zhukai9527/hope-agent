@@ -11,7 +11,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [Coding 能力强化总纲](roadmap/coding-capability-roadmap.md) | 面向 coding-first 的总体路线：调研线索、能力模型、动态 workflow / loop、阶段计划与验收指标 |
-| [Coding Eval 体系方案](roadmap/coding-eval.md) | Phase 0 评测体系 + Phase 5.1-5.5 task scorer / agent execution / Gold Task Pack 全量自动化 / strategy effect 索引 |
+| [Coding Eval 体系方案](roadmap/coding-eval.md) | Phase 0 评测体系 + Phase 5.1-5.6 task scorer / agent execution / Gold Task Pack 全量自动化 / strategy effect / mock tool-call 基线索引 |
 | [Coding Eval 首批 Gold Tasks](roadmap/coding-eval-tasks.md) | 首批 20 个 coding eval 任务；20 个 active 任务均已进入自动化 Gold Task Pack |
 | [Coding Eval Phase 0 完成报告](roadmap/coding-eval-phase0-report.md) | Phase 0 完成审计：5 个校准试跑、schema 修订、失败分类补充与 Phase 1 决策 |
 | [ToolDefinition v2 RFC](roadmap/tool-definition-v2.md) | Phase 1 工具元数据、tool_search v2、deferred 默认策略和 prompt render debug 设计 |

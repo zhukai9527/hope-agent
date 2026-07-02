@@ -1324,6 +1324,8 @@ export interface CodingEvalAgentExecutionCheck {
   expectedStatus?: string | null;
   expectedChangedFiles?: string[];
   forbiddenChangedFiles?: string[];
+  expectedToolCalls?: string[];
+  minToolCalls?: number | null;
   requireTurn?: boolean | null;
   responseContains?: string[];
   errorContains?: string[];
@@ -1378,6 +1380,7 @@ export interface CodingEvalMetrics {
   executionStatus?: string | null;
   executionMode?: string | null;
   executionChangedFiles: string[];
+  executionToolCalls: string[];
   taskOutcome?: string | null;
   taskScore?: number | null;
   taskFailureCategory?: string | null;
@@ -1394,6 +1397,7 @@ export interface CodingEvalAgentExecutionReport {
   response?: string | null;
   error?: string | null;
   modelUsed?: CodingEvalActiveModel | null;
+  toolCalls: string[];
   changedFiles: string[];
   diffBytes: number;
 }
