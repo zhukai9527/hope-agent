@@ -3,7 +3,9 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import {
   Activity,
+  Archive,
   CheckCircle2,
+  FileCheck2,
   GitBranch,
   Layers3,
   Loader2,
@@ -12,6 +14,7 @@ import {
   RotateCcw,
   ShieldAlert,
   Sparkles,
+  Upload,
   XCircle,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
@@ -20,7 +23,11 @@ import { logger } from "@/lib/logger"
 import type {
   CodingBenchmarkCampaign,
   CodingBenchmarkCenterReport,
+  CodingBenchmarkCorpusHealthReport,
   CodingBenchmarkLeaderboardReport,
+  CodingBenchmarkTaskPack,
+  CodingBenchmarkTaskPackManifest,
+  CodingBenchmarkTaskPackValidationReport,
   CodingEvalReleaseGateReport,
   CodingLearningGeneralizationReport,
 } from "@/lib/transport"
@@ -101,6 +108,9 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [benchmarkCampaigns, setBenchmarkCampaigns] = useState<CodingBenchmarkCampaign[]>([])
   const [benchmarkLeaderboard, setBenchmarkLeaderboard] =
     useState<CodingBenchmarkLeaderboardReport | null>(null)
+  const [benchmarkTaskPacks, setBenchmarkTaskPacks] = useState<CodingBenchmarkTaskPack[]>([])
+  const [benchmarkCorpusHealth, setBenchmarkCorpusHealth] =
+    useState<CodingBenchmarkCorpusHealthReport | null>(null)
   const [benchmarkProviders, setBenchmarkProviders] = useState<BenchmarkProviderOption[]>([])
   const [selectedBenchmarkModels, setSelectedBenchmarkModels] = useState<string[]>([])
   const [benchmarkMaxTasks, setBenchmarkMaxTasks] = useState(3)
@@ -111,12 +121,27 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [benchmarkRunning, setBenchmarkRunning] = useState(false)
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
   const [campaignActionId, setCampaignActionId] = useState<string | null>(null)
+  const [corpusActionId, setCorpusActionId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
     setBenchmarkError(null)
     try {
-      const [ov, tl, ts, rs, ci, bc, campaigns, leaderboard, providers, rg, gen] = await Promise.all([
+      const [
+        ov,
+        tl,
+        ts,
+        rs,
+        ci,
+        bc,
+        campaigns,
+        leaderboard,
+        taskPacks,
+        corpusHealth,
+        providers,
+        rg,
+        gen,
+      ] = await Promise.all([
         getTransport().call<LearningOverview>("dashboard_learning_overview", {
           windowDays,
         }),
@@ -152,6 +177,14 @@ export default function LearningTab({ filter }: LearningTabProps) {
             minItems: 1,
           },
         }),
+        getTransport().call<CodingBenchmarkTaskPack[]>("list_benchmark_task_packs", {
+          input: {
+            limit: 8,
+          },
+        }),
+        getTransport().call<CodingBenchmarkCorpusHealthReport>("get_benchmark_corpus_health", {
+          input: {},
+        }),
         getTransport()
           .call<BenchmarkProviderOption[]>("get_providers")
           .catch((error) => {
@@ -185,6 +218,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setBenchmark(bc)
       setBenchmarkCampaigns(campaigns ?? [])
       setBenchmarkLeaderboard(leaderboard)
+      setBenchmarkTaskPacks(taskPacks ?? [])
+      setBenchmarkCorpusHealth(corpusHealth)
       setBenchmarkProviders(providers ?? [])
       setReleaseGate(rg)
       setGeneralization(gen)
@@ -340,6 +375,74 @@ export default function LearningTab({ filter }: LearningTabProps) {
     }
   }, [reload])
 
+  const importSampleTaskPack = useCallback(async () => {
+    setCorpusActionId("import")
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkTaskPack>("import_benchmark_task_pack", {
+        input: {
+          manifest: sampleBenchmarkTaskPackManifest(),
+          explicitImportConsent: true,
+          importedFrom: "dashboard_sample_manifest",
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::importSampleTaskPack", "Failed to import corpus pack", e)
+    } finally {
+      setCorpusActionId(null)
+    }
+  }, [reload])
+
+  const updateTaskPackStatus = useCallback(async (pack: CodingBenchmarkTaskPack, status: string) => {
+    const actionKey = `${pack.packId}@${pack.version}:${status}`
+    setCorpusActionId(actionKey)
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkTaskPack>("update_benchmark_task_pack_status", {
+        input: {
+          packId: pack.packId,
+          version: pack.version,
+          status,
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::updateTaskPackStatus", "Failed to update task pack", e)
+    } finally {
+      setCorpusActionId(null)
+    }
+  }, [reload])
+
+  const validateTaskPack = useCallback(async (pack: CodingBenchmarkTaskPack) => {
+    const actionKey = `${pack.packId}@${pack.version}:validate`
+    setCorpusActionId(actionKey)
+    setBenchmarkError(null)
+    try {
+      const report = await getTransport().call<CodingBenchmarkTaskPackValidationReport>(
+        "validate_benchmark_task_pack",
+        {
+          input: {
+            packId: pack.packId,
+            version: pack.version,
+          },
+        },
+      )
+      if (report.status !== "passed") {
+        const failed = report.checks.find((check) => check.status !== "passed")
+        setBenchmarkError(failed ? `${failed.name}: ${failed.actual}` : "Task pack validation failed.")
+      }
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::validateTaskPack", "Failed to validate task pack", e)
+    } finally {
+      setCorpusActionId(null)
+    }
+  }, [reload])
+
   useEffect(() => {
     reload()
   }, [reload])
@@ -386,6 +489,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
         benchmark={benchmark}
         benchmarkCampaigns={benchmarkCampaigns}
         benchmarkLeaderboard={benchmarkLeaderboard}
+        benchmarkTaskPacks={benchmarkTaskPacks}
+        benchmarkCorpusHealth={benchmarkCorpusHealth}
         benchmarkModelOptions={benchmarkModelOptions}
         selectedBenchmarkModels={selectedBenchmarkModels}
         benchmarkMaxTasks={benchmarkMaxTasks}
@@ -395,6 +500,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         benchmarkRunning={benchmarkRunning}
         benchmarkError={benchmarkError}
         campaignActionId={campaignActionId}
+        corpusActionId={corpusActionId}
         onRunBenchmark={runBenchmark}
         onRunExternalBenchmark={runExternalBenchmark}
         onToggleBenchmarkModel={toggleBenchmarkModel}
@@ -402,6 +508,9 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onBenchmarkBudgetUsdChange={setBenchmarkBudgetUsd}
         onCancelBenchmarkCampaign={cancelBenchmarkCampaign}
         onRetryBenchmarkCampaign={retryBenchmarkCampaign}
+        onImportSampleTaskPack={importSampleTaskPack}
+        onUpdateTaskPackStatus={updateTaskPackStatus}
+        onValidateTaskPack={validateTaskPack}
       />
 
       {/* Overview cards */}
@@ -564,6 +673,8 @@ function CodingImprovementSection({
   benchmark,
   benchmarkCampaigns,
   benchmarkLeaderboard,
+  benchmarkTaskPacks,
+  benchmarkCorpusHealth,
   benchmarkModelOptions,
   selectedBenchmarkModels,
   benchmarkMaxTasks,
@@ -573,6 +684,7 @@ function CodingImprovementSection({
   benchmarkRunning,
   benchmarkError,
   campaignActionId,
+  corpusActionId,
   onRunBenchmark,
   onRunExternalBenchmark,
   onToggleBenchmarkModel,
@@ -580,11 +692,16 @@ function CodingImprovementSection({
   onBenchmarkBudgetUsdChange,
   onCancelBenchmarkCampaign,
   onRetryBenchmarkCampaign,
+  onImportSampleTaskPack,
+  onUpdateTaskPackStatus,
+  onValidateTaskPack,
 }: {
   coding: CodingImprovementDashboard | null
   benchmark: CodingBenchmarkCenterReport | null
   benchmarkCampaigns: CodingBenchmarkCampaign[]
   benchmarkLeaderboard: CodingBenchmarkLeaderboardReport | null
+  benchmarkTaskPacks: CodingBenchmarkTaskPack[]
+  benchmarkCorpusHealth: CodingBenchmarkCorpusHealthReport | null
   benchmarkModelOptions: BenchmarkModelOption[]
   selectedBenchmarkModels: string[]
   benchmarkMaxTasks: number
@@ -594,6 +711,7 @@ function CodingImprovementSection({
   benchmarkRunning: boolean
   benchmarkError: string | null
   campaignActionId: string | null
+  corpusActionId: string | null
   onRunBenchmark: () => void
   onRunExternalBenchmark: () => void
   onToggleBenchmarkModel: (key: string) => void
@@ -601,6 +719,9 @@ function CodingImprovementSection({
   onBenchmarkBudgetUsdChange: (value: string) => void
   onCancelBenchmarkCampaign: (campaignId: string) => void
   onRetryBenchmarkCampaign: (campaignId: string) => void
+  onImportSampleTaskPack: () => void
+  onUpdateTaskPackStatus: (pack: CodingBenchmarkTaskPack, status: string) => void
+  onValidateTaskPack: (pack: CodingBenchmarkTaskPack) => void
 }) {
   const { t } = useTranslation()
   const overview = coding?.overview
@@ -730,6 +851,15 @@ function CodingImprovementSection({
         onBudgetUsdChange={onBenchmarkBudgetUsdChange}
         onCancelCampaign={onCancelBenchmarkCampaign}
         onRetryCampaign={onRetryBenchmarkCampaign}
+      />
+
+      <BenchmarkCorpusPanel
+        health={benchmarkCorpusHealth}
+        packs={benchmarkTaskPacks}
+        actionId={corpusActionId}
+        onImportSample={onImportSampleTaskPack}
+        onUpdateStatus={onUpdateTaskPackStatus}
+        onValidate={onValidateTaskPack}
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -942,6 +1072,241 @@ function CodingImprovementSection({
         </div>
       </div>
     </section>
+  )
+}
+
+function BenchmarkCorpusPanel({
+  health,
+  packs,
+  actionId,
+  onImportSample,
+  onUpdateStatus,
+  onValidate,
+}: {
+  health: CodingBenchmarkCorpusHealthReport | null
+  packs: CodingBenchmarkTaskPack[]
+  actionId: string | null
+  onImportSample: () => void
+  onUpdateStatus: (pack: CodingBenchmarkTaskPack, status: string) => void
+  onValidate: (pack: CodingBenchmarkTaskPack) => void
+}) {
+  const { t } = useTranslation()
+  const attentionChecks =
+    health?.checks.filter((check) => check.status !== "passed").slice(0, 4) ?? []
+  const visiblePacks = packs.slice(0, 6)
+
+  return (
+    <div className="border border-border/60 rounded-lg p-4 min-w-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("dashboard.learning.benchmarkCorpus", {
+              defaultValue: "Task corpus",
+            })}
+          </h4>
+          <span className={`rounded px-2 py-1 text-[10px] font-medium ${releaseGateTone(health?.status)}`}>
+            {health?.status ?? "loading"}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5"
+          onClick={onImportSample}
+          disabled={actionId === "import"}
+          title={t("dashboard.learning.importSampleTaskPack", {
+            defaultValue: "Import sample task pack",
+          })}
+        >
+          {actionId === "import" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+          <span className="text-xs">
+            {t("dashboard.learning.importSample", {
+              defaultValue: "Import sample",
+            })}
+          </span>
+        </Button>
+      </div>
+
+      {health ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            <MetricPill label="PK" value={`${health.activePacks}/${health.packs}`} tone={health.activePacks > 0 ? "accent" : "muted"} />
+            <MetricPill label="TS" value={`${health.activeTasks}/${health.tasks}`} tone={health.activeTasks > 0 ? "accent" : "muted"} />
+            <MetricPill label="DR" value={health.draftTasks} />
+            <MetricPill label="ST" value={health.staleTasks.length} tone={health.staleTasks.length > 0 ? "warn" : "muted"} />
+            <MetricPill label="DP" value={health.duplicateTasks.length} tone={health.duplicateTasks.length > 0 ? "warn" : "muted"} />
+            <MetricPill label="RG" value={health.gamingRiskTasks.length} tone={health.gamingRiskTasks.length > 0 ? "warn" : "muted"} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(220px,0.75fr)]">
+            <div className="space-y-2 min-w-0">
+              {visiblePacks.length ? (
+                visiblePacks.map((pack) => (
+                  <BenchmarkTaskPackRow
+                    key={`${pack.packId}@${pack.version}`}
+                    pack={pack}
+                    busyAction={actionId}
+                    onUpdateStatus={onUpdateStatus}
+                    onValidate={onValidate}
+                  />
+                ))
+              ) : (
+                <EmptyLine
+                  label={t("dashboard.learning.noTaskPacks", {
+                    defaultValue: "No task packs",
+                  })}
+                />
+              )}
+            </div>
+
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {health.byTaskType.slice(0, 5).map((bucket) => (
+                  <span
+                    key={bucket.key}
+                    className="max-w-full truncate rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    title={bucket.key}
+                  >
+                    {bucket.key}:{bucket.count}
+                  </span>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {attentionChecks.length ? (
+                  attentionChecks.map((check) => (
+                    <span
+                      key={check.name}
+                      className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] ${releaseGateCheckTone(check.status)}`}
+                      title={`${check.expected} · ${check.actual}`}
+                    >
+                      {check.name}: {check.actual}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-[10px] text-muted-foreground">
+                    {t("dashboard.learning.corpusClean", {
+                      defaultValue: "Corpus checks passed",
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <EmptyLine
+          label={t("dashboard.learning.corpusLoading", {
+            defaultValue: "Loading corpus",
+          })}
+        />
+      )}
+    </div>
+  )
+}
+
+function BenchmarkTaskPackRow({
+  pack,
+  busyAction,
+  onUpdateStatus,
+  onValidate,
+}: {
+  pack: CodingBenchmarkTaskPack
+  busyAction: string | null
+  onUpdateStatus: (pack: CodingBenchmarkTaskPack, status: string) => void
+  onValidate: (pack: CodingBenchmarkTaskPack) => void
+}) {
+  const { t } = useTranslation()
+  const activeTasks = pack.tasks.filter((task) => task.status === "active").length
+  const riskTasks = pack.tasks.filter((task) => task.riskFlags.length > 0).length
+  const baseKey = `${pack.packId}@${pack.version}`
+  const validating = busyAction === `${baseKey}:validate`
+  const activating = busyAction === `${baseKey}:active`
+  const archiving = busyAction === `${baseKey}:archived`
+
+  return (
+    <div className="rounded border border-border/40 p-2.5 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded px-1.5 py-0.5 text-[10px] ${releaseGateTone(pack.status === "active" ? "passed" : pack.status === "archived" ? "failed" : "insufficient_data")}`}>
+          {pack.status}
+        </span>
+        <span className="min-w-0 max-w-[280px] truncate font-medium">
+          {pack.name}
+        </span>
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {pack.packId}@{pack.version}
+        </span>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+          <MetricPill label="TS" value={`${activeTasks}/${pack.tasks.length}`} tone={activeTasks > 0 ? "accent" : "muted"} />
+          <MetricPill label="RG" value={riskTasks} tone={riskTasks > 0 ? "warn" : "muted"} />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-1.5"
+            onClick={() => onValidate(pack)}
+            disabled={Boolean(busyAction)}
+            title={t("dashboard.learning.validateTaskPack", {
+              defaultValue: "Validate task pack",
+            })}
+          >
+            {validating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileCheck2 className="h-3.5 w-3.5" />}
+          </Button>
+          {pack.status !== "active" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5"
+              onClick={() => onUpdateStatus(pack, "active")}
+              disabled={Boolean(busyAction)}
+              title={t("dashboard.learning.activateTaskPack", {
+                defaultValue: "Activate task pack",
+              })}
+            >
+              {activating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            </Button>
+          )}
+          {pack.status !== "archived" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5 text-muted-foreground hover:text-amber-700 dark:hover:text-amber-300"
+              onClick={() => onUpdateStatus(pack, "archived")}
+              disabled={Boolean(busyAction)}
+              title={t("dashboard.learning.archiveTaskPack", {
+                defaultValue: "Archive task pack",
+              })}
+            >
+              {archiving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <span className="rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {pack.sourceKind}
+        </span>
+        <span className="max-w-full truncate rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {pack.redactionStatus}
+        </span>
+        {pack.tasks.slice(0, 4).map((task) => (
+          <span
+            key={`${task.taskId}@${task.version}`}
+            className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] ${
+              task.status === "active"
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : "bg-secondary/40 text-muted-foreground"
+            }`}
+            title={`${task.taskType} · ${task.difficulty}`}
+          >
+            {task.taskId}@{task.version}
+          </span>
+        ))}
+        {pack.tasks.length > 4 && (
+          <span className="rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            +{pack.tasks.length - 4}
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1668,6 +2033,126 @@ function releaseGateTone(status?: string | null): string {
       return "bg-amber-500/10 text-amber-700 dark:text-amber-300"
     default:
       return "bg-secondary/40 text-muted-foreground"
+  }
+}
+
+function sampleBenchmarkTaskPackManifest(): CodingBenchmarkTaskPackManifest {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
+  const calibratedAt = new Date().toISOString()
+  return {
+    packId: "sample-real-project-regression",
+    version: `v${stamp}`,
+    name: "Sample real project regression pack",
+    description: "Curated sample manifest for benchmark corpus management.",
+    status: "draft",
+    sourceKind: "fixture_repo",
+    sourceUri: "local://hope-agent/examples/benchmark-corpus/sample-real-project-regression",
+    repoTemplate: "fixture://react-rust-desktop-app",
+    licenseNote: "Synthetic sample manifest bundled for local corpus validation.",
+    privacyNote: "No user repository files are read or uploaded by this import.",
+    redactionStatus: "not_required",
+    tasks: [
+      {
+        taskId: "SAMPLE-BUGFIX-001",
+        version: "v1",
+        title: "Repair stale async benchmark status rendering",
+        status: "active",
+        taskType: "bugfix",
+        difficulty: "medium",
+        language: "typescript",
+        framework: "react",
+        sourceUri: "local://hope-agent/examples/benchmark-corpus/sample-real-project-regression/issues/bugfix-001",
+        repoTemplate: "fixture://react-rust-desktop-app",
+        tags: ["dashboard", "async-state"],
+        successCriteria: [
+          "Running and completed states render without stale action buttons.",
+          "The UI keeps campaign status, item counts and retry action in sync after reload.",
+        ],
+        validationCommands: ["pnpm typecheck"],
+        allowedPaths: ["src/components/dashboard/**", "src/lib/**"],
+        forbiddenPaths: ["src-tauri/**", "crates/**"],
+        calibrationNotes: ["Calibrated from dashboard state-management regressions."],
+        calibratedAt,
+        licenseNote: "Synthetic local fixture.",
+        privacyNote: "No private source content.",
+        redactionStatus: "not_required",
+      },
+      {
+        taskId: "SAMPLE-FEATURE-002",
+        version: "v1",
+        title: "Add a compact corpus health summary",
+        status: "active",
+        taskType: "feature",
+        difficulty: "medium",
+        language: "typescript",
+        framework: "react",
+        sourceUri: "local://hope-agent/examples/benchmark-corpus/sample-real-project-regression/issues/feature-002",
+        repoTemplate: "fixture://react-rust-desktop-app",
+        tags: ["benchmark", "corpus", "dashboard"],
+        successCriteria: [
+          "Corpus health shows pack count, active task count and stale/risk signals.",
+          "The summary remains readable with empty, warning and passing states.",
+        ],
+        validationCommands: ["pnpm typecheck"],
+        allowedPaths: ["src/components/dashboard/**", "src/lib/transport.ts"],
+        forbiddenPaths: ["crates/ha-core/tests/**"],
+        calibrationNotes: ["Covers product-facing benchmark corpus visibility."],
+        calibratedAt,
+        licenseNote: "Synthetic local fixture.",
+        privacyNote: "No private source content.",
+        redactionStatus: "not_required",
+      },
+      {
+        taskId: "SAMPLE-REFACTOR-003",
+        version: "v1",
+        title: "Separate benchmark validation policy from runner state",
+        status: "active",
+        taskType: "refactor",
+        difficulty: "hard",
+        language: "rust",
+        framework: "ha-core",
+        sourceUri: "local://hope-agent/examples/benchmark-corpus/sample-real-project-regression/issues/refactor-003",
+        repoTemplate: "fixture://react-rust-desktop-app",
+        tags: ["rust", "benchmark", "validation"],
+        successCriteria: [
+          "Validation is deterministic and does not execute provider or project commands.",
+          "Activation fails closed when active tasks lack source, success criteria or validation commands.",
+        ],
+        validationCommands: ["cargo check -p ha-core --locked"],
+        allowedPaths: ["crates/ha-core/src/coding_improvement.rs"],
+        forbiddenPaths: ["src-tauri/**", "src/**"],
+        calibrationNotes: ["Calibrated around owner-plane benchmark registry invariants."],
+        calibratedAt,
+        licenseNote: "Synthetic local fixture.",
+        privacyNote: "No private source content.",
+        redactionStatus: "not_required",
+      },
+      {
+        taskId: "SAMPLE-I18N-004",
+        version: "v1",
+        title: "Keep dashboard fallback labels deterministic",
+        status: "active",
+        taskType: "i18n",
+        difficulty: "easy",
+        language: "typescript",
+        framework: "i18next",
+        sourceUri: "local://hope-agent/examples/benchmark-corpus/sample-real-project-regression/issues/i18n-004",
+        repoTemplate: "fixture://react-rust-desktop-app",
+        tags: ["i18n", "dashboard"],
+        successCriteria: [
+          "New UI strings use i18n keys with stable default values.",
+          "No visible label overflows compact dashboard controls.",
+        ],
+        validationCommands: ["pnpm typecheck"],
+        allowedPaths: ["src/components/dashboard/**", "src/i18n/**"],
+        forbiddenPaths: ["crates/**"],
+        calibrationNotes: ["Covers non-code-facing product polish tasks."],
+        calibratedAt,
+        licenseNote: "Synthetic local fixture.",
+        privacyNote: "No private source content.",
+        redactionStatus: "not_required",
+      },
+    ],
   }
 }
 

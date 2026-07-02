@@ -1715,6 +1715,157 @@ export interface CodingBenchmarkLeaderboardReport {
   checks: CodingBenchmarkCenterCheck[];
 }
 
+export interface CodingBenchmarkTaskPackTaskManifest {
+  taskId: string;
+  version: string;
+  title: string;
+  status?: string | null;
+  taskType: string;
+  difficulty: string;
+  language?: string | null;
+  framework?: string | null;
+  sourceUri?: string | null;
+  repoTemplate?: string | null;
+  tags?: string[];
+  successCriteria?: string[];
+  validationCommands?: string[];
+  allowedPaths?: string[];
+  forbiddenPaths?: string[];
+  calibrationNotes?: string[];
+  calibratedAt?: string | null;
+  licenseNote?: string | null;
+  privacyNote?: string | null;
+  redactionStatus?: string | null;
+}
+
+export interface CodingBenchmarkTaskPackManifest {
+  packId: string;
+  version: string;
+  name: string;
+  description?: string | null;
+  status?: string | null;
+  sourceKind: string;
+  sourceUri?: string | null;
+  repoTemplate?: string | null;
+  licenseNote: string;
+  privacyNote: string;
+  redactionStatus: string;
+  tasks: CodingBenchmarkTaskPackTaskManifest[];
+}
+
+export interface CodingBenchmarkTaskPackImportInput {
+  manifest: CodingBenchmarkTaskPackManifest;
+  explicitImportConsent: boolean;
+  importedFrom?: string | null;
+}
+
+export interface CodingBenchmarkTaskPackListInput {
+  status?: string | null;
+  includeArchived?: boolean;
+  limit?: number | null;
+}
+
+export interface CodingBenchmarkTaskPackStatusInput {
+  packId: string;
+  version: string;
+  status: string;
+}
+
+export interface CodingBenchmarkTaskPackValidateInput {
+  packId: string;
+  version: string;
+}
+
+export interface CodingBenchmarkCorpusHealthInput {
+  staleAfterDays?: number | null;
+}
+
+export interface CodingBenchmarkTaskPackTask {
+  id: string;
+  packId: string;
+  packVersion: string;
+  taskId: string;
+  version: string;
+  title: string;
+  status: string;
+  taskType: string;
+  difficulty: string;
+  language?: string | null;
+  framework?: string | null;
+  sourceUri?: string | null;
+  repoTemplate?: string | null;
+  tags: string[];
+  successCriteria: string[];
+  validationCommands: string[];
+  allowedPaths: string[];
+  forbiddenPaths: string[];
+  calibrationNotes: string[];
+  calibratedAt?: string | null;
+  licenseNote?: string | null;
+  privacyNote?: string | null;
+  redactionStatus: string;
+  riskFlags: string[];
+  fingerprint: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CodingBenchmarkTaskPack {
+  id: string;
+  packId: string;
+  version: string;
+  name: string;
+  description?: string | null;
+  status: string;
+  sourceKind: string;
+  sourceUri?: string | null;
+  repoTemplate?: string | null;
+  licenseNote: string;
+  privacyNote: string;
+  redactionStatus: string;
+  importedFrom?: string | null;
+  tasks: CodingBenchmarkTaskPackTask[];
+  createdAt: string;
+  updatedAt: string;
+  activatedAt?: string | null;
+  archivedAt?: string | null;
+}
+
+export interface CodingBenchmarkTaskPackValidationReport {
+  generatedAt: string;
+  status: string;
+  packId: string;
+  version: string;
+  checks: CodingBenchmarkCenterCheck[];
+  warnings: string[];
+}
+
+export interface CodingBenchmarkCorpusDuplicate {
+  fingerprint: string;
+  tasks: string[];
+}
+
+export interface CodingBenchmarkCorpusHealthReport {
+  generatedAt: string;
+  status: string;
+  staleAfterDays: number;
+  packs: number;
+  activePacks: number;
+  draftPacks: number;
+  archivedPacks: number;
+  tasks: number;
+  activeTasks: number;
+  draftTasks: number;
+  archivedTasks: number;
+  byDifficulty: CodingMetricBucket[];
+  byTaskType: CodingMetricBucket[];
+  byLanguage: CodingMetricBucket[];
+  staleTasks: string[];
+  duplicateTasks: CodingBenchmarkCorpusDuplicate[];
+  gamingRiskTasks: string[];
+  checks: CodingBenchmarkCenterCheck[];
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

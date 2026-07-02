@@ -98,7 +98,7 @@ Phase 5.10 Learning Generalization Gate（已完成）
 Phase 6.1  Benchmark Run Center v1（已完成）
 Phase 6.2  Benchmark Campaign Runner（已完成）
 Phase 6.3  Cross-model Comparison & Leaderboard（已完成）
-Phase 6.4  Real Task Corpus Expansion（待做）
+Phase 6.4  Real Task Corpus Expansion（已完成）
 Phase 6.5  Benchmark Report Export（待做）
 Phase 6.6  Continuous Benchmark Gate & Improvement Backlog（待做）
 Phase 7.1  Domain Workflow Registry（待做）

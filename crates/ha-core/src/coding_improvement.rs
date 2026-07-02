@@ -56,6 +56,11 @@ const MAX_BENCHMARK_CAMPAIGN_MODELS: usize = 16;
 const DEFAULT_BENCHMARK_LEADERBOARD_LIMIT: usize = 12;
 const MAX_BENCHMARK_LEADERBOARD_LIMIT: usize = 50;
 const DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS: usize = 1;
+const DEFAULT_BENCHMARK_CORPUS_LIMIT: usize = 30;
+const MAX_BENCHMARK_CORPUS_LIMIT: usize = 100;
+const MAX_BENCHMARK_CORPUS_TASKS: usize = 500;
+const DEFAULT_BENCHMARK_CORPUS_STALE_DAYS: u32 = 90;
+const MAX_BENCHMARK_CORPUS_STALE_DAYS: u32 = 365;
 const MAX_SCOPE_SESSIONS: usize = 200;
 const MAX_CONTENT_PREVIEW_BYTES: usize = 12 * 1024;
 const MAX_DISTILLATION_SESSIONS: usize = 12;
@@ -1250,6 +1255,220 @@ pub struct CodingBenchmarkLeaderboardReport {
     pub checks: Vec<CodingBenchmarkCenterCheck>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackTaskManifest {
+    pub task_id: String,
+    pub version: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    pub task_type: String,
+    pub difficulty: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub framework: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_template: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub success_criteria: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forbidden_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration_notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibrated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub privacy_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackManifest {
+    pub pack_id: String,
+    pub version: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    pub source_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_template: Option<String>,
+    pub license_note: String,
+    pub privacy_note: String,
+    pub redaction_status: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<CodingBenchmarkTaskPackTaskManifest>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackImportInput {
+    pub manifest: CodingBenchmarkTaskPackManifest,
+    #[serde(default)]
+    pub explicit_import_consent: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackListInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackStatusInput {
+    pub pack_id: String,
+    pub version: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackValidateInput {
+    pub pack_id: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCorpusHealthInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackTask {
+    pub id: String,
+    pub pack_id: String,
+    pub pack_version: String,
+    pub task_id: String,
+    pub version: String,
+    pub title: String,
+    pub status: String,
+    pub task_type: String,
+    pub difficulty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub framework: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_template: Option<String>,
+    pub tags: Vec<String>,
+    pub success_criteria: Vec<String>,
+    pub validation_commands: Vec<String>,
+    pub allowed_paths: Vec<String>,
+    pub forbidden_paths: Vec<String>,
+    pub calibration_notes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibrated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license_note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_note: Option<String>,
+    pub redaction_status: String,
+    pub risk_flags: Vec<String>,
+    pub fingerprint: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPack {
+    pub id: String,
+    pub pack_id: String,
+    pub version: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub status: String,
+    pub source_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_template: Option<String>,
+    pub license_note: String,
+    pub privacy_note: String,
+    pub redaction_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    pub tasks: Vec<CodingBenchmarkTaskPackTask>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkTaskPackValidationReport {
+    pub generated_at: String,
+    pub status: String,
+    pub pack_id: String,
+    pub version: String,
+    pub checks: Vec<CodingBenchmarkCenterCheck>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCorpusDuplicate {
+    pub fingerprint: String,
+    pub tasks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCorpusHealthReport {
+    pub generated_at: String,
+    pub status: String,
+    pub stale_after_days: u32,
+    pub packs: usize,
+    pub active_packs: usize,
+    pub draft_packs: usize,
+    pub archived_packs: usize,
+    pub tasks: usize,
+    pub active_tasks: usize,
+    pub draft_tasks: usize,
+    pub archived_tasks: usize,
+    pub by_difficulty: Vec<CodingMetricBucket>,
+    pub by_task_type: Vec<CodingMetricBucket>,
+    pub by_language: Vec<CodingMetricBucket>,
+    pub stale_tasks: Vec<String>,
+    pub duplicate_tasks: Vec<CodingBenchmarkCorpusDuplicate>,
+    pub gaming_risk_tasks: Vec<String>,
+    pub checks: Vec<CodingBenchmarkCenterCheck>,
+}
+
 struct ReportScope {
     session_id: String,
     project_id: Option<String>,
@@ -1550,6 +1769,69 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_coding_benchmark_campaign_items_campaign
             ON coding_benchmark_campaign_items(campaign_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_task_packs (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            pack_version TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_uri TEXT,
+            repo_template TEXT,
+            license_note TEXT NOT NULL,
+            privacy_note TEXT NOT NULL,
+            redaction_status TEXT NOT NULL,
+            imported_from TEXT,
+            manifest_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            activated_at TEXT,
+            archived_at TEXT,
+            UNIQUE(pack_id, pack_version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_task_packs_status
+            ON coding_benchmark_task_packs(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_task_pack_tasks (
+            id TEXT PRIMARY KEY,
+            pack_row_id TEXT NOT NULL,
+            pack_id TEXT NOT NULL,
+            pack_version TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            task_version TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            task_type TEXT NOT NULL,
+            difficulty TEXT NOT NULL,
+            language TEXT,
+            framework TEXT,
+            source_uri TEXT,
+            repo_template TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            success_criteria_json TEXT NOT NULL DEFAULT '[]',
+            validation_commands_json TEXT NOT NULL DEFAULT '[]',
+            allowed_paths_json TEXT NOT NULL DEFAULT '[]',
+            forbidden_paths_json TEXT NOT NULL DEFAULT '[]',
+            calibration_notes_json TEXT NOT NULL DEFAULT '[]',
+            calibrated_at TEXT,
+            license_note TEXT,
+            privacy_note TEXT,
+            redaction_status TEXT NOT NULL,
+            risk_flags_json TEXT NOT NULL DEFAULT '[]',
+            fingerprint TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (pack_row_id) REFERENCES coding_benchmark_task_packs(id) ON DELETE CASCADE,
+            UNIQUE(pack_id, pack_version, task_id, task_version)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_task_pack_tasks_pack
+            ON coding_benchmark_task_pack_tasks(pack_row_id, status, task_type);
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_task_pack_tasks_fingerprint
+            ON coding_benchmark_task_pack_tasks(fingerprint);
 
         CREATE TABLE IF NOT EXISTS coding_improvement_proposals (
             id TEXT PRIMARY KEY,
@@ -3007,6 +3289,521 @@ impl SessionDB {
             input.min_items,
         )?;
         self.build_benchmark_leaderboard(scope)
+    }
+
+    pub fn import_benchmark_task_pack(
+        &self,
+        input: CodingBenchmarkTaskPackImportInput,
+    ) -> Result<CodingBenchmarkTaskPack> {
+        if !input.explicit_import_consent {
+            bail!(
+                "benchmark task pack import requires explicitImportConsent=true; Hope will not implicitly scan or upload private repositories"
+            );
+        }
+        let manifest = normalize_benchmark_task_pack_manifest(input.manifest)?;
+        let validation = validate_benchmark_task_pack_manifest(&manifest);
+        if validation.status == "failed" {
+            let failed = validation
+                .checks
+                .iter()
+                .filter(|check| check.status == "failed")
+                .map(|check| check.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("benchmark task pack manifest failed validation: {failed}");
+        }
+
+        let now = now_rfc3339();
+        let pack_row_id = format!("cbtp_{}", uuid::Uuid::new_v4().simple());
+        let status = normalize_benchmark_pack_status(manifest.status.as_deref())?;
+        let imported_from = input
+            .imported_from
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let manifest_json = serde_json::to_string(&manifest)?;
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO coding_benchmark_task_packs (
+                id, pack_id, pack_version, name, description, status, source_kind,
+                source_uri, repo_template, license_note, privacy_note, redaction_status,
+                imported_from, manifest_json, created_at, updated_at, activated_at, archived_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?15, ?16, ?17
+             )",
+            params![
+                pack_row_id,
+                manifest.pack_id,
+                manifest.version,
+                manifest.name,
+                manifest.description,
+                status,
+                manifest.source_kind,
+                manifest.source_uri,
+                manifest.repo_template,
+                manifest.license_note,
+                manifest.privacy_note,
+                manifest.redaction_status,
+                imported_from,
+                manifest_json,
+                now,
+                if status == "active" {
+                    Some(now.clone())
+                } else {
+                    None
+                },
+                if status == "archived" {
+                    Some(now.clone())
+                } else {
+                    None
+                },
+            ],
+        )
+        .map_err(|err| {
+            anyhow!(
+                "failed to import benchmark task pack {}@{}: {err}",
+                manifest.pack_id,
+                manifest.version
+            )
+        })?;
+
+        for task in &manifest.tasks {
+            let task_status = normalize_benchmark_task_status(task.status.as_deref())?;
+            let risk_flags = benchmark_task_risk_flags(task);
+            let fingerprint = benchmark_task_fingerprint(task)?;
+            tx.execute(
+                "INSERT INTO coding_benchmark_task_pack_tasks (
+                    id, pack_row_id, pack_id, pack_version, task_id, task_version,
+                    title, status, task_type, difficulty, language, framework,
+                    source_uri, repo_template, tags_json, success_criteria_json,
+                    validation_commands_json, allowed_paths_json, forbidden_paths_json,
+                    calibration_notes_json, calibrated_at, license_note, privacy_note,
+                    redaction_status, risk_flags_json, fingerprint, created_at, updated_at
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
+                    ?23, ?24, ?25, ?26, ?27, ?27
+                 )",
+                params![
+                    format!("cbtpt_{}", uuid::Uuid::new_v4().simple()),
+                    pack_row_id,
+                    manifest.pack_id,
+                    manifest.version,
+                    task.task_id,
+                    task.version,
+                    task.title,
+                    task_status,
+                    task.task_type,
+                    task.difficulty,
+                    task.language,
+                    task.framework,
+                    task.source_uri,
+                    task.repo_template,
+                    serde_json::to_string(&task.tags)?,
+                    serde_json::to_string(&task.success_criteria)?,
+                    serde_json::to_string(&task.validation_commands)?,
+                    serde_json::to_string(&task.allowed_paths)?,
+                    serde_json::to_string(&task.forbidden_paths)?,
+                    serde_json::to_string(&task.calibration_notes)?,
+                    task.calibrated_at,
+                    task.license_note,
+                    task.privacy_note,
+                    task.redaction_status
+                        .clone()
+                        .unwrap_or_else(|| manifest.redaction_status.clone()),
+                    serde_json::to_string(&risk_flags)?,
+                    fingerprint,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        drop(conn);
+
+        self.get_benchmark_task_pack(&manifest.pack_id, &manifest.version)?
+            .ok_or_else(|| anyhow!("benchmark task pack vanished after import"))
+    }
+
+    pub fn list_benchmark_task_packs(
+        &self,
+        input: CodingBenchmarkTaskPackListInput,
+    ) -> Result<Vec<CodingBenchmarkTaskPack>> {
+        let status = input
+            .status
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_ascii_lowercase);
+        if let Some(status) = status.as_deref() {
+            normalize_benchmark_pack_status(Some(status))?;
+        }
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_BENCHMARK_CORPUS_LIMIT)
+            .clamp(1, MAX_BENCHMARK_CORPUS_LIMIT);
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(status) = status.as_ref() {
+            clauses.push("status = ?".to_string());
+            params.push(status.clone());
+        } else if !input.include_archived {
+            clauses.push("status != 'archived'".to_string());
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT id FROM coding_benchmark_task_packs
+             {where_sql}
+             ORDER BY updated_at DESC, pack_id ASC, pack_version DESC
+             LIMIT {limit}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let ids = stmt
+            .query_map(params_from_iter(params.iter()), |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        drop(conn);
+
+        ids.into_iter()
+            .filter_map(|id| self.get_benchmark_task_pack_by_row_id(&id).transpose())
+            .collect()
+    }
+
+    pub fn get_benchmark_task_pack(
+        &self,
+        pack_id: &str,
+        version: &str,
+    ) -> Result<Option<CodingBenchmarkTaskPack>> {
+        let pack_id = pack_id.trim();
+        let version = version.trim();
+        if pack_id.is_empty() || version.is_empty() {
+            bail!("benchmark task pack id and version must not be empty");
+        }
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let row_id = conn
+            .query_row(
+                "SELECT id FROM coding_benchmark_task_packs
+                 WHERE pack_id = ?1 AND pack_version = ?2",
+                params![pack_id, version],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        drop(conn);
+        match row_id {
+            Some(id) => self.get_benchmark_task_pack_by_row_id(&id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_benchmark_task_pack_status(
+        &self,
+        input: CodingBenchmarkTaskPackStatusInput,
+    ) -> Result<CodingBenchmarkTaskPack> {
+        let pack_id = input.pack_id.trim().to_string();
+        let version = input.version.trim().to_string();
+        if pack_id.is_empty() || version.is_empty() {
+            bail!("benchmark task pack id and version must not be empty");
+        }
+        let status = normalize_benchmark_pack_status(Some(&input.status))?;
+        if status == "active" {
+            let validation =
+                self.validate_benchmark_task_pack(CodingBenchmarkTaskPackValidateInput {
+                    pack_id: pack_id.clone(),
+                    version: version.clone(),
+                })?;
+            if validation.status == "failed" {
+                bail!("cannot activate benchmark task pack with failed validation");
+            }
+        }
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let changed = conn.execute(
+            "UPDATE coding_benchmark_task_packs
+             SET status = ?3,
+                 updated_at = ?4,
+                 activated_at = CASE WHEN ?3 = 'active' THEN ?4 ELSE activated_at END,
+                 archived_at = CASE WHEN ?3 = 'archived' THEN ?4 ELSE NULL END
+             WHERE pack_id = ?1 AND pack_version = ?2",
+            params![pack_id, version, status, now],
+        )?;
+        drop(conn);
+        if changed == 0 {
+            bail!("benchmark task pack not found: {pack_id}@{version}");
+        }
+        self.get_benchmark_task_pack(&pack_id, &version)?
+            .ok_or_else(|| anyhow!("benchmark task pack not found after status update"))
+    }
+
+    pub fn validate_benchmark_task_pack(
+        &self,
+        input: CodingBenchmarkTaskPackValidateInput,
+    ) -> Result<CodingBenchmarkTaskPackValidationReport> {
+        let pack = self
+            .get_benchmark_task_pack(&input.pack_id, &input.version)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "benchmark task pack not found: {}@{}",
+                    input.pack_id,
+                    input.version
+                )
+            })?;
+        Ok(validate_benchmark_task_pack(&pack))
+    }
+
+    pub fn get_benchmark_corpus_health(
+        &self,
+        input: CodingBenchmarkCorpusHealthInput,
+    ) -> Result<CodingBenchmarkCorpusHealthReport> {
+        let stale_after_days = input
+            .stale_after_days
+            .unwrap_or(DEFAULT_BENCHMARK_CORPUS_STALE_DAYS)
+            .clamp(1, MAX_BENCHMARK_CORPUS_STALE_DAYS);
+        let packs = self.list_benchmark_task_packs(CodingBenchmarkTaskPackListInput {
+            include_archived: true,
+            limit: Some(MAX_BENCHMARK_CORPUS_LIMIT),
+            ..Default::default()
+        })?;
+        let mut active_packs = 0usize;
+        let mut draft_packs = 0usize;
+        let mut archived_packs = 0usize;
+        let mut active_tasks = 0usize;
+        let mut draft_tasks = 0usize;
+        let mut archived_tasks = 0usize;
+        let mut difficulty_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut type_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut language_counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut fingerprint_tasks: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut stale_tasks = Vec::new();
+        let mut gaming_risk_tasks = Vec::new();
+        let stale_cutoff = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(stale_after_days as i64))
+            .unwrap_or_else(chrono::Utc::now);
+
+        for pack in &packs {
+            match pack.status.as_str() {
+                "active" => active_packs += 1,
+                "archived" => archived_packs += 1,
+                _ => draft_packs += 1,
+            }
+            for task in &pack.tasks {
+                let effective_active = pack.status == "active" && task.status == "active";
+                let effective_archived = pack.status == "archived" || task.status == "archived";
+                if effective_active {
+                    active_tasks += 1;
+                } else if effective_archived {
+                    archived_tasks += 1;
+                } else {
+                    draft_tasks += 1;
+                }
+                *difficulty_counts
+                    .entry(task.difficulty.clone())
+                    .or_default() += 1;
+                *type_counts.entry(task.task_type.clone()).or_default() += 1;
+                *language_counts
+                    .entry(
+                        task.language
+                            .clone()
+                            .unwrap_or_else(|| "unspecified".to_string()),
+                    )
+                    .or_default() += 1;
+                if effective_active {
+                    fingerprint_tasks
+                        .entry(task.fingerprint.clone())
+                        .or_default()
+                        .push(format!(
+                            "{}@{}:{}@{}",
+                            pack.pack_id, pack.version, task.task_id, task.version
+                        ));
+                    if task.risk_flags.iter().any(|flag| {
+                        matches!(
+                            flag.as_str(),
+                            "missing_validation" | "thin_success_criteria" | "wide_write_surface"
+                        )
+                    }) {
+                        gaming_risk_tasks.push(format!(
+                            "{}@{}:{}@{}",
+                            pack.pack_id, pack.version, task.task_id, task.version
+                        ));
+                    }
+                    let stale = task
+                        .calibrated_at
+                        .as_deref()
+                        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                        .map(|value| value.with_timezone(&chrono::Utc) < stale_cutoff)
+                        .unwrap_or(true);
+                    if stale {
+                        stale_tasks.push(format!(
+                            "{}@{}:{}@{}",
+                            pack.pack_id, pack.version, task.task_id, task.version
+                        ));
+                    }
+                }
+            }
+        }
+
+        let duplicate_tasks = fingerprint_tasks
+            .into_iter()
+            .filter(|(_, tasks)| tasks.len() > 1)
+            .map(|(fingerprint, tasks)| CodingBenchmarkCorpusDuplicate { fingerprint, tasks })
+            .collect::<Vec<_>>();
+        let mut checks = Vec::new();
+        push_benchmark_check(
+            &mut checks,
+            "task_pack_count",
+            if packs.is_empty() {
+                "insufficient_data"
+            } else {
+                "passed"
+            },
+            if packs.is_empty() { "advisory" } else { "info" },
+            "at least 1 imported task pack",
+            packs.len().to_string(),
+            "The corpus registry must contain explicit owner-imported packs before it can drive benchmark policy.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "active_task_count",
+            if active_tasks == 0 {
+                "insufficient_data"
+            } else {
+                "passed"
+            },
+            if active_tasks == 0 {
+                "advisory"
+            } else {
+                "info"
+            },
+            "at least 1 active task",
+            active_tasks.to_string(),
+            "Draft tasks stay visible for curation but do not count as active benchmark coverage.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "duplicate_tasks",
+            if duplicate_tasks.is_empty() {
+                "passed"
+            } else {
+                "failed"
+            },
+            if duplicate_tasks.is_empty() {
+                "info"
+            } else {
+                "warning"
+            },
+            "0 active duplicate task fingerprints",
+            duplicate_tasks.len().to_string(),
+            "Duplicate active tasks can make the benchmark easier to overfit.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "gaming_risk",
+            if gaming_risk_tasks.is_empty() {
+                "passed"
+            } else {
+                "failed"
+            },
+            if gaming_risk_tasks.is_empty() { "info" } else { "warning" },
+            "0 active tasks with fixture-gaming risk flags",
+            gaming_risk_tasks.len().to_string(),
+            "Active tasks need clear success criteria, validation commands, and bounded write surfaces.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "calibration_freshness",
+            if stale_tasks.is_empty() {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            if stale_tasks.is_empty() { "info" } else { "advisory" },
+            format!("all active tasks calibrated within {stale_after_days} days"),
+            stale_tasks.len().to_string(),
+            "Stale or never-calibrated active tasks should be manually reviewed before strict release gating.",
+        );
+        let status = if packs.is_empty() || active_tasks == 0 {
+            "insufficient_data"
+        } else if duplicate_tasks.is_empty() && gaming_risk_tasks.is_empty() {
+            "passed"
+        } else {
+            "failed"
+        }
+        .to_string();
+
+        Ok(CodingBenchmarkCorpusHealthReport {
+            generated_at: now_rfc3339(),
+            status,
+            stale_after_days,
+            packs: packs.len(),
+            active_packs,
+            draft_packs,
+            archived_packs,
+            tasks: active_tasks + draft_tasks + archived_tasks,
+            active_tasks,
+            draft_tasks,
+            archived_tasks,
+            by_difficulty: metric_buckets_from_counts(difficulty_counts),
+            by_task_type: metric_buckets_from_counts(type_counts),
+            by_language: metric_buckets_from_counts(language_counts),
+            stale_tasks,
+            duplicate_tasks,
+            gaming_risk_tasks,
+            checks,
+        })
+    }
+
+    fn get_benchmark_task_pack_by_row_id(
+        &self,
+        row_id: &str,
+    ) -> Result<Option<CodingBenchmarkTaskPack>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let pack = conn
+            .query_row(
+                "SELECT id, pack_id, pack_version, name, description, status, source_kind,
+                        source_uri, repo_template, license_note, privacy_note, redaction_status,
+                        imported_from, created_at, updated_at, activated_at, archived_at
+                 FROM coding_benchmark_task_packs
+                 WHERE id = ?1",
+                params![row_id],
+                coding_benchmark_task_pack_from_row,
+            )
+            .optional()?;
+        let Some(mut pack) = pack else {
+            return Ok(None);
+        };
+        pack.tasks = self.coding_benchmark_task_pack_tasks_locked(&conn, row_id)?;
+        Ok(Some(pack))
+    }
+
+    fn coding_benchmark_task_pack_tasks_locked(
+        &self,
+        conn: &Connection,
+        pack_row_id: &str,
+    ) -> Result<Vec<CodingBenchmarkTaskPackTask>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, pack_id, pack_version, task_id, task_version, title, status,
+                    task_type, difficulty, language, framework, source_uri, repo_template,
+                    tags_json, success_criteria_json, validation_commands_json,
+                    allowed_paths_json, forbidden_paths_json, calibration_notes_json,
+                    calibrated_at, license_note, privacy_note, redaction_status,
+                    risk_flags_json, fingerprint, created_at, updated_at
+             FROM coding_benchmark_task_pack_tasks
+             WHERE pack_row_id = ?1
+             ORDER BY task_id ASC, task_version DESC",
+        )?;
+        let rows = stmt.query_map(
+            params![pack_row_id],
+            coding_benchmark_task_pack_task_from_row,
+        )?;
+        collect_rows(rows)
     }
 
     fn coding_benchmark_campaign_items_locked(
@@ -6446,6 +7243,398 @@ fn f64_sort_key(value: Option<f64>) -> i64 {
         .unwrap_or(-1)
 }
 
+fn normalize_benchmark_task_pack_manifest(
+    manifest: CodingBenchmarkTaskPackManifest,
+) -> Result<CodingBenchmarkTaskPackManifest> {
+    let pack_id = normalized_required_field(&manifest.pack_id, "task pack id")?;
+    let version = normalized_required_field(&manifest.version, "task pack version")?;
+    let name = normalized_required_field(&manifest.name, "task pack name")?;
+    let source_kind = normalized_required_field(&manifest.source_kind, "task pack sourceKind")?;
+    let license_note = normalized_required_field(&manifest.license_note, "task pack licenseNote")?;
+    let privacy_note = normalized_required_field(&manifest.privacy_note, "task pack privacyNote")?;
+    let redaction_status = normalize_redaction_status(
+        Some(&manifest.redaction_status),
+        "task pack redactionStatus",
+    )?;
+    if manifest.tasks.len() > MAX_BENCHMARK_CORPUS_TASKS {
+        bail!(
+            "benchmark task pack has too many tasks: {} > {}",
+            manifest.tasks.len(),
+            MAX_BENCHMARK_CORPUS_TASKS
+        );
+    }
+    let mut tasks = Vec::with_capacity(manifest.tasks.len());
+    for task in manifest.tasks {
+        tasks.push(normalize_benchmark_task_manifest(task, &redaction_status)?);
+    }
+    Ok(CodingBenchmarkTaskPackManifest {
+        pack_id,
+        version,
+        name,
+        description: normalize_optional_string(manifest.description),
+        status: Some(normalize_benchmark_pack_status(manifest.status.as_deref())?),
+        source_kind,
+        source_uri: normalize_optional_string(manifest.source_uri),
+        repo_template: normalize_optional_string(manifest.repo_template),
+        license_note,
+        privacy_note,
+        redaction_status,
+        tasks,
+    })
+}
+
+fn normalize_benchmark_task_manifest(
+    task: CodingBenchmarkTaskPackTaskManifest,
+    default_redaction_status: &str,
+) -> Result<CodingBenchmarkTaskPackTaskManifest> {
+    let task_id = normalized_required_field(&task.task_id, "task id")?;
+    let version = normalized_required_field(&task.version, "task version")?;
+    let title = normalized_required_field(&task.title, "task title")?;
+    let task_type = normalized_required_field(&task.task_type, "task type")?;
+    let difficulty = normalized_required_field(&task.difficulty, "task difficulty")?;
+    let redaction_status = match task.redaction_status.as_deref() {
+        Some(value) if !value.trim().is_empty() => {
+            normalize_redaction_status(Some(value), "task redactionStatus")?
+        }
+        _ => default_redaction_status.to_string(),
+    };
+    Ok(CodingBenchmarkTaskPackTaskManifest {
+        task_id,
+        version,
+        title,
+        status: Some(normalize_benchmark_task_status(task.status.as_deref())?),
+        task_type,
+        difficulty,
+        language: normalize_optional_string(task.language),
+        framework: normalize_optional_string(task.framework),
+        source_uri: normalize_optional_string(task.source_uri),
+        repo_template: normalize_optional_string(task.repo_template),
+        tags: normalize_string_vec(task.tags),
+        success_criteria: normalize_string_vec(task.success_criteria),
+        validation_commands: normalize_string_vec(task.validation_commands),
+        allowed_paths: normalize_string_vec(task.allowed_paths),
+        forbidden_paths: normalize_string_vec(task.forbidden_paths),
+        calibration_notes: normalize_string_vec(task.calibration_notes),
+        calibrated_at: normalize_optional_string(task.calibrated_at),
+        license_note: normalize_optional_string(task.license_note),
+        privacy_note: normalize_optional_string(task.privacy_note),
+        redaction_status: Some(redaction_status),
+    })
+}
+
+fn normalize_benchmark_pack_status(status: Option<&str>) -> Result<String> {
+    let status = status.unwrap_or("draft").trim().to_ascii_lowercase();
+    match status.as_str() {
+        "" => Ok("draft".to_string()),
+        "draft" | "active" | "archived" => Ok(status),
+        other => bail!("unsupported benchmark task pack status: {other}"),
+    }
+}
+
+fn normalize_benchmark_task_status(status: Option<&str>) -> Result<String> {
+    let status = status.unwrap_or("draft").trim().to_ascii_lowercase();
+    match status.as_str() {
+        "" => Ok("draft".to_string()),
+        "draft" | "active" | "archived" => Ok(status),
+        other => bail!("unsupported benchmark task status: {other}"),
+    }
+}
+
+fn normalize_redaction_status(status: Option<&str>, field: &str) -> Result<String> {
+    let status = normalized_required_field(status.unwrap_or_default(), field)?.to_ascii_lowercase();
+    match status.as_str() {
+        "redacted" | "not_required" | "pending" => Ok(status),
+        other => bail!("unsupported {field}: {other}"),
+    }
+}
+
+fn normalized_required_field(value: &str, field: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("{field} must not be empty");
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_string_vec(values: Vec<String>) -> Vec<String> {
+    let mut out = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn validate_benchmark_task_pack_manifest(
+    manifest: &CodingBenchmarkTaskPackManifest,
+) -> CodingBenchmarkTaskPackValidationReport {
+    let mut checks = Vec::new();
+    let mut warnings = Vec::new();
+    push_benchmark_check(
+        &mut checks,
+        "pack_identity",
+        if manifest.pack_id.trim().is_empty()
+            || manifest.version.trim().is_empty()
+            || manifest.name.trim().is_empty()
+        {
+            "failed"
+        } else {
+            "passed"
+        },
+        "error",
+        "packId, version and name are present",
+        format!("{}@{}", manifest.pack_id, manifest.version),
+        "Task pack versions are immutable; a changed prompt, fixture, expected diff, or scorer schema must use a new version.",
+    );
+    let has_source = !manifest.source_kind.trim().is_empty()
+        && (manifest.source_uri.is_some() || manifest.repo_template.is_some());
+    push_benchmark_check(
+        &mut checks,
+        "source_traceability",
+        if has_source { "passed" } else { "failed" },
+        "error",
+        "sourceKind plus sourceUri or repoTemplate",
+        format!(
+            "sourceKind={}, sourceUri={}, repoTemplate={}",
+            manifest.source_kind,
+            manifest.source_uri.is_some(),
+            manifest.repo_template.is_some()
+        ),
+        "Imported real tasks must keep their origin visible for license, privacy and reproducibility review.",
+    );
+    let import_safe = !manifest.license_note.trim().is_empty()
+        && !manifest.privacy_note.trim().is_empty()
+        && matches!(
+            manifest.redaction_status.as_str(),
+            "redacted" | "not_required" | "pending"
+        );
+    push_benchmark_check(
+        &mut checks,
+        "import_safety",
+        if import_safe { "passed" } else { "failed" },
+        "error",
+        "licenseNote, privacyNote and redactionStatus recorded",
+        format!(
+            "license={}, privacy={}, redactionStatus={}",
+            !manifest.license_note.trim().is_empty(),
+            !manifest.privacy_note.trim().is_empty(),
+            manifest.redaction_status
+        ),
+        "Owner import records what is safe to store before any task can become benchmark evidence.",
+    );
+    let has_tasks = !manifest.tasks.is_empty();
+    push_benchmark_check(
+        &mut checks,
+        "task_count",
+        if has_tasks { "passed" } else { "failed" },
+        "error",
+        "at least 1 task",
+        manifest.tasks.len().to_string(),
+        "Empty task packs cannot improve benchmark coverage.",
+    );
+
+    let mut versions = BTreeSet::new();
+    let mut duplicate_versions = Vec::new();
+    let mut active_tasks = 0usize;
+    let mut active_quality_failures = Vec::new();
+    let mut risk_flags = Vec::new();
+    for task in &manifest.tasks {
+        let key = format!("{}@{}", task.task_id, task.version);
+        if !versions.insert(key.clone()) {
+            duplicate_versions.push(key.clone());
+        }
+        if task.status.as_deref().unwrap_or("draft") == "active" {
+            active_tasks += 1;
+            if task.success_criteria.is_empty()
+                || task.validation_commands.is_empty()
+                || (task.source_uri.is_none() && task.repo_template.is_none())
+                || task.redaction_status.as_deref().unwrap_or_default() == "pending"
+            {
+                active_quality_failures.push(key.clone());
+            }
+        }
+        let flags = benchmark_task_risk_flags(task);
+        if !flags.is_empty() {
+            if task.status.as_deref().unwrap_or("draft") == "active" {
+                risk_flags.push(format!("{key}:{}", flags.join("|")));
+            } else {
+                warnings.push(format!("draft_task_risk:{key}:{}", flags.join("|")));
+            }
+        }
+    }
+    push_benchmark_check(
+        &mut checks,
+        "task_version_uniqueness",
+        if duplicate_versions.is_empty() {
+            "passed"
+        } else {
+            "failed"
+        },
+        if duplicate_versions.is_empty() { "info" } else { "error" },
+        "no duplicate taskId@version inside pack",
+        duplicate_versions.len().to_string(),
+        "Task versioning must be explicit; importing the same task id/version twice would make history ambiguous.",
+    );
+    let pack_status = manifest.status.as_deref().unwrap_or("draft");
+    let needs_active_tasks = pack_status == "active";
+    push_benchmark_check(
+        &mut checks,
+        "active_task_presence",
+        if !needs_active_tasks || active_tasks > 0 {
+            "passed"
+        } else {
+            "failed"
+        },
+        if needs_active_tasks { "error" } else { "info" },
+        "active packs contain at least 1 active task",
+        active_tasks.to_string(),
+        "Draft tasks are useful for curation but do not count as active benchmark coverage.",
+    );
+    push_benchmark_check(
+        &mut checks,
+        "active_task_quality",
+        if active_quality_failures.is_empty() {
+            "passed"
+        } else {
+            "failed"
+        },
+        if active_quality_failures.is_empty() {
+            "info"
+        } else {
+            "error"
+        },
+        "every active task has source, criteria, validation and non-pending redaction",
+        active_quality_failures.len().to_string(),
+        "Active tasks must be reviewable and reproducible before they are allowed into gates or leaderboards.",
+    );
+    push_benchmark_check(
+        &mut checks,
+        "fixture_gaming_risk",
+        if risk_flags.is_empty() {
+            "passed"
+        } else {
+            "failed"
+        },
+        if risk_flags.is_empty() { "info" } else { "warning" },
+        "0 active task risk flags",
+        risk_flags.len().to_string(),
+        "Tasks with thin criteria, missing validation, or overly broad write surface are easy to overfit.",
+    );
+    warnings.extend(active_quality_failures);
+    warnings.extend(risk_flags);
+    let status = if checks.iter().any(|check| check.status == "failed") {
+        "failed"
+    } else {
+        "passed"
+    }
+    .to_string();
+    CodingBenchmarkTaskPackValidationReport {
+        generated_at: now_rfc3339(),
+        status,
+        pack_id: manifest.pack_id.clone(),
+        version: manifest.version.clone(),
+        checks,
+        warnings,
+    }
+}
+
+fn validate_benchmark_task_pack(
+    pack: &CodingBenchmarkTaskPack,
+) -> CodingBenchmarkTaskPackValidationReport {
+    let manifest = CodingBenchmarkTaskPackManifest {
+        pack_id: pack.pack_id.clone(),
+        version: pack.version.clone(),
+        name: pack.name.clone(),
+        description: pack.description.clone(),
+        status: Some(pack.status.clone()),
+        source_kind: pack.source_kind.clone(),
+        source_uri: pack.source_uri.clone(),
+        repo_template: pack.repo_template.clone(),
+        license_note: pack.license_note.clone(),
+        privacy_note: pack.privacy_note.clone(),
+        redaction_status: pack.redaction_status.clone(),
+        tasks: pack
+            .tasks
+            .iter()
+            .map(|task| CodingBenchmarkTaskPackTaskManifest {
+                task_id: task.task_id.clone(),
+                version: task.version.clone(),
+                title: task.title.clone(),
+                status: Some(task.status.clone()),
+                task_type: task.task_type.clone(),
+                difficulty: task.difficulty.clone(),
+                language: task.language.clone(),
+                framework: task.framework.clone(),
+                source_uri: task.source_uri.clone(),
+                repo_template: task.repo_template.clone(),
+                tags: task.tags.clone(),
+                success_criteria: task.success_criteria.clone(),
+                validation_commands: task.validation_commands.clone(),
+                allowed_paths: task.allowed_paths.clone(),
+                forbidden_paths: task.forbidden_paths.clone(),
+                calibration_notes: task.calibration_notes.clone(),
+                calibrated_at: task.calibrated_at.clone(),
+                license_note: task.license_note.clone(),
+                privacy_note: task.privacy_note.clone(),
+                redaction_status: Some(task.redaction_status.clone()),
+            })
+            .collect(),
+    };
+    validate_benchmark_task_pack_manifest(&manifest)
+}
+
+fn benchmark_task_risk_flags(task: &CodingBenchmarkTaskPackTaskManifest) -> Vec<String> {
+    let mut flags = Vec::new();
+    if task.success_criteria.len() < 2 {
+        flags.push("thin_success_criteria".to_string());
+    }
+    if task.validation_commands.is_empty() {
+        flags.push("missing_validation".to_string());
+    }
+    if task.allowed_paths.is_empty() && task.forbidden_paths.is_empty() {
+        flags.push("wide_write_surface".to_string());
+    }
+    if task.calibration_notes.is_empty() {
+        flags.push("missing_calibration_note".to_string());
+    }
+    flags
+}
+
+fn benchmark_task_fingerprint(task: &CodingBenchmarkTaskPackTaskManifest) -> Result<String> {
+    Ok(short_hash(&serde_json::to_string(&json!({
+        "title": &task.title,
+        "taskType": &task.task_type,
+        "difficulty": &task.difficulty,
+        "language": &task.language,
+        "framework": &task.framework,
+        "successCriteria": &task.success_criteria,
+        "validationCommands": &task.validation_commands,
+        "allowedPaths": &task.allowed_paths,
+        "forbiddenPaths": &task.forbidden_paths,
+    }))?))
+}
+
+fn metric_buckets_from_counts(counts: BTreeMap<String, usize>) -> Vec<CodingMetricBucket> {
+    counts
+        .into_iter()
+        .map(|(key, count)| CodingMetricBucket {
+            label: failure_label(&key).unwrap_or(&key).to_string(),
+            key,
+            count,
+        })
+        .collect()
+}
+
 fn normalize_benchmark_campaign_models(
     models: Vec<CodingBenchmarkCampaignModel>,
 ) -> Result<Vec<CodingBenchmarkCampaignModel>> {
@@ -6590,6 +7779,72 @@ fn coding_benchmark_campaign_item_from_row(
         started_at: row.get(13)?,
         finished_at: row.get(14)?,
         error: row.get(15)?,
+    })
+}
+
+fn coding_benchmark_task_pack_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkTaskPack> {
+    Ok(CodingBenchmarkTaskPack {
+        id: row.get(0)?,
+        pack_id: row.get(1)?,
+        version: row.get(2)?,
+        name: row.get(3)?,
+        description: row.get(4)?,
+        status: row.get(5)?,
+        source_kind: row.get(6)?,
+        source_uri: row.get(7)?,
+        repo_template: row.get(8)?,
+        license_note: row.get(9)?,
+        privacy_note: row.get(10)?,
+        redaction_status: row.get(11)?,
+        imported_from: row.get(12)?,
+        tasks: Vec::new(),
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        activated_at: row.get(15)?,
+        archived_at: row.get(16)?,
+    })
+}
+
+fn coding_benchmark_task_pack_task_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkTaskPackTask> {
+    let tags_json: String = row.get(13)?;
+    let success_criteria_json: String = row.get(14)?;
+    let validation_commands_json: String = row.get(15)?;
+    let allowed_paths_json: String = row.get(16)?;
+    let forbidden_paths_json: String = row.get(17)?;
+    let calibration_notes_json: String = row.get(18)?;
+    let risk_flags_json: String = row.get(23)?;
+    Ok(CodingBenchmarkTaskPackTask {
+        id: row.get(0)?,
+        pack_id: row.get(1)?,
+        pack_version: row.get(2)?,
+        task_id: row.get(3)?,
+        version: row.get(4)?,
+        title: row.get(5)?,
+        status: row.get(6)?,
+        task_type: row.get(7)?,
+        difficulty: row.get(8)?,
+        language: row.get(9)?,
+        framework: row.get(10)?,
+        source_uri: row.get(11)?,
+        repo_template: row.get(12)?,
+        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+        success_criteria: serde_json::from_str(&success_criteria_json).unwrap_or_default(),
+        validation_commands: serde_json::from_str(&validation_commands_json).unwrap_or_default(),
+        allowed_paths: serde_json::from_str(&allowed_paths_json).unwrap_or_default(),
+        forbidden_paths: serde_json::from_str(&forbidden_paths_json).unwrap_or_default(),
+        calibration_notes: serde_json::from_str(&calibration_notes_json).unwrap_or_default(),
+        calibrated_at: row.get(19)?,
+        license_note: row.get(20)?,
+        privacy_note: row.get(21)?,
+        redaction_status: row.get(22)?,
+        risk_flags: serde_json::from_str(&risk_flags_json).unwrap_or_default(),
+        fingerprint: row.get(24)?,
+        created_at: row.get(25)?,
+        updated_at: row.get(26)?,
     })
 }
 
@@ -7106,6 +8361,74 @@ mod tests {
             );",
         )
         .expect("create channel conversations table");
+    }
+
+    fn sample_task_pack_manifest(status: &str, version: &str) -> CodingBenchmarkTaskPackManifest {
+        CodingBenchmarkTaskPackManifest {
+            pack_id: "sample-real-project-pack".to_string(),
+            version: version.to_string(),
+            name: "Sample real project pack".to_string(),
+            description: Some("Synthetic manifest for corpus tests".to_string()),
+            status: Some(status.to_string()),
+            source_kind: "fixture_repo".to_string(),
+            source_uri: Some("local://fixtures/sample-real-project-pack".to_string()),
+            repo_template: Some("fixture://react-rust-desktop-app".to_string()),
+            license_note: "Synthetic local fixture".to_string(),
+            privacy_note: "No private source content".to_string(),
+            redaction_status: "not_required".to_string(),
+            tasks: vec![
+                CodingBenchmarkTaskPackTaskManifest {
+                    task_id: "REAL-BUGFIX-001".to_string(),
+                    version: "v1".to_string(),
+                    title: "Repair benchmark status rendering".to_string(),
+                    status: Some("active".to_string()),
+                    task_type: "bugfix".to_string(),
+                    difficulty: "medium".to_string(),
+                    language: Some("typescript".to_string()),
+                    framework: Some("react".to_string()),
+                    source_uri: Some("local://fixtures/sample/issues/bugfix-001".to_string()),
+                    repo_template: Some("fixture://react-rust-desktop-app".to_string()),
+                    tags: vec!["dashboard".to_string()],
+                    success_criteria: vec![
+                        "Campaign status stays in sync after reload.".to_string(),
+                        "Retry action only appears for failed terminal states.".to_string(),
+                    ],
+                    validation_commands: vec!["pnpm typecheck".to_string()],
+                    allowed_paths: vec!["src/components/dashboard/**".to_string()],
+                    forbidden_paths: vec!["crates/**".to_string()],
+                    calibration_notes: vec!["Manual calibration completed".to_string()],
+                    calibrated_at: Some(now_rfc3339()),
+                    license_note: Some("Synthetic local fixture".to_string()),
+                    privacy_note: Some("No private source content".to_string()),
+                    redaction_status: Some("not_required".to_string()),
+                },
+                CodingBenchmarkTaskPackTaskManifest {
+                    task_id: "REAL-REFACTOR-002".to_string(),
+                    version: "v1".to_string(),
+                    title: "Separate corpus validation from runner state".to_string(),
+                    status: Some("active".to_string()),
+                    task_type: "refactor".to_string(),
+                    difficulty: "hard".to_string(),
+                    language: Some("rust".to_string()),
+                    framework: Some("ha-core".to_string()),
+                    source_uri: Some("local://fixtures/sample/issues/refactor-002".to_string()),
+                    repo_template: Some("fixture://react-rust-desktop-app".to_string()),
+                    tags: vec!["benchmark".to_string()],
+                    success_criteria: vec![
+                        "Validation is deterministic.".to_string(),
+                        "Activation fails closed on missing active task metadata.".to_string(),
+                    ],
+                    validation_commands: vec!["cargo check -p ha-core --locked".to_string()],
+                    allowed_paths: vec!["crates/ha-core/src/coding_improvement.rs".to_string()],
+                    forbidden_paths: vec!["src/**".to_string()],
+                    calibration_notes: vec!["Manual calibration completed".to_string()],
+                    calibrated_at: Some(now_rfc3339()),
+                    license_note: Some("Synthetic local fixture".to_string()),
+                    privacy_note: Some("No private source content".to_string()),
+                    redaction_status: Some("not_required".to_string()),
+                },
+            ],
+        }
     }
 
     fn insert_promoted_learning(
@@ -7719,6 +9042,88 @@ mod tests {
                 && check.status == "insufficient_data"
                 && check.severity == "required"
         }));
+    }
+
+    #[test]
+    fn benchmark_corpus_imports_versions_and_health_after_activation() {
+        let (_dir, db) = test_db();
+        let pack = db
+            .import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+                manifest: sample_task_pack_manifest("draft", "v1"),
+                explicit_import_consent: true,
+                imported_from: Some("unit-test".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(pack.status, "draft");
+        assert_eq!(pack.tasks.len(), 2);
+        assert!(db
+            .import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+                manifest: sample_task_pack_manifest("draft", "v1"),
+                explicit_import_consent: true,
+                imported_from: Some("unit-test".to_string()),
+            })
+            .is_err());
+
+        let health_before = db
+            .get_benchmark_corpus_health(CodingBenchmarkCorpusHealthInput::default())
+            .unwrap();
+        assert_eq!(health_before.status, "insufficient_data");
+        assert_eq!(health_before.active_tasks, 0);
+        assert_eq!(health_before.draft_tasks, 2);
+
+        let validation = db
+            .validate_benchmark_task_pack(CodingBenchmarkTaskPackValidateInput {
+                pack_id: pack.pack_id.clone(),
+                version: pack.version.clone(),
+            })
+            .unwrap();
+        assert_eq!(validation.status, "passed");
+
+        let active = db
+            .update_benchmark_task_pack_status(CodingBenchmarkTaskPackStatusInput {
+                pack_id: pack.pack_id,
+                version: pack.version,
+                status: "active".to_string(),
+            })
+            .unwrap();
+        assert_eq!(active.status, "active");
+
+        let health_after = db
+            .get_benchmark_corpus_health(CodingBenchmarkCorpusHealthInput::default())
+            .unwrap();
+        assert_eq!(health_after.status, "passed");
+        assert_eq!(health_after.active_packs, 1);
+        assert_eq!(health_after.active_tasks, 2);
+        assert!(health_after
+            .by_task_type
+            .iter()
+            .any(|bucket| bucket.key == "bugfix" && bucket.count == 1));
+    }
+
+    #[test]
+    fn benchmark_corpus_rejects_implicit_import_and_bad_active_tasks() {
+        let (_dir, db) = test_db();
+        assert!(db
+            .import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+                manifest: sample_task_pack_manifest("draft", "v1"),
+                explicit_import_consent: false,
+                imported_from: Some("unit-test".to_string()),
+            })
+            .is_err());
+
+        let mut bad = sample_task_pack_manifest("active", "v2");
+        bad.tasks[0].validation_commands.clear();
+        bad.tasks[0].success_criteria.truncate(1);
+        let err = db
+            .import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+                manifest: bad,
+                explicit_import_consent: true,
+                imported_from: Some("unit-test".to_string()),
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("active_task_quality") || err.contains("fixture_gaming_risk"));
     }
 
     #[test]

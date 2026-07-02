@@ -1504,6 +1504,30 @@ fn build_router_with_cors(
             "/coding-benchmark/compare",
             post(routes::coding_improvement::compare_benchmark_models),
         )
+        .route(
+            "/coding-benchmark/corpus/import",
+            post(routes::coding_improvement::import_benchmark_task_pack),
+        )
+        .route(
+            "/coding-benchmark/corpus/packs",
+            post(routes::coding_improvement::list_benchmark_task_packs),
+        )
+        .route(
+            "/coding-benchmark/corpus/packs/{pack_id}/{version}",
+            get(routes::coding_improvement::get_benchmark_task_pack),
+        )
+        .route(
+            "/coding-benchmark/corpus/packs/status",
+            post(routes::coding_improvement::update_benchmark_task_pack_status),
+        )
+        .route(
+            "/coding-benchmark/corpus/packs/validate",
+            post(routes::coding_improvement::validate_benchmark_task_pack),
+        )
+        .route(
+            "/coding-benchmark/corpus/health",
+            post(routes::coding_improvement::get_benchmark_corpus_health),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

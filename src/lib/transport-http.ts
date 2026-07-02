@@ -422,6 +422,12 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   run_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/run" },
   get_benchmark_leaderboard: { method: "POST", path: "/api/coding-benchmark/leaderboard" },
   compare_benchmark_models: { method: "POST", path: "/api/coding-benchmark/compare" },
+  import_benchmark_task_pack: { method: "POST", path: "/api/coding-benchmark/corpus/import" },
+  list_benchmark_task_packs: { method: "POST", path: "/api/coding-benchmark/corpus/packs" },
+  get_benchmark_task_pack: { method: "GET", path: "/api/coding-benchmark/corpus/packs/{packId}/{version}" },
+  update_benchmark_task_pack_status: { method: "POST", path: "/api/coding-benchmark/corpus/packs/status" },
+  validate_benchmark_task_pack: { method: "POST", path: "/api/coding-benchmark/corpus/packs/validate" },
+  get_benchmark_corpus_health: { method: "POST", path: "/api/coding-benchmark/corpus/health" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },
