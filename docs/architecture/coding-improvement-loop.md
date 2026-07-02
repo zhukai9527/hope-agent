@@ -291,7 +291,7 @@ Phase 5.1 为 `coding_eval.rs` 增加 task-level runner fixture，覆盖候选 d
 
 Phase 5.2 为同一 harness 增加 agent execution runner：`mode=agent` 真实调用 chat engine，`mode=fixture_patch` 做无模型回归替身。task eval run metrics 会携带 execution 摘要，因此 Improvement Loop 可以区分执行失败、无 diff、scope creep、验证缺口等失败来源，而不需要新建 learning 表。
 
-Phase 5.3 为同一 harness 增加 Gold Task Pack v1：5 个 active gold tasks 可批量 materialize 成普通 task fixture 并运行。Pack 内每个 case 仍复用 `runs.task.recordEvalRun` 写入同一 `coding_eval_runs` 表，因此 Dashboard / Improvement Loop 无需新表即可按 case 粒度消费 task-level 结果；pack-level summary 只作为 owner API 响应，不改变持久化模型。
+Phase 5.3 为同一 harness 增加 Gold Task Pack v1；Phase 5.5 已把首批 20 个 active gold tasks 全部接入自动化 pack，可批量 materialize 成普通 task fixture 并运行。Pack 内每个 case 仍复用 `runs.task.recordEvalRun` 写入同一 `coding_eval_runs` 表，因此 Dashboard / Improvement Loop 无需新表即可按 case 粒度消费 task-level 结果；pack-level summary 只作为 owner API 响应，不改变持久化模型。
 
 Phase 5.4 为 pack report 增加策略效果评估：两份 `GoldTaskPackReport` 可通过纯函数 owner API 生成 `StrategyEffectReport`，按共同 case 比较 pass rate、task score、context recall、validation violations、scope creep 和 execution failures。该层暂不新增表；它为 workflow policy、skill/guidance、tool contract 改动提供 review-time 质量闸，后续再把 report history 纳入 Dashboard 趋势。
 

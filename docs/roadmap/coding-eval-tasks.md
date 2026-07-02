@@ -4,41 +4,41 @@
 >
 > 更新时间：2026-06-29
 >
-> 状态：Phase 0 任务草案 + Phase 5.3 Gold Task Pack v1。5 个 `active` 任务已自动化为内置 pack；其余 `draft` 任务仍待试跑校准后逐步纳入。
+> 状态：Phase 0 任务草案 + Phase 5.5 Gold Task Pack 全量自动化。20 个任务均为 `active`，并已自动化为内置 pack。
 
 ## 说明
 
-本文定义第一批 20 个 coding eval 任务草案。Phase 5.3 已把 5 个 `active` 任务接入 `ha-core::coding_eval` 的 Gold Task Pack v1，支持 owner API 批量 materialize / run；其余 `draft` 任务继续用于人工试跑和评估标准校准。
+本文定义第一批 20 个 coding eval 任务。Phase 5.3 先把 5 个 `active` 任务接入 `ha-core::coding_eval` 的 Gold Task Pack v1；Phase 5.5 已把 20 个任务全部接入 typed registry，支持 owner API 批量 materialize / run。运行时仍不从 Markdown 脆弱解析，本文保留任务语义来源。
 
 约定：
 
 - `likely_files` 用于评测者复盘，不应直接暴露给 agent。
 - `allowed_validation` 是推荐的最小相关验证，不代表必须全部执行。
 - 所有任务都必须遵守项目 AGENTS：默认单点验证，不主动跑全套 clippy/test/lint。
-- `status=draft` 表示任务还需要试跑校准；通过 1-2 次人工试跑后再改为 `active`。
-- `status=active` 且已进入 Gold Task Pack v1 的任务，会由代码内 typed registry 生成 fixture；文档仍是任务语义来源，运行时不从 Markdown 脆弱解析。
+- `status=active` 表示任务已进入 Gold Task Pack typed registry，可由 owner API materialize / run。
+- 任务语义仍以本文为来源；代码内 registry 是稳定运行时索引，不从 Markdown 解析。
 
 ## 任务总表
 
 | ID | 类型 | 标题 | 状态 |
 | --- | --- | --- | --- |
-| CE-BUG-001 | bugfix | 修复 tool_search select 查询大小写与空格容错 | draft |
-| CE-BUG-002 | bugfix | 修复 Plan quality 文案误导导致执行期仍修改 plan | draft |
-| CE-BUG-003 | bugfix | 修复文件预览鉴权说明遗漏 HTTP by-path 场景 | draft |
-| CE-BUG-004 | bugfix | 修复 async job 配置中 0 语义解释不一致 | draft |
-| CE-BUG-005 | bugfix | 修复 knowledge access 文档中 owner/agent 平面混写 | draft |
-| CE-TEST-001 | test_gap | 为 Plan 状态机非法转移补 fixture 说明 | draft |
-| CE-TEST-002 | test_gap | 为 ToolDefinition deferred 过滤补回归用例设计 | draft |
-| CE-TEST-003 | test_gap | 为 incognito 文件预览旁路补测试计划 | draft |
+| CE-BUG-001 | bugfix | 修复 tool_search select 查询大小写与空格容错 | active |
+| CE-BUG-002 | bugfix | 修复 Plan quality 文案误导导致执行期仍修改 plan | active |
+| CE-BUG-003 | bugfix | 修复文件预览鉴权说明遗漏 HTTP by-path 场景 | active |
+| CE-BUG-004 | bugfix | 修复 async job 配置中 0 语义解释不一致 | active |
+| CE-BUG-005 | bugfix | 修复 knowledge access 文档中 owner/agent 平面混写 | active |
+| CE-TEST-001 | test_gap | 为 Plan 状态机非法转移补 fixture 说明 | active |
+| CE-TEST-002 | test_gap | 为 ToolDefinition deferred 过滤补回归用例设计 | active |
+| CE-TEST-003 | test_gap | 为 incognito 文件预览旁路补测试计划 | active |
 | CE-TEST-004 | test_gap | 为 workflow loop 停止条件补 eval fixture | active |
-| CE-FE-001 | frontend_ts | 调整 Workspace 面板空态文案但不改布局 | draft |
-| CE-FE-002 | frontend_ts | 给 loop 模式控制设计前端状态入口草案 | draft |
-| CE-FE-003 | frontend_ts | 修复文件类型图标 fallback 的类型收窄 | draft |
-| CE-FE-004 | frontend_ts | 调整 PlanPanel 执行期只读提示的 i18n key 规划 | draft |
+| CE-FE-001 | frontend_ts | 调整 Workspace 面板空态文案但不改布局 | active |
+| CE-FE-002 | frontend_ts | 给 loop 模式控制设计前端状态入口草案 | active |
+| CE-FE-003 | frontend_ts | 修复文件类型图标 fallback 的类型收窄 | active |
+| CE-FE-004 | frontend_ts | 调整 PlanPanel 执行期只读提示的 i18n key 规划 | active |
 | CE-RUST-001 | rust_logic | 为 ToolDefinition v2 增加只读/破坏性枚举设计 | active |
-| CE-RUST-002 | rust_logic | 设计 WorkflowRun trace 的 Rust 类型边界 | draft |
-| CE-RUST-003 | rust_logic | 收敛 validation command 选择器的 crate 边界 | draft |
-| CE-REV-001 | review | 审查一个 seeded diff 中的无关重构和验证缺口 | draft |
+| CE-RUST-002 | rust_logic | 设计 WorkflowRun trace 的 Rust 类型边界 | active |
+| CE-RUST-003 | rust_logic | 收敛 validation command 选择器的 crate 边界 | active |
+| CE-REV-001 | review | 审查一个 seeded diff 中的无关重构和验证缺口 | active |
 | CE-REV-002 | review | 审查 review verifier 三态结果是否过度自信 | active |
 | CE-NAV-001 | repo_navigation | 定位新增 coding workflow 应接入哪些现有模块 | active |
 | CE-NAV-002 | repo_navigation | 分析 LSP 能力与 ACP/IDE 上下文的接合点 | active |
@@ -51,7 +51,7 @@
 id: CE-BUG-001
 type: bugfix
 title: 修复 tool_search select 查询大小写与空格容错
-status: draft
+status: active
 source: synthetic
 repo_state:
   base_ref: current
@@ -83,7 +83,7 @@ failure_notes:
 id: CE-BUG-002
 type: bugfix
 title: 修复 Plan quality 文案误导导致执行期仍修改 plan
-status: draft
+status: active
 source: synthetic
 prompt: |
   检查 Plan Mode 的执行期提示。目标是确保执行期模型不会继续修改 plan 文件，而是使用 task_create/task_update 追踪进度。
@@ -112,7 +112,7 @@ success_criteria:
 id: CE-BUG-003
 type: bugfix
 title: 修复文件预览鉴权说明遗漏 HTTP by-path 场景
-status: draft
+status: active
 source: real_contract
 prompt: |
   检查文件操作相关文档和实现入口，确认 HTTP preview-by-path 的鉴权说明是否完整。
@@ -140,7 +140,7 @@ success_criteria:
 id: CE-BUG-004
 type: bugfix
 title: 修复 async job 配置中 0 语义解释不一致
-status: draft
+status: active
 source: real_contract
 prompt: |
   检查 async_tools 配置里 0 的语义。max_concurrent_jobs 和 max_concurrent_jobs_per_session 的 0 是不限，其它 bounded-resource 旁钮的 0 要钳到地板。
@@ -169,7 +169,7 @@ success_criteria:
 id: CE-BUG-005
 type: bugfix
 title: 修复 knowledge access 文档中 owner/agent 平面混写
-status: draft
+status: active
 source: real_contract
 prompt: |
   检查知识空间访问控制文档，确认 owner 平面和 agent 工具平面有没有混写。
@@ -197,7 +197,7 @@ success_criteria:
 id: CE-TEST-001
 type: test_gap
 title: 为 Plan 状态机非法转移补 fixture 说明
-status: draft
+status: active
 source: synthetic
 prompt: |
   检查 Plan Mode 状态机测试覆盖。请设计并补充一个最小测试或测试计划，覆盖非法状态转移不能发生。
@@ -222,7 +222,7 @@ success_criteria:
 id: CE-TEST-002
 type: test_gap
 title: 为 ToolDefinition deferred 过滤补回归用例设计
-status: draft
+status: active
 source: synthetic
 prompt: |
   检查 tool_search 和 deferred tool 可见性相关逻辑。请设计一个回归用例，确保 Hidden/HintOnly 工具不会被普通搜索错误暴露。
@@ -245,7 +245,7 @@ success_criteria:
 id: CE-TEST-003
 type: test_gap
 title: 为 incognito 文件预览旁路补测试计划
-status: draft
+status: active
 source: real_contract
 prompt: |
   阅读 session 和 file operations 文档，设计一个测试计划，确认 incognito 会话不会通过文件预览/工作台聚合留下持久化痕迹。
@@ -303,7 +303,7 @@ success_criteria:
 id: CE-FE-001
 type: frontend_ts
 title: 调整 Workspace 面板空态文案但不改布局
-status: draft
+status: active
 source: synthetic
 prompt: |
   找到 Workspace 右侧面板的空态文案，把它调整得更适合 coding workflow 场景。
@@ -331,7 +331,7 @@ success_criteria:
 id: CE-FE-002
 type: frontend_ts
 title: 给 loop 模式控制设计前端状态入口草案
-status: draft
+status: active
 source: roadmap
 prompt: |
   只做前端方案设计：如果未来支持 /mode off|guarded|deep|autonomous，前端状态和设置入口应该放在哪里？
@@ -357,7 +357,7 @@ success_criteria:
 id: CE-FE-003
 type: frontend_ts
 title: 修复文件类型图标 fallback 的类型收窄
-status: draft
+status: active
 source: synthetic
 prompt: |
   检查 FileTypeIcon 和 fileKind 的类型关系。如果 fallback 类型收窄不够清晰，请做最小 TypeScript 改动提升类型安全。
@@ -382,7 +382,7 @@ success_criteria:
 id: CE-FE-004
 type: frontend_ts
 title: 调整 PlanPanel 执行期只读提示的 i18n key 规划
-status: draft
+status: active
 source: synthetic
 prompt: |
   检查 PlanPanel 在 Executing 状态下的只读提示。目标是让用户明确 plan 已冻结，进度看 task。
@@ -442,7 +442,7 @@ success_criteria:
 id: CE-RUST-002
 type: rust_logic
 title: 设计 WorkflowRun trace 的 Rust 类型边界
-status: draft
+status: active
 source: roadmap
 prompt: |
   阅读 coding roadmap 和现有 session/async_jobs/task 结构，设计 WorkflowRun trace 应该放在哪个模块、如何避免和 chat message 重复。
@@ -468,7 +468,7 @@ success_criteria:
 id: CE-RUST-003
 type: rust_logic
 title: 收敛 validation command 选择器的 crate 边界
-status: draft
+status: active
 source: roadmap
 prompt: |
   设计一个 validation command selector：根据改动文件和 AGENTS 规则推荐最小验证命令。
@@ -497,7 +497,7 @@ success_criteria:
 id: CE-REV-001
 type: review
 title: 审查一个 seeded diff 中的无关重构和验证缺口
-status: draft
+status: active
 source: synthetic
 prompt: |
   以 code review 姿态审查当前 diff。请优先找 bug、行为回归、缺失验证和无关改动。

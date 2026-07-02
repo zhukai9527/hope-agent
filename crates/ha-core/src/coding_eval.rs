@@ -3295,11 +3295,51 @@ struct GoldTaskAutomation {
     baseline_path: String,
     baseline_text: String,
     candidate_text: String,
+    support_files: Vec<FileFixture>,
+    extra_changes: Vec<FileFixture>,
     required_diff_contains: Vec<String>,
+    expected_validation_commands: Vec<String>,
+    expected_verification_titles: Vec<String>,
+    forbidden_validation_commands: Vec<String>,
+    forbidden_changed_files: Vec<String>,
+    max_review_findings: Option<usize>,
     context_query: String,
     goal_objective: String,
     goal_completion_criteria: String,
     completed_task: String,
+}
+
+impl GoldTaskAutomation {
+    fn with_support_file(mut self, path: &str, text: &str) -> Self {
+        self.support_files.push(FileFixture {
+            path: path.to_string(),
+            text: text.to_string(),
+        });
+        self
+    }
+
+    fn with_file_change(mut self, path: &str, baseline_text: &str, candidate_text: &str) -> Self {
+        self.support_files.push(FileFixture {
+            path: path.to_string(),
+            text: baseline_text.to_string(),
+        });
+        self.extra_changes.push(FileFixture {
+            path: path.to_string(),
+            text: candidate_text.to_string(),
+        });
+        self
+    }
+
+    fn with_validation(mut self, commands: &[&str], titles: &[&str]) -> Self {
+        self.expected_validation_commands = strings(commands);
+        self.expected_verification_titles = strings(titles);
+        self
+    }
+
+    fn with_review_max_findings(mut self, max: usize) -> Self {
+        self.max_review_findings = Some(max);
+        self
+    }
 }
 
 impl GoldTaskCase {
@@ -3394,16 +3434,55 @@ fn materialize_gold_task_fixture(
 ) -> CodingEvalFixture {
     let candidate_path = automation.baseline_path.clone();
     let fixture_name = automation.fixture_name.clone();
-    let forbidden_files = vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()];
+    let forbidden_files = if automation.forbidden_changed_files.is_empty() {
+        vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()]
+    } else {
+        automation.forbidden_changed_files.clone()
+    };
+    let mut expected_changed_files = vec![candidate_path.clone()];
+    expected_changed_files.extend(
+        automation
+            .extra_changes
+            .iter()
+            .map(|file| file.path.clone()),
+    );
+    let expected_changed_file_count = expected_changed_files.len();
+    let expected_validation_commands = if automation.expected_validation_commands.is_empty() {
+        vec!["git diff --check".to_string()]
+    } else {
+        automation.expected_validation_commands.clone()
+    };
+    let forbidden_validation_commands = if automation.forbidden_validation_commands.is_empty() {
+        vec!["cargo test --workspace".to_string()]
+    } else {
+        automation.forbidden_validation_commands.clone()
+    };
     let mut required_context = vec![CandidateExpectation {
         kind: Some("file".to_string()),
         path_suffix: Some(candidate_path.clone()),
         ..Default::default()
     }];
-    required_context.push(CandidateExpectation {
-        kind: Some("verification_step".to_string()),
-        title_contains: Some("Check diff whitespace".to_string()),
-        ..Default::default()
+    let verification_titles = if automation.expected_verification_titles.is_empty() {
+        vec!["Check diff whitespace".to_string()]
+    } else {
+        automation.expected_verification_titles.clone()
+    };
+    for title in verification_titles {
+        required_context.push(CandidateExpectation {
+            kind: Some("verification_step".to_string()),
+            title_contains: Some(title),
+            ..Default::default()
+        });
+    }
+    let mut files = automation.support_files.clone();
+    files.push(FileFixture {
+        path: candidate_path.clone(),
+        text: automation.baseline_text,
+    });
+    let mut changes = automation.extra_changes.clone();
+    changes.push(FileFixture {
+        path: candidate_path.clone(),
+        text: automation.candidate_text,
     });
 
     CodingEvalFixture {
@@ -3428,16 +3507,7 @@ fn materialize_gold_task_fixture(
             success_criteria: case.success_criteria.clone(),
             failure_notes: case.failure_notes.clone(),
         }),
-        repo: RepoFixture {
-            files: vec![FileFixture {
-                path: candidate_path.clone(),
-                text: automation.baseline_text,
-            }],
-            changes: vec![FileFixture {
-                path: candidate_path.clone(),
-                text: automation.candidate_text,
-            }],
-        },
+        repo: RepoFixture { files, changes },
         setup: FixtureSetup {
             goal: Some(GoalFixture {
                 objective: automation.goal_objective,
@@ -3472,20 +3542,20 @@ fn materialize_gold_task_fixture(
             execution: Some(AgentExecutionCheck {
                 expected_mode: Some("fixture_patch".to_string()),
                 expected_status: Some("completed".to_string()),
-                expected_changed_files: vec![candidate_path.clone()],
+                expected_changed_files: expected_changed_files.clone(),
                 forbidden_changed_files: forbidden_files.clone(),
                 require_turn: Some(false),
                 response_contains: vec!["fixture patch applied".to_string()],
                 ..Default::default()
             }),
             review: Some(ReviewCheck {
-                max_findings: Some(0),
+                max_findings: automation.max_review_findings,
                 expect_focused: Some(false),
                 ..Default::default()
             }),
             verification: Some(VerificationCheck {
-                expected_commands: vec!["git diff --check".to_string()],
-                forbidden_commands: vec!["cargo test --workspace".to_string()],
+                expected_commands: expected_validation_commands.clone(),
+                forbidden_commands: forbidden_validation_commands.clone(),
                 expect_focused: Some(false),
                 ..Default::default()
             }),
@@ -3499,13 +3569,13 @@ fn materialize_gold_task_fixture(
             task: Some(TaskLevelCheck {
                 expected_outcome: Some("pass".to_string()),
                 min_score: Some(1.0),
-                expected_changed_files: vec![candidate_path.clone()],
+                expected_changed_files,
                 forbidden_changed_files: forbidden_files,
                 required_diff_contains: automation.required_diff_contains,
                 forbidden_diff_contains: vec!["println!".to_string(), "TODO:".to_string()],
-                expected_validation_commands: vec!["git diff --check".to_string()],
-                forbidden_validation_commands: vec!["cargo test --workspace".to_string()],
-                max_changed_files: Some(1),
+                expected_validation_commands: expected_validation_commands.clone(),
+                forbidden_validation_commands,
+                max_changed_files: Some(expected_changed_file_count),
                 require_review: Some(true),
                 require_verification: Some(true),
                 require_context: Some(true),
@@ -3519,45 +3589,291 @@ fn materialize_gold_task_fixture(
 
 fn gold_task_cases() -> Vec<GoldTaskCase> {
     vec![
-        manual_gold_task_case(
+        gold_task_case(
             "CE-BUG-001",
             "bugfix",
             "修复 tool_search select 查询大小写与空格容错",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Fix tool_search select parsing so select: Read, edit tolerates whitespace and case differences.",
+            &[
+                "select entries are trimmed",
+                "select entries are normalized case-insensitively",
+                "ordinary keyword search behavior is unchanged",
+            ],
+            &["do not rewrite tool_search", "do not alter permission visibility"],
+            &["crates/ha-core/src/tools/tool_search.rs"],
+            &["diff", "validation"],
+            false,
+            &["cargo check -p ha-core --locked"],
+            &["select query parsing trims and normalizes individual tool names"],
+            &["only trimming the whole query leaves comma-separated entries broken"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_bug_001_tool_search_select",
+                    "crates/ha-core/src/tools/tool_search.rs",
+                    "pub fn parse_select_query(query: &str) -> Vec<String> {\n    query\n        .strip_prefix(\"select:\")\n        .map(|rest| rest.split(',').map(str::to_string).collect())\n        .unwrap_or_default()\n}\n",
+                    "pub fn parse_select_query(query: &str) -> Vec<String> {\n    query\n        .strip_prefix(\"select:\")\n        .map(|rest| {\n            rest.split(',')\n                .map(|name| name.trim().to_ascii_lowercase())\n                .filter(|name| !name.is_empty())\n                .collect()\n        })\n        .unwrap_or_default()\n}\n",
+                    &["name.trim().to_ascii_lowercase()", "filter(|name| !name.is_empty())"],
+                    "tool_search select trim case insensitive",
+                    "Fix tool_search select parsing",
+                    "select parsing handles whitespace and case differences without changing ordinary search",
+                    "Fix CE-BUG-001 tool_search select parsing",
+                )
+                .with_support_file("crates/ha-core/Cargo.toml", "[package]\nname = \"ha-core\"\n")
+                .with_validation(
+                    &["cargo check -p ha-core --locked"],
+                    &["Check Rust crate ha-core"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-BUG-002",
             "bugfix",
             "修复 Plan quality 文案误导导致执行期仍修改 plan",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Adjust Plan Mode execution guidance so the model treats the plan as frozen and tracks progress through tasks.",
+            &[
+                "execution guidance says the plan is frozen",
+                "progress updates go through task_create/task_update",
+                "Plan Mode state machine is unchanged",
+            ],
+            &["do not reintroduce update_plan_step", "do not write task status back to plan.md"],
+            &["crates/ha-core/src/plan/constants.rs"],
+            &["diff", "validation"],
+            false,
+            &["cargo check -p ha-core --locked"],
+            &["execution guidance points to task APIs instead of plan mutation"],
+            &["editing plan content during execution violates the frozen-plan contract"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_bug_002_plan_execution_guidance",
+                    "crates/ha-core/src/plan/constants.rs",
+                    "pub const EXECUTION_GUIDANCE: &str = \"Keep the plan updated as work progresses.\";\n",
+                    "pub const EXECUTION_GUIDANCE: &str = \"The approved plan is frozen during execution. Track progress with task_create and task_update, and only revise the plan after returning to planning.\";\n",
+                    &["approved plan is frozen", "task_create and task_update"],
+                    "Plan Mode frozen execution task progress",
+                    "Clarify Plan execution guidance",
+                    "Execution guidance makes plan/task separation explicit",
+                    "Fix CE-BUG-002 Plan execution guidance",
+                )
+                .with_support_file("crates/ha-core/Cargo.toml", "[package]\nname = \"ha-core\"\n")
+                .with_validation(
+                    &["cargo check -p ha-core --locked"],
+                    &["Check Rust crate ha-core"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-BUG-003",
             "bugfix",
             "修复文件预览鉴权说明遗漏 HTTP by-path 场景",
+            "active",
+            "real_contract",
+            "design",
+            "Clarify HTTP preview-by-path authorization without weakening remote file access restrictions.",
+            &[
+                "HTTP by-path routes mention authorized_canonical_file_path",
+                "desktop trust and remote HTTP authorization are separate",
+                "arbitrary host paths remain forbidden remotely",
+            ],
+            &["do not loosen HTTP host path reads", "do not apply Tauri local trust to HTTP"],
+            &["docs/architecture/file-operations.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["HTTP preview-by-path authorization is explicit"],
+            &["remote arbitrary file reads must remain impossible"],
+            Some(gold_task_automation(
+                "gold_task_ce_bug_003_preview_by_path_auth",
+                "docs/architecture/file-operations.md",
+                "# File Operations\n\nPreview routes share one local-file policy.\n",
+                "# File Operations\n\nPreview routes share one local-file policy.\n\n## HTTP preview-by-path authorization\n\nHTTP `read`, `extract`, and `by-path` preview routes must all pass through `authorized_canonical_file_path`. A path is allowed only when it was referenced by the session's tool messages or is inside the session working directory. Tauri desktop remains a local-trust surface; HTTP must not inherit that trust model or expose arbitrary host paths.\n",
+                &["authorized_canonical_file_path", "HTTP must not inherit that trust model"],
+                "HTTP preview by-path authorized_canonical_file_path",
+                "Clarify preview-by-path authorization",
+                "HTTP preview-by-path documentation separates owner trust from remote path authorization",
+                "Fix CE-BUG-003 preview-by-path authorization docs",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-BUG-004",
             "bugfix",
             "修复 async job 配置中 0 语义解释不一致",
+            "active",
+            "real_contract",
+            "design",
+            "Clarify async_tools zero-value semantics across concurrency limits and bounded-resource settings.",
+            &[
+                "max_concurrent_jobs zero means unlimited",
+                "max_concurrent_jobs_per_session zero means unlimited",
+                "bounded-resource knobs clamp zero to the floor",
+            ],
+            &["do not treat every zero as unlimited", "do not change defaults"],
+            &["docs/architecture/background-jobs.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["0 semantics are consistent with AsyncToolsConfig clamping"],
+            &["bounded-resource zero must not silently become unlimited"],
+            Some(gold_task_automation(
+                "gold_task_ce_bug_004_async_zero_semantics",
+                "docs/architecture/background-jobs.md",
+                "# Background Jobs\n\nAsync tool limits are configurable.\n",
+                "# Background Jobs\n\nAsync tool limits are configurable.\n\n## Zero-value semantics\n\n`max_concurrent_jobs` and `max_concurrent_jobs_per_session` use `0` as explicit unlimited. Bounded-resource knobs such as `output_tail_bytes`, `max_queued_jobs`, `wakeup_max_delay_secs`, and `wakeup_max_pending_per_session` clamp `0` to their safe floor instead of treating it as unlimited.\n",
+                &["use `0` as explicit unlimited", "clamp `0` to their safe floor"],
+                "async_tools zero unlimited clamp floor",
+                "Clarify async zero semantics",
+                "Async job documentation distinguishes unlimited concurrency from bounded-resource clamps",
+                "Fix CE-BUG-004 async zero semantics docs",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-BUG-005",
             "bugfix",
             "修复 knowledge access 文档中 owner/agent 平面混写",
+            "active",
+            "real_contract",
+            "design",
+            "Separate Knowledge Base owner-plane trust from agent-plane effective access checks.",
+            &[
+                "owner plane sees all KBs through local/API-key trust",
+                "agent note_* tools use effective_kb_access",
+                "/api/knowledge/{kb}/files/* has no session fallback",
+            ],
+            &["do not weaken default deny", "do not let note_* bypass effective_kb_access"],
+            &["docs/architecture/knowledge-base.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["owner and agent authorization planes are not mixed"],
+            &["agent tool access must remain default deny"],
+            Some(gold_task_automation(
+                "gold_task_ce_bug_005_knowledge_access_planes",
+                "docs/architecture/knowledge-base.md",
+                "# Knowledge Base Access\n\nKnowledge APIs and agent tools share access rules.\n",
+                "# Knowledge Base Access\n\nKnowledge APIs and agent tools use separate authorization planes.\n\n## Owner plane\n\nTauri and HTTP owner APIs are local/API-key trusted and can inspect registered knowledge bases without session attachment fallback.\n\n## Agent plane\n\nAgent-facing `note_*` tools must resolve access through `effective_kb_access`; incognito and unattached IM contexts fail closed. `/api/knowledge/{kb}/files/*` remains owner-plane only and does not accept a session fallback.\n",
+                &["separate authorization planes", "effective_kb_access", "does not accept a session fallback"],
+                "knowledge owner plane agent plane effective_kb_access",
+                "Clarify knowledge access planes",
+                "Knowledge access docs separate owner-plane APIs from agent tool access",
+                "Fix CE-BUG-005 knowledge access docs",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-TEST-001",
             "test_gap",
             "为 Plan 状态机非法转移补 fixture 说明",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Add a minimal regression test showing an illegal Plan Mode state transition is rejected.",
+            &[
+                "covers at least one illegal transition",
+                "keeps legal re-entry semantics intact",
+            ],
+            &["do not rewrite the Plan state machine"],
+            &["crates/ha-core/src/plan/tests.rs"],
+            &["diff", "validation"],
+            false,
+            &["cargo check -p ha-core --tests --locked"],
+            &["illegal transition coverage is explicit"],
+            &["test-only change must not alter state machine behavior"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_test_001_plan_illegal_transition",
+                    "crates/ha-core/src/plan/tests.rs",
+                    "#[test]\nfn legal_plan_reentry_is_allowed() {\n    assert!(true);\n}\n",
+                    "#[test]\nfn legal_plan_reentry_is_allowed() {\n    assert!(true);\n}\n\n#[test]\nfn illegal_executing_to_draft_transition_is_rejected() {\n    let transition = \"executing -> draft\";\n    assert_eq!(transition, \"executing -> draft\");\n    // The real assertion belongs to the Plan state machine fixture; this seeded case preserves the regression intent.\n}\n",
+                    &["illegal_executing_to_draft_transition_is_rejected", "executing -> draft"],
+                    "Plan state illegal transition fixture",
+                    "Design Plan illegal transition regression",
+                    "A regression fixture exists for rejecting illegal Plan Mode transitions",
+                    "Add CE-TEST-001 Plan illegal transition fixture",
+                )
+                .with_support_file("crates/ha-core/Cargo.toml", "[package]\nname = \"ha-core\"\n")
+                .with_validation(
+                    &["cargo check -p ha-core --tests --locked"],
+                    &["Check Rust tests for ha-core"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-TEST-002",
             "test_gap",
             "为 ToolDefinition deferred 过滤补回归用例设计",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Add a regression case documenting that Hidden and HintOnly tools stay hidden from ordinary search.",
+            &[
+                "ordinary search does not expose Hidden/HintOnly tools",
+                "select search is explicit and still checked against visibility",
+            ],
+            &["do not bypass ctx.is_tool_visible"],
+            &["crates/ha-core/src/tools/tool_search.rs"],
+            &["diff", "validation"],
+            false,
+            &["cargo check -p ha-core --locked"],
+            &["deferred visibility boundary is covered"],
+            &["search must not become a tool visibility bypass"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_test_002_tool_definition_deferred",
+                    "crates/ha-core/src/tools/tool_search.rs",
+                    "pub fn ordinary_search_exposes_visible_tools() -> bool {\n    true\n}\n",
+                    "pub fn ordinary_search_exposes_visible_tools() -> bool {\n    true\n}\n\n#[cfg(test)]\nmod deferred_visibility_tests {\n    #[test]\n    fn ordinary_search_does_not_expose_hidden_or_hint_only_tools() {\n        let hidden_tool_is_visible = false;\n        assert!(!hidden_tool_is_visible, \"ordinary search must respect ctx.is_tool_visible\");\n    }\n}\n",
+                    &["ordinary_search_does_not_expose_hidden_or_hint_only_tools", "ctx.is_tool_visible"],
+                    "ToolDefinition deferred hidden hint only search visibility",
+                    "Design deferred visibility regression",
+                    "A regression fixture protects Hidden/HintOnly tools from ordinary search exposure",
+                    "Add CE-TEST-002 deferred visibility fixture",
+                )
+                .with_support_file("crates/ha-core/Cargo.toml", "[package]\nname = \"ha-core\"\n")
+                .with_validation(
+                    &["cargo check -p ha-core --locked"],
+                    &["Check Rust crate ha-core"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-TEST-003",
             "test_gap",
             "为 incognito 文件预览旁路补测试计划",
+            "active",
+            "real_contract",
+            "design",
+            "Design a test plan proving incognito file preview and workspace aggregation leave no durable trace.",
+            &[
+                "covers burn-on-close",
+                "covers tool_results and background job spool bypass",
+                "maps checks to existing session/file operation red lines",
+            ],
+            &["do not change incognito semantics"],
+            &["docs/architecture/session.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["test plan maps to incognito persistence red lines"],
+            &["preview/workspace aggregation must not persist incognito traces"],
+            Some(gold_task_automation(
+                "gold_task_ce_test_003_incognito_preview_plan",
+                "docs/architecture/session.md",
+                "# Incognito Sessions\n\nIncognito sessions are temporary.\n",
+                "# Incognito Sessions\n\nIncognito sessions are temporary.\n\n## File preview bypass test plan\n\n1. Create an incognito session and generate a previewable tool result.\n2. Confirm workspace artifact aggregation uses live memory only and skips durable `tool_results` reads.\n3. Start a background job and confirm spool placeholders remain in memory for incognito scope.\n4. Close the session and assert `session:purged` removes transient preview files, job rows, and spool paths.\n\nThe plan maps directly to the burn-on-close and no-durable-preview red lines.\n",
+                &["workspace artifact aggregation uses live memory only", "burn-on-close"],
+                "incognito preview workspace aggregation no durable trace",
+                "Design incognito preview bypass test plan",
+                "The test plan maps file preview and background spool paths to incognito red lines",
+                "Add CE-TEST-003 incognito preview test plan",
+            )),
         ),
         gold_task_case(
             "CE-TEST-004",
@@ -3596,25 +3912,166 @@ fn gold_task_cases() -> Vec<GoldTaskCase> {
                 "Design CE-TEST-004 repair loop stop fixture",
             )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-FE-001",
             "frontend_ts",
             "调整 Workspace 面板空态文案但不改布局",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Adjust Workspace empty-state copy for coding workflow without changing layout.",
+            &[
+                "copy is updated through component and i18n text",
+                "layout structure remains unchanged",
+                "no landing-style explanatory block is added",
+            ],
+            &["do not add new cards", "do not change layout"],
+            &[
+                "src/components/chat/workspace/WorkspaceEmptyState.tsx",
+                "src/i18n/locales/en.json",
+            ],
+            &["diff", "validation"],
+            false,
+            &["pnpm typecheck", "node scripts/sync-i18n.mjs --check"],
+            &["empty state copy is coding-workflow oriented without layout churn"],
+            &["visual restructuring would hide the copy-only regression target"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_fe_001_workspace_empty_copy",
+                    "src/components/chat/workspace/WorkspaceEmptyState.tsx",
+                    "export function WorkspaceEmptyState() {\n  return <p>{t(\"workspace.empty.generic\")}</p>;\n}\n",
+                    "export function WorkspaceEmptyState() {\n  return <p>{t(\"workspace.empty.codingWorkflow\")}</p>;\n}\n",
+                    &["workspace.empty.codingWorkflow"],
+                    "Workspace empty state coding workflow copy i18n",
+                    "Adjust Workspace empty-state copy",
+                    "Workspace empty-state copy is updated without changing layout",
+                    "Update CE-FE-001 Workspace empty state copy",
+                )
+                .with_file_change(
+                    "src/i18n/locales/en.json",
+                    "{\n  \"workspace\": {\n    \"empty\": {\n      \"generic\": \"No workspace context yet\"\n    }\n  }\n}\n",
+                    "{\n  \"workspace\": {\n    \"empty\": {\n      \"generic\": \"No workspace context yet\",\n      \"codingWorkflow\": \"Open a task, diff, or validation result to guide this coding session.\"\n    }\n  }\n}\n",
+                )
+                .with_validation(
+                    &["pnpm typecheck", "node scripts/sync-i18n.mjs --check"],
+                    &["Typecheck frontend", "Check i18n completeness"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-FE-002",
             "frontend_ts",
             "给 loop 模式控制设计前端状态入口草案",
+            "active",
+            "roadmap",
+            "design",
+            "Design the frontend entry point for mode/loop controls using existing chat controls and settings patterns.",
+            &[
+                "identifies existing chat control surfaces",
+                "keeps mode separate from scheduled loop state",
+                "does not add config schema",
+            ],
+            &["do not implement UI", "do not add a new settings schema"],
+            &["docs/evals/ce-fe-002-loop-mode-entry.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["frontend state entry is a minimal design, not an implementation"],
+            &["loop must remain repeat scheduling, not execution intensity"],
+            Some(gold_task_automation(
+                "gold_task_ce_fe_002_loop_mode_entry",
+                "docs/evals/ce-fe-002-loop-mode-entry.md",
+                "# CE-FE-002\n\nBaseline loop mode entry notes.\n",
+                "# CE-FE-002\n\nBaseline loop mode entry notes.\n\n## Frontend Entry Design\n\nUse the existing chat control strip for `/mode off|guarded|deep|autonomous`, because mode changes the current session's execution intensity. Keep `/loop` controls in the Workspace Loop section where schedule status, next run, pause, resume, and stop already belong.\n\n## State Boundary\n\nMode is immediate session state; loop is durable repeat scheduling. The UI should show both together only as a status summary, not as one combined setting.\n",
+                &["Mode is immediate session state", "loop is durable repeat scheduling"],
+                "frontend mode loop control entry state boundary",
+                "Design loop/mode frontend entry",
+                "Frontend design separates mode controls from loop scheduling controls",
+                "Design CE-FE-002 loop mode frontend entry",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-FE-003",
             "frontend_ts",
             "修复文件类型图标 fallback 的类型收窄",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Tighten FileTypeIcon fallback type narrowing without changing icon visuals.",
+            &[
+                "fallback kind is explicit",
+                "existing visual mapping is unchanged",
+            ],
+            &["do not introduce a new icon library", "do not rewrite file action policy"],
+            &["src/lib/fileKind.ts"],
+            &["diff", "validation"],
+            false,
+            &["pnpm typecheck"],
+            &["TypeScript fallback type is explicit"],
+            &["visual icon changes are outside this task"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_fe_003_file_icon_fallback",
+                    "src/lib/fileKind.ts",
+                    "export type FileKind = \"text\" | \"image\" | string;\n\nexport function fallbackKind(kind: FileKind) {\n  return kind || \"text\";\n}\n",
+                    "export type KnownFileKind = \"text\" | \"image\";\nexport type FileKind = KnownFileKind | \"unknown\";\n\nexport function fallbackKind(kind: string | null | undefined): FileKind {\n  return kind === \"text\" || kind === \"image\" ? kind : \"unknown\";\n}\n",
+                    &["KnownFileKind", "kind === \"text\" || kind === \"image\""],
+                    "FileTypeIcon fallback fileKind type narrowing",
+                    "Tighten file icon fallback typing",
+                    "File kind fallback is explicit and typecheckable",
+                    "Fix CE-FE-003 file icon fallback typing",
+                )
+                .with_validation(&["pnpm typecheck"], &["Typecheck frontend"])
+                .with_review_max_findings(2),
+            ),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-FE-004",
             "frontend_ts",
             "调整 PlanPanel 执行期只读提示的 i18n key 规划",
+            "active",
+            "synthetic",
+            "fixture_patch",
+            "Update PlanPanel executing-state read-only copy so users know the plan is frozen and progress lives in tasks.",
+            &[
+                "executing copy says plan is frozen",
+                "copy points progress to task",
+                "Plan state machine is unchanged",
+            ],
+            &["do not add a plan editing affordance"],
+            &[
+                "src/components/chat/PlanPanel.tsx",
+                "src/i18n/locales/en.json",
+            ],
+            &["diff", "validation"],
+            false,
+            &["pnpm typecheck", "node scripts/sync-i18n.mjs --check"],
+            &["PlanPanel executing copy explains plan/task split"],
+            &["do not make execution-time plan edits appear supported"],
+            Some(
+                gold_task_automation(
+                    "gold_task_ce_fe_004_planpanel_readonly_copy",
+                    "src/components/chat/PlanPanel.tsx",
+                    "export function PlanPanelNotice() {\n  return <p>{t(\"plan.executing.notice\")}</p>;\n}\n",
+                    "export function PlanPanelNotice() {\n  return <p>{t(\"plan.executing.readOnlyTaskProgress\")}</p>;\n}\n",
+                    &["plan.executing.readOnlyTaskProgress"],
+                    "PlanPanel executing read-only task progress i18n",
+                    "Clarify PlanPanel executing copy",
+                    "PlanPanel read-only copy says plan is frozen and progress is tracked by tasks",
+                    "Update CE-FE-004 PlanPanel read-only copy",
+                )
+                .with_file_change(
+                    "src/i18n/locales/en.json",
+                    "{\n  \"plan\": {\n    \"executing\": {\n      \"notice\": \"Execution is in progress\"\n    }\n  }\n}\n",
+                    "{\n  \"plan\": {\n    \"executing\": {\n      \"notice\": \"Execution is in progress\",\n      \"readOnlyTaskProgress\": \"The approved plan is frozen. Track live progress in Tasks.\"\n    }\n  }\n}\n",
+                )
+                .with_validation(
+                    &["pnpm typecheck", "node scripts/sync-i18n.mjs --check"],
+                    &["Typecheck frontend", "Check i18n completeness"],
+                )
+                .with_review_max_findings(2),
+            ),
         ),
         gold_task_case(
             "CE-RUST-001",
@@ -3654,20 +4111,102 @@ fn gold_task_cases() -> Vec<GoldTaskCase> {
                 "Design CE-RUST-001 ToolDefinition v2 safety metadata",
             )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-RUST-002",
             "rust_logic",
             "设计 WorkflowRun trace 的 Rust 类型边界",
+            "active",
+            "roadmap",
+            "design",
+            "Design Rust module boundaries for WorkflowRun trace without creating a parallel background job API.",
+            &[
+                "places trace data in ha-core workflow/session boundaries",
+                "explains relation to SessionDB, EventBus, and Task",
+                "keeps JobManager as background work entry",
+            ],
+            &["do not create a parallel background job API"],
+            &["docs/evals/ce-rust-002-workflow-trace-boundary.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["workflow trace design can feed workflow.md"],
+            &["trace must not duplicate chat messages as the source of truth"],
+            Some(gold_task_automation(
+                "gold_task_ce_rust_002_workflow_trace_boundary",
+                "docs/evals/ce-rust-002-workflow-trace-boundary.md",
+                "# CE-RUST-002\n\nBaseline WorkflowRun trace notes.\n",
+                "# CE-RUST-002\n\nBaseline WorkflowRun trace notes.\n\n## Rust Boundary\n\n`ha_core::workflow` owns WorkflowRun, WorkflowOp, and WorkflowEvent records. SessionDB persists the trace, EventBus publishes live updates, and Task stores the user-visible progress handle. Background tool/subagent execution must continue through JobManager rather than a workflow-specific job API.\n\n## Non-duplication Rule\n\nChat messages narrate the run; WorkflowEvent is the durable execution trace. Neither should be reconstructed from the other.\n",
+                &["WorkflowEvent is the durable execution trace", "continue through JobManager"],
+                "WorkflowRun trace Rust module SessionDB EventBus Task JobManager",
+                "Design WorkflowRun trace boundary",
+                "Workflow trace design keeps JobManager and SessionDB boundaries clear",
+                "Design CE-RUST-002 workflow trace boundary",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-RUST-003",
             "rust_logic",
             "收敛 validation command 选择器的 crate 边界",
+            "active",
+            "roadmap",
+            "design",
+            "Design a validation command selector that recommends minimal targeted checks without duplicating pre-push gates.",
+            &[
+                "Rust changes map to cargo check -p <crate>",
+                "TS changes map to pnpm typecheck",
+                "full suites remain user-gated or stage-end only",
+            ],
+            &["do not auto-run clippy/test/lint", "do not duplicate pre-push hook"],
+            &["docs/evals/ce-rust-003-validation-selector.md"],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["selector design follows AGENTS validation policy"],
+            &["full checks must not become the default per-turn path"],
+            Some(gold_task_automation(
+                "gold_task_ce_rust_003_validation_selector",
+                "docs/evals/ce-rust-003-validation-selector.md",
+                "# CE-RUST-003\n\nBaseline validation selector notes.\n",
+                "# CE-RUST-003\n\nBaseline validation selector notes.\n\n## Selector Boundary\n\nThe selector consumes changed paths and project rules, then recommends the smallest relevant command: `cargo check -p <crate> --locked` for Rust package changes, `cargo check -p <crate> --tests --locked` for Rust test changes, and `pnpm typecheck` for TS/TSX changes.\n\n## Gated Commands\n\n`cargo clippy`, `cargo test`, `pnpm lint`, and `pnpm test` remain explicit stage-end or user-approved gates. The selector may display them as gated follow-ups but must not silently run them.\n",
+                &["smallest relevant command", "remain explicit stage-end or user-approved gates"],
+                "validation command selector cargo check pnpm typecheck gated full checks",
+                "Design validation selector boundary",
+                "Validation selector design follows AGENTS targeted-check policy",
+                "Design CE-RUST-003 validation selector boundary",
+            )),
         ),
-        manual_gold_task_case(
+        gold_task_case(
             "CE-REV-001",
             "review",
             "审查一个 seeded diff 中的无关重构和验证缺口",
+            "active",
+            "synthetic",
+            "review",
+            "Review a seeded diff and identify unrelated refactor plus missing targeted validation before summary.",
+            &[
+                "findings come first",
+                "scope creep is identified",
+                "validation gap is identified",
+            ],
+            &["do not directly modify code", "do not bury findings under a long summary"],
+            &["docs/evals/ce-rev-001-seeded-review.md"],
+            &["review_findings"],
+            false,
+            &["git diff --check"],
+            &["review output identifies seeded scope creep or states no issue with residual risk"],
+            &["missing validation must not be omitted"],
+            Some(gold_task_automation(
+                "gold_task_ce_rev_001_seeded_review",
+                "docs/evals/ce-rev-001-seeded-review.md",
+                "# CE-REV-001\n\nBaseline seeded review notes.\n",
+                "# CE-REV-001\n\nBaseline seeded review notes.\n\n## Findings\n\n1. Scope creep: the seeded diff changes unrelated formatting outside the requested file. Keep the implementation focused on the task-owned path.\n2. Validation gap: the author reports completion without a targeted validation command. Ask for `git diff --check` at minimum and the relevant package/typecheck command when source files change.\n\n## Residual Risk\n\nIf no seeded code issue is present, the review must still state validation coverage and scope risk explicitly.\n",
+                &["Scope creep", "Validation gap"],
+                "review seeded diff scope creep validation gap findings first",
+                "Review seeded diff quality",
+                "The review report identifies scope creep and missing validation first",
+                "Review CE-REV-001 seeded diff",
+            )
+            .with_review_max_findings(2)),
         ),
         gold_task_case(
             "CE-REV-002",
@@ -3786,27 +4325,6 @@ fn gold_task_cases() -> Vec<GoldTaskCase> {
     ]
 }
 
-fn manual_gold_task_case(id: &str, task_type: &str, title: &str) -> GoldTaskCase {
-    gold_task_case(
-        id,
-        task_type,
-        title,
-        "draft",
-        "roadmap",
-        "manual",
-        "See docs/roadmap/coding-eval-tasks.md for the calibrated manual task prompt.",
-        &["Manual task is defined in the roadmap source document."],
-        &["Do not run as an automated fixture until calibrated and materialized."],
-        &[],
-        &[],
-        false,
-        &[],
-        &["Manual calibration is complete before automation."],
-        &[],
-        None,
-    )
-}
-
 fn gold_task_case(
     id: &str,
     task_type: &str,
@@ -3862,7 +4380,14 @@ fn gold_task_automation(
         baseline_path: baseline_path.to_string(),
         baseline_text: baseline_text.to_string(),
         candidate_text: candidate_text.to_string(),
+        support_files: Vec::new(),
+        extra_changes: Vec::new(),
         required_diff_contains: strings(required_diff_contains),
+        expected_validation_commands: vec!["git diff --check".to_string()],
+        expected_verification_titles: vec!["Check diff whitespace".to_string()],
+        forbidden_validation_commands: vec!["cargo test --workspace".to_string()],
+        forbidden_changed_files: vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()],
+        max_review_findings: Some(0),
         context_query: context_query.to_string(),
         goal_objective: goal_objective.to_string(),
         goal_completion_criteria: goal_completion_criteria.to_string(),
@@ -4303,9 +4828,9 @@ mod tests {
         assert_eq!(summary.pack_id, GOLD_TASK_PACK_ID);
         assert_eq!(summary.source_doc, GOLD_TASK_SOURCE_DOC);
         assert_eq!(summary.total_cases, 20);
-        assert_eq!(summary.active_cases, 5);
-        assert_eq!(summary.automated_cases, 5);
-        assert!(summary.cases.iter().any(|case| case.id == "CE-TEST-004"
+        assert_eq!(summary.active_cases, 20);
+        assert_eq!(summary.automated_cases, 20);
+        assert!(summary.cases.iter().any(|case| case.id == "CE-BUG-001"
             && case.automation_status == "automated"
             && case.fixture_name.is_some()));
     }
@@ -4342,7 +4867,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gold_task_pack_skipped_only_is_not_passed() {
+    async fn gold_task_pack_runs_former_draft_case() {
         let dir = tempfile::tempdir().expect("temp db dir");
         let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
         crate::channel::ChannelDB::new(db.clone())
@@ -4352,19 +4877,48 @@ mod tests {
             db,
             GoldTaskPackRunInput {
                 ids: vec!["CE-BUG-001".to_string()],
-                include_unautomated: true,
+                record_eval_runs: false,
                 ..Default::default()
             },
         )
         .await
         .expect("run gold task pack");
 
-        assert!(!report.passed, "skipped-only pack must not pass");
+        assert!(report.passed, "former draft case should now pass");
         assert_eq!(report.selected_cases, 1);
-        assert_eq!(report.automated_cases, 0);
-        assert_eq!(report.skipped_cases, 1);
+        assert_eq!(report.automated_cases, 1);
+        assert_eq!(report.skipped_cases, 0);
         assert_eq!(report.failed_cases, 0);
-        assert_eq!(report.cases[0].status, "skipped");
+        assert_eq!(report.cases[0].status, "passed");
+    }
+
+    #[tokio::test]
+    async fn gold_task_pack_runs_all_automated_cases() {
+        let dir = tempfile::tempdir().expect("temp db dir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel db migration");
+        let report = run_gold_task_pack(
+            db,
+            GoldTaskPackRunInput {
+                record_eval_runs: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run full gold task pack");
+
+        let failures = gold_task_pack_failure_summary(&report);
+        assert!(
+            failures.is_empty(),
+            "full gold task pack failures: {failures:?}"
+        );
+        assert_eq!(report.selected_cases, 20);
+        assert_eq!(report.automated_cases, 20);
+        assert_eq!(report.skipped_cases, 0);
+        assert_eq!(report.passed_cases, 20);
+        assert_eq!(report.failed_cases, 0);
     }
 
     #[tokio::test]
@@ -4472,5 +5026,27 @@ mod tests {
             .regressions
             .iter()
             .any(|item| item.contains("missing a baseline case")));
+    }
+
+    fn gold_task_pack_failure_summary(report: &GoldTaskPackReport) -> Vec<String> {
+        report
+            .cases
+            .iter()
+            .filter(|case| case.status != "passed")
+            .map(|case| {
+                let failed_checks = case
+                    .report
+                    .as_ref()
+                    .map(|report| {
+                        report
+                            .failures()
+                            .into_iter()
+                            .map(|check| check.name.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                format!("{}:{}:{failed_checks:?}", case.case.id, case.status)
+            })
+            .collect()
     }
 }
