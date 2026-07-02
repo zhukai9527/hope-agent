@@ -397,6 +397,7 @@ fn redact_image_generate_value(mut value: Value) -> Value {
 fn redact_server_value(mut value: Value) -> Value {
     if let Some(obj) = value.as_object_mut() {
         redact_string_field(obj, "apiKey");
+        redact_string_field(obj, "knowledgeAgentReadToken");
     }
     value
 }
@@ -1586,9 +1587,11 @@ mod tests {
         let r = redact_server_value(json!({
             "bindAddr": "127.0.0.1:8420",
             "apiKey": "long-bearer-token",
+            "knowledgeAgentReadToken": "read-only-token",
             "publicBaseUrl": null
         }));
         assert_eq!(r["apiKey"], json!("[REDACTED]"));
+        assert_eq!(r["knowledgeAgentReadToken"], json!("[REDACTED]"));
         assert_eq!(r["bindAddr"], "127.0.0.1:8420");
         // Null api_key (server unauthenticated) stays null.
         let r = redact_server_value(json!({ "bindAddr": "127.0.0.1:8420", "apiKey": null }));

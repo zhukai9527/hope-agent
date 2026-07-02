@@ -1720,13 +1720,14 @@ pub struct NoteReadResult {
 /// `AppConfig.knowledge_passive_recall`. When enabled, each user turn searches
 /// the accessible KBs by the user's message and injects the top note **titles**
 /// as an independent, untrusted cache block (mirrors Active Memory's slot but
-/// retrieval-only — no LLM call). Opt-in; disabled by default.
+/// retrieval-only — no LLM call). Enabled by default after KB access is granted;
+/// access gates still enforce incognito / IM opt-in / attached-KB limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassiveRecallConfig {
-    /// Master switch. Off by default — turns surface related notes only after the
-    /// user opts in (Settings → Knowledge).
-    #[serde(default)]
+    /// Master switch. On by default because it is retrieval-only and still bounded
+    /// by KB access; users can disable it in Settings → Knowledge.
+    #[serde(default = "default_passive_recall_enabled")]
     pub enabled: bool,
     /// Max related notes to list per turn.
     #[serde(default = "default_passive_top_n")]
@@ -1745,6 +1746,9 @@ pub struct PassiveRecallConfig {
 fn default_passive_top_n() -> usize {
     5
 }
+fn default_passive_recall_enabled() -> bool {
+    true
+}
 fn default_passive_max_chars() -> usize {
     800
 }
@@ -1755,7 +1759,7 @@ fn default_passive_cache_ttl_secs() -> u64 {
 impl Default for PassiveRecallConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_passive_recall_enabled(),
             top_n: default_passive_top_n(),
             max_chars: default_passive_max_chars(),
             cache_ttl_secs: default_passive_cache_ttl_secs(),
@@ -1775,5 +1779,32 @@ impl PassiveRecallConfig {
             cache_ttl_secs: self.cache_ttl_secs.max(1),
             show_snippet: self.show_snippet,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passive_recall_config_defaults_enabled() {
+        let cfg = PassiveRecallConfig::default();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.top_n, default_passive_top_n());
+        assert_eq!(cfg.max_chars, default_passive_max_chars());
+        assert_eq!(cfg.cache_ttl_secs, default_passive_cache_ttl_secs());
+        assert!(!cfg.show_snippet);
+    }
+
+    #[test]
+    fn passive_recall_config_deserializes_missing_enabled_as_enabled() {
+        let cfg: PassiveRecallConfig = serde_json::from_value(serde_json::json!({}))
+            .expect("deserialize empty passive recall config");
+
+        assert!(cfg.enabled);
+        assert_eq!(cfg.top_n, default_passive_top_n());
+        assert_eq!(cfg.max_chars, default_passive_max_chars());
+        assert_eq!(cfg.cache_ttl_secs, default_passive_cache_ttl_secs());
+        assert!(!cfg.show_snippet);
     }
 }

@@ -355,8 +355,8 @@ function KnowledgeReembedCard({
 /**
  * Read bridge ③ — passive related-notes prompt (Phase 3, D7). When enabled, each
  * user turn surfaces the top accessible-KB note titles as an untrusted reference
- * block. Opt-in (off by default); access is already per-session gated so one
- * global toggle suffices. The enable switch saves immediately; the tuning knobs
+ * block. Enabled by default after KB access is granted; access is already
+ * per-session gated so one global toggle suffices. The enable switch saves immediately; the tuning knobs
  * use the three-state Save button.
  */
 function PassiveRecallSection() {

@@ -809,6 +809,36 @@ pub struct EmbeddedServerConfig {
     pub public_base_url: Option<String>,
 }
 
+impl EmbeddedServerConfig {
+    /// Merge a partial update over an existing server config.
+    ///
+    /// This matches onboarding semantics for optional secrets:
+    /// - `None` keeps the existing value (the GUI only receives masked values).
+    /// - `Some("")` clears the value.
+    /// - `Some(value)` replaces it.
+    pub fn merge_over_existing(mut self, existing: &EmbeddedServerConfig) -> Self {
+        if self.bind_addr.trim().is_empty() {
+            self.bind_addr = existing.bind_addr.clone();
+        }
+        self.api_key = merge_optional_config_string(self.api_key, existing.api_key.clone());
+        self.knowledge_agent_read_token = merge_optional_config_string(
+            self.knowledge_agent_read_token,
+            existing.knowledge_agent_read_token.clone(),
+        );
+        self.public_base_url =
+            merge_optional_config_string(self.public_base_url, existing.public_base_url.clone());
+        self
+    }
+}
+
+fn merge_optional_config_string(next: Option<String>, existing: Option<String>) -> Option<String> {
+    match next {
+        Some(value) if value.is_empty() => None,
+        Some(value) => Some(value),
+        None => existing,
+    }
+}
+
 impl Default for EmbeddedServerConfig {
     fn default() -> Self {
         Self {

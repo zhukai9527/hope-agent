@@ -482,10 +482,7 @@ pub async fn save_server_config(
     config: ha_core::config::EmbeddedServerConfig,
 ) -> Result<(), CmdError> {
     ha_core::config::mutate_config(("server", "settings-ui"), |store| {
-        let mut next = config;
-        if next.knowledge_agent_read_token.is_none() {
-            next.knowledge_agent_read_token = store.server.knowledge_agent_read_token.clone();
-        }
+        let next = config.merge_over_existing(&store.server);
         store.server = next;
         Ok(())
     })

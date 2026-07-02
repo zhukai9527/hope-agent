@@ -676,10 +676,7 @@ pub async fn save_server_config(
     Json(body): Json<ConfigBody<ha_core::config::EmbeddedServerConfig>>,
 ) -> Result<Json<Value>, AppError> {
     ha_core::config::mutate_config(("server", "http"), |store| {
-        let mut next = body.config;
-        if next.knowledge_agent_read_token.is_none() {
-            next.knowledge_agent_read_token = store.server.knowledge_agent_read_token.clone();
-        }
+        let next = body.config.merge_over_existing(&store.server);
         store.server = next;
         Ok(())
     })?;
