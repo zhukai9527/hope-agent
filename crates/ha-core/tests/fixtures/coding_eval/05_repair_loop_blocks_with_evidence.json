@@ -35,6 +35,22 @@
     "context": {
       "query": "repair",
       "limit": 24
+    },
+    "improvement": {
+      "generateProposals": true,
+      "seedEvalRuns": [
+        {
+          "suite": "coding_control_plane",
+          "name": "repair_loop_blocks_with_evidence",
+          "status": "failed",
+          "metrics": {
+            "criticalContextRecall": 1.0,
+            "repairLoopBlocked": true
+          },
+          "sourceType": "fixture",
+          "sourceId": "repair_loop_blocks_with_evidence"
+        }
+      ]
     }
   },
   "checks": {
@@ -76,6 +92,22 @@
           "statusContains": "workflow_blocked"
         }
       ]
+    },
+    "improvement": {
+      "expectedScope": "session",
+      "minFailures": 1,
+      "expectedFailureCategories": [
+        "repair_loop_exhausted"
+      ],
+      "minProposals": 1,
+      "minInsertedProposals": 1,
+      "expectedProposalKinds": [
+        "eval_candidate"
+      ],
+      "expectDraftOnly": true,
+      "minEvalRuns": 1,
+      "expectEvalSuccessRate": 0.0,
+      "minRepairLoopBlocked": 1
     }
   }
 }

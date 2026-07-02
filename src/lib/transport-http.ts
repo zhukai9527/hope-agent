@@ -398,6 +398,11 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   plan_smart_verification:         { method: "POST",   path: "/api/sessions/{sessionId}/verification-runs/plan" },
   run_smart_verification:          { method: "POST",   path: "/api/sessions/{sessionId}/verification-runs/run" },
   get_verification_run:            { method: "GET",    path: "/api/verification-runs/{runId}" },
+  get_coding_trend_report:         { method: "GET",    path: "/api/sessions/{sessionId}/coding-trend" },
+  list_coding_improvement_proposals: { method: "GET",  path: "/api/sessions/{sessionId}/coding-improvement/proposals" },
+  generate_coding_improvement_proposals: { method: "POST", path: "/api/sessions/{sessionId}/coding-improvement/proposals" },
+  update_coding_improvement_proposal_status: { method: "POST", path: "/api/coding-improvement/proposals/{proposalId}/status" },
+  record_coding_eval_run:          { method: "POST",   path: "/api/coding-improvement/eval-runs" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

@@ -8,6 +8,7 @@ pub mod background_jobs;
 pub mod browser;
 pub mod channel;
 pub mod chat;
+pub mod coding_improvement;
 pub mod config;
 pub mod context_retrieval;
 pub mod crash;

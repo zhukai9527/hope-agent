@@ -48,7 +48,7 @@ Phase 2 已经完成 Workflow + Execution Mode 的第一版产品化：长任务
 2. **Phase 2.7：`/goal` MVP**，已完成第一版。补一等目标对象：objective、completion criteria、budget、evidence、status、final audit。
 3. **Phase 2.8：Goal-driven Workflow**。Goal 派生 workflow run，失败后生成 repair run，workflow evidence 回写 goal，最终 evaluator 收口。
 4. **Phase 2.9：真正 `/loop`**。只做定时、重复、轮询或条件触发，复用 cron / wakeup / automation。
-5. **Phase 3：coding-specific 能力**。Managed Worktree、LSP、Review Engine、Smart Verification、Context Retrieval v2、Actionable Context Loop、Coding Eval、Workflow review/verify、Repair Loop 自动化、Deep Review / Profiles / IDE Context 已完成；Phase 3 剩余只剩 Trend Report / Improvement Loop 接口。
+5. **Phase 3：coding-specific 能力**。Managed Worktree、LSP、Review Engine、Smart Verification、Context Retrieval v2、Actionable Context Loop、Coding Eval、Workflow review/verify、Repair Loop 自动化、Deep Review / Profiles / IDE Context、Trend Report / Improvement Loop 已完成；后续进入 Learning Loop / Skill & Guidance 沉淀等 Phase 4 能力。
 
 这次调整的核心不是降低 coding 优先级，而是把 coding 能力挂到更稳的控制平面上。`/goal` 负责最终完成标准，`/workflow` 负责一次具体执行，`/mode` 负责推进强度，`/loop` 第一版负责重复触发，`/worktree` 才是 coding 场景的隔离环境。
 
@@ -722,23 +722,25 @@ StopPolicy
 
 ### Phase 3.11：Trend Report / Improvement Loop 接口
 
-状态：计划中。
+状态：已完成。
 
 目标：把 Phase 3 已有的 workflow、goal、review、verification、repair loop 和 eval 证据汇总成可持续改进系统，而不是只停留在单次任务完成。
 
-任务：
+已落地：
 
-- Coding trend report：统计 coding eval 成功率、review finding 命中、verification 选择质量、repair loop 成功率 / blocked 原因。
-- Failure taxonomy：把验证失败、review blocker、权限卡点、上下文漏召回、无有效 diff 进展等归入可比较分类。
-- Eval backlog 接口：失败 run 可一键转 eval candidate，带目标、diff、关键上下文、失败原因和期望信号。
-- Workflow / skill / guidance 候选：从成功 run 中抽取可复用 workflow 草稿、项目 guidance 建议或 skill 改进点，但默认只生成 proposal。
-- GUI 报告：Workspace / Dashboard 能看到本项目近期 coding 质量趋势和最常见卡点。
+- Coding trend report：统计 coding eval 成功率、review finding/blocker、verification 选择质量、repair loop 成功率 / blocked 原因。
+- Failure taxonomy：把验证失败、review blocker、权限卡点、上下文漏召回、无有效 diff 进展、repair loop exhausted、verification selection gap 等归入可比较分类。
+- Eval backlog 接口：失败 bucket 生成 draft `eval_candidate` proposal，payload 包含 failure、scope、expected signals。
+- Workflow / skill / guidance 候选：成功 run 或高频 blocker 可生成 `workflow_template` / `skill_candidate` / `guidance_candidate` proposal，默认只生成草案。
+- GUI 报告：Workspace 「质量趋势」区块显示当前 session/project 近 30 天质量趋势、常见卡点和 proposal 草案；Dashboard 全局版保留为后续 project/global scope API 增强。
+- Eval 覆盖：deterministic coding eval harness 增加 improvement run/check，repair-loop fixture 覆盖趋势报告与 proposal 语义。
 
 验收：
 
 - 单次任务结束后，用户能看到“为什么完成 / 为什么阻塞 / 下次怎么改进”。
 - 趋势报告不依赖外部 LLM，至少能基于 durable 控制面数据稳定生成。
 - 任何自动沉淀都必须先进入 proposal，不直接改项目规则或全局 skill。
+- 最终架构见 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)。
 
 ### 后续池：Review 与 Verification Engine 增强
 
@@ -759,7 +761,7 @@ StopPolicy
 
 ### 后续池：Learning Loop 与技能沉淀
 
-目标：让每次 coding session 都能让系统变强；其中 eval backlog、workflow / skill / guidance proposal 已作为 Phase 3.11 的接口先落一层。
+目标：让每次 coding session 都能让系统变强；eval backlog、workflow / skill / guidance proposal 已作为 Phase 3.11 的接口先落一层，后续要做的是从 proposal 进入人工确认后的实际落地动作。
 
 任务：
 
@@ -767,11 +769,11 @@ StopPolicy
 - 失败案例可一键转 eval candidate。
 - 成功 transcript 可抽取 workflow skill 草稿。
 - 常见 failure mode 反哺工具描述、workflow policy、project guidance。
-- Dashboard 展示 coding success、review catch rate、slow tools、cache invalidators、approval stalls。
+- Dashboard 全局展示 coding success、review catch rate、slow tools、cache invalidators、approval stalls。
 
 产物：
 
-- `coding improvement loop` 设计文档。
+- [Coding Improvement Loop](../architecture/coding-improvement-loop.md) 架构文档已落地；后续补 Dashboard 全局视图设计。
 - eval backlog。
 - skill/guidance draft generator。
 
@@ -849,6 +851,6 @@ StopPolicy
 9. [Smart Verification 控制平面](../architecture/verification-engine.md)：最小验证选择、后台低风险执行、Goal validation evidence 与 Workspace 验证区块。
 10. [Context Retrieval v2](../architecture/context-retrieval.md)：任务感知上下文推荐与行动入口、file search v2、LSP symbols、diff/artifact/review/verification/goal/task/workflow 聚合、focused review / verification。
 11. [Coding Eval 控制面评测](../architecture/coding-eval.md)：Phase 3.7 deterministic fixture harness、context precision / critical recall 与控制面回归。
-12. `docs/roadmap/coding-improvement-loop.md`：retro、eval candidate、skill/guidance distillation。
+12. [Coding Improvement Loop](../architecture/coding-improvement-loop.md)：已落地 trend report、failure taxonomy、draft-only proposal 队列；后续继续设计 retro、eval candidate 落地、skill/guidance distillation。
 
 这些文档完成后，再进入逐项实现。实现顺序应优先保证可评测、可回滚、可审计，而不是先堆最显眼的 UI。

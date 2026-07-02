@@ -17,6 +17,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::agent_loader::DEFAULT_AGENT_ID;
+use crate::coding_improvement::{
+    CodingTrendReport, GenerateCodingImprovementProposalsResult, RecordCodingEvalRunInput,
+};
 use crate::context_retrieval::{self, ContextCandidate, ContextCandidateKind};
 use crate::goal::CreateGoalInput;
 use crate::review::{self, RunReviewInput};
@@ -127,6 +130,8 @@ pub struct FixtureRuns {
     pub verification: Option<VerificationEvalRun>,
     #[serde(default)]
     pub context: Option<ContextEvalRun>,
+    #[serde(default)]
+    pub improvement: Option<ImprovementEvalRun>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -176,6 +181,17 @@ pub struct ContextEvalRun {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ImprovementEvalRun {
+    #[serde(default)]
+    pub window_days: Option<u32>,
+    #[serde(default)]
+    pub generate_proposals: bool,
+    #[serde(default)]
+    pub seed_eval_runs: Vec<RecordCodingEvalRunInput>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FixtureChecks {
     #[serde(default)]
     pub workflow: Option<WorkflowCheck>,
@@ -185,6 +201,8 @@ pub struct FixtureChecks {
     pub review: Option<ReviewCheck>,
     #[serde(default)]
     pub verification: Option<VerificationCheck>,
+    #[serde(default)]
+    pub improvement: Option<ImprovementCheck>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -272,6 +290,31 @@ pub struct VerificationCheck {
     pub expected_focus_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImprovementCheck {
+    #[serde(default)]
+    pub expected_scope: Option<String>,
+    #[serde(default)]
+    pub min_failures: Option<usize>,
+    #[serde(default)]
+    pub expected_failure_categories: Vec<String>,
+    #[serde(default)]
+    pub min_proposals: Option<usize>,
+    #[serde(default)]
+    pub min_inserted_proposals: Option<usize>,
+    #[serde(default)]
+    pub expected_proposal_kinds: Vec<String>,
+    #[serde(default)]
+    pub expect_draft_only: Option<bool>,
+    #[serde(default)]
+    pub min_eval_runs: Option<usize>,
+    #[serde(default)]
+    pub expect_eval_success_rate: Option<f64>,
+    #[serde(default)]
+    pub min_repair_loop_blocked: Option<usize>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckOutcome {
     pub name: String,
@@ -313,6 +356,8 @@ struct EvalRunArtifacts {
     review: Option<review::ReviewRunSnapshot>,
     verification: Option<verification::VerificationRunSnapshot>,
     context: Option<context_retrieval::ContextRetrievalSnapshot>,
+    improvement: Option<CodingTrendReport>,
+    improvement_proposals: Option<GenerateCodingImprovementProposalsResult>,
     goal_evidence_relations: Vec<String>,
 }
 
@@ -370,6 +415,8 @@ pub async fn evaluate(db: Arc<SessionDB>, fixture: &CodingEvalFixture) -> Result
         review: None,
         verification: None,
         context: None,
+        improvement: None,
+        improvement_proposals: None,
         goal_evidence_relations: Vec::new(),
     };
 
@@ -451,6 +498,21 @@ pub async fn evaluate(db: Arc<SessionDB>, fixture: &CodingEvalFixture) -> Result
         );
     }
 
+    if let Some(run) = &fixture.runs.improvement {
+        for seed in &run.seed_eval_runs {
+            let mut input = seed.clone();
+            if input.session_id.is_none() {
+                input.session_id = Some(session.id.clone());
+            }
+            db.record_coding_eval_run(input)?;
+        }
+        if run.generate_proposals {
+            artifacts.improvement_proposals =
+                Some(db.generate_coding_improvement_proposals(&session.id, run.window_days)?);
+        }
+        artifacts.improvement = Some(db.coding_trend_report(&session.id, run.window_days)?);
+    }
+
     if let Some(goal_id) = goal_id.as_deref() {
         if let Some(snapshot) = db.goal_snapshot(goal_id, 200)? {
             artifacts.goal_evidence_relations = snapshot
@@ -481,6 +543,9 @@ fn check_fixture(fixture: &CodingEvalFixture, artifacts: &EvalRunArtifacts) -> F
     }
     if let Some(check) = &fixture.checks.context {
         check_context(&mut report, artifacts, check);
+    }
+    if let Some(check) = &fixture.checks.improvement {
+        check_improvement(&mut report, artifacts, check);
     }
     report
 }
@@ -918,6 +983,155 @@ fn check_verification(
             } else {
                 format!("focusPaths={focus_paths:?}")
             },
+        );
+    }
+}
+
+fn check_improvement(
+    report: &mut FixtureReport,
+    artifacts: &EvalRunArtifacts,
+    check: &ImprovementCheck,
+) {
+    let Some(snapshot) = artifacts.improvement.as_ref() else {
+        push_check(
+            report,
+            "improvement.snapshot",
+            false,
+            "coding improvement report was not requested",
+        );
+        return;
+    };
+
+    if let Some(expected) = check.expected_scope.as_deref() {
+        push_check(
+            report,
+            "improvement.scope",
+            snapshot.scope == expected,
+            format!("scope={}, expected={expected}", snapshot.scope),
+        );
+    }
+
+    if let Some(min) = check.min_failures {
+        push_check(
+            report,
+            "improvement.min_failures",
+            snapshot.failures.len() >= min,
+            format!("{} failure bucket(s), min {min}", snapshot.failures.len()),
+        );
+    }
+
+    for category in &check.expected_failure_categories {
+        let found = snapshot
+            .failures
+            .iter()
+            .any(|failure| failure.category == *category);
+        push_check(
+            report,
+            format!("improvement.failure.{category}"),
+            found,
+            if found {
+                "matched".to_string()
+            } else {
+                format!(
+                    "failures={:?}",
+                    snapshot
+                        .failures
+                        .iter()
+                        .map(|failure| failure.category.as_str())
+                        .collect::<Vec<_>>()
+                )
+            },
+        );
+    }
+
+    if let Some(min) = check.min_proposals {
+        push_check(
+            report,
+            "improvement.min_proposals",
+            snapshot.proposals.len() >= min,
+            format!("{} proposal(s), min {min}", snapshot.proposals.len()),
+        );
+    }
+
+    if let Some(min) = check.min_inserted_proposals {
+        let inserted = artifacts
+            .improvement_proposals
+            .as_ref()
+            .map(|result| result.inserted)
+            .unwrap_or(0);
+        push_check(
+            report,
+            "improvement.min_inserted_proposals",
+            inserted >= min,
+            format!("{inserted} inserted proposal(s), min {min}"),
+        );
+    }
+
+    for kind in &check.expected_proposal_kinds {
+        let found = snapshot
+            .proposals
+            .iter()
+            .any(|proposal| proposal.kind == *kind);
+        push_check(
+            report,
+            format!("improvement.proposal_kind.{kind}"),
+            found,
+            if found {
+                "matched".to_string()
+            } else {
+                format!(
+                    "proposalKinds={:?}",
+                    snapshot
+                        .proposals
+                        .iter()
+                        .map(|proposal| proposal.kind.as_str())
+                        .collect::<Vec<_>>()
+                )
+            },
+        );
+    }
+
+    if let Some(expect) = check.expect_draft_only {
+        let draft_only = snapshot
+            .proposals
+            .iter()
+            .all(|proposal| proposal.status == "draft");
+        push_check(
+            report,
+            "improvement.draft_only",
+            draft_only == expect,
+            format!("draftOnly={draft_only}, expected={expect}"),
+        );
+    }
+
+    if let Some(min) = check.min_eval_runs {
+        push_check(
+            report,
+            "improvement.min_eval_runs",
+            snapshot.eval.runs >= min,
+            format!("{} eval run(s), min {min}", snapshot.eval.runs),
+        );
+    }
+
+    if let Some(expected) = check.expect_eval_success_rate {
+        let actual = snapshot.eval.success_rate.unwrap_or(-1.0);
+        push_check(
+            report,
+            "improvement.eval_success_rate",
+            (actual - expected).abs() <= 0.001,
+            format!("{actual:.3}, expected {expected:.3}"),
+        );
+    }
+
+    if let Some(min) = check.min_repair_loop_blocked {
+        push_check(
+            report,
+            "improvement.repair_loop_blocked",
+            snapshot.repair_loop.blocked >= min,
+            format!(
+                "{} blocked repair loop run(s), min {min}",
+                snapshot.repair_loop.blocked
+            ),
         );
     }
 }

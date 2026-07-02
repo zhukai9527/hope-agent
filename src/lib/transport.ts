@@ -840,6 +840,139 @@ export interface VerificationRunSnapshot {
   events: VerificationEvent[];
 }
 
+export interface CodingTrendOverview {
+  sessions: number;
+  goals: number;
+  completedGoals: number;
+  blockedGoals: number;
+  workflowRuns: number;
+  completedWorkflows: number;
+  blockedWorkflows: number;
+  failedWorkflows: number;
+  goalCompletionRate?: number | null;
+  workflowCompletionRate?: number | null;
+}
+
+export interface CodingEvalTrend {
+  runs: number;
+  passed: number;
+  failed: number;
+  successRate?: number | null;
+  backlogCandidates: number;
+}
+
+export interface CodingReviewTrend {
+  runs: number;
+  findings: number;
+  blockingFindings: number;
+  resolvedFindings: number;
+  falsePositiveFindings: number;
+  byCategory: CodingMetricBucket[];
+}
+
+export interface CodingVerificationTrend {
+  runs: number;
+  steps: number;
+  passedSteps: number;
+  failedSteps: number;
+  timedOutSteps: number;
+  plannedOnlyRuns: number;
+  executedSuccessRate?: number | null;
+  recommendationCoverage?: number | null;
+}
+
+export interface CodingRepairLoopTrend {
+  runs: number;
+  completed: number;
+  blocked: number;
+  exhausted: number;
+  successRate?: number | null;
+}
+
+export interface CodingMetricBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface CodingFailureBucket {
+  category: string;
+  label: string;
+  count: number;
+  severity: string;
+  examples: string[];
+}
+
+export interface CodingRunSummary {
+  runId: string;
+  sessionId: string;
+  goalId?: string | null;
+  kind: string;
+  state: string;
+  blockedReason?: string | null;
+  failureCategory?: string | null;
+  updatedAt: string;
+}
+
+export interface CodingImprovementProposal {
+  id: string;
+  sessionId: string;
+  projectId?: string | null;
+  kind: string;
+  status: string;
+  sourceType: string;
+  sourceId: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+  fingerprint: string;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string | null;
+}
+
+export interface CodingTrendReport {
+  sessionId: string;
+  projectId?: string | null;
+  scope: string;
+  windowDays: number;
+  generatedAt: string;
+  overview: CodingTrendOverview;
+  eval: CodingEvalTrend;
+  review: CodingReviewTrend;
+  verification: CodingVerificationTrend;
+  repairLoop: CodingRepairLoopTrend;
+  failures: CodingFailureBucket[];
+  recentRuns: CodingRunSummary[];
+  proposals: CodingImprovementProposal[];
+}
+
+export interface GenerateCodingImprovementProposalsResult {
+  inserted: number;
+  proposals: CodingImprovementProposal[];
+}
+
+export interface RecordCodingEvalRunInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  suite: string;
+  name: string;
+  status: string;
+  metrics?: Record<string, unknown>;
+  sourceType?: string | null;
+  sourceId?: string | null;
+}
+
+export interface CodingEvalRunRecord extends RecordCodingEvalRunInput {
+  id: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  metrics: Record<string, unknown>;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  createdAt: string;
+}
+
 export interface GitInfo {
   branch: string | null;
   worktrees: WorktreeInfo[];

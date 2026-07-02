@@ -1405,6 +1405,24 @@ fn build_router_with_cors(
             "/review-findings/{id}/status",
             post(routes::review::update_review_finding_status),
         )
+        // Coding trend report + improvement proposals (Phase 3.11)
+        .route(
+            "/sessions/{sid}/coding-trend",
+            get(routes::coding_improvement::get_coding_trend_report),
+        )
+        .route(
+            "/sessions/{sid}/coding-improvement/proposals",
+            get(routes::coding_improvement::list_coding_improvement_proposals)
+                .post(routes::coding_improvement::generate_coding_improvement_proposals),
+        )
+        .route(
+            "/coding-improvement/proposals/{id}/status",
+            post(routes::coding_improvement::update_coding_improvement_proposal_status),
+        )
+        .route(
+            "/coding-improvement/eval-runs",
+            post(routes::coding_improvement::record_coding_eval_run),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

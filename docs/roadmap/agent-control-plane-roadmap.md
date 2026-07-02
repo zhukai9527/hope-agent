@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-02
 >
-> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；Coding Eval 控制面评测已作为 Phase 3.7 落地并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)；Deep Review / Profiles / IDE Context 已作为 Phase 3.10 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md) 与 [Context Retrieval v2](../architecture/context-retrieval.md)；Phase 3 剩余只剩 Trend Report / Improvement Loop 接口。
+> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；Coding Eval 控制面评测已作为 Phase 3.7 落地并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)；Deep Review / Profiles / IDE Context 已作为 Phase 3.10 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md) 与 [Context Retrieval v2](../architecture/context-retrieval.md)；Trend Report / Improvement Loop 已作为 Phase 3.11 落地并沉淀到 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)。Phase 3 已完成。
 
 ## 1. 路线调整结论
 
@@ -47,7 +47,7 @@ Phase 3.7  Coding Eval 控制面评测（已完成）
 Phase 3.8  Workflow Review/Verify Host API 与 Goal-aware Eval（已完成）
 Phase 3.9  Repair Loop 自动化（已完成）
 Phase 3.10 Deep Review / Profiles / IDE Context（已完成）
-Phase 3.11 Trend Report / Improvement Loop 接口（计划中）
+Phase 3.11 Trend Report / Improvement Loop 接口（已完成）
 ```
 
 旧主线里“Coding Mode -> Workflow/Loop -> Worktree/LSP/Review”的顺序需要改成：
@@ -74,6 +74,7 @@ Phase 3.11 Trend Report / Improvement Loop 接口（计划中）
 | Worktree | coding-specific | 已实现 Phase 3.1 | 代码改动落在哪个隔离环境。 |
 | Context Retrieval | 通用 owner-plane，当前 coding-first | 已实现 Phase 3.6 | 当前任务下一步最该看哪些上下文，以及能否直接进入 focused review / verification。 |
 | Coding Eval | coding-first 质量闸，harness 可复用于通用控制面 | 已实现 Phase 3.7 | 控制面协同是否可回归，关键上下文是否被召回，focused action 是否真实收窄。 |
+| Coding Improvement | coding-first 改进回路，报告形态可复用于通用控制面 | 已实现 Phase 3.11 | 最近任务为什么完成/阻塞，下一步应补 eval、workflow、guidance 还是 skill。 |
 
 用户视角应稳定成：
 
@@ -454,7 +455,7 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - 首批 fixture 覆盖 Rust 控制面召回、docs-only sanity、focused scope 不扫无关文件。
 - 集成测试入口：`cargo test -p ha-core --test coding_eval --locked`。
 - 指标包含 `context_precision`、`critical_context_recall`、review finding 数量、verification command 列表。
-- 不调用 LLM、不执行真实验证命令，作为后续 workflow review/verify、repair loop、profile/IDE 回归和趋势 dashboard 的底座质量闸。
+- 不调用 LLM、不执行真实验证命令，作为后续 workflow review/verify、repair loop、profile/IDE 回归和 Phase 3.11 Improvement Loop 的底座质量闸。
 - 最终架构见 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
 
 ### Phase 3.8 Workflow Review/Verify Host API 与 Goal-aware Eval（已完成）
@@ -484,12 +485,16 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - Diff scan 已增强到 enclosing function / symbol context，减少大文件噪音。
 - eval 已增加 profile-specific review 与 IDE context recall fixture，继续保持无 LLM 的控制面回归。
 
-### Phase 3.11 Trend Report / Improvement Loop 接口（计划中）
+### Phase 3.11 Trend Report / Improvement Loop 接口（已完成）
 
-- 汇总 coding eval、workflow、goal、review、verification、repair loop 数据，生成项目级 coding trend report。
-- 统计 repair loop 成功率、blocked reason、review blocker 类型、验证失败类型和上下文漏召回。
-- 失败 run 可生成 eval candidate proposal；成功 run 可生成 workflow / skill / project guidance proposal。
-- 默认只产 proposal，不自动修改项目规则、全局 skill 或用户记忆。
+- `ha-core::coding_improvement` 已落地 deterministic trend report：按 session/project scope 汇总 coding eval、workflow、goal、review、verification、repair loop durable 数据。
+- Failure taxonomy 已覆盖 validation failure、review blocker、permission stall、context miss、no effective diff progress、repair loop exhausted、verification selection gap 等分类。
+- Proposal queue 已落地：失败 bucket 生成 `eval_candidate`，成功/清洁 run 可生成 `workflow_template` / `guidance_candidate` / `skill_candidate`，默认全部 `draft`。
+- Tauri + HTTP owner API 已对齐：读取 trend report、列出/生成 proposal、更新 proposal 状态、记录 eval run。
+- Workspace GUI 已新增「质量趋势」区块：显示近 30 天 Goal / Workflow / Eval / Repair 指标、常见 blocker、候选草案，并支持生成/采纳/拒绝 proposal。
+- Coding Eval harness 已新增 improvement run/check，`repair_loop_blocks_with_evidence` fixture 覆盖 `repair_loop_exhausted`、draft `eval_candidate` 和 eval success rate。
+- Dashboard 全局化未伪装落地：当前准确入口是 Workspace 的 session/project scope；后续若要做 Dashboard，需要新增正式 project/global scope API。
+- 最终架构见 [Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
 
 ## 9. 体验与性能红线
 

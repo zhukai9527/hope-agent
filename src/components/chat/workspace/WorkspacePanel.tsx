@@ -33,6 +33,7 @@ import {
   Hash,
   Layers,
   LayoutDashboard,
+  Lightbulb,
   Loader2,
   Lock,
   MessageCircle,
@@ -79,6 +80,10 @@ import { useDangerousModeStatus } from "@/hooks/useDangerousModeStatus"
 import { type BackgroundJobSnapshot, isBackgroundJobActive } from "@/types/background-jobs"
 import { SessionBackgroundJobsList } from "../background-jobs/SessionBackgroundJobsList"
 import type {
+  CodingFailureBucket,
+  CodingImprovementProposal,
+  CodingMetricBucket,
+  CodingTrendReport,
   ContextCandidate,
   ContextCandidateKind,
   LspDiagnostic,
@@ -138,6 +143,7 @@ import { useContextRetrieval } from "./useContextRetrieval"
 import { useLspDiagnostics } from "./useLspDiagnostics"
 import { useReviewRuns } from "./useReviewRuns"
 import { useVerificationRuns } from "./useVerificationRuns"
+import { useCodingTrendReport } from "./useCodingTrendReport"
 import {
   useWorkflowRuns,
   type WorkflowEvent,
@@ -2819,6 +2825,421 @@ function VerificationSection({
               <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
                 {t("workspace.verification.more", "还有 {{count}} 条", {
                   count: steps.length - visibleSteps.length,
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </WorkspaceSection>
+  )
+}
+
+function trendPercent(value?: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—"
+  return `${Math.round(value * 100)}%`
+}
+
+function codingTrendMetricTone(value?: number | null): StatusTone {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "muted"
+  if (value >= 0.8) return "good"
+  if (value >= 0.5) return "warn"
+  return "danger"
+}
+
+function codingFailureTone(severity: string): StatusTone {
+  switch (severity) {
+    case "high":
+      return "danger"
+    case "medium":
+      return "warn"
+    default:
+      return "muted"
+  }
+}
+
+function codingProposalTone(status: string): StatusTone {
+  switch (status) {
+    case "accepted":
+      return "good"
+    case "rejected":
+      return "muted"
+    default:
+      return "info"
+  }
+}
+
+function codingProposalKindLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: string,
+): string {
+  switch (kind) {
+    case "eval_candidate":
+      return t("workspace.codingTrend.kindEval", "评测候选")
+    case "workflow_template":
+      return t("workspace.codingTrend.kindWorkflow", "工作流模板")
+    case "guidance_candidate":
+      return t("workspace.codingTrend.kindGuidance", "规则候选")
+    case "skill_candidate":
+      return t("workspace.codingTrend.kindSkill", "Skill 候选")
+    default:
+      return kind
+  }
+}
+
+function codingProposalStatusLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  status: string,
+): string {
+  switch (status) {
+    case "accepted":
+      return t("workspace.codingTrend.accepted", "已采纳")
+    case "rejected":
+      return t("workspace.codingTrend.rejected", "已拒绝")
+    default:
+      return t("workspace.codingTrend.draft", "草案")
+  }
+}
+
+function CodingTrendMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string | number
+  tone: StatusTone
+}) {
+  return (
+    <div className={cn("rounded-md border px-2 py-1.5", STATUS_TONE_CLASS[tone])}>
+      <div className="truncate text-[10px]">{label}</div>
+      <div className="text-xs font-semibold tabular-nums">{value}</div>
+    </div>
+  )
+}
+
+function CodingFailureRow({ failure }: { failure: CodingFailureBucket }) {
+  return (
+    <IconTip label={failure.examples.join("\n") || failure.label}>
+      <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <CircleAlert className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {failure.label}
+          </span>
+          <StatusPill label={String(failure.count)} tone={codingFailureTone(failure.severity)} />
+        </div>
+        {failure.examples[0] ? (
+          <div className="mt-1 truncate pl-5 text-[11px] text-muted-foreground">
+            {failure.examples[0]}
+          </div>
+        ) : null}
+      </div>
+    </IconTip>
+  )
+}
+
+function CodingProposalRow({
+  proposal,
+  updating,
+  onUpdateStatus,
+}: {
+  proposal: CodingImprovementProposal
+  updating?: boolean
+  onUpdateStatus: (proposalId: string, status: "accepted" | "rejected") => void
+}) {
+  const { t } = useTranslation()
+  const disabled = updating || proposal.status !== "draft"
+  return (
+    <IconTip label={proposal.body}>
+      <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Lightbulb className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {proposal.title}
+          </span>
+          <StatusPill
+            label={codingProposalKindLabel(t, proposal.kind)}
+            tone={codingProposalTone(proposal.status)}
+          />
+        </div>
+        <div className="mt-1 line-clamp-2 pl-5 text-[11px] leading-snug text-muted-foreground">
+          {proposal.body}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-5">
+          <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground/65">
+            {codingProposalStatusLabel(t, proposal.status)} · {formatMessageTime(proposal.updatedAt)}
+          </span>
+          <IconTip label={t("workspace.codingTrend.accept", "采纳")}>
+            <button
+              type="button"
+              disabled={disabled}
+              className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-emerald-600 disabled:opacity-45"
+              onClick={() => onUpdateStatus(proposal.id, "accepted")}
+              aria-label={t("workspace.codingTrend.accept", "采纳")}
+            >
+              {updating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </IconTip>
+          <IconTip label={t("workspace.codingTrend.reject", "拒绝")}>
+            <button
+              type="button"
+              disabled={disabled}
+              className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-destructive disabled:opacity-45"
+              onClick={() => onUpdateStatus(proposal.id, "rejected")}
+              aria-label={t("workspace.codingTrend.reject", "拒绝")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </IconTip>
+        </div>
+      </div>
+    </IconTip>
+  )
+}
+
+function codingTrendTopReviewCategory(report: CodingTrendReport): CodingMetricBucket | null {
+  return [...report.review.byCategory].sort((a, b) => b.count - a.count)[0] ?? null
+}
+
+function CodingTrendSection({
+  sessionId,
+  incognito,
+  turnActive,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  turnActive?: boolean
+}) {
+  const { t } = useTranslation()
+  const {
+    report,
+    loading,
+    generating,
+    updatingProposalId,
+    error,
+    refresh,
+    generateProposals,
+    updateProposalStatus,
+  } = useCodingTrendReport(sessionId, { incognito, turnActive })
+  const failures = report?.failures ?? []
+  const visibleFailures = failures.slice(0, 4)
+  const proposals = report?.proposals ?? []
+  const visibleProposals = proposals.slice(0, 4)
+  const draftCount = proposals.filter((proposal) => proposal.status === "draft").length
+  const topCategory = report ? codingTrendTopReviewCategory(report) : null
+  const disabled = !sessionId || incognito || loading || generating
+
+  const meta =
+    loading && !report ? (
+      <StatusPill label={t("workspace.codingTrend.loading", "读取中")} tone="info" loading />
+    ) : error ? (
+      <StatusPill label={t("workspace.codingTrend.failed", "失败")} tone="danger" />
+    ) : failures.some((failure) => failure.severity === "high") ? (
+      <StatusPill
+        label={t("workspace.codingTrend.blockers", "{{count}} 阻塞", { count: failures.length })}
+        tone="danger"
+      />
+    ) : draftCount > 0 ? (
+      <StatusPill
+        label={t("workspace.codingTrend.proposals", "{{count}} 草案", { count: draftCount })}
+        tone="info"
+      />
+    ) : report ? (
+      <StatusPill label={t("workspace.codingTrend.ready", "已汇总")} tone="good" />
+    ) : (
+      <StatusPill label={t("workspace.codingTrend.idle", "待汇总")} tone="muted" />
+    )
+
+  const handleGenerate = async () => {
+    const result = await generateProposals()
+    if (result) {
+      toast.success(
+        result.inserted > 0
+          ? t("workspace.codingTrend.generated", "已生成 {{count}} 个候选", {
+              count: result.inserted,
+            })
+          : t("workspace.codingTrend.generatedNoop", "候选已是最新"),
+      )
+    }
+  }
+
+  const handleUpdateProposal = async (proposalId: string, status: "accepted" | "rejected") => {
+    const proposal = await updateProposalStatus(proposalId, status)
+    if (proposal) {
+      toast.success(
+        t("workspace.codingTrend.statusUpdated", "候选已更新为 {{status}}", {
+          status: codingProposalStatusLabel(t, proposal.status),
+        }),
+      )
+    }
+  }
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.codingTrend.title", "质量趋势")}
+      count={failures.length + draftCount}
+      icon={BarChart3}
+      meta={meta}
+      defaultExpanded={failures.length > 0 || draftCount > 0 || !!error}
+    >
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={disabled}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {generating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.codingTrend.generate", "生成改进候选")}</span>
+          </button>
+          <IconTip label={t("workspace.codingTrend.refresh", "刷新质量趋势")}>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading || generating}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+              aria-label={t("workspace.codingTrend.refresh", "刷新质量趋势")}
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </IconTip>
+        </div>
+
+        {report ? (
+          <div className="grid grid-cols-4 gap-1.5">
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricGoal", "Goal")}
+              value={trendPercent(report.overview.goalCompletionRate)}
+              tone={codingTrendMetricTone(report.overview.goalCompletionRate)}
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricWorkflow", "Workflow")}
+              value={trendPercent(report.overview.workflowCompletionRate)}
+              tone={codingTrendMetricTone(report.overview.workflowCompletionRate)}
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricEval", "Eval")}
+              value={trendPercent(report.eval.successRate)}
+              tone={codingTrendMetricTone(report.eval.successRate)}
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricRepair", "Repair")}
+              value={trendPercent(report.repairLoop.successRate)}
+              tone={codingTrendMetricTone(report.repairLoop.successRate)}
+            />
+          </div>
+        ) : null}
+
+        {report ? (
+          <div className="grid grid-cols-4 gap-1.5">
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricReview", "Review")}
+              value={report.review.blockingFindings}
+              tone={report.review.blockingFindings > 0 ? "danger" : "good"}
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricVerify", "Verify")}
+              value={report.verification.failedSteps + report.verification.timedOutSteps}
+              tone={
+                report.verification.failedSteps + report.verification.timedOutSteps > 0
+                  ? "danger"
+                  : "good"
+              }
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricFailures", "Blockers")}
+              value={failures.length}
+              tone={failures.length > 0 ? "warn" : "good"}
+            />
+            <CodingTrendMetric
+              label={t("workspace.codingTrend.metricDrafts", "Drafts")}
+              value={draftCount}
+              tone={draftCount > 0 ? "info" : "muted"}
+            />
+          </div>
+        ) : null}
+
+        {incognito ? (
+          <EmptyHint>{t("workspace.codingTrend.incognito", "无痕会话不持久化质量趋势")}</EmptyHint>
+        ) : error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : !report ? (
+          <EmptyHint>{t("workspace.codingTrend.empty", "还没有质量趋势记录")}</EmptyHint>
+        ) : (
+          <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <BarChart3 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+                {report.scope === "project"
+                  ? t("workspace.codingTrend.projectScope", "项目近 {{days}} 天", {
+                      days: report.windowDays,
+                    })
+                  : t("workspace.codingTrend.sessionScope", "会话近 {{days}} 天", {
+                      days: report.windowDays,
+                    })}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {formatMessageTime(report.generatedAt)}
+              </span>
+            </div>
+            <div className="mt-1 flex min-w-0 flex-wrap gap-1 pl-5">
+              <StatusPill
+                label={t("workspace.codingTrend.sessions", "{{count}} 会话", {
+                  count: report.overview.sessions,
+                })}
+                tone="muted"
+              />
+              <StatusPill
+                label={t("workspace.codingTrend.workflows", "{{count}} runs", {
+                  count: report.overview.workflowRuns,
+                })}
+                tone="muted"
+              />
+              {topCategory ? (
+                <StatusPill label={topCategory.label} tone="warn" />
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {visibleFailures.length > 0 ? (
+          <div className="space-y-1">
+            {visibleFailures.map((failure) => (
+              <CodingFailureRow key={failure.category} failure={failure} />
+            ))}
+          </div>
+        ) : null}
+
+        {visibleProposals.length > 0 ? (
+          <div className="space-y-1">
+            {visibleProposals.map((proposal) => (
+              <CodingProposalRow
+                key={proposal.id}
+                proposal={proposal}
+                updating={updatingProposalId === proposal.id}
+                onUpdateStatus={handleUpdateProposal}
+              />
+            ))}
+            {proposals.length > visibleProposals.length ? (
+              <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
+                {t("workspace.codingTrend.moreProposals", "还有 {{count}} 个候选", {
+                  count: proposals.length - visibleProposals.length,
                 })}
               </div>
             ) : null}
@@ -7785,6 +8206,8 @@ export default function WorkspacePanel({
           turnActive={turnActive}
           workingDir={effectiveWorkingDir}
         />
+
+        <CodingTrendSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
 
         {/* 进度 — 复用 TaskProgressPanel(自带「任务 · N/M」折叠头)。 */}
         {taskSnapshot && taskSnapshot.total > 0 ? (

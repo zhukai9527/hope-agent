@@ -35,6 +35,7 @@ pub mod canvas_db;
 pub mod channel;
 pub mod chat_engine;
 pub mod coding_eval;
+pub mod coding_improvement;
 pub mod config;
 pub mod context_compact;
 pub mod context_retrieval;

@@ -1,0 +1,63 @@
+use crate::commands::CmdError;
+use ha_core::coding_improvement::{
+    CodingEvalRunRecord, CodingImprovementProposal, CodingTrendReport,
+    GenerateCodingImprovementProposalsResult, RecordCodingEvalRunInput,
+};
+
+#[tauri::command]
+pub async fn get_coding_trend_report(
+    session_id: String,
+    window_days: Option<u32>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingTrendReport, CmdError> {
+    app_state
+        .session_db
+        .coding_trend_report(&session_id, window_days)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_coding_improvement_proposals(
+    session_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<CodingImprovementProposal>, CmdError> {
+    app_state
+        .session_db
+        .list_coding_improvement_proposals(&session_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn generate_coding_improvement_proposals(
+    session_id: String,
+    window_days: Option<u32>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<GenerateCodingImprovementProposalsResult, CmdError> {
+    app_state
+        .session_db
+        .generate_coding_improvement_proposals(&session_id, window_days)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn update_coding_improvement_proposal_status(
+    proposal_id: String,
+    status: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingImprovementProposal, CmdError> {
+    app_state
+        .session_db
+        .update_coding_improvement_proposal_status(&proposal_id, &status)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn record_coding_eval_run(
+    input: RecordCodingEvalRunInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingEvalRunRecord, CmdError> {
+    app_state
+        .session_db
+        .record_coding_eval_run(input)
+        .map_err(Into::into)
+}

@@ -364,6 +364,7 @@ impl SessionDB {
         crate::review::ensure_tables(&conn)?;
         crate::verification::ensure_tables(&conn)?;
         crate::loop_control::ensure_tables(&conn)?;
+        crate::coding_improvement::ensure_tables(&conn)?;
 
         // Migration: fix FTS delete trigger — must match INSERT trigger's WHEN clause
         // to avoid "database disk image is malformed" errors during CASCADE delete.
