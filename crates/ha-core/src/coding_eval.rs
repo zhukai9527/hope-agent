@@ -19,9 +19,10 @@ use serde_json::{json, Value};
 use crate::agent_loader::DEFAULT_AGENT_ID;
 use crate::chat_engine::{self, ChatEngineParams, ChatSource, NoopEventSink};
 use crate::coding_improvement::{
-    ApplyCodingImprovementProposalResult, CodingTrendReport,
-    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
-    RecordCodingEvalPackRunInput, RecordCodingEvalRunInput, RecordCodingStrategyEffectRunInput,
+    ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign, CodingBenchmarkCampaignRunInput,
+    CodingTrendReport, GenerateCodingImprovementProposalsResult,
+    PromoteCodingImprovementProposalResult, RecordCodingEvalPackRunInput, RecordCodingEvalRunInput,
+    RecordCodingStrategyEffectRunInput,
 };
 use crate::context_compact::CompactConfig;
 use crate::context_retrieval::{self, ContextCandidate, ContextCandidateKind};
@@ -51,7 +52,7 @@ pub struct CodingEvalFixture {
     pub checks: FixtureChecks,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoldTaskPackRunInput {
     #[serde(default)]
@@ -1047,6 +1048,92 @@ pub async fn run_gold_task_pack(
     }
 
     Ok(report)
+}
+
+pub async fn run_benchmark_campaign(
+    db: Arc<SessionDB>,
+    input: CodingBenchmarkCampaignRunInput,
+) -> Result<CodingBenchmarkCampaign> {
+    let campaign_id = input.campaign_id.trim().to_string();
+    if campaign_id.is_empty() {
+        bail!("benchmark campaign id must not be empty");
+    }
+    let items = db.prepare_coding_benchmark_campaign_run(&campaign_id, input.retry_failed_only)?;
+    for queued_item in items {
+        if db.is_coding_benchmark_campaign_cancel_requested(&campaign_id)? {
+            break;
+        }
+        let Some(item) = db.mark_coding_benchmark_campaign_item_running(&queued_item.id)? else {
+            continue;
+        };
+        let campaign = db
+            .get_coding_benchmark_campaign(&campaign_id)?
+            .ok_or_else(|| anyhow!("benchmark campaign not found: {campaign_id}"))?;
+        let mut pack_input =
+            serde_json::from_value::<GoldTaskPackRunInput>(campaign.task_filter.clone())
+                .unwrap_or_default();
+        pack_input.session_id = campaign.session_id.clone();
+        pack_input.project_id = campaign.project_id.clone();
+        pack_input.record_eval_runs = true;
+        pack_input.record_pack_run = true;
+        pack_input.source_type = Some("benchmark_campaign".to_string());
+        pack_input.source_id = Some(campaign.id.clone());
+        pack_input.label = Some(format!(
+            "{} · {}",
+            campaign.name,
+            item.label
+                .clone()
+                .or_else(|| {
+                    item.provider_id
+                        .as_ref()
+                        .zip(item.model_id.as_ref())
+                        .map(|(provider_id, model_id)| format!("{provider_id}/{model_id}"))
+                })
+                .unwrap_or_else(|| "deterministic".to_string())
+        ));
+
+        if let (Some(provider_id), Some(model_id)) =
+            (item.provider_id.clone(), item.model_id.clone())
+        {
+            if !input
+                .providers
+                .iter()
+                .any(|provider| provider.id == provider_id)
+            {
+                db.fail_coding_benchmark_campaign_item(
+                    &item.id,
+                    &format!(
+                        "Provider config for {provider_id} was not supplied; campaign history never stores provider secrets"
+                    ),
+                )?;
+                continue;
+            }
+            pack_input.providers = input.providers.clone();
+            pack_input.model_chain = vec![ActiveModel {
+                provider_id,
+                model_id,
+            }];
+            pack_input.execution_mode = Some("agent".to_string());
+            pack_input.baseline_kind = Some("external_model".to_string());
+        } else {
+            pack_input.providers.clear();
+            pack_input.model_chain.clear();
+            pack_input.execution_mode = Some("fixture_patch".to_string());
+            pack_input.baseline_kind = Some("deterministic_mock".to_string());
+        }
+
+        match run_gold_task_pack(db.clone(), pack_input).await {
+            Ok(report) => {
+                db.finish_coding_benchmark_campaign_item(&item.id, &report)?;
+            }
+            Err(err) => {
+                db.fail_coding_benchmark_campaign_item(&item.id, &err.to_string())?;
+            }
+        }
+    }
+    db.complete_coding_benchmark_campaign(&campaign_id)?;
+    db.get_coding_benchmark_campaign(&campaign_id)?
+        .ok_or_else(|| anyhow!("benchmark campaign not found after run: {campaign_id}"))
 }
 
 pub fn evaluate_strategy_effect(input: StrategyEffectEvalInput) -> StrategyEffectReport {

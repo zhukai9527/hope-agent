@@ -415,6 +415,11 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   evaluate_coding_eval_release_gate: { method: "POST", path: "/api/coding-improvement/release-gate/evaluate" },
   evaluate_coding_learning_generalization: { method: "POST", path: "/api/coding-improvement/generalization/evaluate" },
   get_coding_benchmark_center: { method: "POST", path: "/api/coding-benchmark/center" },
+  create_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/create" },
+  list_coding_benchmark_campaigns: { method: "POST", path: "/api/coding-benchmark/campaigns" },
+  get_coding_benchmark_campaign: { method: "GET", path: "/api/coding-benchmark/campaigns/{campaignId}" },
+  cancel_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/{campaignId}/cancel" },
+  run_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/run" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

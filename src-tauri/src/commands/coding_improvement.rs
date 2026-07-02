@@ -1,6 +1,8 @@
 use crate::commands::CmdError;
 use ha_core::coding_improvement::{
-    ApplyCodingImprovementProposalResult, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
+    ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
+    CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
+    CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
     CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
     CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
@@ -152,5 +154,80 @@ pub async fn get_coding_benchmark_center(
     app_state
         .session_db
         .get_coding_benchmark_center(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_coding_benchmark_campaign(
+    input: CodingBenchmarkCampaignCreateInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkCampaign, CmdError> {
+    let run_now = input.run_now;
+    let providers = input.gold_task_input.providers.clone();
+    let campaign = app_state
+        .session_db
+        .create_coding_benchmark_campaign(input)
+        .map_err(CmdError::from)?;
+    if run_now {
+        let db = app_state.session_db.clone();
+        let campaign_id = campaign.id.clone();
+        tokio::spawn(async move {
+            let input = CodingBenchmarkCampaignRunInput {
+                campaign_id,
+                providers,
+                retry_failed_only: false,
+            };
+            let _ = ha_core::coding_eval::run_benchmark_campaign(db, input).await;
+        });
+    }
+    Ok(campaign)
+}
+
+#[tauri::command]
+pub async fn list_coding_benchmark_campaigns(
+    input: CodingBenchmarkCampaignListInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<CodingBenchmarkCampaign>, CmdError> {
+    app_state
+        .session_db
+        .list_coding_benchmark_campaigns(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_coding_benchmark_campaign(
+    campaign_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<CodingBenchmarkCampaign>, CmdError> {
+    app_state
+        .session_db
+        .get_coding_benchmark_campaign(&campaign_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn cancel_coding_benchmark_campaign(
+    campaign_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<CodingBenchmarkCampaign>, CmdError> {
+    app_state
+        .session_db
+        .cancel_coding_benchmark_campaign(&campaign_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn run_coding_benchmark_campaign(
+    input: CodingBenchmarkCampaignRunInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<CodingBenchmarkCampaign>, CmdError> {
+    let db = app_state.session_db.clone();
+    let campaign_id = input.campaign_id.clone();
+    tokio::spawn(async move {
+        let _ = ha_core::coding_eval::run_benchmark_campaign(db, input).await;
+    });
+    app_state
+        .session_db
+        .get_coding_benchmark_campaign(&campaign_id)
         .map_err(Into::into)
 }

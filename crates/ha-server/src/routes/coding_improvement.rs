@@ -1,7 +1,9 @@
 use axum::extract::{Path, Query};
 use axum::Json;
 use ha_core::coding_improvement::{
-    ApplyCodingImprovementProposalResult, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
+    ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
+    CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
+    CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
     CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
     CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
@@ -53,6 +55,24 @@ pub struct LearningGeneralizationBody {
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkCenterBody {
     pub input: CodingBenchmarkCenterInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkCampaignCreateBody {
+    pub input: CodingBenchmarkCampaignCreateInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkCampaignListBody {
+    pub input: CodingBenchmarkCampaignListInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkCampaignRunBody {
+    pub input: CodingBenchmarkCampaignRunInput,
 }
 
 pub async fn get_coding_trend_report(
@@ -170,6 +190,71 @@ pub async fn get_coding_benchmark_center(
 ) -> Result<Json<CodingBenchmarkCenterReport>, AppError> {
     session_db()?
         .get_coding_benchmark_center(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn create_coding_benchmark_campaign(
+    Json(body): Json<BenchmarkCampaignCreateBody>,
+) -> Result<Json<CodingBenchmarkCampaign>, AppError> {
+    let db = session_db()?.clone();
+    let run_now = body.input.run_now;
+    let providers = body.input.gold_task_input.providers.clone();
+    let campaign = db
+        .create_coding_benchmark_campaign(body.input)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    if run_now {
+        let run_db = db.clone();
+        let campaign_id = campaign.id.clone();
+        tokio::spawn(async move {
+            let input = CodingBenchmarkCampaignRunInput {
+                campaign_id,
+                providers,
+                retry_failed_only: false,
+            };
+            let _ = ha_core::coding_eval::run_benchmark_campaign(run_db, input).await;
+        });
+    }
+    Ok(Json(campaign))
+}
+
+pub async fn list_coding_benchmark_campaigns(
+    Json(body): Json<BenchmarkCampaignListBody>,
+) -> Result<Json<Vec<CodingBenchmarkCampaign>>, AppError> {
+    session_db()?
+        .list_coding_benchmark_campaigns(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn get_coding_benchmark_campaign(
+    Path(campaign_id): Path<String>,
+) -> Result<Json<Option<CodingBenchmarkCampaign>>, AppError> {
+    session_db()?
+        .get_coding_benchmark_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn cancel_coding_benchmark_campaign(
+    Path(campaign_id): Path<String>,
+) -> Result<Json<Option<CodingBenchmarkCampaign>>, AppError> {
+    session_db()?
+        .cancel_coding_benchmark_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn run_coding_benchmark_campaign(
+    Json(body): Json<BenchmarkCampaignRunBody>,
+) -> Result<Json<Option<CodingBenchmarkCampaign>>, AppError> {
+    let db = session_db()?.clone();
+    let campaign_id = body.input.campaign_id.clone();
+    tokio::spawn(async move {
+        let _ = ha_core::coding_eval::run_benchmark_campaign(db, body.input).await;
+    });
+    session_db()?
+        .get_coding_benchmark_campaign(&campaign_id)
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

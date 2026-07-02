@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::coding_eval::{GoldTaskPackReport, StrategyEffectReport};
+use crate::coding_eval::{GoldTaskPackReport, GoldTaskPackRunInput, StrategyEffectReport};
 use crate::review::{ReviewFindingStatus, ReviewSeverity};
 use crate::session::{MessageRole, SessionDB, SessionMessage};
 use crate::skills::SkillStatus;
@@ -50,6 +50,9 @@ const DEFAULT_GENERALIZATION_MAX_VALIDATION_VIOLATION_DELTA_PER_PROJECT: isize =
 const DEFAULT_GENERALIZATION_MAX_SCOPE_CREEP_DELTA_PER_PROJECT: isize = 0;
 const DEFAULT_BENCHMARK_CENTER_LIMIT: usize = 12;
 const MAX_BENCHMARK_CENTER_LIMIT: usize = 50;
+const DEFAULT_BENCHMARK_CAMPAIGN_LIMIT: usize = 20;
+const MAX_BENCHMARK_CAMPAIGN_LIMIT: usize = 100;
+const MAX_BENCHMARK_CAMPAIGN_MODELS: usize = 16;
 const MAX_SCOPE_SESSIONS: usize = 200;
 const MAX_CONTENT_PREVIEW_BYTES: usize = 12 * 1024;
 const MAX_DISTILLATION_SESSIONS: usize = 12;
@@ -988,6 +991,156 @@ pub struct CodingBenchmarkCenterReport {
     pub generalization_gate: CodingLearningGeneralizationReport,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignCreateInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub gold_task_input: GoldTaskPackRunInput,
+    #[serde(default)]
+    pub models: Vec<CodingBenchmarkCampaignModel>,
+    #[serde(default)]
+    pub run_now: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+impl Default for CodingBenchmarkCampaignCreateInput {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            project_id: None,
+            name: None,
+            gold_task_input: GoldTaskPackRunInput::default(),
+            models: Vec::new(),
+            run_now: false,
+            max_budget_usd: None,
+            timeout_secs: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignListInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignRunInput {
+    pub campaign_id: String,
+    #[serde(default)]
+    pub providers: Vec<crate::provider::ProviderConfig>,
+    #[serde(default)]
+    pub retry_failed_only: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignSummary {
+    pub total_items: usize,
+    pub queued_items: usize,
+    pub running_items: usize,
+    pub passed_items: usize,
+    pub failed_items: usize,
+    pub skipped_items: usize,
+    pub cancelled_items: usize,
+    pub interrupted_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_pass_rate: Option<f64>,
+    pub selected_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    pub skipped_cases: usize,
+    pub total_checks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_pass_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaignItem {
+    pub id: String,
+    pub campaign_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub status: String,
+    pub attempt: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_run_id: Option<String>,
+    pub selected_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    pub skipped_cases: usize,
+    pub total_checks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkCampaign {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub name: String,
+    pub status: String,
+    pub task_pack_id: String,
+    pub source_doc: String,
+    pub execution_mode: String,
+    pub baseline_kind: String,
+    pub task_filter: Value,
+    pub model_matrix: Vec<CodingBenchmarkCampaignModel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    pub summary: CodingBenchmarkCampaignSummary,
+    pub items: Vec<CodingBenchmarkCampaignItem>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 struct ReportScope {
     session_id: String,
     project_id: Option<String>,
@@ -1223,6 +1376,60 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             ON coding_strategy_effect_runs(project_id, session_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_coding_strategy_effect_runs_verdict
             ON coding_strategy_effect_runs(verdict, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_campaigns (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            project_id TEXT,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            task_pack_id TEXT NOT NULL,
+            source_doc TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            baseline_kind TEXT NOT NULL,
+            task_filter_json TEXT NOT NULL DEFAULT '{}',
+            model_matrix_json TEXT NOT NULL DEFAULT '[]',
+            max_budget_usd REAL,
+            timeout_secs INTEGER,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_campaigns_scope
+            ON coding_benchmark_campaigns(project_id, session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_campaigns_status
+            ON coding_benchmark_campaigns(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_campaign_items (
+            id TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL,
+            provider_id TEXT,
+            model_id TEXT,
+            label TEXT,
+            status TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 0,
+            pack_run_id TEXT,
+            selected_cases INTEGER NOT NULL DEFAULT 0,
+            passed_cases INTEGER NOT NULL DEFAULT 0,
+            failed_cases INTEGER NOT NULL DEFAULT 0,
+            skipped_cases INTEGER NOT NULL DEFAULT 0,
+            total_checks INTEGER NOT NULL DEFAULT 0,
+            report_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (campaign_id) REFERENCES coding_benchmark_campaigns(id) ON DELETE CASCADE,
+            FOREIGN KEY (pack_run_id) REFERENCES coding_eval_pack_runs(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_campaign_items_campaign
+            ON coding_benchmark_campaign_items(campaign_id, status, updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS coding_improvement_proposals (
             id TEXT PRIMARY KEY,
@@ -2269,6 +2476,407 @@ impl SessionDB {
             release_gate,
             generalization_gate,
         })
+    }
+
+    pub fn create_coding_benchmark_campaign(
+        &self,
+        input: CodingBenchmarkCampaignCreateInput,
+    ) -> Result<CodingBenchmarkCampaign> {
+        let (session_id, project_id) = self.resolve_durable_coding_record_scope(
+            input
+                .session_id
+                .or_else(|| input.gold_task_input.session_id.clone()),
+            input
+                .project_id
+                .or_else(|| input.gold_task_input.project_id.clone()),
+            "benchmark campaign",
+        )?;
+        let models = normalize_benchmark_campaign_models(input.models)?;
+        let has_external_model = models
+            .iter()
+            .any(|model| model.provider_id.is_some() || model.model_id.is_some());
+        let execution_mode = input
+            .gold_task_input
+            .execution_mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if has_external_model {
+                    "agent".to_string()
+                } else {
+                    "fixture_patch".to_string()
+                }
+            });
+        let baseline_kind = input
+            .gold_task_input
+            .baseline_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if has_external_model {
+                    "external_model".to_string()
+                } else {
+                    "deterministic_mock".to_string()
+                }
+            });
+        if baseline_kind == "external_model" && !has_external_model {
+            bail!("external_model benchmark campaign requires at least one provider/model");
+        }
+        let mut sanitized_input = input.gold_task_input.clone();
+        sanitized_input.session_id = session_id.clone();
+        sanitized_input.project_id = project_id.clone();
+        sanitized_input.providers.clear();
+        sanitized_input.model_chain.clear();
+        sanitized_input.execution_mode = Some(execution_mode.clone());
+        sanitized_input.baseline_kind = Some(baseline_kind.clone());
+        sanitized_input.source_type = Some("benchmark_campaign".to_string());
+        sanitized_input.source_id = None;
+        let task_filter_json = stable_json(&serde_json::to_value(&sanitized_input)?)?;
+        let model_matrix_json = stable_json(&serde_json::to_value(&models)?)?;
+        let name = input
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if has_external_model {
+                    "External model benchmark campaign".to_string()
+                } else {
+                    "Deterministic benchmark campaign".to_string()
+                }
+            });
+        let id = format!("cbc_{}", uuid::Uuid::new_v4().simple());
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO coding_benchmark_campaigns (
+                id, session_id, project_id, name, status, task_pack_id, source_doc,
+                execution_mode, baseline_kind, task_filter_json, model_matrix_json,
+                max_budget_usd, timeout_secs, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, 'queued', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
+            params![
+                id,
+                session_id,
+                project_id,
+                name,
+                "phase5-gold-task-pack",
+                "docs/roadmap/coding-eval-tasks.md",
+                execution_mode,
+                baseline_kind,
+                task_filter_json,
+                model_matrix_json,
+                input.max_budget_usd,
+                input.timeout_secs.map(|value| value as i64),
+                now,
+            ],
+        )?;
+        for model in &models {
+            let item_id = format!("cbci_{}", uuid::Uuid::new_v4().simple());
+            tx.execute(
+                "INSERT INTO coding_benchmark_campaign_items (
+                    id, campaign_id, provider_id, model_id, label, status,
+                    created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'queued', ?6, ?6)",
+                params![
+                    item_id,
+                    id,
+                    model.provider_id,
+                    model.model_id,
+                    model.label,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        drop(conn);
+        self.get_coding_benchmark_campaign(&id)?
+            .ok_or_else(|| anyhow!("benchmark campaign vanished after insert"))
+    }
+
+    pub fn list_coding_benchmark_campaigns(
+        &self,
+        input: CodingBenchmarkCampaignListInput,
+    ) -> Result<Vec<CodingBenchmarkCampaign>> {
+        let (session_id, project_id) = self.resolve_durable_coding_record_scope(
+            input.session_id,
+            input.project_id,
+            "benchmark campaign",
+        )?;
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_BENCHMARK_CAMPAIGN_LIMIT)
+            .clamp(1, MAX_BENCHMARK_CAMPAIGN_LIMIT);
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(project_id) = project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        params.push(limit.to_string());
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id FROM coding_benchmark_campaigns
+             {where_sql}
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?"
+        ))?;
+        let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+            row.get::<_, String>(0)
+        })?;
+        let ids = collect_rows(rows)?;
+        drop(stmt);
+        drop(conn);
+        ids.into_iter()
+            .filter_map(|id| self.get_coding_benchmark_campaign(&id).transpose())
+            .collect()
+    }
+
+    pub fn get_coding_benchmark_campaign(
+        &self,
+        campaign_id: &str,
+    ) -> Result<Option<CodingBenchmarkCampaign>> {
+        let campaign_id = campaign_id.trim();
+        if campaign_id.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let row = conn
+            .query_row(
+                "SELECT id, session_id, project_id, name, status, task_pack_id, source_doc,
+                        execution_mode, baseline_kind, task_filter_json, model_matrix_json,
+                        max_budget_usd, timeout_secs, created_at, updated_at, started_at,
+                        finished_at, error
+                 FROM coding_benchmark_campaigns
+                 WHERE id = ?1",
+                params![campaign_id],
+                coding_benchmark_campaign_from_row,
+            )
+            .optional()?;
+        let Some(mut campaign) = row else {
+            return Ok(None);
+        };
+        campaign.items = self.coding_benchmark_campaign_items_locked(&conn, campaign_id)?;
+        campaign.summary = benchmark_campaign_summary(&campaign.items);
+        Ok(Some(campaign))
+    }
+
+    pub fn cancel_coding_benchmark_campaign(
+        &self,
+        campaign_id: &str,
+    ) -> Result<Option<CodingBenchmarkCampaign>> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let changed = conn.execute(
+            "UPDATE coding_benchmark_campaigns
+             SET status = CASE WHEN status IN ('passed','failed','partial','cancelled','interrupted') THEN status ELSE 'cancel_requested' END,
+                 updated_at = ?2,
+                 error = CASE WHEN status IN ('passed','failed','partial','cancelled','interrupted') THEN error ELSE 'Cancellation requested' END
+             WHERE id = ?1",
+            params![campaign_id, now],
+        )?;
+        if changed > 0 {
+            conn.execute(
+                "UPDATE coding_benchmark_campaign_items
+                 SET status = 'cancelled', updated_at = ?2, finished_at = ?2, error = 'Cancelled before run'
+                 WHERE campaign_id = ?1 AND status = 'queued'",
+                params![campaign_id, now],
+            )?;
+        }
+        drop(conn);
+        self.get_coding_benchmark_campaign(campaign_id)
+    }
+
+    pub fn prepare_coding_benchmark_campaign_run(
+        &self,
+        campaign_id: &str,
+        retry_failed_only: bool,
+    ) -> Result<Vec<CodingBenchmarkCampaignItem>> {
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        if retry_failed_only {
+            tx.execute(
+                "UPDATE coding_benchmark_campaign_items
+                 SET status = 'queued', updated_at = ?2, error = NULL
+                 WHERE campaign_id = ?1 AND status IN ('failed','interrupted','cancelled')",
+                params![campaign_id, now],
+            )?;
+        }
+        tx.execute(
+            "UPDATE coding_benchmark_campaigns
+             SET status = 'running', started_at = COALESCE(started_at, ?2), updated_at = ?2,
+                 finished_at = NULL, error = NULL
+             WHERE id = ?1 AND status NOT IN ('cancel_requested','passed','failed','partial','cancelled')",
+            params![campaign_id, now],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        let campaign = self
+            .get_coding_benchmark_campaign(campaign_id)?
+            .ok_or_else(|| anyhow!("benchmark campaign not found: {campaign_id}"))?;
+        Ok(campaign
+            .items
+            .into_iter()
+            .filter(|item| item.status == "queued")
+            .collect())
+    }
+
+    pub fn is_coding_benchmark_campaign_cancel_requested(&self, campaign_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let status = conn
+            .query_row(
+                "SELECT status FROM coding_benchmark_campaigns WHERE id = ?1",
+                params![campaign_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(matches!(
+            status.as_deref(),
+            Some("cancel_requested" | "cancelled")
+        ))
+    }
+
+    pub fn mark_coding_benchmark_campaign_item_running(
+        &self,
+        item_id: &str,
+    ) -> Result<Option<CodingBenchmarkCampaignItem>> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE coding_benchmark_campaign_items
+             SET status = 'running', attempt = attempt + 1, started_at = ?2,
+                 updated_at = ?2, error = NULL
+             WHERE id = ?1 AND status = 'queued'",
+            params![item_id, now],
+        )?;
+        let item = conn
+            .query_row(
+                "SELECT id, campaign_id, provider_id, model_id, label, status, attempt,
+                        pack_run_id, selected_cases, passed_cases, failed_cases, skipped_cases,
+                        total_checks, started_at, finished_at, error
+                 FROM coding_benchmark_campaign_items WHERE id = ?1",
+                params![item_id],
+                coding_benchmark_campaign_item_from_row,
+            )
+            .optional()?;
+        Ok(item)
+    }
+
+    pub fn finish_coding_benchmark_campaign_item(
+        &self,
+        item_id: &str,
+        report: &GoldTaskPackReport,
+    ) -> Result<()> {
+        let now = now_rfc3339();
+        let status = if report.passed {
+            "passed"
+        } else if report.automated_cases == 0 {
+            "skipped"
+        } else {
+            "failed"
+        };
+        let report_json = stable_json(&serde_json::to_value(report)?)?;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE coding_benchmark_campaign_items
+             SET status = ?2, pack_run_id = ?3, selected_cases = ?4, passed_cases = ?5,
+                 failed_cases = ?6, skipped_cases = ?7, total_checks = ?8,
+                 report_json = ?9, error = NULL, updated_at = ?10, finished_at = ?10
+             WHERE id = ?1",
+            params![
+                item_id,
+                status,
+                report.pack_run_id,
+                report.selected_cases as i64,
+                report.passed_cases as i64,
+                report.failed_cases as i64,
+                report.skipped_cases as i64,
+                report.total_checks as i64,
+                report_json,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn fail_coding_benchmark_campaign_item(&self, item_id: &str, error: &str) -> Result<()> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE coding_benchmark_campaign_items
+             SET status = 'failed', error = ?2, updated_at = ?3, finished_at = ?3
+             WHERE id = ?1",
+            params![item_id, truncate_for_storage(error, 2000), now],
+        )?;
+        Ok(())
+    }
+
+    pub fn complete_coding_benchmark_campaign(&self, campaign_id: &str) -> Result<()> {
+        let now = now_rfc3339();
+        let campaign = self
+            .get_coding_benchmark_campaign(campaign_id)?
+            .ok_or_else(|| anyhow!("benchmark campaign not found: {campaign_id}"))?;
+        let summary = benchmark_campaign_summary(&campaign.items);
+        let status = if campaign.status == "cancel_requested" || summary.cancelled_items > 0 {
+            "cancelled"
+        } else if summary.running_items > 0 || summary.queued_items > 0 {
+            "interrupted"
+        } else if summary.failed_items > 0 || summary.interrupted_items > 0 {
+            if summary.passed_items > 0 || summary.skipped_items > 0 {
+                "partial"
+            } else {
+                "failed"
+            }
+        } else if summary.passed_items > 0 && summary.failed_items == 0 {
+            "passed"
+        } else if summary.skipped_items > 0 {
+            "partial"
+        } else {
+            "failed"
+        };
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE coding_benchmark_campaigns
+             SET status = ?2, updated_at = ?3, finished_at = ?3,
+                 error = CASE WHEN ?2 = 'passed' THEN NULL ELSE error END
+             WHERE id = ?1",
+            params![campaign_id, status, now],
+        )?;
+        Ok(())
+    }
+
+    fn coding_benchmark_campaign_items_locked(
+        &self,
+        conn: &Connection,
+        campaign_id: &str,
+    ) -> Result<Vec<CodingBenchmarkCampaignItem>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, campaign_id, provider_id, model_id, label, status, attempt,
+                    pack_run_id, selected_cases, passed_cases, failed_cases, skipped_cases,
+                    total_checks, started_at, finished_at, error
+             FROM coding_benchmark_campaign_items
+             WHERE campaign_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(
+            params![campaign_id],
+            coding_benchmark_campaign_item_from_row,
+        )?;
+        collect_rows(rows)
     }
 
     fn resolve_durable_coding_record_scope(
@@ -5306,6 +5914,153 @@ fn push_benchmark_check(
     });
 }
 
+fn normalize_benchmark_campaign_models(
+    models: Vec<CodingBenchmarkCampaignModel>,
+) -> Result<Vec<CodingBenchmarkCampaignModel>> {
+    let mut out = models
+        .into_iter()
+        .filter_map(|model| {
+            let provider_id = model
+                .provider_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let model_id = model
+                .model_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let label = model
+                .label
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            if provider_id.is_none() && model_id.is_none() && label.is_none() {
+                None
+            } else {
+                Some(CodingBenchmarkCampaignModel {
+                    provider_id,
+                    model_id,
+                    label,
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+    if out.is_empty() {
+        out.push(CodingBenchmarkCampaignModel {
+            provider_id: None,
+            model_id: None,
+            label: Some("deterministic".to_string()),
+        });
+    }
+    if out.len() > MAX_BENCHMARK_CAMPAIGN_MODELS {
+        bail!(
+            "benchmark campaign model matrix too large: {} > {}",
+            out.len(),
+            MAX_BENCHMARK_CAMPAIGN_MODELS
+        );
+    }
+    for model in &out {
+        if model.provider_id.is_some() != model.model_id.is_some() {
+            bail!("benchmark campaign external model entries require both providerId and modelId");
+        }
+    }
+    Ok(out)
+}
+
+fn benchmark_campaign_summary(
+    items: &[CodingBenchmarkCampaignItem],
+) -> CodingBenchmarkCampaignSummary {
+    let mut summary = CodingBenchmarkCampaignSummary {
+        total_items: items.len(),
+        ..Default::default()
+    };
+    for item in items {
+        match item.status.as_str() {
+            "queued" => summary.queued_items += 1,
+            "running" => summary.running_items += 1,
+            "passed" => summary.passed_items += 1,
+            "failed" => summary.failed_items += 1,
+            "skipped" => summary.skipped_items += 1,
+            "cancelled" => summary.cancelled_items += 1,
+            "interrupted" => summary.interrupted_items += 1,
+            _ => {}
+        }
+        summary.selected_cases += item.selected_cases;
+        summary.passed_cases += item.passed_cases;
+        summary.failed_cases += item.failed_cases;
+        summary.skipped_cases += item.skipped_cases;
+        summary.total_checks += item.total_checks;
+    }
+    summary.item_pass_rate = ratio(
+        summary.passed_items,
+        summary.passed_items + summary.failed_items,
+    );
+    summary.case_pass_rate = ratio(
+        summary.passed_cases,
+        summary.passed_cases + summary.failed_cases,
+    );
+    summary
+}
+
+fn coding_benchmark_campaign_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkCampaign> {
+    let task_filter_json: String = row.get(9)?;
+    let model_matrix_json: String = row.get(10)?;
+    let model_matrix = serde_json::from_str(&model_matrix_json).unwrap_or_default();
+    Ok(CodingBenchmarkCampaign {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        project_id: row.get(2)?,
+        name: row.get(3)?,
+        status: row.get(4)?,
+        task_pack_id: row.get(5)?,
+        source_doc: row.get(6)?,
+        execution_mode: row.get(7)?,
+        baseline_kind: row.get(8)?,
+        task_filter: serde_json::from_str(&task_filter_json).unwrap_or_else(|_| json!({})),
+        model_matrix,
+        max_budget_usd: row.get(11)?,
+        timeout_secs: row
+            .get::<_, Option<i64>>(12)?
+            .map(|value| value.max(0) as u64),
+        summary: CodingBenchmarkCampaignSummary::default(),
+        items: Vec::new(),
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        started_at: row.get(15)?,
+        finished_at: row.get(16)?,
+        error: row.get(17)?,
+    })
+}
+
+fn coding_benchmark_campaign_item_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkCampaignItem> {
+    Ok(CodingBenchmarkCampaignItem {
+        id: row.get(0)?,
+        campaign_id: row.get(1)?,
+        provider_id: row.get(2)?,
+        model_id: row.get(3)?,
+        label: row.get(4)?,
+        status: row.get(5)?,
+        attempt: nonnegative_usize(row.get::<_, i64>(6)?),
+        pack_run_id: row.get(7)?,
+        selected_cases: nonnegative_usize(row.get::<_, i64>(8)?),
+        passed_cases: nonnegative_usize(row.get::<_, i64>(9)?),
+        failed_cases: nonnegative_usize(row.get::<_, i64>(10)?),
+        skipped_cases: nonnegative_usize(row.get::<_, i64>(11)?),
+        total_checks: nonnegative_usize(row.get::<_, i64>(12)?),
+        started_at: row.get(13)?,
+        finished_at: row.get(14)?,
+        error: row.get(15)?,
+    })
+}
+
 fn release_gate_filter(
     scope: &ReleaseGateScope,
     fact_alias: &str,
@@ -5445,6 +6200,10 @@ fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
 
 fn nonnegative_usize(value: i64) -> usize {
     value.max(0) as usize
+}
+
+fn truncate_for_storage(value: &str, max_bytes: usize) -> String {
+    crate::truncate_utf8(value, max_bytes).to_string()
 }
 
 fn stable_json(value: &Value) -> Result<String> {

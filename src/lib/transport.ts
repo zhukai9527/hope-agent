@@ -1561,6 +1561,95 @@ export interface CodingBenchmarkCenterReport {
   generalizationGate: CodingLearningGeneralizationReport;
 }
 
+export interface CodingBenchmarkCampaignModel {
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+}
+
+export interface CodingBenchmarkCampaignCreateInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  name?: string | null;
+  goldTaskInput?: CodingEvalGoldTaskPackRunInput;
+  models?: CodingBenchmarkCampaignModel[];
+  runNow?: boolean;
+  maxBudgetUsd?: number | null;
+  timeoutSecs?: number | null;
+}
+
+export interface CodingBenchmarkCampaignListInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  limit?: number | null;
+}
+
+export interface CodingBenchmarkCampaignRunInput {
+  campaignId: string;
+  providers?: Record<string, unknown>[];
+  retryFailedOnly?: boolean;
+}
+
+export interface CodingBenchmarkCampaignSummary {
+  totalItems: number;
+  queuedItems: number;
+  runningItems: number;
+  passedItems: number;
+  failedItems: number;
+  skippedItems: number;
+  cancelledItems: number;
+  interruptedItems: number;
+  itemPassRate?: number | null;
+  selectedCases: number;
+  passedCases: number;
+  failedCases: number;
+  skippedCases: number;
+  totalChecks: number;
+  casePassRate?: number | null;
+}
+
+export interface CodingBenchmarkCampaignItem {
+  id: string;
+  campaignId: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+  status: string;
+  attempt: number;
+  packRunId?: string | null;
+  selectedCases: number;
+  passedCases: number;
+  failedCases: number;
+  skippedCases: number;
+  totalChecks: number;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  error?: string | null;
+}
+
+export interface CodingBenchmarkCampaign {
+  id: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  name: string;
+  status: string;
+  taskPackId: string;
+  sourceDoc: string;
+  executionMode: string;
+  baselineKind: string;
+  taskFilter: Record<string, unknown>;
+  modelMatrix: CodingBenchmarkCampaignModel[];
+  maxBudgetUsd?: number | null;
+  timeoutSecs?: number | null;
+  summary: CodingBenchmarkCampaignSummary;
+  items: CodingBenchmarkCampaignItem[];
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  error?: string | null;
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;
