@@ -16,10 +16,11 @@ use ha_core::knowledge::{
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
     KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
-    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
-    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
-    RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
+    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
+    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
+    SchemaProfile, UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -128,6 +129,16 @@ pub async fn kb_source_import_browser_cmd(
     input: KnowledgeBrowserSourceImportInput,
 ) -> Result<KnowledgeSource, CmdError> {
     service::source_import_browser(&kb_id, input)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_import_session_attachment_cmd(
+    kb_id: String,
+    input: KnowledgeSourceImportSessionAttachmentInput,
+) -> Result<KnowledgeSource, CmdError> {
+    service::source_import_session_attachment(&kb_id, input)
         .await
         .map_err(Into::into)
 }

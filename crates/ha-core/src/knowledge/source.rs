@@ -24,8 +24,9 @@ use super::types::{
     KnowledgeSourceChunk, KnowledgeSourceDiff, KnowledgeSourceDiffLine,
     KnowledgeSourceDiffLineKind, KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput,
     KnowledgeSourceImportItemStatus, KnowledgeSourceImportRunDetail,
-    KnowledgeSourceImportRunStatus, KnowledgeSourceKind, KnowledgeSourceReadResult,
-    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceImportRunStatus, KnowledgeSourceImportSessionAttachmentInput,
+    KnowledgeSourceKind, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
+    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
     KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus, KnowledgeSourceVersionHistory,
 };
 
@@ -159,6 +160,90 @@ pub async fn import_source(
     Ok(outcome.source)
 }
 
+/// Owner import: archive a file already persisted as a chat/session attachment.
+/// This is intentionally narrower than the generic source import path: callers
+/// must provide both the session id and the absolute attachment path, and the
+/// path is accepted only when it resolves under that session's attachment dir.
+pub async fn import_session_attachment(
+    kb_id: &str,
+    input: KnowledgeSourceImportSessionAttachmentInput,
+) -> Result<KnowledgeSource> {
+    ensure_kb_open(kb_id)?;
+    let session_id = normalize_optional(Some(&input.session_id))
+        .ok_or_else(|| anyhow!("session attachment import requires sessionId"))?
+        .to_string();
+    if !is_safe_path_segment(&session_id) {
+        bail!("invalid sessionId for attachment import");
+    }
+    let requested_path = normalize_optional(Some(&input.path))
+        .ok_or_else(|| anyhow!("session attachment import requires path"))?
+        .to_string();
+
+    let attachment_root = crate::paths::attachments_dir(&session_id)?;
+    let canonical_root = attachment_root.canonicalize().map_err(|e| {
+        anyhow!(
+            "session attachments directory is not available for {}: {e}",
+            session_id
+        )
+    })?;
+    let canonical_path = Path::new(&requested_path)
+        .canonicalize()
+        .map_err(|e| anyhow!("session attachment path is not available: {e}"))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        bail!("attachment path does not belong to session {session_id}");
+    }
+    let metadata = std::fs::metadata(&canonical_path)
+        .map_err(|e| anyhow!("cannot read session attachment metadata: {e}"))?;
+    if !metadata.is_file() {
+        bail!("session attachment path is not a file");
+    }
+    if metadata.len() == 0 {
+        bail!("session attachment file is empty");
+    }
+    if metadata.len() > MAX_BINARY_SOURCE_BYTES as u64 {
+        bail!(
+            "session attachment is too large ({} bytes, max {})",
+            metadata.len(),
+            MAX_BINARY_SOURCE_BYTES
+        );
+    }
+
+    let bytes = std::fs::read(&canonical_path)
+        .map_err(|e| anyhow!("cannot read session attachment file: {e}"))?;
+    let file_name = normalize_optional(input.file_name.as_deref())
+        .and_then(sanitize_remote_file_name)
+        .or_else(|| {
+            canonical_path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .and_then(sanitize_remote_file_name)
+        })
+        .unwrap_or_else(|| default_file_name(KnowledgeSourceKind::Text).to_string());
+    let mime_type = normalize_optional(input.mime_type.as_deref())
+        .and_then(normalize_mime_type)
+        .unwrap_or_else(|| crate::attachments::sniff_mime(&bytes, &canonical_path));
+    let kind = input
+        .kind
+        .unwrap_or_else(|| infer_file_kind(&file_name, &mime_type));
+    if matches!(
+        kind,
+        KnowledgeSourceKind::UrlSnapshot | KnowledgeSourceKind::BrowserSnapshot
+    ) {
+        bail!(
+            "session attachment imports cannot use {} kind",
+            kind.as_str()
+        );
+    }
+
+    let title = input.title;
+    let outcome =
+        import_file_snapshot(kb_id, kind, title, Some(file_name), Some(mime_type), bytes).await?;
+    if outcome.duplicate_of_id.is_none() {
+        emit(kb_id, "source_import");
+    }
+    Ok(outcome.source)
+}
+
 async fn import_source_with_outcome(
     kb_id: &str,
     input: KnowledgeSourceImportInput,
@@ -173,7 +258,21 @@ async fn import_source_with_outcome(
     }
 
     Ok(match normalize_import_input(input)? {
-        NormalizedImport::Url { url, title } => import_url_snapshot(kb_id, &url, title).await?,
+        NormalizedImport::Url {
+            kind,
+            url,
+            title,
+            file_name,
+            mime_type,
+        } => match kind {
+            KnowledgeSourceKind::UrlSnapshot => import_url_snapshot(kb_id, &url, title).await?,
+            KnowledgeSourceKind::AudioTranscript
+            | KnowledgeSourceKind::VideoTranscript
+            | KnowledgeSourceKind::ImageOcr => {
+                import_remote_media_snapshot(kb_id, kind, &url, title, file_name, mime_type).await?
+            }
+            _ => bail!("unsupported URL source kind: {}", kind.as_str()),
+        },
         NormalizedImport::Content {
             kind,
             title,
@@ -749,8 +848,11 @@ async fn import_file_snapshot(
 
 enum NormalizedImport {
     Url {
+        kind: KnowledgeSourceKind,
         url: String,
         title: Option<String>,
+        file_name: Option<String>,
+        mime_type: Option<String>,
     },
     Content {
         kind: KnowledgeSourceKind,
@@ -879,9 +981,25 @@ fn normalize_import_input(input: KnowledgeSourceImportInput) -> Result<Normalize
     }
 
     if let Some(url) = url {
+        let kind = input.kind.unwrap_or(KnowledgeSourceKind::UrlSnapshot);
+        match kind {
+            KnowledgeSourceKind::UrlSnapshot
+            | KnowledgeSourceKind::AudioTranscript
+            | KnowledgeSourceKind::VideoTranscript
+            | KnowledgeSourceKind::ImageOcr => {}
+            KnowledgeSourceKind::BrowserSnapshot => {
+                bail!("browser_snapshot source imports require browser capture");
+            }
+            _ => {
+                bail!("URL source imports currently support web pages, audio, video, and images");
+            }
+        }
         return Ok(NormalizedImport::Url {
+            kind,
             url,
             title: input.title,
+            file_name: input.file_name,
+            mime_type: normalize_optional_owned(input.mime_type),
         });
     }
 
@@ -962,7 +1080,48 @@ async fn transcribe_uploaded_media(
 ) -> Result<ImportedSourceOutcome> {
     let file_name = file_name.unwrap_or_else(|| default_file_name(kind).to_string());
     let mime = mime_type.unwrap_or_else(|| default_mime_type(kind).to_string());
-    if !matches_media_kind(kind, &file_name, &mime) {
+    let provenance = BinarySourceProvenance::local(file_name, mime);
+    transcribe_media_bytes(kb_id, kind, title, provenance, bytes).await
+}
+
+#[derive(Debug, Clone)]
+struct BinarySourceProvenance {
+    file_name: String,
+    mime_type: String,
+    source_label: String,
+    origin_uri: String,
+}
+
+impl BinarySourceProvenance {
+    fn local(file_name: String, mime_type: String) -> Self {
+        Self {
+            origin_uri: format!("local-file:{file_name}"),
+            source_label: file_name.clone(),
+            file_name,
+            mime_type,
+        }
+    }
+
+    fn remote(file_name: String, mime_type: String, final_url: String) -> Self {
+        Self {
+            source_label: final_url.clone(),
+            origin_uri: final_url,
+            file_name,
+            mime_type,
+        }
+    }
+}
+
+async fn transcribe_media_bytes(
+    kb_id: &str,
+    kind: KnowledgeSourceKind,
+    title: String,
+    provenance: BinarySourceProvenance,
+    bytes: Vec<u8>,
+) -> Result<ImportedSourceOutcome> {
+    let file_name = provenance.file_name.as_str();
+    let mime = provenance.mime_type.as_str();
+    if !matches_media_kind(kind, file_name, mime) {
         bail!(
             "{} imports require a matching audio/video file",
             kind.as_str()
@@ -982,9 +1141,9 @@ async fn transcribe_uploaded_media(
         primary,
         fallback,
         AudioPayload::Bytes {
-            mime_type: mime.clone(),
+            mime_type: provenance.mime_type.clone(),
             bytes: bytes.clone(),
-            filename: file_name.clone(),
+            filename: provenance.file_name.clone(),
         },
         &options,
     )
@@ -997,12 +1156,16 @@ async fn transcribe_uploaded_media(
 
     let imported_at = chrono::Utc::now().to_rfc3339();
     let mut snapshot = format!(
-        "# {title}\n\nSource: {file_name}\nImported: {imported_at}\nSource-Type: {}\nContent-Type: {mime}\nOriginal-Bytes: {}\nTranscript-Provider: {}\nTranscript-Model: {}\n",
+        "# {title}\n\nSource: {}\nImported: {imported_at}\nSource-Type: {}\nContent-Type: {mime}\nOriginal-Bytes: {}\nTranscript-Provider: {}\nTranscript-Model: {}\n",
+        provenance.source_label,
         kind.as_str(),
         bytes.len(),
         transcript.provider_id,
         transcript.model_id
     );
+    if provenance.source_label != provenance.file_name {
+        snapshot.push_str(&format!("File-Name: {}\n", provenance.file_name));
+    }
     if let Some(language) = transcript
         .language
         .as_deref()
@@ -1024,7 +1187,7 @@ async fn transcribe_uploaded_media(
         kb_id,
         kind,
         title,
-        Some(format!("local-file:{file_name}")),
+        Some(provenance.origin_uri),
         "md",
         snapshot,
         Some(&transcript_text),
@@ -1042,15 +1205,27 @@ async fn ocr_uploaded_image(
         file_name.unwrap_or_else(|| default_file_name(KnowledgeSourceKind::ImageOcr).to_string());
     let mime =
         mime_type.unwrap_or_else(|| default_mime_type(KnowledgeSourceKind::ImageOcr).to_string());
-    if !is_image_source(&file_name, &mime) {
+    let provenance = BinarySourceProvenance::local(file_name, mime);
+    ocr_image_bytes(kb_id, title, provenance, bytes).await
+}
+
+async fn ocr_image_bytes(
+    kb_id: &str,
+    title: String,
+    provenance: BinarySourceProvenance,
+    bytes: Vec<u8>,
+) -> Result<ImportedSourceOutcome> {
+    let file_name = provenance.file_name.as_str();
+    let mime = provenance.mime_type.as_str();
+    if !is_image_source(file_name, mime) {
         bail!("image_ocr imports require an image file");
     }
 
     let config = (*crate::config::cached_config()).clone();
     let (agent, model_label) = crate::recap::report::build_vision_analysis_agent(&config).await?;
     let attachment = Attachment {
-        name: file_name.clone(),
-        mime_type: mime.clone(),
+        name: provenance.file_name.clone(),
+        mime_type: provenance.mime_type.clone(),
         source: Some("knowledge_source_ocr".to_string()),
         data: Some(general_purpose::STANDARD.encode(&bytes)),
         file_path: None,
@@ -1071,9 +1246,14 @@ async fn ocr_uploaded_image(
 
     let imported_at = chrono::Utc::now().to_rfc3339();
     let mut snapshot = format!(
-        "# {title}\n\nSource: {file_name}\nImported: {imported_at}\nSource-Type: image_ocr\nContent-Type: {mime}\nOriginal-Bytes: {}\nOCR-Model: {model_label}\n\n---\n\n",
+        "# {title}\n\nSource: {}\nImported: {imported_at}\nSource-Type: image_ocr\nContent-Type: {mime}\nOriginal-Bytes: {}\nOCR-Model: {model_label}\n",
+        provenance.source_label,
         bytes.len()
     );
+    if provenance.source_label != provenance.file_name {
+        snapshot.push_str(&format!("File-Name: {}\n", provenance.file_name));
+    }
+    snapshot.push_str("\n---\n\n");
     snapshot.push_str(&ocr_text);
     snapshot.push('\n');
 
@@ -1081,7 +1261,7 @@ async fn ocr_uploaded_image(
         kb_id,
         KnowledgeSourceKind::ImageOcr,
         title,
-        Some(format!("local-file:{file_name}")),
+        Some(provenance.origin_uri),
         "md",
         snapshot,
         Some(&ocr_text),
@@ -1175,6 +1355,148 @@ async fn import_url_snapshot(
 ) -> Result<ImportedSourceOutcome> {
     let draft = fetch_url_snapshot(url, requested_title).await?;
     persist_source_draft(kb_id, draft, true, None)
+}
+
+async fn import_remote_media_snapshot(
+    kb_id: &str,
+    kind: KnowledgeSourceKind,
+    url: &str,
+    requested_title: Option<String>,
+    file_name_hint: Option<String>,
+    mime_type_hint: Option<String>,
+) -> Result<ImportedSourceOutcome> {
+    let downloaded =
+        download_remote_media_source(kind, url, file_name_hint, mime_type_hint).await?;
+    let title = choose_title(requested_title, Some(downloaded.file_name.as_str()), None);
+    let provenance = BinarySourceProvenance::remote(
+        downloaded.file_name,
+        downloaded.mime_type,
+        downloaded.final_url,
+    );
+    match kind {
+        KnowledgeSourceKind::AudioTranscript | KnowledgeSourceKind::VideoTranscript => {
+            transcribe_media_bytes(kb_id, kind, title, provenance, downloaded.bytes).await
+        }
+        KnowledgeSourceKind::ImageOcr => {
+            ocr_image_bytes(kb_id, title, provenance, downloaded.bytes).await
+        }
+        _ => bail!("unsupported remote media source kind: {}", kind.as_str()),
+    }
+}
+
+struct RemoteMediaDownload {
+    final_url: String,
+    file_name: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+}
+
+async fn download_remote_media_source(
+    kind: KnowledgeSourceKind,
+    url: &str,
+    file_name_hint: Option<String>,
+    mime_type_hint: Option<String>,
+) -> Result<RemoteMediaDownload> {
+    let cfg = crate::config::cached_config();
+    let ssrf_cfg = cfg.ssrf.clone();
+    let web_cfg = cfg.web_fetch.clone();
+    let effective_policy = if web_cfg.ssrf_protection {
+        ssrf_cfg.web_fetch()
+    } else {
+        crate::security::ssrf::SsrfPolicy::AllowPrivate
+    };
+    let trusted_hosts = ssrf_cfg.trusted_hosts.clone();
+    let parsed = crate::security::ssrf::check_url(url, effective_policy, &trusted_hosts).await?;
+
+    let max_redirects = web_cfg.max_redirects;
+    let timeout_seconds = web_cfg.timeout_seconds.max(1);
+    let user_agent = if web_cfg.user_agent.trim().is_empty() {
+        USER_AGENT.to_string()
+    } else {
+        web_cfg.user_agent.clone()
+    };
+    let redirect_policy_hosts = trusted_hosts.clone();
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= max_redirects {
+            return attempt.error("too many redirects");
+        }
+        if let Some(host) = attempt.url().host_str() {
+            if crate::security::ssrf::check_host_blocking_sync(
+                host,
+                effective_policy,
+                &redirect_policy_hosts,
+            ) {
+                return attempt.stop();
+            }
+        }
+        attempt.follow()
+    });
+
+    let client = crate::provider::apply_proxy(
+        reqwest::Client::builder()
+            .user_agent(user_agent)
+            .timeout(Duration::from_secs(timeout_seconds))
+            .redirect(redirect_policy),
+    )
+    .build()
+    .map_err(|e| anyhow!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .get(parsed.clone())
+        .send()
+        .await
+        .map_err(|e| anyhow!("remote media fetch failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("remote media URL returned HTTP {}", status.as_u16());
+    }
+
+    let final_url = resp.url().to_string();
+    crate::security::ssrf::check_url(&final_url, effective_policy, &trusted_hosts).await?;
+    let response_mime = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| normalize_mime_type(v));
+    let mime_type = response_mime
+        .or_else(|| mime_type_hint.and_then(|v| normalize_mime_type(&v)))
+        .unwrap_or_else(|| default_mime_type(kind).to_string());
+    let file_name = file_name_hint
+        .and_then(|v| sanitize_remote_file_name(&v))
+        .or_else(|| file_name_from_url(&final_url))
+        .unwrap_or_else(|| default_file_name(kind).to_string());
+    if !remote_media_kind_matches(kind, &file_name, &mime_type) {
+        bail!(
+            "remote URL content does not match requested source kind {} (file: {}, content-type: {})",
+            kind.as_str(),
+            file_name,
+            mime_type
+        );
+    }
+
+    let mut bytes = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow!("remote media stream read failed: {e}"))?;
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > MAX_BINARY_SOURCE_BYTES {
+            bail!(
+                "remote media is too large (>{} bytes, max {})",
+                MAX_BINARY_SOURCE_BYTES,
+                MAX_BINARY_SOURCE_BYTES
+            );
+        }
+    }
+    if bytes.is_empty() {
+        bail!("remote media source is empty");
+    }
+
+    Ok(RemoteMediaDownload {
+        final_url,
+        file_name,
+        mime_type,
+        bytes,
+    })
 }
 
 async fn fetch_url_snapshot(
@@ -1454,7 +1776,7 @@ fn ensure_kb_exists(kb_id: &str) -> Result<()> {
 
 fn infer_input_kind(input: &KnowledgeSourceImportInput) -> Option<KnowledgeSourceKind> {
     if normalize_optional(input.url.as_deref()).is_some() {
-        return Some(KnowledgeSourceKind::UrlSnapshot);
+        return Some(input.kind.unwrap_or(KnowledgeSourceKind::UrlSnapshot));
     }
     input.kind.or_else(|| Some(infer_kind(&input.file_name)))
 }
@@ -1486,10 +1808,41 @@ fn infer_kind(file_name: &Option<String>) -> KnowledgeSourceKind {
     }
 }
 
+fn infer_file_kind(file_name: &str, mime_type: &str) -> KnowledgeSourceKind {
+    let lower_mime = mime_type.to_ascii_lowercase();
+    if lower_mime == "application/pdf" {
+        KnowledgeSourceKind::Pdf
+    } else if lower_mime
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    {
+        KnowledgeSourceKind::Docx
+    } else if lower_mime.starts_with("audio/") {
+        KnowledgeSourceKind::AudioTranscript
+    } else if lower_mime.starts_with("video/") {
+        KnowledgeSourceKind::VideoTranscript
+    } else if lower_mime.starts_with("image/") {
+        KnowledgeSourceKind::ImageOcr
+    } else if lower_mime == "text/markdown" || lower_mime == "text/x-markdown" {
+        KnowledgeSourceKind::Markdown
+    } else {
+        infer_kind(&Some(file_name.to_string()))
+    }
+}
+
 fn matches_media_kind(kind: KnowledgeSourceKind, file_name: &str, mime_type: &str) -> bool {
     match kind {
         KnowledgeSourceKind::AudioTranscript => is_audio_source(file_name, mime_type),
         KnowledgeSourceKind::VideoTranscript => is_video_source(file_name, mime_type),
+        _ => false,
+    }
+}
+
+fn remote_media_kind_matches(kind: KnowledgeSourceKind, file_name: &str, mime_type: &str) -> bool {
+    match kind {
+        KnowledgeSourceKind::AudioTranscript | KnowledgeSourceKind::VideoTranscript => {
+            matches_media_kind(kind, file_name, mime_type)
+        }
+        KnowledgeSourceKind::ImageOcr => is_image_source(file_name, mime_type),
         _ => false,
     }
 }
@@ -1525,6 +1878,43 @@ fn is_image_source(file_name: &str, mime_type: &str) -> bool {
 
 fn has_ext(lower_name: &str, exts: &[&str]) -> bool {
     exts.iter().any(|ext| lower_name.ends_with(ext))
+}
+
+fn is_safe_path_segment(raw: &str) -> bool {
+    let mut components = Path::new(raw).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+fn normalize_mime_type(raw: &str) -> Option<String> {
+    normalize_optional(Some(raw))
+        .map(|v| v.split(';').next().unwrap_or(v).trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
+}
+
+fn file_name_from_url(raw: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw).ok()?;
+    let last = parsed.path_segments()?.next_back()?;
+    sanitize_remote_file_name(last)
+}
+
+fn sanitize_remote_file_name(raw: &str) -> Option<String> {
+    let decoded = urlencoding::decode(raw)
+        .map(|v| v.into_owned())
+        .unwrap_or_else(|_| raw.to_string());
+    let cleaned = decoded
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect::<String>();
+    let trimmed = cleaned.trim().trim_matches('.').trim().to_string();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 fn default_file_name(kind: KnowledgeSourceKind) -> &'static str {
@@ -1891,6 +2281,45 @@ mod tests {
     }
 
     #[test]
+    fn normalize_import_accepts_remote_media_url() {
+        let mut req = input();
+        req.kind = Some(KnowledgeSourceKind::AudioTranscript);
+        req.url = Some("https://example.com/audio/voice.mp3".to_string());
+        req.file_name = Some("voice.mp3".to_string());
+        req.mime_type = Some("audio/mpeg".to_string());
+
+        let NormalizedImport::Url {
+            kind,
+            url,
+            file_name,
+            mime_type,
+            ..
+        } = normalize_import_input(req).expect("valid remote media URL import")
+        else {
+            panic!("expected URL import");
+        };
+
+        assert_eq!(kind, KnowledgeSourceKind::AudioTranscript);
+        assert_eq!(url, "https://example.com/audio/voice.mp3");
+        assert_eq!(file_name.as_deref(), Some("voice.mp3"));
+        assert_eq!(mime_type.as_deref(), Some("audio/mpeg"));
+    }
+
+    #[test]
+    fn normalize_import_keeps_plain_url_as_web_snapshot() {
+        let mut req = input();
+        req.url = Some("https://example.com/post".to_string());
+
+        let NormalizedImport::Url { kind, .. } =
+            normalize_import_input(req).expect("valid URL import")
+        else {
+            panic!("expected URL import");
+        };
+
+        assert_eq!(kind, KnowledgeSourceKind::UrlSnapshot);
+    }
+
+    #[test]
     fn normalize_import_rejects_pdf_content_without_file_bytes() {
         let mut req = input();
         req.kind = Some(KnowledgeSourceKind::Pdf);
@@ -2027,6 +2456,31 @@ mod tests {
             general_purpose::STANDARD.encode(b"hello")
         );
         assert_eq!(decode_base64_source(&encoded).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn remote_media_helpers_clean_filename_and_mime() {
+        assert_eq!(
+            normalize_mime_type(" Audio/MPEG; charset=binary "),
+            Some("audio/mpeg".to_string())
+        );
+        assert_eq!(
+            file_name_from_url("https://example.com/media/voice%20note.mp3?token=1").as_deref(),
+            Some("voice note.mp3")
+        );
+        assert_eq!(
+            sanitize_remote_file_name("../bad:name?.mp3").as_deref(),
+            Some("_bad_name_.mp3")
+        );
+    }
+
+    #[test]
+    fn session_attachment_session_id_must_be_single_path_segment() {
+        assert!(is_safe_path_segment("session_123"));
+        assert!(is_safe_path_segment("channel:telegram:chat"));
+        assert!(!is_safe_path_segment("../session_123"));
+        assert!(!is_safe_path_segment("session/123"));
+        assert!(!is_safe_path_segment(""));
     }
 
     #[test]

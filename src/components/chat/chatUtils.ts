@@ -300,10 +300,15 @@ export function parseUserAttachmentsMeta(
   if (!metaJson) return undefined
   try {
     const parsed = JSON.parse(metaJson)
-    if (!Array.isArray(parsed) || parsed.length === 0) return undefined
+    const rawItems = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object"
+        ? (parsed.user_attachments ?? parsed.attachments)
+        : null
+    if (!Array.isArray(rawItems) || rawItems.length === 0) return undefined
 
     const attachments: MessageAttachment[] = []
-    for (const item of parsed) {
+    for (const item of rawItems) {
       if (!item || typeof item !== "object" || Array.isArray(item)) continue
       const obj = item as Record<string, unknown>
       // File-browser quote reference card.

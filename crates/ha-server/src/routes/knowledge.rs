@@ -29,10 +29,11 @@ use ha_core::knowledge::{
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
     KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
-    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
-    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
-    RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
+    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
+    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
+    SchemaProfile, UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -209,6 +210,11 @@ pub struct KbBrowserSourceImportBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct KbSourceImportSessionAttachmentBody {
+    pub input: KnowledgeSourceImportSessionAttachmentInput,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct KbSourceImportBatchBody {
     pub input: KnowledgeSourceImportBatchInput,
 }
@@ -381,6 +387,16 @@ pub async fn kb_source_import_browser(
 ) -> Result<Json<KnowledgeSource>, AppError> {
     Ok(Json(
         service::source_import_browser(&kb_id, body.input).await?,
+    ))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/session-attachment`
+pub async fn kb_source_import_session_attachment(
+    Path(kb_id): Path<String>,
+    Json(body): Json<KbSourceImportSessionAttachmentBody>,
+) -> Result<Json<KnowledgeSource>, AppError> {
+    Ok(Json(
+        service::source_import_session_attachment(&kb_id, body.input).await?,
     ))
 }
 

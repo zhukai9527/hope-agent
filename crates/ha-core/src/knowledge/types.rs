@@ -318,6 +318,21 @@ pub struct KnowledgeSourceImportInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceImportSessionAttachmentInput {
+    pub session_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub kind: Option<KnowledgeSourceKind>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KnowledgeSourceImportBatchItemInput {
     #[serde(default)]
     pub client_id: Option<String>,

@@ -37,6 +37,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { IconTip } from "@/components/ui/tooltip"
@@ -67,6 +74,7 @@ interface KnowledgeSourcesPanelProps {
 }
 
 type ImportMode = "url" | "text" | "file" | "browser"
+type UrlSourceKind = "url_snapshot" | "audio_transcript" | "video_transcript" | "image_ocr"
 
 interface SourceFileDraft {
   file: File
@@ -90,6 +98,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   const [importing, setImporting] = useState(false)
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null)
   const [mode, setMode] = useState<ImportMode>("url")
+  const [urlKind, setUrlKind] = useState<UrlSourceKind>("url_snapshot")
   const [title, setTitle] = useState("")
   const [url, setUrl] = useState("")
   const [text, setText] = useState("")
@@ -181,6 +190,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     setText("")
     setFileDrafts([])
     setBrowserMode("auto")
+    setUrlKind("url_snapshot")
     setMode("url")
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -257,7 +267,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
       } else {
         const input: KnowledgeSourceImportInput =
           mode === "url"
-            ? { url: url.trim(), title: title.trim() || null, kind: "url_snapshot" }
+            ? { url: url.trim(), title: title.trim() || null, kind: urlKind }
             : {
                 content: text,
                 title: title.trim() || null,
@@ -743,11 +753,36 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                 placeholder={t("knowledge.sources.titlePlaceholder", "Title")}
               />
               <TabsContent value="url" className="mt-0">
-                <Input
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://example.com/article"
-                />
+                <div className="grid gap-2 sm:grid-cols-[11rem_1fr]">
+                  <Select value={urlKind} onValueChange={(v) => setUrlKind(v as UrlSourceKind)}>
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="url_snapshot">
+                        {t("knowledge.sources.urlKindPage", "Web page")}
+                      </SelectItem>
+                      <SelectItem value="audio_transcript">
+                        {t("knowledge.sources.urlKindAudio", "Audio transcript")}
+                      </SelectItem>
+                      <SelectItem value="video_transcript">
+                        {t("knowledge.sources.urlKindVideo", "Video transcript")}
+                      </SelectItem>
+                      <SelectItem value="image_ocr">
+                        {t("knowledge.sources.urlKindImage", "Image OCR")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder={
+                      urlKind === "url_snapshot"
+                        ? "https://example.com/article"
+                        : "https://example.com/media"
+                    }
+                  />
+                </div>
               </TabsContent>
               <TabsContent value="text" className="mt-0">
                 <Textarea

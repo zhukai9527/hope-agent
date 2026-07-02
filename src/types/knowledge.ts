@@ -95,6 +95,15 @@ export interface KnowledgeSourceImportInput {
   url?: string | null
 }
 
+export interface KnowledgeSourceImportSessionAttachmentInput {
+  sessionId: string
+  path: string
+  kind?: KnowledgeSourceKind | null
+  title?: string | null
+  fileName?: string | null
+  mimeType?: string | null
+}
+
 export interface KnowledgeSourceImportBatchItemInput {
   clientId?: string | null
   label?: string | null

@@ -15,10 +15,11 @@ use super::types::{
     CreateKnowledgeBaseInput, KbAccess, KbAttachInput, KbChatThread, KnowledgeBaseMeta,
     KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceDiff,
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
-    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
-    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
-    RenameOutcome, SchemaIssue, SchemaProfile,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
+    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
+    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
+    SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -64,6 +65,14 @@ pub async fn source_import_browser(
     input: KnowledgeBrowserSourceImportInput,
 ) -> Result<KnowledgeSource> {
     super::source::import_browser_capture(kb_id, input).await
+}
+
+/// Owner import: archive an already-persisted session attachment into sources.
+pub async fn source_import_session_attachment(
+    kb_id: &str,
+    input: KnowledgeSourceImportSessionAttachmentInput,
+) -> Result<KnowledgeSource> {
+    super::source::import_session_attachment(kb_id, input).await
 }
 
 /// Owner import: run a durable multi-item import pipeline with per-item status.

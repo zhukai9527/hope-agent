@@ -613,6 +613,7 @@ pub fn run() {
             commands::knowledge::reindex_dir_cmd,
             commands::knowledge::kb_source_import_cmd,
             commands::knowledge::kb_source_import_browser_cmd,
+            commands::knowledge::kb_source_import_session_attachment_cmd,
             commands::knowledge::kb_source_import_batch_cmd,
             commands::knowledge::kb_source_list_cmd,
             commands::knowledge::kb_source_import_runs_list_cmd,

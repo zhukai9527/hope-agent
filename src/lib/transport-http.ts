@@ -69,6 +69,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   reindex_kb_cmd:                  { method: "POST",   path: "/api/knowledge/{id}/reindex" },
   kb_source_import_cmd:            { method: "POST",   path: "/api/knowledge/{kbId}/sources" },
   kb_source_import_browser_cmd:    { method: "POST",   path: "/api/knowledge/{kbId}/sources/browser" },
+  kb_source_import_session_attachment_cmd:{ method: "POST",   path: "/api/knowledge/{kbId}/sources/session-attachment" },
   kb_source_import_batch_cmd:      { method: "POST",   path: "/api/knowledge/{kbId}/sources/batch" },
   kb_source_list_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources" },
   kb_source_import_runs_list_cmd:  { method: "GET",    path: "/api/knowledge/{kbId}/sources/import-runs" },

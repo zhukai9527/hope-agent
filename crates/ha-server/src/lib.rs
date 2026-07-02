@@ -287,6 +287,10 @@ fn build_router_with_cors(
             post(routes::knowledge::kb_source_import_browser),
         )
         .route(
+            "/knowledge/{kb_id}/sources/session-attachment",
+            post(routes::knowledge::kb_source_import_session_attachment),
+        )
+        .route(
             "/knowledge/{kb_id}/sources/batch",
             post(routes::knowledge::kb_source_import_batch).layer(DefaultBodyLimit::max(
                 (ha_core::knowledge::source::MAX_BINARY_SOURCE_BYTES * 4 / 3 * 3) + 4 * 1024 * 1024,
