@@ -33,9 +33,11 @@ use ha_core::knowledge::{
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
     KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
     KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -441,6 +443,22 @@ pub async fn kb_source_similarity_groups(
     Path(kb_id): Path<String>,
 ) -> Result<Json<Vec<KnowledgeSourceSimilarityGroup>>, AppError> {
     Ok(Json(service::source_similarity_groups(&kb_id)?))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/similar/dismiss`
+pub async fn kb_source_similarity_dismiss(
+    Path(kb_id): Path<String>,
+    Json(input): Json<KnowledgeSourceSimilarityDismissInput>,
+) -> Result<Json<Vec<KnowledgeSourceSimilarityGroup>>, AppError> {
+    Ok(Json(service::source_similarity_dismiss(&kb_id, input)?))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/similar/resolve`
+pub async fn kb_source_similarity_resolve(
+    Path(kb_id): Path<String>,
+    Json(input): Json<KnowledgeSourceSimilarityResolveInput>,
+) -> Result<Json<KnowledgeSourceSimilarityResolveResult>, AppError> {
+    Ok(Json(service::source_similarity_resolve(&kb_id, input)?))
 }
 
 /// `GET /api/knowledge/{kb_id}/sources`

@@ -301,7 +301,9 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 | `kb_source_import_runs_list_cmd` | `GET /api/knowledge/{kbId}/sources/import-runs?limit=` | ✅ (导入历史，limit 默认 20、钳 1..=200) |
 | `kb_source_import_run_detail_cmd` | `GET /api/knowledge/{kbId}/sources/import-runs/{runId}` | ✅ (导入 run 明细 + item 状态，不回显原始 `input_json`) |
 | `kb_source_import_retry_failed_cmd` | `POST /api/knowledge/{kbId}/sources/import-runs/{runId}/retry-failed` | ✅ (重试 failed item，校验 run 属于目标 KB，复用原 input_json) |
-| `kb_source_similarity_groups_cmd` | `GET /api/knowledge/{kbId}/sources/similar` | ✅ (确定性 shingle/Jaccard 相似 source 分组，用于资料去重治理) |
+| `kb_source_similarity_groups_cmd` | `GET /api/knowledge/{kbId}/sources/similar` | ✅ (资料去重治理：同 KB shingle/Jaccard 相似分组 + 跨 KB exact duplicate 提示，过滤已忽略 fingerprint) |
+| `kb_source_similarity_dismiss_cmd` | `POST /api/knowledge/{kbId}/sources/similar/dismiss` | ✅ (按 fingerprint 持久忽略相似/重复 source 建议) |
+| `kb_source_similarity_resolve_cmd` | `POST /api/knowledge/{kbId}/sources/similar/resolve` | ✅ (保留一个 source、删除当前 KB 内选定重复 source，并把该 fingerprint 记为已解决；不跨 KB 删除) |
 | `kb_source_sync_external_raw_cmd` | `POST /api/knowledge/{kbId}/sources/sync-external-raw` | ✅ (把已有 source/version 文本快照镜像到外部 vault 的 `raw/` 或 `sources/`；仅外部 KB + 外部写 opt-in + `externalRawSync` 开启时可用，返回 synced/failed 计数) |
 | `kb_evidence_coverage_cmd` | `GET /api/knowledge/{kbId}/evidence/coverage` | ✅ (Evidence 派生索引覆盖率：compiled note 数、claim-level evidence 命中数、missing/stale refs，用于维护面板) |
 | `kb_evidence_source_claims_cmd` | `GET /api/knowledge/{kbId}/evidence/sources/{sourceId}/claims` | ✅ (按 raw source 反查引用它的 compiled claims，实时 hydrate missing/stale/superseded 状态) |

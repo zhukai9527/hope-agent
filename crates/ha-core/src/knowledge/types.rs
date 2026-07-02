@@ -812,14 +812,55 @@ impl KnowledgeSourceSimilarityGroupKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceSimilarityGroupScope {
+    SameKb,
+    CrossKb,
+}
+
+impl KnowledgeSourceSimilarityGroupScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeSourceSimilarityGroupScope::SameKb => "same_kb",
+            KnowledgeSourceSimilarityGroupScope::CrossKb => "cross_kb",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeSourceSimilarityGroup {
     pub id: String,
     pub kind: KnowledgeSourceSimilarityGroupKind,
+    pub scope: KnowledgeSourceSimilarityGroupScope,
     pub similarity: f32,
     pub fingerprint: String,
     pub sources: Vec<KnowledgeSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceSimilarityDismissInput {
+    pub fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceSimilarityResolveInput {
+    pub fingerprint: String,
+    pub keep_source_id: String,
+    pub delete_source_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceSimilarityResolveResult {
+    pub kept_source_id: String,
+    pub deleted_source_ids: Vec<String>,
+    pub dismissed: bool,
 }
 
 /// Separate chunk rows for raw sources. They never share `note_chunk`, keeping

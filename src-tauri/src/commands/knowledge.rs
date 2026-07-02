@@ -20,9 +20,11 @@ use ha_core::knowledge::{
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
     KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
     KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -191,6 +193,22 @@ pub fn kb_source_similarity_groups_cmd(
     kb_id: String,
 ) -> Result<Vec<KnowledgeSourceSimilarityGroup>, CmdError> {
     service::source_similarity_groups(&kb_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn kb_source_similarity_dismiss_cmd(
+    kb_id: String,
+    input: KnowledgeSourceSimilarityDismissInput,
+) -> Result<Vec<KnowledgeSourceSimilarityGroup>, CmdError> {
+    service::source_similarity_dismiss(&kb_id, input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn kb_source_similarity_resolve_cmd(
+    kb_id: String,
+    input: KnowledgeSourceSimilarityResolveInput,
+) -> Result<KnowledgeSourceSimilarityResolveResult, CmdError> {
+    service::source_similarity_resolve(&kb_id, input).map_err(Into::into)
 }
 
 #[tauri::command]

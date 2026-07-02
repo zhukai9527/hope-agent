@@ -313,6 +313,14 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_source_similarity_groups),
         )
         .route(
+            "/knowledge/{kb_id}/sources/similar/dismiss",
+            post(routes::knowledge::kb_source_similarity_dismiss),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/similar/resolve",
+            post(routes::knowledge::kb_source_similarity_resolve),
+        )
+        .route(
             "/knowledge/{kb_id}/sources/sync-external-raw",
             post(routes::knowledge::kb_source_sync_external_raw),
         )

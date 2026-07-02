@@ -19,9 +19,10 @@ use super::types::{
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
     KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
     KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile,
+    KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -122,6 +123,23 @@ pub fn source_import_run_detail(
 /// Owner source governance: exact duplicate and near-similar source groups.
 pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
     super::source::source_similarity_groups(kb_id)
+}
+
+/// Owner source governance: hide a source similarity suggestion.
+pub fn source_similarity_dismiss(
+    kb_id: &str,
+    input: KnowledgeSourceSimilarityDismissInput,
+) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
+    super::source::dismiss_source_similarity_group(kb_id, input)
+}
+
+/// Owner source governance: keep one source and remove duplicate sources in the
+/// same KB, then remember the group as resolved.
+pub fn source_similarity_resolve(
+    kb_id: &str,
+    input: KnowledgeSourceSimilarityResolveInput,
+) -> Result<KnowledgeSourceSimilarityResolveResult> {
+    super::source::resolve_source_similarity_group(kb_id, input)
 }
 
 /// Owner read: source metadata + stored snapshot text.

@@ -1,6 +1,7 @@
 import {
   Check,
   Download,
+  EyeOff,
   ExternalLink,
   FileAudio,
   FileText,
@@ -67,6 +68,7 @@ import type {
   KnowledgeSourceReadResult,
   KnowledgeSourceRefreshResult,
   KnowledgeSourceSimilarityGroup,
+  KnowledgeSourceSimilarityResolveResult,
   KnowledgeSourceVersionHistory,
 } from "@/types/knowledge"
 
@@ -101,6 +103,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   const [similarOpen, setSimilarOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null)
+  const [resolvingSimilarityId, setResolvingSimilarityId] = useState<string | null>(null)
   const [mode, setMode] = useState<ImportMode>("url")
   const [urlKind, setUrlKind] = useState<UrlSourceKind>("url_snapshot")
   const [title, setTitle] = useState("")
@@ -168,6 +171,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     setRunDetail(null)
     setImportRuns([])
     setSimilarGroups([])
+    setResolvingSimilarityId(null)
   }, [kbId])
 
   useEffect(() => {
@@ -395,6 +399,72 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
       toast.error(t("knowledge.sources.retryFailed", "Couldn't retry failed imports"))
     } finally {
       setRetryingRunId(null)
+    }
+  }
+
+  async function dismissSimilarityGroup(group: KnowledgeSourceSimilarityGroup) {
+    if (!kbId || resolvingSimilarityId) return
+    setResolvingSimilarityId(`${group.id}:dismiss`)
+    try {
+      const groups = await getTransport().call<KnowledgeSourceSimilarityGroup[]>(
+        "kb_source_similarity_dismiss_cmd",
+        { kbId, input: { fingerprint: group.fingerprint, reason: "dismissed" } },
+      )
+      setSimilarGroups(groups)
+      toast.message(t("knowledge.sources.similarDismissed", "Similarity suggestion hidden"))
+      await reload()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::dismissSimilar", "source similarity dismiss failed", e)
+      toast.error(t("knowledge.sources.similarDismissFailed", "Couldn't hide similarity suggestion"))
+    } finally {
+      setResolvingSimilarityId(null)
+    }
+  }
+
+  async function resolveSimilarityGroup(group: KnowledgeSourceSimilarityGroup, keep: KnowledgeSource) {
+    if (!kbId || resolvingSimilarityId) return
+    const deleteSourceIds = group.sources
+      .filter((source) => source.kbId === kbId && source.id !== keep.id)
+      .map((source) => source.id)
+    if (deleteSourceIds.length === 0) {
+      toast.message(t("knowledge.sources.noLocalDuplicates", "No duplicate source in this space to delete"))
+      return
+    }
+    const confirmed = window.confirm(
+      t("knowledge.sources.resolveSimilarConfirm", {
+        defaultValue: "Keep {{name}} and delete {{count}} duplicate source(s) from this space?",
+        name: keep.title,
+        count: deleteSourceIds.length,
+      }),
+    )
+    if (!confirmed) return
+    const token = `${group.id}:${keep.id}`
+    setResolvingSimilarityId(token)
+    try {
+      const result = await getTransport().call<KnowledgeSourceSimilarityResolveResult>(
+        "kb_source_similarity_resolve_cmd",
+        {
+          kbId,
+          input: {
+            fingerprint: group.fingerprint,
+            keepSourceId: keep.id,
+            deleteSourceIds,
+          },
+        },
+      )
+      toast.success(
+        t("knowledge.sources.similarResolved", {
+          defaultValue: "Deleted {{count}} duplicate source(s)",
+          count: result.deletedSourceIds.length,
+        }),
+      )
+      setRunDetail(null)
+      await reload()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::resolveSimilar", "source similarity resolve failed", e)
+      toast.error(t("knowledge.sources.similarResolveFailed", "Couldn't resolve duplicate sources"))
+    } finally {
+      setResolvingSimilarityId(null)
     }
   }
 
@@ -1261,7 +1331,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
       </Dialog>
 
       <Dialog open={similarOpen} onOpenChange={setSimilarOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>{t("knowledge.sources.similarGroups", "Similar sources")}</DialogTitle>
           </DialogHeader>
@@ -1274,28 +1344,96 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
             {similarGroups.map((group) => (
               <div key={group.id} className="rounded-md border border-border-soft/60 p-2 text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{groupKindLabel(group.kind)}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {Math.round(group.similarity * 100)}%
-                  </span>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="font-medium">{groupKindLabel(group.kind)}</span>
+                    <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {groupScopeLabel(group.scope)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">
+                      {Math.round(group.similarity * 100)}%
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 gap-1 px-2 text-[10px]"
+                      onClick={() => void dismissSimilarityGroup(group)}
+                      disabled={!!resolvingSimilarityId}
+                    >
+                      {resolvingSimilarityId === `${group.id}:dismiss` ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <EyeOff className="h-3 w-3" />
+                      )}
+                      {t("knowledge.sources.dismissSimilar", "Ignore")}
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-2 space-y-1">
                   {group.sources.map((source) => (
                     <button
                       key={source.id}
                       type="button"
-                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1 text-left hover:bg-muted/60"
+                      className={cn(
+                        "flex w-full min-w-0 items-center justify-between gap-2 rounded px-2 py-1 text-left",
+                        source.kbId === kbId ? "hover:bg-muted/60" : "cursor-default opacity-80",
+                      )}
                       onClick={() => {
+                        if (source.kbId !== kbId) return
                         setSimilarOpen(false)
                         void openSource(source)
                       }}
                     >
-                      <span className="min-w-0 truncate">{source.title}</span>
+                      <span className="min-w-0 truncate">
+                        {source.title}
+                        {source.kbId !== kbId ? (
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            {t("knowledge.sources.otherKb", {
+                              defaultValue: "Other space {{id}}",
+                              id: source.kbId.slice(0, 8),
+                            })}
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
                         {sourceKindLabel(source.kind)} · {formatBytes(source.size)}
                       </span>
                     </button>
                   ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border-soft/50 pt-2">
+                  {group.sources
+                    .filter((source) => source.kbId === kbId)
+                    .map((source) => {
+                      const deleteCount = localDuplicateDeleteCount(group, source.id, kbId)
+                      const token = `${group.id}:${source.id}`
+                      return (
+                        <Button
+                          key={source.id}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 gap-1 px-2 text-[10px]"
+                          onClick={() => void resolveSimilarityGroup(group, source)}
+                          disabled={deleteCount === 0 || !!resolvingSimilarityId}
+                        >
+                          {resolvingSimilarityId === token ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="h-3 w-3" />
+                          )}
+                          {t("knowledge.sources.keepSource", {
+                            defaultValue: "Keep {{name}}",
+                            name: truncateLabel(source.title, 22),
+                          })}
+                          {deleteCount > 0 ? (
+                            <span className="text-muted-foreground">-{deleteCount}</span>
+                          ) : null}
+                        </Button>
+                      )
+                    })}
                 </div>
               </div>
             ))}
@@ -1736,6 +1874,24 @@ function groupKindLabel(kind: KnowledgeSourceSimilarityGroup["kind"]): string {
     default:
       return "Similar"
   }
+}
+
+function groupScopeLabel(scope: KnowledgeSourceSimilarityGroup["scope"]): string {
+  return scope === "cross_kb" ? "Cross-space" : "This space"
+}
+
+function localDuplicateDeleteCount(
+  group: KnowledgeSourceSimilarityGroup,
+  keepSourceId: string,
+  kbId: string | null,
+): number {
+  if (!kbId) return 0
+  return group.sources.filter((source) => source.kbId === kbId && source.id !== keepSourceId).length
+}
+
+function truncateLabel(value: string, max: number): string {
+  if (value.length <= max) return value
+  return `${value.slice(0, Math.max(1, max - 1))}...`
 }
 
 function stripExt(fileName: string): string {

@@ -7,6 +7,7 @@
 
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -345,6 +346,16 @@ impl KnowledgeRegistry {
                 ON knowledge_source_import_items(run_id, position);
             CREATE INDEX IF NOT EXISTS idx_knowledge_source_import_items_kb_status
                 ON knowledge_source_import_items(kb_id, status, updated_at DESC);
+
+            -- User governance memory for source similarity suggestions. Source
+            -- groups are computed, but dismiss decisions are owner truth.
+            CREATE TABLE IF NOT EXISTS knowledge_source_similarity_dismissals (
+                kb_id        TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                fingerprint  TEXT NOT NULL,
+                reason       TEXT,
+                dismissed_at INTEGER NOT NULL,
+                PRIMARY KEY (kb_id, fingerprint)
+            );
 
             -- Knowledge Compiler Phase 2: owner-reviewed compile runs and
             -- proposals. Runs are truth-source state. Proposals are durable
@@ -1365,6 +1376,82 @@ impl KnowledgeRegistry {
         let mut sources = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         hydrate_source_assets_locked(&conn, &mut sources)?;
         Ok(sources)
+    }
+
+    pub fn list_current_sources_for_similarity(
+        &self,
+        primary_kb_id: &str,
+        limit: usize,
+    ) -> Result<Vec<KnowledgeSource>> {
+        let limit = limit.clamp(1, 1000) as i64;
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
+                    s.external_raw_path, s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
+                    s.created_at, s.updated_at, s.size, s.version_of_source_id,
+                    s.version_index, s.superseded_by_source_id, s.superseded_at,
+                    COUNT(c.id) AS chunk_count
+             FROM knowledge_sources s
+             JOIN knowledge_bases kb ON kb.id = s.kb_id
+             LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
+             WHERE s.superseded_by_source_id IS NULL
+               AND kb.archived = 0
+             GROUP BY s.id
+             ORDER BY CASE WHEN s.kb_id = ?1 THEN 0 ELSE 1 END,
+                      s.created_at DESC, s.id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![primary_kb_id, limit], row_to_source)?;
+        let mut sources = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        hydrate_source_assets_locked(&conn, &mut sources)?;
+        Ok(sources)
+    }
+
+    pub fn dismissed_source_similarity_fingerprints(
+        &self,
+        kb_id: &str,
+    ) -> Result<BTreeSet<String>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT fingerprint
+             FROM knowledge_source_similarity_dismissals
+             WHERE kb_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![kb_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn dismiss_source_similarity_group(
+        &self,
+        kb_id: &str,
+        fingerprint: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "INSERT INTO knowledge_source_similarity_dismissals
+                (kb_id, fingerprint, reason, dismissed_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(kb_id, fingerprint) DO UPDATE SET
+                reason = excluded.reason,
+                dismissed_at = excluded.dismissed_at",
+            params![kb_id, fingerprint, reason, now],
+        )?;
+        Ok(())
     }
 
     pub fn get_source(&self, kb_id: &str, source_id: &str) -> Result<Option<KnowledgeSource>> {

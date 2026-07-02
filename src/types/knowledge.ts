@@ -287,13 +287,32 @@ export interface KnowledgeSourceImportRunDetail extends KnowledgeSourceImportRun
 }
 
 export type KnowledgeSourceSimilarityGroupKind = "exact_duplicate" | "similar"
+export type KnowledgeSourceSimilarityGroupScope = "same_kb" | "cross_kb"
 
 export interface KnowledgeSourceSimilarityGroup {
   id: string
   kind: KnowledgeSourceSimilarityGroupKind
+  scope: KnowledgeSourceSimilarityGroupScope
   similarity: number
   fingerprint: string
   sources: KnowledgeSource[]
+}
+
+export interface KnowledgeSourceSimilarityDismissInput {
+  fingerprint: string
+  reason?: string | null
+}
+
+export interface KnowledgeSourceSimilarityResolveInput {
+  fingerprint: string
+  keepSourceId: string
+  deleteSourceIds: string[]
+}
+
+export interface KnowledgeSourceSimilarityResolveResult {
+  keptSourceId: string
+  deletedSourceIds: string[]
+  dismissed: boolean
 }
 
 export interface SchemaPageTypeSpec {

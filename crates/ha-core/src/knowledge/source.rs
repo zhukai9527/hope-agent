@@ -29,8 +29,11 @@ use super::types::{
     KnowledgeSourceImportInput, KnowledgeSourceImportItem, KnowledgeSourceImportItemStatus,
     KnowledgeSourceImportRunDetail, KnowledgeSourceImportRunStatus,
     KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceKind, KnowledgeSourceReadResult,
-    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
-    KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus, KnowledgeSourceVersionHistory,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceSimilarityGroupKind, KnowledgeSourceSimilarityGroupScope,
+    KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
+    KnowledgeSourceStatus, KnowledgeSourceVersionHistory,
 };
 
 type QueuedSourceImport = (KnowledgeSourceImportItem, KnowledgeSourceImportInput);
@@ -606,8 +609,78 @@ pub fn source_import_run_detail(run_id: &str) -> Result<Option<KnowledgeSourceIm
 
 pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
     ensure_kb_exists(kb_id)?;
-    let sources = registry()?.list_all_sources(kb_id)?;
-    build_source_similarity_groups(kb_id, sources)
+    let current_sources = registry()?.list_sources(kb_id)?;
+    let all_sources =
+        registry()?.list_current_sources_for_similarity(kb_id, MAX_SOURCE_SIMILARITY_SCAN * 3)?;
+    let dismissed = registry()?.dismissed_source_similarity_fingerprints(kb_id)?;
+    build_source_similarity_groups(kb_id, current_sources, all_sources, dismissed)
+}
+
+pub fn dismiss_source_similarity_group(
+    kb_id: &str,
+    input: KnowledgeSourceSimilarityDismissInput,
+) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
+    ensure_kb_exists(kb_id)?;
+    let fingerprint = normalize_similarity_fingerprint(&input.fingerprint)?;
+    registry()?.dismiss_source_similarity_group(
+        kb_id,
+        &fingerprint,
+        normalize_optional(input.reason.as_deref()),
+    )?;
+    emit(kb_id, "source_similarity_dismiss");
+    source_similarity_groups(kb_id)
+}
+
+pub fn resolve_source_similarity_group(
+    kb_id: &str,
+    input: KnowledgeSourceSimilarityResolveInput,
+) -> Result<KnowledgeSourceSimilarityResolveResult> {
+    ensure_kb_exists(kb_id)?;
+    let fingerprint = normalize_similarity_fingerprint(&input.fingerprint)?;
+    if input.delete_source_ids.is_empty() {
+        bail!("source similarity resolve requires at least one source to delete");
+    }
+    let group = source_similarity_groups(kb_id)?
+        .into_iter()
+        .find(|group| group.fingerprint == fingerprint)
+        .ok_or_else(|| anyhow!("source similarity group not found: {fingerprint}"))?;
+    let by_id: HashMap<&str, &KnowledgeSource> = group
+        .sources
+        .iter()
+        .map(|source| (source.id.as_str(), source))
+        .collect();
+    if !by_id.contains_key(input.keep_source_id.as_str()) {
+        bail!("keep source does not belong to source similarity group");
+    }
+    let mut delete_ids = BTreeSet::new();
+    for source_id in &input.delete_source_ids {
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            bail!("delete source does not belong to source similarity group: {source_id}");
+        };
+        if source.id == input.keep_source_id {
+            bail!("keep source cannot also be deleted: {source_id}");
+        }
+        if source.kb_id != kb_id {
+            bail!("cannot delete a duplicate source from another knowledge base: {source_id}");
+        }
+        delete_ids.insert(source.id.clone());
+    }
+    let mut deleted_source_ids = Vec::new();
+    for source_id in delete_ids {
+        if delete_source(kb_id, &source_id)? {
+            deleted_source_ids.push(source_id);
+        }
+    }
+    if deleted_source_ids.is_empty() {
+        bail!("no source was deleted");
+    }
+    registry()?.dismiss_source_similarity_group(kb_id, &fingerprint, Some("resolved"))?;
+    emit(kb_id, "source_similarity_resolve");
+    Ok(KnowledgeSourceSimilarityResolveResult {
+        kept_source_id: input.keep_source_id,
+        deleted_source_ids,
+        dismissed: true,
+    })
 }
 
 pub fn read_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadResult> {
@@ -2815,11 +2888,13 @@ fn strip_html_tags(html: &str) -> String {
 
 fn build_source_similarity_groups(
     kb_id: &str,
-    sources: Vec<KnowledgeSource>,
+    current_sources: Vec<KnowledgeSource>,
+    all_sources: Vec<KnowledgeSource>,
+    dismissed: BTreeSet<String>,
 ) -> Result<Vec<KnowledgeSourceSimilarityGroup>> {
     let mut groups = Vec::new();
     let mut exact_by_hash: BTreeMap<String, Vec<KnowledgeSource>> = BTreeMap::new();
-    for source in &sources {
+    for source in &all_sources {
         if let Some(hash) = normalize_optional(source.extracted_text_hash.as_deref()) {
             exact_by_hash
                 .entry(hash.to_string())
@@ -2831,14 +2906,25 @@ fn build_source_similarity_groups(
         if items.len() < 2 {
             continue;
         }
+        if dismissed.contains(&hash) || !items.iter().any(|source| source.kb_id == kb_id) {
+            continue;
+        }
+        let scope = if items.iter().any(|source| source.kb_id != kb_id) {
+            KnowledgeSourceSimilarityGroupScope::CrossKb
+        } else {
+            KnowledgeSourceSimilarityGroupScope::SameKb
+        };
         items.sort_by(|a, b| {
-            b.created_at
-                .cmp(&a.created_at)
-                .then_with(|| a.id.cmp(&b.id))
+            (a.kb_id != kb_id).cmp(&(b.kb_id != kb_id)).then_with(|| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            })
         });
         groups.push(KnowledgeSourceSimilarityGroup {
             id: format!("exact-{}", short_hash(&hash)),
             kind: KnowledgeSourceSimilarityGroupKind::ExactDuplicate,
+            scope,
             similarity: 1.0,
             fingerprint: hash,
             sources: items,
@@ -2849,7 +2935,7 @@ fn build_source_similarity_groups(
     }
 
     let mut candidates = Vec::new();
-    for source in sources.into_iter().take(MAX_SOURCE_SIMILARITY_SCAN) {
+    for source in current_sources.into_iter().take(MAX_SOURCE_SIMILARITY_SCAN) {
         let path = source_path(kb_id, &source.stored_path)?;
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
@@ -2906,9 +2992,13 @@ fn build_source_similarity_groups(
                 .join(":")
                 .as_bytes(),
         );
+        if dismissed.contains(&fingerprint) {
+            continue;
+        }
         groups.push(KnowledgeSourceSimilarityGroup {
             id: format!("similar-{}", short_hash(&fingerprint)),
             kind: KnowledgeSourceSimilarityGroupKind::Similar,
+            scope: KnowledgeSourceSimilarityGroupScope::SameKb,
             similarity: *cluster_similarity
                 .get(&root)
                 .unwrap_or(&SOURCE_SIMILARITY_THRESHOLD),
@@ -2920,6 +3010,12 @@ fn build_source_similarity_groups(
         }
     }
     Ok(groups)
+}
+
+fn normalize_similarity_fingerprint(value: &str) -> Result<String> {
+    normalize_optional(Some(value))
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("source similarity fingerprint is required"))
 }
 
 fn short_hash(hash: &str) -> String {

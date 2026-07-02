@@ -620,6 +620,8 @@ pub fn run() {
             commands::knowledge::kb_source_import_run_detail_cmd,
             commands::knowledge::kb_source_import_retry_failed_cmd,
             commands::knowledge::kb_source_similarity_groups_cmd,
+            commands::knowledge::kb_source_similarity_dismiss_cmd,
+            commands::knowledge::kb_source_similarity_resolve_cmd,
             commands::knowledge::kb_source_read_cmd,
             commands::knowledge::kb_source_asset_link_cmd,
             commands::knowledge::kb_source_refresh_cmd,
