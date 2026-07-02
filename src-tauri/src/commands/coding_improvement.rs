@@ -5,14 +5,16 @@ use ha_core::coding_improvement::{
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingBenchmarkComparisonInput, CodingBenchmarkCorpusHealthInput,
     CodingBenchmarkCorpusHealthReport, CodingBenchmarkLeaderboardInput,
-    CodingBenchmarkLeaderboardReport, CodingBenchmarkTaskPack, CodingBenchmarkTaskPackImportInput,
-    CodingBenchmarkTaskPackListInput, CodingBenchmarkTaskPackStatusInput,
-    CodingBenchmarkTaskPackValidateInput, CodingBenchmarkTaskPackValidationReport,
-    CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
-    CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
-    CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
-    DistillCodingImprovementResult, GenerateCodingImprovementProposalsResult,
-    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
+    CodingBenchmarkLeaderboardReport, CodingBenchmarkReport, CodingBenchmarkReportGenerateInput,
+    CodingBenchmarkReportListInput, CodingBenchmarkReportMarkInput, CodingBenchmarkTaskPack,
+    CodingBenchmarkTaskPackImportInput, CodingBenchmarkTaskPackListInput,
+    CodingBenchmarkTaskPackStatusInput, CodingBenchmarkTaskPackValidateInput,
+    CodingBenchmarkTaskPackValidationReport, CodingEvalReleaseGateInput,
+    CodingEvalReleaseGateReport, CodingEvalRunRecord, CodingImprovementActionPlan,
+    CodingImprovementPromotionPlan, CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
+    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
+    RecordCodingEvalRunInput,
 };
 
 #[tauri::command]
@@ -323,5 +325,49 @@ pub async fn get_benchmark_corpus_health(
     app_state
         .session_db
         .get_benchmark_corpus_health(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn generate_benchmark_report(
+    input: CodingBenchmarkReportGenerateInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkReport, CmdError> {
+    app_state
+        .session_db
+        .generate_benchmark_report(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_benchmark_reports(
+    input: CodingBenchmarkReportListInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<CodingBenchmarkReport>, CmdError> {
+    app_state
+        .session_db
+        .list_benchmark_reports(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_benchmark_report(
+    report_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<CodingBenchmarkReport>, CmdError> {
+    app_state
+        .session_db
+        .get_benchmark_report(&report_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn mark_benchmark_report_release_evidence(
+    input: CodingBenchmarkReportMarkInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkReport, CmdError> {
+    app_state
+        .session_db
+        .mark_benchmark_report_release_evidence(input)
         .map_err(Into::into)
 }

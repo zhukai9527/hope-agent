@@ -6,14 +6,16 @@ use ha_core::coding_improvement::{
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingBenchmarkComparisonInput, CodingBenchmarkCorpusHealthInput,
     CodingBenchmarkCorpusHealthReport, CodingBenchmarkLeaderboardInput,
-    CodingBenchmarkLeaderboardReport, CodingBenchmarkTaskPack, CodingBenchmarkTaskPackImportInput,
-    CodingBenchmarkTaskPackListInput, CodingBenchmarkTaskPackStatusInput,
-    CodingBenchmarkTaskPackValidateInput, CodingBenchmarkTaskPackValidationReport,
-    CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
-    CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
-    CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
-    DistillCodingImprovementResult, GenerateCodingImprovementProposalsResult,
-    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
+    CodingBenchmarkLeaderboardReport, CodingBenchmarkReport, CodingBenchmarkReportGenerateInput,
+    CodingBenchmarkReportListInput, CodingBenchmarkReportMarkInput, CodingBenchmarkTaskPack,
+    CodingBenchmarkTaskPackImportInput, CodingBenchmarkTaskPackListInput,
+    CodingBenchmarkTaskPackStatusInput, CodingBenchmarkTaskPackValidateInput,
+    CodingBenchmarkTaskPackValidationReport, CodingEvalReleaseGateInput,
+    CodingEvalReleaseGateReport, CodingEvalRunRecord, CodingImprovementActionPlan,
+    CodingImprovementPromotionPlan, CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
+    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
+    RecordCodingEvalRunInput,
 };
 use serde::Deserialize;
 
@@ -120,6 +122,24 @@ pub struct BenchmarkTaskPackValidateBody {
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkCorpusHealthBody {
     pub input: CodingBenchmarkCorpusHealthInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkReportGenerateBody {
+    pub input: CodingBenchmarkReportGenerateInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkReportListBody {
+    pub input: CodingBenchmarkReportListInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkReportMarkBody {
+    pub input: CodingBenchmarkReportMarkInput,
 }
 
 pub async fn get_coding_trend_report(
@@ -374,6 +394,42 @@ pub async fn get_benchmark_corpus_health(
 ) -> Result<Json<CodingBenchmarkCorpusHealthReport>, AppError> {
     session_db()?
         .get_benchmark_corpus_health(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn generate_benchmark_report(
+    Json(body): Json<BenchmarkReportGenerateBody>,
+) -> Result<Json<CodingBenchmarkReport>, AppError> {
+    session_db()?
+        .generate_benchmark_report(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn list_benchmark_reports(
+    Json(body): Json<BenchmarkReportListBody>,
+) -> Result<Json<Vec<CodingBenchmarkReport>>, AppError> {
+    session_db()?
+        .list_benchmark_reports(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn get_benchmark_report(
+    Path(report_id): Path<String>,
+) -> Result<Json<Option<CodingBenchmarkReport>>, AppError> {
+    session_db()?
+        .get_benchmark_report(&report_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn mark_benchmark_report_release_evidence(
+    Json(body): Json<BenchmarkReportMarkBody>,
+) -> Result<Json<CodingBenchmarkReport>, AppError> {
+    session_db()?
+        .mark_benchmark_report_release_evidence(body.input)
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

@@ -1528,6 +1528,22 @@ fn build_router_with_cors(
             "/coding-benchmark/corpus/health",
             post(routes::coding_improvement::get_benchmark_corpus_health),
         )
+        .route(
+            "/coding-benchmark/reports/generate",
+            post(routes::coding_improvement::generate_benchmark_report),
+        )
+        .route(
+            "/coding-benchmark/reports",
+            post(routes::coding_improvement::list_benchmark_reports),
+        )
+        .route(
+            "/coding-benchmark/reports/{reportId}",
+            get(routes::coding_improvement::get_benchmark_report),
+        )
+        .route(
+            "/coding-benchmark/reports/release-evidence",
+            post(routes::coding_improvement::mark_benchmark_report_release_evidence),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

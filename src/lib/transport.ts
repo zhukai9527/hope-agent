@@ -1866,6 +1866,53 @@ export interface CodingBenchmarkCorpusHealthReport {
   checks: CodingBenchmarkCenterCheck[];
 }
 
+export interface CodingBenchmarkReportGenerateInput {
+  reportType: string;
+  title?: string | null;
+  sessionId?: string | null;
+  projectId?: string | null;
+  campaignId?: string | null;
+  campaignIds?: string[];
+  windowDays?: number | null;
+  markReleaseEvidence?: boolean;
+  outputDir?: string | null;
+}
+
+export interface CodingBenchmarkReportListInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  releaseEvidenceOnly?: boolean;
+  limit?: number | null;
+}
+
+export interface CodingBenchmarkReportMarkInput {
+  reportId: string;
+  releaseEvidence: boolean;
+}
+
+export interface CodingBenchmarkReport {
+  id: string;
+  reportType: string;
+  title: string;
+  status: string;
+  summary: string;
+  scope: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  sourceType: string;
+  sourceId: string;
+  campaignId?: string | null;
+  campaignIds: string[];
+  snapshot: Record<string, unknown>;
+  markdownPath: string;
+  jsonPath: string;
+  htmlPath: string;
+  releaseEvidence: boolean;
+  createdAt: string;
+  updatedAt: string;
+  markedReleaseAt?: string | null;
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

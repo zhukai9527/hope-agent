@@ -5,7 +5,9 @@ import {
   Activity,
   Archive,
   CheckCircle2,
+  Copy,
   FileCheck2,
+  FileText,
   GitBranch,
   Layers3,
   Loader2,
@@ -25,6 +27,7 @@ import type {
   CodingBenchmarkCenterReport,
   CodingBenchmarkCorpusHealthReport,
   CodingBenchmarkLeaderboardReport,
+  CodingBenchmarkReport,
   CodingBenchmarkTaskPack,
   CodingBenchmarkTaskPackManifest,
   CodingBenchmarkTaskPackValidationReport,
@@ -111,6 +114,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [benchmarkTaskPacks, setBenchmarkTaskPacks] = useState<CodingBenchmarkTaskPack[]>([])
   const [benchmarkCorpusHealth, setBenchmarkCorpusHealth] =
     useState<CodingBenchmarkCorpusHealthReport | null>(null)
+  const [benchmarkReports, setBenchmarkReports] = useState<CodingBenchmarkReport[]>([])
   const [benchmarkProviders, setBenchmarkProviders] = useState<BenchmarkProviderOption[]>([])
   const [selectedBenchmarkModels, setSelectedBenchmarkModels] = useState<string[]>([])
   const [benchmarkMaxTasks, setBenchmarkMaxTasks] = useState(3)
@@ -122,6 +126,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
   const [campaignActionId, setCampaignActionId] = useState<string | null>(null)
   const [corpusActionId, setCorpusActionId] = useState<string | null>(null)
+  const [reportActionId, setReportActionId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -138,6 +143,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         leaderboard,
         taskPacks,
         corpusHealth,
+        reports,
         providers,
         rg,
         gen,
@@ -185,6 +191,11 @@ export default function LearningTab({ filter }: LearningTabProps) {
         getTransport().call<CodingBenchmarkCorpusHealthReport>("get_benchmark_corpus_health", {
           input: {},
         }),
+        getTransport().call<CodingBenchmarkReport[]>("list_benchmark_reports", {
+          input: {
+            limit: 6,
+          },
+        }),
         getTransport()
           .call<BenchmarkProviderOption[]>("get_providers")
           .catch((error) => {
@@ -220,6 +231,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setBenchmarkLeaderboard(leaderboard)
       setBenchmarkTaskPacks(taskPacks ?? [])
       setBenchmarkCorpusHealth(corpusHealth)
+      setBenchmarkReports(reports ?? [])
       setBenchmarkProviders(providers ?? [])
       setReleaseGate(rg)
       setGeneralization(gen)
@@ -443,6 +455,56 @@ export default function LearningTab({ filter }: LearningTabProps) {
     }
   }, [reload])
 
+  const generateBenchmarkReport = useCallback(async (reportType: string, campaignId?: string | null) => {
+    const actionKey = campaignId ? `${reportType}:${campaignId}` : reportType
+    setReportActionId(actionKey)
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkReport>("generate_benchmark_report", {
+        input: {
+          reportType,
+          campaignId: campaignId ?? null,
+          campaignIds: campaignId ? [campaignId] : benchmarkCampaigns.slice(0, 6).map((campaign) => campaign.id),
+          windowDays: releaseGateWindowDays(filter, windowDays),
+          markReleaseEvidence: reportType === "release",
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::generateBenchmarkReport", "Failed to generate benchmark report", e)
+    } finally {
+      setReportActionId(null)
+    }
+  }, [benchmarkCampaigns, filter, reload, windowDays])
+
+  const markBenchmarkReport = useCallback(async (report: CodingBenchmarkReport, releaseEvidence: boolean) => {
+    setReportActionId(`mark:${report.id}`)
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkReport>("mark_benchmark_report_release_evidence", {
+        input: {
+          reportId: report.id,
+          releaseEvidence,
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::markBenchmarkReport", "Failed to mark benchmark report", e)
+    } finally {
+      setReportActionId(null)
+    }
+  }, [reload])
+
+  const copyBenchmarkReportPath = useCallback(async (path: string) => {
+    try {
+      await navigator.clipboard?.writeText(path)
+    } catch (e) {
+      logger.warn("dashboard", "LearningTab::copyBenchmarkReportPath", "Failed to copy report path", e)
+    }
+  }, [])
+
   useEffect(() => {
     reload()
   }, [reload])
@@ -491,6 +553,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         benchmarkLeaderboard={benchmarkLeaderboard}
         benchmarkTaskPacks={benchmarkTaskPacks}
         benchmarkCorpusHealth={benchmarkCorpusHealth}
+        benchmarkReports={benchmarkReports}
         benchmarkModelOptions={benchmarkModelOptions}
         selectedBenchmarkModels={selectedBenchmarkModels}
         benchmarkMaxTasks={benchmarkMaxTasks}
@@ -501,6 +564,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         benchmarkError={benchmarkError}
         campaignActionId={campaignActionId}
         corpusActionId={corpusActionId}
+        reportActionId={reportActionId}
         onRunBenchmark={runBenchmark}
         onRunExternalBenchmark={runExternalBenchmark}
         onToggleBenchmarkModel={toggleBenchmarkModel}
@@ -511,6 +575,9 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onImportSampleTaskPack={importSampleTaskPack}
         onUpdateTaskPackStatus={updateTaskPackStatus}
         onValidateTaskPack={validateTaskPack}
+        onGenerateBenchmarkReport={generateBenchmarkReport}
+        onMarkBenchmarkReport={markBenchmarkReport}
+        onCopyBenchmarkReportPath={copyBenchmarkReportPath}
       />
 
       {/* Overview cards */}
@@ -675,6 +742,7 @@ function CodingImprovementSection({
   benchmarkLeaderboard,
   benchmarkTaskPacks,
   benchmarkCorpusHealth,
+  benchmarkReports,
   benchmarkModelOptions,
   selectedBenchmarkModels,
   benchmarkMaxTasks,
@@ -685,6 +753,7 @@ function CodingImprovementSection({
   benchmarkError,
   campaignActionId,
   corpusActionId,
+  reportActionId,
   onRunBenchmark,
   onRunExternalBenchmark,
   onToggleBenchmarkModel,
@@ -695,6 +764,9 @@ function CodingImprovementSection({
   onImportSampleTaskPack,
   onUpdateTaskPackStatus,
   onValidateTaskPack,
+  onGenerateBenchmarkReport,
+  onMarkBenchmarkReport,
+  onCopyBenchmarkReportPath,
 }: {
   coding: CodingImprovementDashboard | null
   benchmark: CodingBenchmarkCenterReport | null
@@ -702,6 +774,7 @@ function CodingImprovementSection({
   benchmarkLeaderboard: CodingBenchmarkLeaderboardReport | null
   benchmarkTaskPacks: CodingBenchmarkTaskPack[]
   benchmarkCorpusHealth: CodingBenchmarkCorpusHealthReport | null
+  benchmarkReports: CodingBenchmarkReport[]
   benchmarkModelOptions: BenchmarkModelOption[]
   selectedBenchmarkModels: string[]
   benchmarkMaxTasks: number
@@ -712,6 +785,7 @@ function CodingImprovementSection({
   benchmarkError: string | null
   campaignActionId: string | null
   corpusActionId: string | null
+  reportActionId: string | null
   onRunBenchmark: () => void
   onRunExternalBenchmark: () => void
   onToggleBenchmarkModel: (key: string) => void
@@ -722,6 +796,9 @@ function CodingImprovementSection({
   onImportSampleTaskPack: () => void
   onUpdateTaskPackStatus: (pack: CodingBenchmarkTaskPack, status: string) => void
   onValidateTaskPack: (pack: CodingBenchmarkTaskPack) => void
+  onGenerateBenchmarkReport: (reportType: string, campaignId?: string | null) => void
+  onMarkBenchmarkReport: (report: CodingBenchmarkReport, releaseEvidence: boolean) => void
+  onCopyBenchmarkReportPath: (path: string) => void
 }) {
   const { t } = useTranslation()
   const overview = coding?.overview
@@ -860,6 +937,15 @@ function CodingImprovementSection({
         onImportSample={onImportSampleTaskPack}
         onUpdateStatus={onUpdateTaskPackStatus}
         onValidate={onValidateTaskPack}
+      />
+
+      <BenchmarkReportPanel
+        reports={benchmarkReports}
+        campaigns={benchmarkCampaigns}
+        actionId={reportActionId}
+        onGenerate={onGenerateBenchmarkReport}
+        onMarkReleaseEvidence={onMarkBenchmarkReport}
+        onCopyPath={onCopyBenchmarkReportPath}
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -1072,6 +1158,163 @@ function CodingImprovementSection({
         </div>
       </div>
     </section>
+  )
+}
+
+function BenchmarkReportPanel({
+  reports,
+  campaigns,
+  actionId,
+  onGenerate,
+  onMarkReleaseEvidence,
+  onCopyPath,
+}: {
+  reports: CodingBenchmarkReport[]
+  campaigns: CodingBenchmarkCampaign[]
+  actionId: string | null
+  onGenerate: (reportType: string, campaignId?: string | null) => void
+  onMarkReleaseEvidence: (report: CodingBenchmarkReport, releaseEvidence: boolean) => void
+  onCopyPath: (path: string) => void
+}) {
+  const { t } = useTranslation()
+  const latestCampaign = campaigns[0]
+  const generatingComparison = actionId === "comparison"
+  const generatingRelease = actionId === "release"
+  const generatingCampaign = latestCampaign ? actionId === `campaign:${latestCampaign.id}` : false
+
+  return (
+    <div className="border border-border/60 rounded-lg p-4 min-w-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("dashboard.learning.benchmarkReports", {
+              defaultValue: "Benchmark reports",
+            })}
+          </h4>
+          <span className="rounded bg-secondary/40 px-2 py-1 text-[10px] text-muted-foreground tabular-nums">
+            {reports.length}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5"
+            onClick={() => onGenerate("comparison", null)}
+            disabled={Boolean(actionId)}
+            title={t("dashboard.learning.generateComparisonReport", {
+              defaultValue: "Generate comparison report",
+            })}
+          >
+            {generatingComparison ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            <span className="text-xs">
+              {t("dashboard.learning.reportComparison", {
+                defaultValue: "Comparison",
+              })}
+            </span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5"
+            onClick={() => onGenerate("release", null)}
+            disabled={Boolean(actionId)}
+            title={t("dashboard.learning.generateReleaseReport", {
+              defaultValue: "Generate release report",
+            })}
+          >
+            {generatingRelease ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+            <span className="text-xs">
+              {t("dashboard.learning.reportRelease", {
+                defaultValue: "Release",
+              })}
+            </span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5"
+            onClick={() => latestCampaign && onGenerate("campaign", latestCampaign.id)}
+            disabled={Boolean(actionId) || !latestCampaign}
+            title={t("dashboard.learning.generateCampaignReport", {
+              defaultValue: "Generate campaign report",
+            })}
+          >
+            {generatingCampaign ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Layers3 className="h-3.5 w-3.5" />}
+            <span className="text-xs">
+              {t("dashboard.learning.reportCampaign", {
+                defaultValue: "Campaign",
+              })}
+            </span>
+          </Button>
+        </div>
+      </div>
+
+      {reports.length ? (
+        <div className="space-y-2">
+          {reports.slice(0, 6).map((report) => (
+            <div key={report.id} className="rounded border border-border/40 p-2.5 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] ${releaseGateTone(report.status)}`}>
+                  {report.status}
+                </span>
+                <span className="rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {report.reportType}
+                </span>
+                <span className="min-w-0 max-w-[320px] truncate font-medium">{report.title}</span>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {new Date(report.createdAt).toLocaleString()}
+                </span>
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+                  {report.releaseEvidence && (
+                    <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                      release
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5"
+                    onClick={() => onCopyPath(report.markdownPath)}
+                    title={t("dashboard.learning.copyReportPath", {
+                      defaultValue: "Copy report path",
+                    })}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5"
+                    onClick={() => onMarkReleaseEvidence(report, !report.releaseEvidence)}
+                    disabled={Boolean(actionId)}
+                    title={t("dashboard.learning.toggleReleaseEvidence", {
+                      defaultValue: report.releaseEvidence
+                        ? "Remove release evidence"
+                        : "Mark as release evidence",
+                    })}
+                  >
+                    {actionId === `mark:${report.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  </Button>
+                </div>
+              </div>
+              <p className="mt-1.5 line-clamp-2 text-[10px] text-muted-foreground" title={report.summary}>
+                {report.summary}
+              </p>
+              <div className="mt-1.5 truncate text-[10px] text-muted-foreground" title={report.markdownPath}>
+                {report.markdownPath}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyLine
+          label={t("dashboard.learning.noBenchmarkReports", {
+            defaultValue: "No benchmark reports",
+          })}
+        />
+      )}
+    </div>
   )
 }
 

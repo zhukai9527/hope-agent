@@ -862,6 +862,10 @@ pub fn run() {
             commands::coding_improvement::update_benchmark_task_pack_status,
             commands::coding_improvement::validate_benchmark_task_pack,
             commands::coding_improvement::get_benchmark_corpus_health,
+            commands::coding_improvement::generate_benchmark_report,
+            commands::coding_improvement::list_benchmark_reports,
+            commands::coding_improvement::get_benchmark_report,
+            commands::coding_improvement::mark_benchmark_report_release_evidence,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

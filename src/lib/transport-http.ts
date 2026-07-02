@@ -428,6 +428,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   update_benchmark_task_pack_status: { method: "POST", path: "/api/coding-benchmark/corpus/packs/status" },
   validate_benchmark_task_pack: { method: "POST", path: "/api/coding-benchmark/corpus/packs/validate" },
   get_benchmark_corpus_health: { method: "POST", path: "/api/coding-benchmark/corpus/health" },
+  generate_benchmark_report: { method: "POST", path: "/api/coding-benchmark/reports/generate" },
+  list_benchmark_reports: { method: "POST", path: "/api/coding-benchmark/reports" },
+  get_benchmark_report: { method: "GET", path: "/api/coding-benchmark/reports/{reportId}" },
+  mark_benchmark_report_release_evidence: { method: "POST", path: "/api/coding-benchmark/reports/release-evidence" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

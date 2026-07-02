@@ -61,6 +61,8 @@ const MAX_BENCHMARK_CORPUS_LIMIT: usize = 100;
 const MAX_BENCHMARK_CORPUS_TASKS: usize = 500;
 const DEFAULT_BENCHMARK_CORPUS_STALE_DAYS: u32 = 90;
 const MAX_BENCHMARK_CORPUS_STALE_DAYS: u32 = 365;
+const DEFAULT_BENCHMARK_REPORT_LIMIT: usize = 20;
+const MAX_BENCHMARK_REPORT_LIMIT: usize = 100;
 const MAX_SCOPE_SESSIONS: usize = 200;
 const MAX_CONTENT_PREVIEW_BYTES: usize = 12 * 1024;
 const MAX_DISTILLATION_SESSIONS: usize = 12;
@@ -1469,6 +1471,78 @@ pub struct CodingBenchmarkCorpusHealthReport {
     pub checks: Vec<CodingBenchmarkCenterCheck>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkReportGenerateInput {
+    pub report_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub campaign_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub campaign_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default)]
+    pub mark_release_evidence: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkReportListInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub release_evidence_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkReportMarkInput {
+    pub report_id: String,
+    pub release_evidence: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkReport {
+    pub id: String,
+    pub report_type: String,
+    pub title: String,
+    pub status: String,
+    pub summary: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub source_type: String,
+    pub source_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub campaign_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub campaign_ids: Vec<String>,
+    pub snapshot: Value,
+    pub markdown_path: String,
+    pub json_path: String,
+    pub html_path: String,
+    pub release_evidence: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marked_release_at: Option<String>,
+}
+
 struct ReportScope {
     session_id: String,
     project_id: Option<String>,
@@ -1832,6 +1906,34 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             ON coding_benchmark_task_pack_tasks(pack_row_id, status, task_type);
         CREATE INDEX IF NOT EXISTS idx_coding_benchmark_task_pack_tasks_fingerprint
             ON coding_benchmark_task_pack_tasks(fingerprint);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_reports (
+            id TEXT PRIMARY KEY,
+            report_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            session_id TEXT,
+            project_id TEXT,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            campaign_id TEXT,
+            campaign_ids_json TEXT NOT NULL DEFAULT '[]',
+            snapshot_json TEXT NOT NULL DEFAULT '{}',
+            markdown_path TEXT NOT NULL,
+            json_path TEXT NOT NULL,
+            html_path TEXT NOT NULL,
+            release_evidence INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            marked_release_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_reports_scope
+            ON coding_benchmark_reports(project_id, session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_reports_release
+            ON coding_benchmark_reports(release_evidence, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS coding_improvement_proposals (
             id TEXT PRIMARY KEY,
@@ -3758,6 +3860,360 @@ impl SessionDB {
             gaming_risk_tasks,
             checks,
         })
+    }
+
+    pub fn generate_benchmark_report(
+        &self,
+        input: CodingBenchmarkReportGenerateInput,
+    ) -> Result<CodingBenchmarkReport> {
+        let report_type = normalize_benchmark_report_type(&input.report_type)?;
+        let report_id = format!("cbr_{}", uuid::Uuid::new_v4().simple());
+        let generated_at = now_rfc3339();
+        let mut title = input
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let campaign_id = input
+            .campaign_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut campaign_ids = input
+            .campaign_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .take(MAX_BENCHMARK_CAMPAIGN_LIMIT)
+            .collect::<Vec<_>>();
+        if let Some(campaign_id) = campaign_id.as_ref() {
+            if !campaign_ids.iter().any(|id| id == campaign_id) {
+                campaign_ids.push(campaign_id.clone());
+            }
+        }
+
+        let window_days = input
+            .window_days
+            .unwrap_or(DEFAULT_WINDOW_DAYS)
+            .clamp(1, MAX_WINDOW_DAYS);
+        let mut session_id = input
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut project_id = input
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut source_type = report_type.clone();
+        let mut source_id = report_id.clone();
+        let (status, scope, summary, snapshot) = match report_type.as_str() {
+            "campaign" => {
+                let campaign_id_value = campaign_id
+                    .clone()
+                    .ok_or_else(|| anyhow!("campaign benchmark report requires campaignId"))?;
+                let campaign = self
+                    .get_coding_benchmark_campaign(&campaign_id_value)?
+                    .ok_or_else(|| anyhow!("benchmark campaign not found: {campaign_id_value}"))?;
+                session_id = campaign.session_id.clone().or(session_id);
+                project_id = campaign.project_id.clone().or(project_id);
+                source_type = "campaign".to_string();
+                source_id = campaign.id.clone();
+                title
+                    .get_or_insert_with(|| format!("Benchmark campaign report: {}", campaign.name));
+                let leaderboard =
+                    self.get_benchmark_leaderboard(CodingBenchmarkLeaderboardInput {
+                        session_id: session_id.clone(),
+                        project_id: project_id.clone(),
+                        window_days: Some(window_days),
+                        campaign_ids: vec![campaign.id.clone()],
+                        limit: Some(DEFAULT_BENCHMARK_LEADERBOARD_LIMIT),
+                        min_items: Some(DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS),
+                    })?;
+                let scope = benchmark_scope_label(session_id.as_ref(), project_id.as_ref());
+                let status = benchmark_report_status_from_campaign(&campaign);
+                let summary = format!(
+                    "Campaign {} has {}/{} passed item(s), {} failed item(s), and {} total check(s).",
+                    campaign.name,
+                    campaign.summary.passed_items,
+                    campaign.summary.total_items,
+                    campaign.summary.failed_items,
+                    campaign.summary.total_checks
+                );
+                let snapshot = json!({
+                    "reportId": report_id,
+                    "reportType": report_type,
+                    "generatedAt": generated_at,
+                    "campaign": campaign,
+                    "leaderboard": leaderboard,
+                });
+                (status, scope, summary, snapshot)
+            }
+            "comparison" => {
+                title.get_or_insert_with(|| "Benchmark comparison report".to_string());
+                let leaderboard =
+                    self.compare_benchmark_models(CodingBenchmarkComparisonInput {
+                        session_id: session_id.clone(),
+                        project_id: project_id.clone(),
+                        window_days: Some(window_days),
+                        campaign_ids: campaign_ids.clone(),
+                        limit: Some(MAX_BENCHMARK_LEADERBOARD_LIMIT.min(20)),
+                        min_items: Some(DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS),
+                    })?;
+                let corpus_health =
+                    self.get_benchmark_corpus_health(CodingBenchmarkCorpusHealthInput::default())?;
+                session_id = leaderboard.session_id.clone().or(session_id);
+                project_id = leaderboard.project_id.clone().or(project_id);
+                let scope = leaderboard.scope.clone();
+                let status = leaderboard.status.clone();
+                let summary = format!(
+                    "Comparison includes {} model/baseline row(s) across a {} day window.",
+                    leaderboard.rows.len(),
+                    leaderboard.window_days
+                );
+                let snapshot = json!({
+                    "reportId": report_id,
+                    "reportType": report_type,
+                    "generatedAt": generated_at,
+                    "leaderboard": leaderboard,
+                    "corpusHealth": corpus_health,
+                });
+                (status, scope, summary, snapshot)
+            }
+            "release" => {
+                title.get_or_insert_with(|| "Benchmark release report".to_string());
+                let center = self.get_coding_benchmark_center(CodingBenchmarkCenterInput {
+                    session_id: session_id.clone(),
+                    project_id: project_id.clone(),
+                    window_days: Some(window_days),
+                    limit: Some(DEFAULT_BENCHMARK_CENTER_LIMIT),
+                    ..Default::default()
+                })?;
+                let release_gate =
+                    self.evaluate_coding_eval_release_gate(CodingEvalReleaseGateInput {
+                        session_id: session_id.clone(),
+                        project_id: project_id.clone(),
+                        window_days: Some(window_days),
+                        ..Default::default()
+                    })?;
+                let leaderboard =
+                    self.get_benchmark_leaderboard(CodingBenchmarkLeaderboardInput {
+                        session_id: session_id.clone(),
+                        project_id: project_id.clone(),
+                        window_days: Some(window_days),
+                        campaign_ids: campaign_ids.clone(),
+                        limit: Some(DEFAULT_BENCHMARK_LEADERBOARD_LIMIT),
+                        min_items: Some(DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS),
+                    })?;
+                let corpus_health =
+                    self.get_benchmark_corpus_health(CodingBenchmarkCorpusHealthInput::default())?;
+                session_id = center.session_id.clone().or(session_id);
+                project_id = center.project_id.clone().or(project_id);
+                source_type = "release_gate".to_string();
+                source_id = release_gate.generated_at.clone();
+                let scope = center.scope.clone();
+                let status = project_status_rank(&center.status)
+                    .min(project_status_rank(&release_gate.status))
+                    .min(project_status_rank(&corpus_health.status));
+                let status = match status {
+                    0 => "failed",
+                    1 => "insufficient_data",
+                    _ => "passed",
+                }
+                .to_string();
+                let summary = format!(
+                    "Release gate is {}; benchmark center is {}; corpus health is {}.",
+                    release_gate.status, center.status, corpus_health.status
+                );
+                let snapshot = json!({
+                    "reportId": report_id,
+                    "reportType": report_type,
+                    "generatedAt": generated_at,
+                    "benchmarkCenter": center,
+                    "releaseGate": release_gate,
+                    "leaderboard": leaderboard,
+                    "corpusHealth": corpus_health,
+                });
+                (status, scope, summary, snapshot)
+            }
+            _ => unreachable!(),
+        };
+
+        let title = title.unwrap_or_else(|| "Benchmark report".to_string());
+        let output_root = if let Some(path) = input
+            .output_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            PathBuf::from(path)
+        } else {
+            crate::paths::reports_dir()?.join("benchmark")
+        };
+        let report_dir = output_root.join(&report_id);
+        std::fs::create_dir_all(&report_dir)?;
+        let markdown_path = report_dir.join("report.md");
+        let json_path = report_dir.join("snapshot.json");
+        let html_path = report_dir.join("report.html");
+        let markdown = benchmark_report_markdown(&title, &status, &scope, &summary, &snapshot)?;
+        let snapshot_json = serde_json::to_string_pretty(&snapshot)?;
+        let html = benchmark_report_html(&title, &markdown);
+        crate::platform::write_atomic(&markdown_path, markdown.as_bytes())?;
+        crate::platform::write_atomic(&json_path, snapshot_json.as_bytes())?;
+        crate::platform::write_atomic(&html_path, html.as_bytes())?;
+
+        let release_evidence = input.mark_release_evidence || report_type == "release";
+        let marked_release_at = if release_evidence {
+            Some(generated_at.clone())
+        } else {
+            None
+        };
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "INSERT INTO coding_benchmark_reports (
+                id, report_type, title, status, summary, scope, session_id, project_id,
+                source_type, source_id, campaign_id, campaign_ids_json, snapshot_json,
+                markdown_path, json_path, html_path, release_evidence, created_at,
+                updated_at, marked_release_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                ?14, ?15, ?16, ?17, ?18, ?18, ?19
+             )",
+            params![
+                report_id,
+                report_type,
+                title,
+                status,
+                summary,
+                scope,
+                session_id,
+                project_id,
+                source_type,
+                source_id,
+                campaign_id,
+                serde_json::to_string(&campaign_ids)?,
+                snapshot_json,
+                markdown_path.to_string_lossy().to_string(),
+                json_path.to_string_lossy().to_string(),
+                html_path.to_string_lossy().to_string(),
+                if release_evidence { 1i64 } else { 0i64 },
+                generated_at,
+                marked_release_at,
+            ],
+        )?;
+        drop(conn);
+        self.get_benchmark_report(&report_id)?
+            .ok_or_else(|| anyhow!("benchmark report vanished after insert"))
+    }
+
+    pub fn list_benchmark_reports(
+        &self,
+        input: CodingBenchmarkReportListInput,
+    ) -> Result<Vec<CodingBenchmarkReport>> {
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_BENCHMARK_REPORT_LIMIT)
+            .clamp(1, MAX_BENCHMARK_REPORT_LIMIT);
+        let session_id = input
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let project_id = input
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(project_id) = project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        if input.release_evidence_only {
+            clauses.push("release_evidence = 1".to_string());
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT id, report_type, title, status, summary, scope, session_id,
+                    project_id, source_type, source_id, campaign_id, campaign_ids_json,
+                    snapshot_json, markdown_path, json_path, html_path, release_evidence,
+                    created_at, updated_at, marked_release_at
+             FROM coding_benchmark_reports
+             {where_sql}
+             ORDER BY created_at DESC
+             LIMIT {limit}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params_from_iter(params.iter()),
+            coding_benchmark_report_from_row,
+        )?;
+        collect_rows(rows)
+    }
+
+    pub fn get_benchmark_report(&self, report_id: &str) -> Result<Option<CodingBenchmarkReport>> {
+        let report_id = report_id.trim();
+        if report_id.is_empty() {
+            bail!("benchmark report id must not be empty");
+        }
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT id, report_type, title, status, summary, scope, session_id,
+                    project_id, source_type, source_id, campaign_id, campaign_ids_json,
+                    snapshot_json, markdown_path, json_path, html_path, release_evidence,
+                    created_at, updated_at, marked_release_at
+             FROM coding_benchmark_reports
+             WHERE id = ?1",
+            params![report_id],
+            coding_benchmark_report_from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn mark_benchmark_report_release_evidence(
+        &self,
+        input: CodingBenchmarkReportMarkInput,
+    ) -> Result<CodingBenchmarkReport> {
+        let report_id = input.report_id.trim().to_string();
+        if report_id.is_empty() {
+            bail!("benchmark report id must not be empty");
+        }
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let changed = conn.execute(
+            "UPDATE coding_benchmark_reports
+             SET release_evidence = ?2, updated_at = ?3,
+                 marked_release_at = CASE WHEN ?2 = 1 THEN COALESCE(marked_release_at, ?3) ELSE NULL END
+             WHERE id = ?1",
+            params![
+                report_id,
+                if input.release_evidence { 1i64 } else { 0i64 },
+                now
+            ],
+        )?;
+        drop(conn);
+        if changed == 0 {
+            bail!("benchmark report not found: {report_id}");
+        }
+        self.get_benchmark_report(&report_id)?
+            .ok_or_else(|| anyhow!("benchmark report not found after mark"))
     }
 
     fn get_benchmark_task_pack_by_row_id(
@@ -7635,6 +8091,113 @@ fn metric_buckets_from_counts(counts: BTreeMap<String, usize>) -> Vec<CodingMetr
         .collect()
 }
 
+fn normalize_benchmark_report_type(report_type: &str) -> Result<String> {
+    let report_type = report_type.trim().to_ascii_lowercase();
+    match report_type.as_str() {
+        "campaign" | "comparison" | "release" => Ok(report_type),
+        other => bail!("unsupported benchmark report type: {other}"),
+    }
+}
+
+fn benchmark_scope_label(session_id: Option<&String>, project_id: Option<&String>) -> String {
+    if project_id.is_some() {
+        "project"
+    } else if session_id.is_some() {
+        "session"
+    } else {
+        "global"
+    }
+    .to_string()
+}
+
+fn benchmark_report_status_from_campaign(campaign: &CodingBenchmarkCampaign) -> String {
+    match campaign.status.as_str() {
+        "passed" => "passed",
+        "failed" | "partial" | "interrupted" => "failed",
+        "cancelled" | "cancel_requested" | "queued" | "running" => "insufficient_data",
+        _ => "insufficient_data",
+    }
+    .to_string()
+}
+
+fn benchmark_report_markdown(
+    title: &str,
+    status: &str,
+    scope: &str,
+    summary: &str,
+    snapshot: &Value,
+) -> Result<String> {
+    let report_id = snapshot
+        .get("reportId")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let report_type = snapshot
+        .get("reportType")
+        .and_then(Value::as_str)
+        .unwrap_or("benchmark");
+    let generated_at = snapshot
+        .get("generatedAt")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut evidence = Vec::new();
+    if let Some(campaign) = snapshot.get("campaign") {
+        if let Some(id) = campaign.get("id").and_then(Value::as_str) {
+            evidence.push(format!("- Campaign: `{id}`"));
+        }
+        if let Some(items) = campaign.get("items").and_then(Value::as_array) {
+            for item in items.iter().take(6) {
+                if let Some(pack_run_id) = item.get("packRunId").and_then(Value::as_str) {
+                    evidence.push(format!("- Pack run: `{pack_run_id}`"));
+                }
+            }
+        }
+    }
+    if let Some(leaderboard) = snapshot.get("leaderboard") {
+        if let Some(rows) = leaderboard.get("rows").and_then(Value::as_array) {
+            for row in rows.iter().take(6) {
+                let label = row.get("label").and_then(Value::as_str).unwrap_or("row");
+                let case_rate = row
+                    .get("casePassRate")
+                    .and_then(Value::as_f64)
+                    .map(|value| format!("{:.0}%", value * 100.0))
+                    .unwrap_or_else(|| "n/a".to_string());
+                evidence.push(format!(
+                    "- Leaderboard row `{label}` case pass rate: {case_rate}"
+                ));
+            }
+        }
+    }
+    if let Some(release_gate) = snapshot.get("releaseGate") {
+        if let Some(status) = release_gate.get("status").and_then(Value::as_str) {
+            evidence.push(format!("- Release gate status: `{status}`"));
+        }
+    }
+    if evidence.is_empty() {
+        evidence.push("- No linked benchmark evidence in snapshot.".to_string());
+    }
+
+    Ok(format!(
+        "# {title}\n\n## Executive Summary\n\n- Report id: `{report_id}`\n- Type: `{report_type}`\n- Status: `{status}`\n- Scope: `{scope}`\n- Generated at: `{generated_at}`\n\n{summary}\n\n## Evidence Links\n\n{}\n\n## Snapshot\n\nThe full immutable JSON snapshot is stored next to this report as `snapshot.json`.\n",
+        evidence.join("\n")
+    ))
+}
+
+fn benchmark_report_html(title: &str, markdown: &str) -> String {
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:960px;margin:40px auto;padding:0 24px;line-height:1.55}}pre{{white-space:pre-wrap;background:#f6f8fa;padding:16px;border-radius:8px}}</style></head><body><pre>{}</pre></body></html>",
+        escape_html(title),
+        escape_html(markdown)
+    )
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 fn normalize_benchmark_campaign_models(
     models: Vec<CodingBenchmarkCampaignModel>,
 ) -> Result<Vec<CodingBenchmarkCampaignModel>> {
@@ -7845,6 +8408,35 @@ fn coding_benchmark_task_pack_task_from_row(
         fingerprint: row.get(24)?,
         created_at: row.get(25)?,
         updated_at: row.get(26)?,
+    })
+}
+
+fn coding_benchmark_report_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkReport> {
+    let campaign_ids_json: String = row.get(11)?;
+    let snapshot_json: String = row.get(12)?;
+    Ok(CodingBenchmarkReport {
+        id: row.get(0)?,
+        report_type: row.get(1)?,
+        title: row.get(2)?,
+        status: row.get(3)?,
+        summary: row.get(4)?,
+        scope: row.get(5)?,
+        session_id: row.get(6)?,
+        project_id: row.get(7)?,
+        source_type: row.get(8)?,
+        source_id: row.get(9)?,
+        campaign_id: row.get(10)?,
+        campaign_ids: serde_json::from_str(&campaign_ids_json).unwrap_or_default(),
+        snapshot: serde_json::from_str(&snapshot_json).unwrap_or_else(|_| json!({})),
+        markdown_path: row.get(13)?,
+        json_path: row.get(14)?,
+        html_path: row.get(15)?,
+        release_evidence: row.get::<_, i64>(16)? != 0,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
+        marked_release_at: row.get(19)?,
     })
 }
 
@@ -9124,6 +9716,82 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("active_task_quality") || err.contains("fixture_gaming_risk"));
+    }
+
+    #[test]
+    fn benchmark_report_exports_release_snapshot_and_marks_evidence() {
+        let (dir, db) = test_db();
+        let project_id = "project-benchmark-report";
+        let session = db
+            .create_session_with_project(
+                crate::agent_loader::DEFAULT_AGENT_ID,
+                Some(project_id),
+                None,
+            )
+            .unwrap();
+        insert_generalization_pack(
+            &db,
+            &session.id,
+            project_id,
+            "cepr_benchmark_report",
+            "passed",
+        );
+        db.import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+            manifest: sample_task_pack_manifest("active", "v-report"),
+            explicit_import_consent: true,
+            imported_from: Some("unit-test".to_string()),
+        })
+        .unwrap();
+
+        let output_dir = dir.path().join("benchmark-reports");
+        let report = db
+            .generate_benchmark_report(CodingBenchmarkReportGenerateInput {
+                report_type: "release".to_string(),
+                session_id: Some(session.id.clone()),
+                output_dir: Some(output_dir.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(report.report_type, "release");
+        assert_eq!(report.status, "passed");
+        assert_eq!(report.project_id.as_deref(), Some(project_id));
+        assert!(report.release_evidence);
+        assert!(report.marked_release_at.is_some());
+        assert!(report.snapshot.get("benchmarkCenter").is_some());
+        assert!(report.snapshot.get("releaseGate").is_some());
+        assert!(report.snapshot.get("leaderboard").is_some());
+        assert!(report.snapshot.get("corpusHealth").is_some());
+        assert!(std::path::Path::new(&report.markdown_path).exists());
+        assert!(std::path::Path::new(&report.json_path).exists());
+        assert!(std::path::Path::new(&report.html_path).exists());
+
+        let markdown = std::fs::read_to_string(&report.markdown_path).unwrap();
+        assert!(markdown.contains("## Executive Summary"));
+        assert!(markdown.contains(&report.id));
+
+        let listed = db
+            .list_benchmark_reports(CodingBenchmarkReportListInput {
+                session_id: Some(session.id),
+                release_evidence_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, report.id);
+
+        let unmarked = db
+            .mark_benchmark_report_release_evidence(CodingBenchmarkReportMarkInput {
+                report_id: report.id.clone(),
+                release_evidence: false,
+            })
+            .unwrap();
+        assert!(!unmarked.release_evidence);
+        assert!(unmarked.marked_release_at.is_none());
+
+        let fetched = db.get_benchmark_report(&report.id).unwrap().unwrap();
+        assert_eq!(fetched.id, report.id);
+        assert!(!fetched.release_evidence);
     }
 
     #[test]
