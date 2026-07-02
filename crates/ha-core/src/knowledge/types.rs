@@ -430,6 +430,173 @@ pub struct NoteSourceRef {
     pub cited_in: Vec<String>,
 }
 
+// ── Phase 6 external-agent API ──────────────────────────────────
+
+/// Stable item discriminator for external agents. `compiled_note` means the
+/// result is a normal wiki note with source/evidence markers; raw sources never
+/// masquerade as notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeAgentItemKind {
+    Note,
+    CompiledNote,
+    Source,
+}
+
+/// `knowledge.search` input. Notes are always searched first; raw sources are
+/// included only when explicitly requested.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentSearchInput {
+    pub query: String,
+    #[serde(default)]
+    pub kb_id: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub include_sources: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentNoteHit {
+    pub kind: KnowledgeAgentItemKind,
+    pub kb_id: String,
+    #[serde(default)]
+    pub kb_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kb_emoji: Option<String>,
+    pub note_id: i64,
+    pub rel_path: String,
+    pub title: String,
+    pub score: f32,
+    pub snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<String>,
+    pub start_line: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentSourceItem {
+    pub kind: KnowledgeAgentItemKind,
+    pub kb_id: String,
+    pub source_id: String,
+    pub source_kind: KnowledgeSourceKind,
+    pub status: KnowledgeSourceStatus,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_uri: Option<String>,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiled_at: Option<i64>,
+    pub stale: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub size: i64,
+    pub chunk_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentSearchResult {
+    pub notes: Vec<KnowledgeAgentNoteHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<KnowledgeAgentSourceItem>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// `knowledge.read` input. Exactly one of `path` or `reference` should be
+/// supplied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentReadInput {
+    pub kb_id: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub include_source_refs: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentReadResult {
+    pub kind: KnowledgeAgentItemKind,
+    pub kb_id: String,
+    pub note_id: i64,
+    pub rel_path: String,
+    pub title: String,
+    pub content: String,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontmatter_json: Option<String>,
+    pub outgoing_links: Vec<NoteLink>,
+    pub backlinks: Vec<Backlink>,
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_refs: Vec<NoteSourceRef>,
+}
+
+/// `knowledge.expand` input: read one note plus adjacent context that external
+/// agents can choose to follow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentExpandInput {
+    pub kb_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentExpandResult {
+    pub note: KnowledgeAgentReadResult,
+    pub related_notes: Vec<KnowledgeAgentNoteHit>,
+}
+
+/// `knowledge.sources` input. Listing returns metadata/snippets; source content
+/// is returned only for an explicit `source_id` plus `include_content=true`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentSourcesInput {
+    pub kb_id: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub include_content: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentSourcesResult {
+    pub sources: Vec<KnowledgeAgentSourceItem>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// `knowledge.compile.propose` input. This starts the normal compile run and
+/// creates review proposals; it never applies note writes by itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeAgentCompileProposeInput {
+    pub kb_id: String,
+    pub source_ids: Vec<String>,
+    #[serde(default)]
+    pub strategy: Option<String>,
+}
+
 // ── Knowledge Compiler Phase 2 ──────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

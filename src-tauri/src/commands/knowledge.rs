@@ -10,7 +10,10 @@ use ha_core::filesystem::{self, ExtractedContent, FileTextContent, WorkspaceScop
 use ha_core::knowledge::{
     self, service, Backlink, BrokenLink, CompileProposal, CompileProposalStatus, CompileRun,
     CompileStartInput, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KbAttachment,
-    KbChatThread, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
+    KbChatThread, KnowledgeAgentCompileProposeInput, KnowledgeAgentExpandInput,
+    KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
+    KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
+    KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
     KnowledgeSourceImportInput, KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit,
     NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
     UpdateKnowledgeBaseInput,
@@ -216,6 +219,45 @@ pub async fn kb_note_source_refs_cmd(
     path: String,
 ) -> Result<Vec<NoteSourceRef>, CmdError> {
     service::note_source_refs(&kb_id, &path).map_err(Into::into)
+}
+
+// ── Phase 6 external-agent API ──────────────────────────────────
+
+#[tauri::command]
+pub async fn knowledge_agent_search_cmd(
+    input: KnowledgeAgentSearchInput,
+) -> Result<KnowledgeAgentSearchResult, CmdError> {
+    knowledge::agent_api::search(input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn knowledge_agent_read_cmd(
+    input: KnowledgeAgentReadInput,
+) -> Result<KnowledgeAgentReadResult, CmdError> {
+    knowledge::agent_api::read(input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn knowledge_agent_expand_cmd(
+    input: KnowledgeAgentExpandInput,
+) -> Result<KnowledgeAgentExpandResult, CmdError> {
+    knowledge::agent_api::expand(input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn knowledge_agent_sources_cmd(
+    input: KnowledgeAgentSourcesInput,
+) -> Result<KnowledgeAgentSourcesResult, CmdError> {
+    knowledge::agent_api::sources(input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn knowledge_agent_compile_propose_cmd(
+    input: KnowledgeAgentCompileProposeInput,
+) -> Result<CompileRun, CmdError> {
+    knowledge::agent_api::compile_propose(input)
+        .await
+        .map_err(Into::into)
 }
 
 // ── Access bindings ─────────────────────────────────────────────

@@ -207,12 +207,9 @@ fn indexed_schema_marker(json: Option<&str>) -> bool {
     serde_json::from_str::<Value>(json)
         .ok()
         .map(|value| {
-            ["type", "last_compiled", "sources"].iter().any(|key| {
-                value
-                    .get(*key)
-                    .map(json_value_is_present)
-                    .unwrap_or(false)
-            })
+            ["type", "last_compiled", "sources"]
+                .iter()
+                .any(|key| value.get(*key).map(json_value_is_present).unwrap_or(false))
         })
         .unwrap_or(false)
 }
@@ -529,6 +526,8 @@ last_compiled: "2026-07-01T00:00:00Z"
         assert!(!indexed_schema_marker(None));
         assert!(!indexed_schema_marker(Some(r#"{"title":"Plain"}"#)));
         assert!(indexed_schema_marker(Some(r#"{"type":"source_summary"}"#)));
-        assert!(indexed_schema_marker(Some(r#"{"sources":[{"source_id":"src-a"}]}"#)));
+        assert!(indexed_schema_marker(Some(
+            r#"{"sources":[{"source_id":"src-a"}]}"#
+        )));
     }
 }

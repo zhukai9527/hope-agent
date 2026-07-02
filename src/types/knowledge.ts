@@ -146,6 +146,106 @@ export interface NoteSourceRef {
   citedIn?: string[]
 }
 
+export type KnowledgeAgentItemKind = "note" | "compiled_note" | "source"
+
+export interface KnowledgeAgentSearchInput {
+  query: string
+  kbId?: string | null
+  limit?: number | null
+  includeSources?: boolean
+}
+
+export interface KnowledgeAgentNoteHit {
+  kind: KnowledgeAgentItemKind
+  kbId: string
+  kbName?: string
+  kbEmoji?: string | null
+  noteId: number
+  relPath: string
+  title: string
+  score: number
+  snippet: string
+  headingPath?: string | null
+  startLine: number
+}
+
+export interface KnowledgeAgentSourceItem {
+  kind: "source"
+  kbId: string
+  sourceId: string
+  sourceKind: KnowledgeSourceKind
+  status: KnowledgeSourceStatus
+  title: string
+  originUri?: string | null
+  contentHash: string
+  compiledAt?: number | null
+  stale: boolean
+  createdAt: number
+  updatedAt: number
+  size: number
+  chunkCount: number
+  snippet?: string | null
+  content?: string | null
+}
+
+export interface KnowledgeAgentSearchResult {
+  notes: KnowledgeAgentNoteHit[]
+  sources?: KnowledgeAgentSourceItem[]
+  truncated: boolean
+}
+
+export interface KnowledgeAgentReadInput {
+  kbId: string
+  path?: string | null
+  reference?: string | null
+  includeSourceRefs?: boolean | null
+}
+
+export interface KnowledgeAgentReadResult {
+  kind: KnowledgeAgentItemKind
+  kbId: string
+  noteId: number
+  relPath: string
+  title: string
+  content: string
+  contentHash: string
+  frontmatterJson?: string | null
+  outgoingLinks: NoteLink[]
+  backlinks: Backlink[]
+  tags: string[]
+  sourceRefs?: NoteSourceRef[]
+}
+
+export interface KnowledgeAgentExpandInput {
+  kbId: string
+  path: string
+  limit?: number | null
+}
+
+export interface KnowledgeAgentExpandResult {
+  note: KnowledgeAgentReadResult
+  relatedNotes: KnowledgeAgentNoteHit[]
+}
+
+export interface KnowledgeAgentSourcesInput {
+  kbId: string
+  sourceId?: string | null
+  query?: string | null
+  limit?: number | null
+  includeContent?: boolean
+}
+
+export interface KnowledgeAgentSourcesResult {
+  sources: KnowledgeAgentSourceItem[]
+  truncated: boolean
+}
+
+export interface KnowledgeAgentCompileProposeInput {
+  kbId: string
+  sourceIds: string[]
+  strategy?: string | null
+}
+
 export type CompileRunStatus = "running" | "completed" | "failed" | "cancelled"
 export type CompileProposalStatus = "draft" | "applied" | "rejected" | "failed"
 export type CompileProposalKind =

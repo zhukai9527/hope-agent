@@ -23,7 +23,10 @@ use ha_core::filesystem::{
 use ha_core::knowledge::{
     self, service, Backlink, BrokenLink, CompileProposal, CompileProposalStatus, CompileRun,
     CompileStartInput, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KbAttachment,
-    KbChatThread, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
+    KbChatThread, KnowledgeAgentCompileProposeInput, KnowledgeAgentExpandInput,
+    KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
+    KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
+    KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta, KnowledgeGraph, KnowledgeSource,
     KnowledgeSourceImportInput, KnowledgeSourceReadResult, Note, NoteReadResult, NoteSearchHit,
     NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
     UpdateKnowledgeBaseInput,
@@ -217,6 +220,22 @@ pub struct KbCompileProposalQuery {
 #[derive(Debug, Deserialize)]
 pub struct KbNoteSourceRefsQuery {
     pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum AgentInputBody<T> {
+    Wrapped { input: T },
+    Direct(T),
+}
+
+impl<T> AgentInputBody<T> {
+    fn into_inner(self) -> T {
+        match self {
+            AgentInputBody::Wrapped { input } => input,
+            AgentInputBody::Direct(input) => input,
+        }
+    }
 }
 
 // ── Registry CRUD ───────────────────────────────────────────────
@@ -455,6 +474,47 @@ pub async fn kb_note_source_refs(
     Query(q): Query<KbNoteSourceRefsQuery>,
 ) -> Result<Json<Vec<NoteSourceRef>>, AppError> {
     Ok(Json(service::note_source_refs(&kb_id, &q.path)?))
+}
+
+// ── Phase 6 external-agent API ─────────────────────────────────
+
+/// `POST /api/knowledge/agent/search` — stable `knowledge.search` surface.
+pub async fn knowledge_agent_search(
+    Json(body): Json<AgentInputBody<KnowledgeAgentSearchInput>>,
+) -> Result<Json<KnowledgeAgentSearchResult>, AppError> {
+    Ok(Json(knowledge::agent_api::search(body.into_inner())?))
+}
+
+/// `POST /api/knowledge/agent/read` — stable `knowledge.read` surface.
+pub async fn knowledge_agent_read(
+    Json(body): Json<AgentInputBody<KnowledgeAgentReadInput>>,
+) -> Result<Json<KnowledgeAgentReadResult>, AppError> {
+    Ok(Json(knowledge::agent_api::read(body.into_inner())?))
+}
+
+/// `POST /api/knowledge/agent/expand` — stable `knowledge.expand` surface.
+pub async fn knowledge_agent_expand(
+    Json(body): Json<AgentInputBody<KnowledgeAgentExpandInput>>,
+) -> Result<Json<KnowledgeAgentExpandResult>, AppError> {
+    Ok(Json(knowledge::agent_api::expand(body.into_inner())?))
+}
+
+/// `POST /api/knowledge/agent/sources` — stable `knowledge.sources` surface.
+pub async fn knowledge_agent_sources(
+    Json(body): Json<AgentInputBody<KnowledgeAgentSourcesInput>>,
+) -> Result<Json<KnowledgeAgentSourcesResult>, AppError> {
+    Ok(Json(knowledge::agent_api::sources(body.into_inner())?))
+}
+
+/// `POST /api/knowledge/agent/compile/propose` — stable
+/// `knowledge.compile.propose` surface. Starts a normal compile run that only
+/// creates Review Diff proposals.
+pub async fn knowledge_agent_compile_propose(
+    Json(body): Json<AgentInputBody<KnowledgeAgentCompileProposeInput>>,
+) -> Result<Json<CompileRun>, AppError> {
+    Ok(Json(
+        knowledge::agent_api::compile_propose(body.into_inner()).await?,
+    ))
 }
 
 // ── Access bindings ─────────────────────────────────────────────

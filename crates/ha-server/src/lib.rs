@@ -321,6 +321,26 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_note_source_refs),
         )
         .route(
+            "/knowledge/agent/search",
+            post(routes::knowledge::knowledge_agent_search),
+        )
+        .route(
+            "/knowledge/agent/read",
+            post(routes::knowledge::knowledge_agent_read),
+        )
+        .route(
+            "/knowledge/agent/expand",
+            post(routes::knowledge::knowledge_agent_expand),
+        )
+        .route(
+            "/knowledge/agent/sources",
+            post(routes::knowledge::knowledge_agent_sources),
+        )
+        .route(
+            "/knowledge/agent/compile/propose",
+            post(routes::knowledge::knowledge_agent_compile_propose),
+        )
+        .route(
             "/knowledge/{kb_id}/dirs",
             get(routes::knowledge::kb_list_dirs),
         )

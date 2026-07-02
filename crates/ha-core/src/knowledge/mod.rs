@@ -11,6 +11,7 @@
 //! browse-only in Phase 1 (D11).
 
 pub mod access;
+pub mod agent_api;
 pub mod chunker;
 pub mod compile;
 pub mod db;
