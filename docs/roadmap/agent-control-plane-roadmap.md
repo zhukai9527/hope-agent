@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-02
 >
-> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；本文继续记录后续 coding-specific 能力推进顺序。
+> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；Coding Eval 控制面评测已作为 Phase 3.7 落地并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)；本文继续记录后续 coding-specific 能力推进顺序。
 
 ## 1. 路线调整结论
 
@@ -43,6 +43,7 @@ Phase 3.3  Review Engine（已完成）
 Phase 3.4  Smart Verification / 智能验证选择（已完成）
 Phase 3.5  Context Retrieval v2 / 推荐上下文（已完成）
 Phase 3.6  Actionable Context Loop / 可行动上下文闭环（已完成）
+Phase 3.7  Coding Eval 控制面评测（已完成）
 ```
 
 旧主线里“Coding Mode -> Workflow/Loop -> Worktree/LSP/Review”的顺序需要改成：
@@ -68,6 +69,7 @@ Phase 3.6  Actionable Context Loop / 可行动上下文闭环（已完成）
 | Loop | 通用 | 已实现第一版 | 是否按时间、事件或条件重复触发。 |
 | Worktree | coding-specific | 已实现 Phase 3.1 | 代码改动落在哪个隔离环境。 |
 | Context Retrieval | 通用 owner-plane，当前 coding-first | 已实现 Phase 3.6 | 当前任务下一步最该看哪些上下文，以及能否直接进入 focused review / verification。 |
+| Coding Eval | coding-first 质量闸，harness 可复用于通用控制面 | 已实现 Phase 3.7 | 控制面协同是否可回归，关键上下文是否被召回，focused action 是否真实收窄。 |
 
 用户视角应稳定成：
 
@@ -443,7 +445,16 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 
 - 增加 document symbols fallback、IDE selection envelope 与 ACP 当前文件信号。
 - Workflow host API：`workflow.review()` / `workflow.verify()`，让 script runtime 复用同一 focused owner API。
-- 把 context precision / critical context recall 纳入 coding eval。
+- context precision / critical context recall 已进入 Phase 3.7 控制面 eval；后续扩展到趋势 dashboard。
+
+### Phase 3.7 Coding Eval 控制面评测（已完成）
+
+- `ha-core::coding_eval` 提供 deterministic fixture harness：临时 git repo、真实 session / goal / task / workflow seed、生产 review / verification / context API 调用。
+- 首批 fixture 覆盖 Rust 控制面召回、docs-only sanity、focused scope 不扫无关文件。
+- 集成测试入口：`cargo test -p ha-core --test coding_eval --locked`。
+- 指标包含 `context_precision`、`critical_context_recall`、review finding 数量、verification command 列表。
+- 不调用 LLM、不执行真实验证命令，作为后续 LLM reviewer、Workflow review/verify API、repair loop 的底座质量闸。
+- 最终架构见 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
 
 ## 9. 体验与性能红线
 

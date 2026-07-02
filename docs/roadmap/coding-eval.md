@@ -2,9 +2,9 @@
 
 > 返回 [路线图索引](README.md)
 >
-> 更新时间：2026-06-29
+> 更新时间：2026-07-02
 >
-> 状态：Roadmap / Phase 0 方案，尚未实现为最终架构
+> 状态：Phase 0 人工评测体系已完成；Phase 3.7 自动化控制面评测已落地，最终架构见 [Coding Eval 控制面评测](../architecture/coding-eval.md)。
 
 ## 目录
 
@@ -270,7 +270,21 @@ Trace 必须回答：
 
 ## 后续自动化方向
 
-当 20 个任务定义稳定后，再考虑：
+Phase 3.7 已先落地一层确定性控制面 eval。它不替代 20 个人工 gold tasks，而是把最容易回归的底层协同质量先自动化：
+
+- 临时 git repo + baseline commit + local diff。
+- 真实 session / goal / task / workflow seed。
+- 生产 `run_review_for_session`、`plan_verification_for_session`、`context_retrieval_for_session`。
+- `context_precision` / `critical_context_recall` / review finding / verification command 断言。
+- 不调用 LLM，不执行真实验证命令，不访问网络。
+
+已实现入口见 [Coding Eval 控制面评测](../architecture/coding-eval.md)；当前回归命令：
+
+```bash
+cargo test -p ha-core --test coding_eval --locked
+```
+
+在 20 个人工任务定义稳定后，仍需继续考虑更高层自动化：
 
 - fixture repo 或临时 worktree 自动准备。
 - 自动采集 tool trace。
@@ -280,7 +294,7 @@ Trace 必须回答：
 - coding eval dashboard。
 - 失败转 improvement backlog。
 
-自动化实现前，应先完成 `ToolDefinition v2` 和最小 `WorkflowRun trace` 设计，避免重复造一套旁路记录系统。
+后续自动化必须复用现有 Goal / Workflow / Review / Verification / Context Retrieval 记录，不再造一套旁路 trace。
 
 ## 交付物
 
@@ -291,3 +305,4 @@ Phase 0 完成的最低标准：
 - [x] [Phase 0 完成报告](coding-eval-phase0-report.md) 记录 5 个校准试跑。
 - [x] 根据试跑结果修订 task schema 和失败分类。
 - [x] 决定 Phase 1 优先做 `ToolDefinition v2 + tool_search v2 MVP`。
+- [x] Phase 3.7：落地确定性控制面 eval harness，并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)。

@@ -1,0 +1,122 @@
+# Coding Eval 控制面评测
+
+> 返回 [技术文档索引](../README.md)
+>
+> 状态：Phase 3.7 已实现。本文只记录已经落地的自动化评测层；人工 gold task 体系仍见 [Coding Eval 体系方案](../roadmap/coding-eval.md)。
+
+## 目标
+
+Coding Eval 控制面评测用于回答一个更底层但非常关键的问题：
+
+> Review、Smart Verification、Context Retrieval、Goal、Task、Workflow 这些 coding 控制面，是否能在同一个真实 session 中稳定协同？
+
+它不是完整的端到端 agent benchmark，也不调用 LLM。Phase 3.7 的定位是先把“可确定性回归”的能力钉住：
+
+- 能创建临时 git repo，制造真实 diff。
+- 能创建真实 session / goal / task / workflow state。
+- 能调用生产实现的 `run_review_for_session`、`plan_verification_for_session`、`context_retrieval_for_session`。
+- 能检查 focused review / focused verification 是否真正收窄范围。
+- 能计算 `context_precision`、`critical_context_recall`、review finding 数量和 verification command。
+- 不执行项目验证命令，不访问网络，不依赖外部模型。
+
+## 代码入口
+
+| 位置 | 说明 |
+| --- | --- |
+| `crates/ha-core/src/coding_eval.rs` | 确定性 fixture harness，供测试和后续报告复用。 |
+| `crates/ha-core/tests/coding_eval.rs` | 集成测试入口，加载全部 fixture 并聚合失败信息。 |
+| `crates/ha-core/tests/fixtures/coding_eval/*.json` | Phase 3.7 首批 fixture。 |
+
+运行方式：
+
+```bash
+cargo test -p ha-core --test coding_eval --locked
+```
+
+## Fixture 模型
+
+每个 fixture 是一份 JSON，包含四部分：
+
+| 字段 | 说明 |
+| --- | --- |
+| `repo.files` | baseline 文件，先写入临时 git repo 并提交。 |
+| `repo.changes` | baseline 后的工作区改动，形成 local diff。 |
+| `setup` | 可选 goal、task、workflow op，用来模拟长任务控制面状态。 |
+| `runs` | 要运行的 review、verification plan、context retrieval 以及 focus paths。 |
+| `checks` | 对 review、verification、context 的确定性断言。 |
+
+首批 fixture：
+
+| Fixture | 覆盖目标 |
+| --- | --- |
+| `rust_control_plane_context` | Rust diff 触发 review finding、包级 `cargo check` 计划，并在 context 中召回 file / review / verification / goal evidence / task / workflow op。 |
+| `docs_sanity_context` | docs-only diff 不应制造 review 噪音，只选择 `git diff --check`。 |
+| `focused_scope_excludes_unfocused_files` | 同时存在 Rust + TS diff 时，focused review / verification 只处理指定 Rust 文件，不扫无关前端文件。 |
+
+## 执行流程
+
+```text
+JSON fixture
+  -> temp git repo
+  -> baseline commit
+  -> changed working tree
+  -> SessionDB session + working_dir
+  -> optional goal/task/workflow seed
+  -> production review run
+  -> production verification plan
+  -> production context retrieval
+  -> deterministic checks + metrics
+```
+
+关键约束：
+
+- fixture repo 一律是临时目录，测试结束后销毁。
+- `git commit` 只用于制造 baseline；不读取或修改真实工作区。
+- verification 只调用 `plan_verification_for_session`，不调用 `run_verification_for_session`，因此不会执行 `cargo`、`pnpm` 或其它项目命令。
+- review 使用生产 diff scanner 和 LSP diagnostic 聚合路径，但 fixture 不启动真实 LSP。
+- context retrieval 使用生产聚合器，候选来自真实 DB state 和真实 local diff。
+
+## 指标
+
+Harness 输出 `FixtureReport`：
+
+| 指标 | 说明 |
+| --- | --- |
+| `context_precision` | critical candidate 命中数 / 返回候选数，用来发现推荐列表是否过散。 |
+| `critical_context_recall` | critical candidate 命中数 / fixture 要求的 critical 数，用来发现关键控制面信号是否丢失。 |
+| `review_findings` | review run 产生的 finding 数量。 |
+| `verification_commands` | verification plan 选择的命令列表。 |
+
+测试失败时会输出 fixture 名、失败 check、候选或命令摘要，方便定位是 diff scanner、review、verification selector、goal evidence 还是 context ranking 出问题。
+
+## 与人工 Coding Eval 的关系
+
+Phase 0 的 `docs/roadmap/coding-eval*.md` 仍然负责真实任务质量：
+
+- 任务是否真实。
+- Agent 是否理解需求。
+- 是否做出正确代码改动。
+- 是否如实报告验证结果。
+- 是否遵守项目规则。
+
+Phase 3.7 自动化层负责控制面健康：
+
+- focused action 是否收窄。
+- 最小验证选择是否稳定。
+- review finding 是否能进入 goal/context。
+- goal/task/workflow evidence 是否能被下一步推荐系统看见。
+- 新功能是否破坏已有 coding control-plane glue。
+
+两者互补：人工 eval 衡量完整 coding 能力，确定性 eval 保护控制面底座。
+
+## 后续扩展
+
+后续增强应优先保持 fixture 可解释、运行快、无模型依赖：
+
+- 增加 LSP diagnostics seeded fixture。
+- 增加 workflow-bound review / verification host API fixture。
+- 增加 Goal final audit / blocked repair fixture。
+- 增加 context ranking 回归样本，记录 precision / recall 趋势。
+- 增加可选 HTML/JSON 报告，但不要把报告生成变成测试必需条件。
+
+LLM reviewer、真实命令执行和完整任务通过率应进入更高层 eval，不应污染这个确定性控制面 harness。
