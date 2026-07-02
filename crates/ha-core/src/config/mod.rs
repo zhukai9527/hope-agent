@@ -974,10 +974,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig,
     /// Read bridge ③ — passive related-notes prompt (Phase 3, D7): each user turn
-    /// surface the top accessible-KB note titles as an independent untrusted cache
-    /// block. Opt-in, disabled by default (access is already per-session gated, so
-    /// a single global toggle suffices). MEDIUM risk (context/cost), writable via
-    /// `update_settings`.
+    /// surfaces the top accessible-KB note titles as an independent untrusted
+    /// cache block. Enabled by default because it is retrieval-only, title-only,
+    /// and still fully gated by session/IM/incognito KB access. MEDIUM risk
+    /// (context/cost), writable via `update_settings`.
     #[serde(default)]
     pub knowledge_passive_recall: crate::knowledge::PassiveRecallConfig,
     /// Optional retention for original audio/video/image source files and image
