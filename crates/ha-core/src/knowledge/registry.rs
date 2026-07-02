@@ -161,7 +161,11 @@ impl KnowledgeRegistry {
                 compiled_at         INTEGER,
                 created_at          INTEGER NOT NULL,
                 updated_at          INTEGER NOT NULL,
-                size                INTEGER NOT NULL DEFAULT 0
+                size                INTEGER NOT NULL DEFAULT 0,
+                version_of_source_id TEXT,
+                version_index       INTEGER NOT NULL DEFAULT 1,
+                superseded_by_source_id TEXT,
+                superseded_at       INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_knowledge_sources_kb
                 ON knowledge_sources(kb_id, created_at DESC);
@@ -169,6 +173,10 @@ impl KnowledgeRegistry {
                 ON knowledge_sources(kb_id, content_hash);
             CREATE INDEX IF NOT EXISTS idx_knowledge_sources_extracted_hash
                 ON knowledge_sources(kb_id, extracted_text_hash);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_sources_version_root
+                ON knowledge_sources(kb_id, version_of_source_id, version_index DESC);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_sources_superseded
+                ON knowledge_sources(kb_id, superseded_by_source_id);
 
             CREATE TABLE IF NOT EXISTS knowledge_source_chunks (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -284,6 +292,24 @@ impl KnowledgeRegistry {
                  ADD COLUMN allow_external_writes INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+
+        let has_source_version = conn
+            .prepare("SELECT version_index FROM knowledge_sources LIMIT 1")
+            .is_ok();
+        if !has_source_version {
+            conn.execute_batch(
+                "ALTER TABLE knowledge_sources ADD COLUMN version_of_source_id TEXT;
+                 ALTER TABLE knowledge_sources ADD COLUMN version_index INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE knowledge_sources ADD COLUMN superseded_by_source_id TEXT;
+                 ALTER TABLE knowledge_sources ADD COLUMN superseded_at INTEGER;",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_sources_version_root
+                ON knowledge_sources(kb_id, version_of_source_id, version_index DESC);
+             CREATE INDEX IF NOT EXISTS idx_knowledge_sources_superseded
+                ON knowledge_sources(kb_id, superseded_by_source_id);",
+        )?;
 
         Ok(())
     }
@@ -848,8 +874,9 @@ impl KnowledgeRegistry {
         tx.execute(
             "INSERT INTO knowledge_sources
                 (id, kb_id, kind, title, origin_uri, stored_path, content_hash,
-                 extracted_text_hash, status, compiled_at, created_at, updated_at, size)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 extracted_text_hash, status, compiled_at, created_at, updated_at, size,
+                 version_of_source_id, version_index, superseded_by_source_id, superseded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 source.id,
                 source.kb_id,
@@ -864,6 +891,10 @@ impl KnowledgeRegistry {
                 source.created_at,
                 source.updated_at,
                 source.size,
+                source.version_of_source_id,
+                source.version_index as i64,
+                source.superseded_by_source_id,
+                source.superseded_at,
             ],
         )?;
         for chunk in chunks {
@@ -885,6 +916,72 @@ impl KnowledgeRegistry {
         Ok(())
     }
 
+    pub fn insert_source_version(
+        &self,
+        previous_source_id: &str,
+        source: &KnowledgeSource,
+        chunks: &[KnowledgeSourceChunk],
+    ) -> Result<()> {
+        let mut conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO knowledge_sources
+                (id, kb_id, kind, title, origin_uri, stored_path, content_hash,
+                 extracted_text_hash, status, compiled_at, created_at, updated_at, size,
+                 version_of_source_id, version_index, superseded_by_source_id, superseded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, NULL, NULL)",
+            params![
+                source.id,
+                source.kb_id,
+                source.kind.as_str(),
+                source.title,
+                source.origin_uri,
+                source.stored_path,
+                source.content_hash,
+                source.extracted_text_hash,
+                source.status.as_str(),
+                source.compiled_at,
+                source.created_at,
+                source.updated_at,
+                source.size,
+                source.version_of_source_id,
+                source.version_index as i64,
+            ],
+        )?;
+        for chunk in chunks {
+            tx.execute(
+                "INSERT INTO knowledge_source_chunks
+                    (source_id, chunk_index, body, start_offset, end_offset, content_hash)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    source.id,
+                    chunk.chunk_index,
+                    chunk.body,
+                    chunk.start_offset,
+                    chunk.end_offset,
+                    chunk.content_hash,
+                ],
+            )?;
+        }
+        tx.execute(
+            "UPDATE knowledge_sources
+             SET superseded_by_source_id = ?3, superseded_at = ?4
+             WHERE kb_id = ?1 AND id = ?2",
+            params![
+                source.kb_id,
+                previous_source_id,
+                source.id,
+                source.created_at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_sources(&self, kb_id: &str) -> Result<Vec<KnowledgeSource>> {
         let conn = self
             .session_db
@@ -894,11 +991,12 @@ impl KnowledgeRegistry {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
                     s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
-                    s.created_at, s.updated_at, s.size,
+                    s.created_at, s.updated_at, s.size, s.version_of_source_id,
+                    s.version_index, s.superseded_by_source_id, s.superseded_at,
                     COUNT(c.id) AS chunk_count
              FROM knowledge_sources s
              LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
-             WHERE s.kb_id = ?1
+             WHERE s.kb_id = ?1 AND s.superseded_by_source_id IS NULL
              GROUP BY s.id
              ORDER BY s.created_at DESC, s.id DESC",
         )?;
@@ -916,7 +1014,8 @@ impl KnowledgeRegistry {
         conn.query_row(
             "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
                     s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
-                    s.created_at, s.updated_at, s.size,
+                    s.created_at, s.updated_at, s.size, s.version_of_source_id,
+                    s.version_index, s.superseded_by_source_id, s.superseded_at,
                     COUNT(c.id) AS chunk_count
              FROM knowledge_sources s
              LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
@@ -942,11 +1041,13 @@ impl KnowledgeRegistry {
         conn.query_row(
             "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
                     s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
-                    s.created_at, s.updated_at, s.size,
+                    s.created_at, s.updated_at, s.size, s.version_of_source_id,
+                    s.version_index, s.superseded_by_source_id, s.superseded_at,
                     COUNT(c.id) AS chunk_count
              FROM knowledge_sources s
              LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
              WHERE s.kb_id = ?1 AND s.extracted_text_hash = ?2
+               AND s.superseded_by_source_id IS NULL
              GROUP BY s.id
              ORDER BY s.created_at ASC, s.id ASC
              LIMIT 1",
@@ -957,6 +1058,68 @@ impl KnowledgeRegistry {
         .map_err(Into::into)
     }
 
+    pub fn source_versions(&self, kb_id: &str, source_id: &str) -> Result<Vec<KnowledgeSource>> {
+        let Some(anchor) = self.get_source(kb_id, source_id)? else {
+            return Ok(Vec::new());
+        };
+        let root_id = anchor
+            .version_of_source_id
+            .clone()
+            .unwrap_or_else(|| anchor.id.clone());
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
+                    s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
+                    s.created_at, s.updated_at, s.size, s.version_of_source_id,
+                    s.version_index, s.superseded_by_source_id, s.superseded_at,
+                    COUNT(c.id) AS chunk_count
+             FROM knowledge_sources s
+             LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
+             WHERE s.kb_id = ?1 AND (s.id = ?2 OR s.version_of_source_id = ?2)
+             GROUP BY s.id
+             ORDER BY s.version_index DESC, s.created_at DESC, s.id DESC",
+        )?;
+        let rows = stmt.query_map(params![kb_id, root_id], row_to_source)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn current_source_for(
+        &self,
+        kb_id: &str,
+        source_id: &str,
+    ) -> Result<Option<KnowledgeSource>> {
+        let versions = self.source_versions(kb_id, source_id)?;
+        if let Some(current) = versions
+            .iter()
+            .find(|source| source.superseded_by_source_id.is_none())
+        {
+            Ok(Some(current.clone()))
+        } else {
+            Ok(versions.into_iter().next())
+        }
+    }
+
+    pub fn next_source_version_index(&self, kb_id: &str, root_source_id: &str) -> Result<u32> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let max_index: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(version_index), 1)
+             FROM knowledge_sources
+             WHERE kb_id = ?1 AND (id = ?2 OR version_of_source_id = ?2)",
+            params![kb_id, root_source_id],
+            |r| r.get(0),
+        )?;
+        Ok(max_index.max(1).saturating_add(1) as u32)
+    }
+
     pub fn delete_source(&self, kb_id: &str, source_id: &str) -> Result<Option<String>> {
         let mut conn = self
             .session_db
@@ -964,21 +1127,30 @@ impl KnowledgeRegistry {
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
         let tx = conn.transaction()?;
-        let stored_path: Option<String> = tx
+        let row: Option<(String, Option<String>)> = tx
             .query_row(
-                "SELECT stored_path FROM knowledge_sources WHERE kb_id = ?1 AND id = ?2",
+                "SELECT stored_path, superseded_by_source_id
+                 FROM knowledge_sources WHERE kb_id = ?1 AND id = ?2",
                 params![kb_id, source_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1).unwrap_or(None))),
             )
             .optional()?;
-        if stored_path.is_some() {
+        if let Some((_, next_source_id)) = &row {
+            let now = chrono::Utc::now().timestamp_millis();
+            tx.execute(
+                "UPDATE knowledge_sources
+                 SET superseded_by_source_id = ?3,
+                     superseded_at = CASE WHEN ?3 IS NULL THEN NULL ELSE ?4 END
+                 WHERE kb_id = ?1 AND superseded_by_source_id = ?2",
+                params![kb_id, source_id, next_source_id, now],
+            )?;
             tx.execute(
                 "DELETE FROM knowledge_sources WHERE kb_id = ?1 AND id = ?2",
                 params![kb_id, source_id],
             )?;
         }
         tx.commit()?;
-        Ok(stored_path)
+        Ok(row.map(|(stored_path, _)| stored_path))
     }
 
     pub fn replace_source_chunks(
@@ -1932,7 +2104,7 @@ fn row_to_compile_proposal(row: &rusqlite::Row) -> rusqlite::Result<CompilePropo
 fn row_to_source(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSource> {
     let kind_s: String = row.get(2)?;
     let status_s: String = row.get(8)?;
-    let chunk_count: i64 = row.get(13).unwrap_or(0);
+    let chunk_count: i64 = row.get(17).unwrap_or(0);
     Ok(KnowledgeSource {
         id: row.get(0)?,
         kb_id: row.get(1)?,
@@ -1948,6 +2120,10 @@ fn row_to_source(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSource> {
         updated_at: row.get(11)?,
         size: row.get::<_, i64>(12).unwrap_or(0),
         chunk_count: chunk_count.max(0) as u32,
+        version_of_source_id: row.get::<_, Option<String>>(13).unwrap_or(None),
+        version_index: row.get::<_, i64>(14).unwrap_or(1).max(1) as u32,
+        superseded_by_source_id: row.get::<_, Option<String>>(15).unwrap_or(None),
+        superseded_at: row.get::<_, Option<i64>>(16).unwrap_or(None),
     })
 }
 
@@ -2242,6 +2418,10 @@ mod tests {
             updated_at: now,
             size: 42,
             chunk_count: 0,
+            version_of_source_id: None,
+            version_index: 1,
+            superseded_by_source_id: None,
+            superseded_at: None,
         };
         let chunks = vec![
             KnowledgeSourceChunk {
@@ -2302,6 +2482,75 @@ mod tests {
         assert_eq!(stored_path.as_deref(), Some("src-1.md"));
         assert!(reg.get_source(&kb.id, &source.id).unwrap().is_none());
         assert!(reg.list_sources(&kb.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn source_versions_hide_superseded_from_current_list() {
+        let (_d, reg) = registry();
+        let kb = reg
+            .create(CreateKnowledgeBaseInput {
+                name: "Versions".into(),
+                emoji: None,
+                root_dir: None,
+            })
+            .unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let source = KnowledgeSource {
+            id: "src-1".into(),
+            kb_id: kb.id.clone(),
+            kind: KnowledgeSourceKind::UrlSnapshot,
+            title: "Article".into(),
+            origin_uri: Some("https://example.com/a".into()),
+            stored_path: "src-1.md".into(),
+            content_hash: "hash-1".into(),
+            extracted_text_hash: Some("text-hash-1".into()),
+            status: KnowledgeSourceStatus::Ready,
+            compiled_at: None,
+            created_at: now,
+            updated_at: now,
+            size: 42,
+            chunk_count: 0,
+            version_of_source_id: None,
+            version_index: 1,
+            superseded_by_source_id: None,
+            superseded_at: None,
+        };
+        reg.insert_source(&source, &[]).unwrap();
+
+        let version = KnowledgeSource {
+            id: "src-2".into(),
+            kb_id: kb.id.clone(),
+            kind: KnowledgeSourceKind::UrlSnapshot,
+            title: "Article".into(),
+            origin_uri: Some("https://example.com/a".into()),
+            stored_path: "src-2.md".into(),
+            content_hash: "hash-2".into(),
+            extracted_text_hash: Some("text-hash-2".into()),
+            status: KnowledgeSourceStatus::Ready,
+            compiled_at: None,
+            created_at: now + 1,
+            updated_at: now + 1,
+            size: 64,
+            chunk_count: 0,
+            version_of_source_id: Some(source.id.clone()),
+            version_index: 2,
+            superseded_by_source_id: None,
+            superseded_at: None,
+        };
+        reg.insert_source_version(&source.id, &version, &[])
+            .unwrap();
+
+        let listed = reg.list_sources(&kb.id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "src-2");
+
+        let old = reg.get_source(&kb.id, "src-1").unwrap().unwrap();
+        assert_eq!(old.superseded_by_source_id.as_deref(), Some("src-2"));
+        let current = reg.current_source_for(&kb.id, "src-1").unwrap().unwrap();
+        assert_eq!(current.id, "src-2");
+        let versions = reg.source_versions(&kb.id, "src-2").unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version_index, 2);
     }
 
     #[test]

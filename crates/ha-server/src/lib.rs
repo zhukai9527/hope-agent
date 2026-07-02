@@ -313,6 +313,18 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_source_read).delete(routes::knowledge::kb_source_delete),
         )
         .route(
+            "/knowledge/{kb_id}/sources/{source_id}/refresh",
+            post(routes::knowledge::kb_source_refresh),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/{source_id}/versions",
+            get(routes::knowledge::kb_source_versions),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/{source_id}/diff",
+            get(routes::knowledge::kb_source_diff),
+        )
+        .route(
             "/knowledge/{kb_id}/sources/{source_id}/reextract",
             post(routes::knowledge::kb_source_reextract),
         )

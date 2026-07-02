@@ -125,10 +125,56 @@ export interface KnowledgeSource {
   updatedAt: number
   size: number
   chunkCount: number
+  versionOfSourceId?: string | null
+  versionIndex: number
+  supersededBySourceId?: string | null
+  supersededAt?: number | null
 }
 
 export interface KnowledgeSourceReadResult extends KnowledgeSource {
   content: string
+}
+
+export interface KnowledgeSourceRefreshInput {
+  title?: string | null
+  browserMode?: KnowledgeBrowserCaptureMode
+  requireSameUrl?: boolean
+}
+
+export type KnowledgeSourceDiffLineKind = "context" | "added" | "removed"
+
+export interface KnowledgeSourceDiffLine {
+  kind: KnowledgeSourceDiffLineKind
+  oldLine?: number | null
+  newLine?: number | null
+  text: string
+}
+
+export interface KnowledgeSourceDiff {
+  fromSourceId: string
+  toSourceId: string
+  fromTitle: string
+  toTitle: string
+  fromContentHash: string
+  toContentHash: string
+  addedLines: number
+  removedLines: number
+  contextLines: number
+  truncated: boolean
+  lines: KnowledgeSourceDiffLine[]
+}
+
+export interface KnowledgeSourceRefreshResult {
+  source: KnowledgeSource
+  previousSource: KnowledgeSource
+  changed: boolean
+  diff?: KnowledgeSourceDiff | null
+}
+
+export interface KnowledgeSourceVersionHistory {
+  rootSourceId: string
+  currentSourceId: string
+  versions: KnowledgeSource[]
 }
 
 export type KnowledgeSourceImportRunStatus =
@@ -227,6 +273,8 @@ export interface NoteSourceRef {
   originUri?: string | null
   missing: boolean
   stale: boolean
+  superseded: boolean
+  latestSourceId?: string | null
   sourceUpdatedAt?: number | null
   noteLastCompiledAt?: number | null
   citedIn?: string[]
@@ -270,6 +318,10 @@ export interface KnowledgeAgentSourceItem {
   updatedAt: number
   size: number
   chunkCount: number
+  versionOfSourceId?: string | null
+  versionIndex: number
+  supersededBySourceId?: string | null
+  supersededAt?: number | null
   snippet?: string | null
   content?: string | null
 }

@@ -114,7 +114,9 @@ export default function NoteSourceReferences({
             <span className="truncate text-[10px] text-muted-foreground">
               {ref.missing
                 ? t("knowledge.sources.missingSource", "Missing source")
-                : ref.stale
+                : ref.superseded
+                  ? t("knowledge.sources.supersededSource", "Newer source version available")
+                  : ref.stale
                   ? t("knowledge.sources.staleSource", "Source changed after compile")
                   : ref.originUri || ref.sourceId}
             </span>

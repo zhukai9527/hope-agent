@@ -27,9 +27,10 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
+    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
     Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
     RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
 };
@@ -210,6 +211,17 @@ pub struct KbBrowserSourceImportBody {
 #[derive(Debug, Deserialize)]
 pub struct KbSourceImportBatchBody {
     pub input: KnowledgeSourceImportBatchInput,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KbSourceRefreshBody {
+    pub input: KnowledgeSourceRefreshInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbSourceDiffQuery {
+    pub to_source_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -425,6 +437,35 @@ pub async fn kb_source_read(
     Path((kb_id, source_id)): Path<(String, String)>,
 ) -> Result<Json<KnowledgeSourceReadResult>, AppError> {
     Ok(Json(service::source_read(&kb_id, &source_id)?))
+}
+
+/// `POST /api/knowledge/{kb_id}/sources/{source_id}/refresh`
+pub async fn kb_source_refresh(
+    Path((kb_id, source_id)): Path<(String, String)>,
+    Json(body): Json<KbSourceRefreshBody>,
+) -> Result<Json<KnowledgeSourceRefreshResult>, AppError> {
+    Ok(Json(
+        service::source_refresh(&kb_id, &source_id, body.input).await?,
+    ))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/{source_id}/versions`
+pub async fn kb_source_versions(
+    Path((kb_id, source_id)): Path<(String, String)>,
+) -> Result<Json<KnowledgeSourceVersionHistory>, AppError> {
+    Ok(Json(service::source_versions(&kb_id, &source_id)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/{source_id}/diff?toSourceId=...`
+pub async fn kb_source_diff(
+    Path((kb_id, source_id)): Path<(String, String)>,
+    Query(query): Query<KbSourceDiffQuery>,
+) -> Result<Json<KnowledgeSourceDiff>, AppError> {
+    Ok(Json(service::source_diff(
+        &kb_id,
+        &source_id,
+        &query.to_source_id,
+    )?))
 }
 
 /// `POST /api/knowledge/{kb_id}/sources/{source_id}/reextract`

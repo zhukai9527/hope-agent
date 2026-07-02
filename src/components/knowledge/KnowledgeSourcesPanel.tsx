@@ -3,6 +3,7 @@ import {
   FileAudio,
   FileText,
   FileVideo,
+  GitCompare,
   Globe,
   History,
   Image as ImageIcon,
@@ -47,13 +48,16 @@ import type {
   KnowledgeBrowserCaptureMode,
   KnowledgeBrowserSourceImportInput,
   KnowledgeSource,
+  KnowledgeSourceDiff,
   KnowledgeSourceImportBatchInput,
   KnowledgeSourceImportRun,
   KnowledgeSourceImportRunDetail,
   KnowledgeSourceImportInput,
   KnowledgeSourceKind,
   KnowledgeSourceReadResult,
+  KnowledgeSourceRefreshResult,
   KnowledgeSourceSimilarityGroup,
+  KnowledgeSourceVersionHistory,
 } from "@/types/knowledge"
 
 import KnowledgeCompilePanel from "./KnowledgeCompilePanel"
@@ -94,6 +98,10 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
   const [selected, setSelected] = useState<KnowledgeSourceReadResult | null>(null)
   const [reading, setReading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeSource | null>(null)
+  const [refreshingSourceId, setRefreshingSourceId] = useState<string | null>(null)
+  const [versionHistory, setVersionHistory] = useState<KnowledgeSourceVersionHistory | null>(null)
+  const [sourceDiff, setSourceDiff] = useState<KnowledgeSourceDiff | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(() => new Set())
   const [compileOpen, setCompileOpen] = useState(false)
   const [compileSourceIds, setCompileSourceIds] = useState<string[]>([])
@@ -366,6 +374,74 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
     }
   }
 
+  async function refreshSource(source: KnowledgeSource) {
+    if (!kbId || !isRefreshableSourceKind(source.kind) || refreshingSourceId) return
+    setRefreshingSourceId(source.id)
+    try {
+      const result = await getTransport().call<KnowledgeSourceRefreshResult>(
+        "kb_source_refresh_cmd",
+        {
+          kbId,
+          sourceId: source.id,
+          input: { browserMode: "auto", requireSameUrl: true },
+        },
+      )
+      if (!result.changed) {
+        toast.info(t("knowledge.sources.refreshUnchanged", "Source is already up to date"))
+        setSources((items) =>
+          items.map((item) => (item.id === result.source.id ? result.source : item)),
+        )
+        return
+      }
+      toast.success(
+        t("knowledge.sources.refreshChanged", {
+          defaultValue: "Source refreshed to v{{version}}",
+          version: result.source.versionIndex ?? 1,
+        }),
+      )
+      if (result.diff) setSourceDiff(result.diff)
+      await reload()
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::refresh", "source refresh failed", e)
+      toast.error(t("knowledge.sources.refreshFailed", "Couldn't refresh source"))
+    } finally {
+      setRefreshingSourceId(null)
+    }
+  }
+
+  async function openVersions(source: KnowledgeSource) {
+    if (!kbId) return
+    try {
+      const history = await getTransport().call<KnowledgeSourceVersionHistory>(
+        "kb_source_versions_cmd",
+        { kbId, sourceId: source.id },
+      )
+      setVersionHistory(history)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::versions", "source versions failed", e)
+      toast.error(t("knowledge.sources.versionsFailed", "Couldn't load source versions"))
+    }
+  }
+
+  async function openSourceDiff(fromSourceId: string, toSourceId: string) {
+    if (!kbId) return
+    setSourceDiff(null)
+    setDiffLoading(true)
+    try {
+      const diff = await getTransport().call<KnowledgeSourceDiff>("kb_source_diff_cmd", {
+        kbId,
+        sourceId: fromSourceId,
+        toSourceId,
+      })
+      setSourceDiff(diff)
+    } catch (e) {
+      logger.warn("knowledge", "KnowledgeSourcesPanel::diff", "source diff failed", e)
+      toast.error(t("knowledge.sources.diffFailed", "Couldn't load source diff"))
+    } finally {
+      setDiffLoading(false)
+    }
+  }
+
   function toggleSourceSelection(sourceId: string) {
     setSelectedSourceIds((prev) => {
       const next = new Set(prev)
@@ -553,6 +629,12 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                       <span>{formatBytes(source.size)}</span>
                       <span>·</span>
                       <span>{sourceKindLabel(source.kind)}</span>
+                      {(source.versionIndex ?? 1) > 1 ? (
+                        <>
+                          <span>·</span>
+                          <span>{sourceVersionLabel(source)}</span>
+                        </>
+                      ) : null}
                       <span>·</span>
                       <span>{source.chunkCount}</span>
                       <span>·</span>
@@ -582,6 +664,21 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
               <ContextMenuItem onClick={() => openCompile([source.id])}>
                 <Sparkles className="mr-2 h-3.5 w-3.5" />
                 {t("knowledge.sources.compileOne", "Compile")}
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={!isRefreshableSourceKind(source.kind) || refreshingSourceId === source.id}
+                onClick={() => void refreshSource(source)}
+              >
+                {refreshingSourceId === source.id ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                )}
+                {t("knowledge.sources.refreshSource", "Refresh snapshot")}
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => void openVersions(source)}>
+                <History className="mr-2 h-3.5 w-3.5" />
+                {t("knowledge.sources.versionHistory", "Version history")}
               </ContextMenuItem>
               <ContextMenuItem onClick={() => void reextractSource(source)}>
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
@@ -743,6 +840,163 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
           <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md border border-border-soft/60 bg-muted/30 p-3 text-xs leading-relaxed">
             {reading ? t("knowledge.sources.loading", "Loading…") : selected?.content}
           </pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!versionHistory}
+        onOpenChange={(open) => !open && setVersionHistory(null)}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t("knowledge.sources.versionHistory", "Version history")}</DialogTitle>
+            <DialogDescription>
+              {versionHistory
+                ? t("knowledge.sources.versionHistoryDesc", {
+                    defaultValue: "{{count}} archived snapshots. Current: {{current}}",
+                    count: versionHistory.versions.length,
+                    current: versionHistory.currentSourceId.slice(0, 8),
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[70vh] space-y-2 overflow-auto">
+            {versionHistory?.versions.map((version, index) => {
+              const older = versionHistory.versions[index + 1]
+              const current = version.id === versionHistory.currentSourceId
+              return (
+                <div
+                  key={version.id}
+                  className={cn(
+                    "rounded-md border border-border-soft/60 p-2 text-xs",
+                    current && "border-primary/60 bg-primary/5",
+                  )}
+                >
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+                          {sourceVersionLabel(version)}
+                        </span>
+                        <span className="truncate font-medium">{version.title}</span>
+                        {current ? (
+                          <span className="shrink-0 rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                            {t("knowledge.sources.currentVersion", "Current")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                        <span>{formatDateTime(version.createdAt)}</span>
+                        <span>·</span>
+                        <span>{formatBytes(version.size)}</span>
+                        <span>·</span>
+                        <span className="font-mono">{version.id.slice(0, 8)}</span>
+                        {version.originUri ? (
+                          <>
+                            <span>·</span>
+                            <span className="truncate">{version.originUri}</span>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <IconTip label={t("knowledge.sources.open", "Open")}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => {
+                            setVersionHistory(null)
+                            void openSource(version)
+                          }}
+                        >
+                          <FileText className="h-3 w-3" />
+                        </Button>
+                      </IconTip>
+                      <IconTip label={t("knowledge.sources.comparePrevious", "Compare previous")}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          disabled={!older || diffLoading}
+                          onClick={() => older && void openSourceDiff(older.id, version.id)}
+                        >
+                          {diffLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <GitCompare className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </IconTip>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!sourceDiff || diffLoading}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSourceDiff(null)
+            setDiffLoading(false)
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{t("knowledge.sources.sourceDiff", "Source diff")}</DialogTitle>
+            {sourceDiff ? (
+              <DialogDescription className="truncate">
+                {sourceDiff.fromTitle} -&gt; {sourceDiff.toTitle}
+              </DialogDescription>
+            ) : null}
+          </DialogHeader>
+          {diffLoading && !sourceDiff ? (
+            <div className="flex items-center gap-2 rounded-md border border-border-soft/60 p-3 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t("knowledge.sources.loadingDiff", "Loading diff...")}
+            </div>
+          ) : sourceDiff ? (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                <span className="rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600 dark:text-emerald-400">
+                  +{sourceDiff.addedLines}
+                </span>
+                <span className="rounded-sm bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                  -{sourceDiff.removedLines}
+                </span>
+                {sourceDiff.truncated ? (
+                  <span>{t("knowledge.sources.diffTruncated", "Preview truncated")}</span>
+                ) : null}
+              </div>
+              <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft/60 bg-muted/20 font-mono text-[11px] leading-relaxed">
+                {sourceDiff.lines.map((line, index) => (
+                  <div
+                    key={`${line.kind}-${index}-${line.oldLine ?? ""}-${line.newLine ?? ""}`}
+                    className={cn(
+                      "grid grid-cols-[3rem_3rem_1rem_minmax(0,1fr)] gap-2 px-2 py-0.5",
+                      diffLineClass(line.kind),
+                    )}
+                  >
+                    <span className="select-none text-right text-muted-foreground">
+                      {line.oldLine ?? ""}
+                    </span>
+                    <span className="select-none text-right text-muted-foreground">
+                      {line.newLine ?? ""}
+                    </span>
+                    <span className="select-none">{diffLinePrefix(line.kind)}</span>
+                    <span className="whitespace-pre-wrap break-words">{line.text || " "}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -1072,6 +1326,38 @@ function isBinarySourceKind(kind: KnowledgeSourceKind): boolean {
     kind === "video_transcript" ||
     kind === "image_ocr"
   )
+}
+
+function isRefreshableSourceKind(kind: KnowledgeSourceKind): boolean {
+  return kind === "url_snapshot" || kind === "browser_snapshot"
+}
+
+function sourceVersionLabel(source: Pick<KnowledgeSource, "versionIndex">): string {
+  return `v${source.versionIndex ?? 1}`
+}
+
+function diffLineClass(kind: "context" | "added" | "removed"): string {
+  switch (kind) {
+    case "added":
+      return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+    case "removed":
+      return "bg-destructive/10 text-destructive"
+    case "context":
+    default:
+      return ""
+  }
+}
+
+function diffLinePrefix(kind: "context" | "added" | "removed"): string {
+  switch (kind) {
+    case "added":
+      return "+"
+    case "removed":
+      return "-"
+    case "context":
+    default:
+      return " "
+  }
 }
 
 function hasExt(fileName: string, exts: string[]): boolean {

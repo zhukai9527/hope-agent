@@ -14,9 +14,10 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
     KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
+    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
     Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
     RenameOutcome, SchemaIssue, SchemaProfile, UpdateKnowledgeBaseInput,
 };
@@ -185,6 +186,34 @@ pub async fn kb_source_read_cmd(
     source_id: String,
 ) -> Result<KnowledgeSourceReadResult, CmdError> {
     service::source_read(&kb_id, &source_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_refresh_cmd(
+    kb_id: String,
+    source_id: String,
+    input: KnowledgeSourceRefreshInput,
+) -> Result<KnowledgeSourceRefreshResult, CmdError> {
+    service::source_refresh(&kb_id, &source_id, input)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_versions_cmd(
+    kb_id: String,
+    source_id: String,
+) -> Result<KnowledgeSourceVersionHistory, CmdError> {
+    service::source_versions(&kb_id, &source_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_diff_cmd(
+    kb_id: String,
+    source_id: String,
+    to_source_id: String,
+) -> Result<KnowledgeSourceDiff, CmdError> {
+    service::source_diff(&kb_id, &source_id, &to_source_id).map_err(Into::into)
 }
 
 #[tauri::command]

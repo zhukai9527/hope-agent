@@ -10,6 +10,7 @@ use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use similar::{ChangeTag, TextDiff};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -20,10 +21,12 @@ use crate::stt::{AudioPayload, Transcript};
 
 use super::types::{
     KnowledgeBrowserCaptureMode, KnowledgeBrowserSourceImportInput, KnowledgeSource,
-    KnowledgeSourceChunk, KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput,
+    KnowledgeSourceChunk, KnowledgeSourceDiff, KnowledgeSourceDiffLine,
+    KnowledgeSourceDiffLineKind, KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput,
     KnowledgeSourceImportItemStatus, KnowledgeSourceImportRunDetail,
     KnowledgeSourceImportRunStatus, KnowledgeSourceKind, KnowledgeSourceReadResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceSimilarityGroupKind, KnowledgeSourceStatus, KnowledgeSourceVersionHistory,
 };
 
 const MAX_DIRECT_SOURCE_BYTES: usize = 5 * 1024 * 1024;
@@ -38,6 +41,7 @@ const MAX_SOURCE_SIMILARITY_GROUPS: usize = 25;
 const SOURCE_SIMILARITY_THRESHOLD: f32 = 0.84;
 const MAX_URL_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const SOURCE_CHUNK_CHARS: usize = 4_000;
+const MAX_SOURCE_DIFF_LINES: usize = 240;
 const USER_AGENT: &str =
     "HopeAgent/KnowledgeSourceImporter (+https://github.com/shiwenwen/hope-agent)";
 const BROWSER_CAPTURE_JS: &str = r#"(() => {
@@ -127,6 +131,21 @@ struct ImportedSourceOutcome {
     duplicate_of_id: Option<String>,
 }
 
+struct SourceSnapshotDraft {
+    kind: KnowledgeSourceKind,
+    title: String,
+    origin_uri: Option<String>,
+    ext: &'static str,
+    content: String,
+    extracted_text: String,
+}
+
+struct SourceVersionLink {
+    root_source_id: String,
+    previous_source_id: String,
+    version_index: u32,
+}
+
 /// Import one raw source into a KB. Exactly one of `content`, `dataBase64`, or
 /// `url` is used.
 pub async fn import_source(
@@ -178,74 +197,9 @@ pub async fn import_browser_capture(
     kb_id: &str,
     input: KnowledgeBrowserSourceImportInput,
 ) -> Result<KnowledgeSource> {
-    let kb = registry()?
-        .get(kb_id)?
-        .ok_or_else(|| anyhow!("knowledge base not found: {kb_id}"))?;
-    if kb.archived {
-        bail!("cannot import source into archived knowledge base: {kb_id}");
-    }
-
-    let backend = crate::browser::acquire_backend_for(
-        crate::browser::BrowserBackendContext::default(),
-        crate::browser::BrowserBackendRequirement::ExtensionPreferred,
-    )
-    .await?;
-    let active = backend
-        .active_tab_info()
-        .await?
-        .ok_or_else(|| anyhow!("no active browser tab to capture"))?;
-    if !active.target_id.trim().is_empty() {
-        backend.select_page(&active.target_id).await?;
-    }
-    let raw = backend.evaluate(BROWSER_CAPTURE_JS).await?;
-    let capture: BrowserCapturePayload = serde_json::from_value(raw)
-        .map_err(|e| anyhow!("browser capture returned invalid payload: {e}"))?;
-    let selected = !capture.selection_text.trim().is_empty();
-    let (capture_mode, text) = match input.mode {
-        KnowledgeBrowserCaptureMode::Selection => {
-            if !selected {
-                bail!("browser selection capture requires selected text in the active tab");
-            }
-            ("selection", capture.selection_text)
-        }
-        KnowledgeBrowserCaptureMode::Page => ("page", capture.page_text),
-        KnowledgeBrowserCaptureMode::Auto => {
-            if selected {
-                ("selection", capture.selection_text)
-            } else {
-                ("page", capture.page_text)
-            }
-        }
-    };
-    let text = normalize_capture_text(&text)?;
-    let url = normalize_optional_owned(Some(capture.url))
-        .unwrap_or_else(|| active.url.clone())
-        .trim()
-        .to_string();
-    let text_hash = stable_text_hash(&text);
-    if let Some(existing) = registry()?.find_source_by_extracted_text_hash(kb_id, &text_hash)? {
-        return Ok(existing);
-    }
-    let extracted_title = normalize_optional_owned(Some(capture.title))
-        .or_else(|| normalize_optional_owned(Some(active.title.clone())));
-    let title = choose_title(input.title, None, extracted_title.as_deref());
-    let captured_at = chrono::Utc::now().to_rfc3339();
-    let mut snapshot = format!(
-        "# {title}\n\nSource: {url}\nCaptured: {captured_at}\nSource-Type: browser_snapshot\nCapture-Mode: {capture_mode}\nSelected: {}\n\n---\n\n",
-        capture_mode == "selection"
-    );
-    snapshot.push_str(&text);
-    snapshot.push('\n');
-
-    let outcome = persist_source(
-        kb_id,
-        KnowledgeSourceKind::BrowserSnapshot,
-        title,
-        Some(url),
-        "md",
-        snapshot,
-        Some(&text),
-    )?;
+    ensure_kb_open(kb_id)?;
+    let draft = capture_browser_snapshot(input).await?;
+    let outcome = persist_source_draft(kb_id, draft, true, None)?;
     if outcome.duplicate_of_id.is_none() {
         emit(kb_id, "source_import");
     }
@@ -429,10 +383,144 @@ pub fn read_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadRe
     let source = registry()?
         .get_source(kb_id, source_id)?
         .ok_or_else(|| anyhow!("source not found: {source_id}"))?;
-    let path = source_path(kb_id, &source.stored_path)?;
-    let bytes = std::fs::read(&path)?;
-    let content = String::from_utf8_lossy(&bytes).to_string();
+    let content = read_source_content(kb_id, &source)?;
     Ok(KnowledgeSourceReadResult { source, content })
+}
+
+pub async fn refresh_source(
+    kb_id: &str,
+    source_id: &str,
+    input: KnowledgeSourceRefreshInput,
+) -> Result<KnowledgeSourceRefreshResult> {
+    ensure_kb_open(kb_id)?;
+    let anchor = registry()?
+        .get_source(kb_id, source_id)?
+        .ok_or_else(|| anyhow!("source not found: {source_id}"))?;
+    let previous = registry()?
+        .current_source_for(kb_id, &anchor.id)?
+        .unwrap_or(anchor);
+
+    let draft = match previous.kind {
+        KnowledgeSourceKind::UrlSnapshot => {
+            let url = previous
+                .origin_uri
+                .as_deref()
+                .and_then(|v| normalize_optional(Some(v)))
+                .ok_or_else(|| anyhow!("source has no URL to refresh"))?;
+            fetch_url_snapshot(url, input.title).await?
+        }
+        KnowledgeSourceKind::BrowserSnapshot => {
+            let draft = capture_browser_snapshot(KnowledgeBrowserSourceImportInput {
+                mode: input.browser_mode,
+                title: input.title,
+            })
+            .await?;
+            if input.require_same_url {
+                let expected = previous
+                    .origin_uri
+                    .as_deref()
+                    .and_then(|v| normalize_optional(Some(v)))
+                    .ok_or_else(|| anyhow!("browser source has no original URL to match"))?;
+                let actual = draft.origin_uri.as_deref().unwrap_or_default();
+                if !same_refresh_url(expected, actual) {
+                    bail!(
+                        "active browser tab URL does not match the source URL; open {} before refreshing this source",
+                        expected
+                    );
+                }
+            }
+            draft
+        }
+        _ => bail!(
+            "{} sources cannot be refreshed automatically; re-import a new file/source instead",
+            previous.kind.as_str()
+        ),
+    };
+
+    let new_extracted_hash = stable_text_hash(&draft.extracted_text);
+    let previous_hash = previous
+        .extracted_text_hash
+        .as_deref()
+        .unwrap_or(&previous.content_hash);
+    if new_extracted_hash == previous_hash {
+        return Ok(KnowledgeSourceRefreshResult {
+            source: previous.clone(),
+            previous_source: previous,
+            changed: false,
+            diff: None,
+        });
+    }
+
+    let old_content = read_source_content(kb_id, &previous)?;
+    let new_content = draft.content.clone();
+    let root_source_id = previous
+        .version_of_source_id
+        .clone()
+        .unwrap_or_else(|| previous.id.clone());
+    let version_index = registry()?.next_source_version_index(kb_id, &root_source_id)?;
+    let outcome = persist_source_draft(
+        kb_id,
+        draft,
+        false,
+        Some(SourceVersionLink {
+            root_source_id,
+            previous_source_id: previous.id.clone(),
+            version_index,
+        }),
+    )?;
+    let diff = build_source_diff(&previous, &outcome.source, &old_content, &new_content);
+    emit(kb_id, "source_refresh");
+    Ok(KnowledgeSourceRefreshResult {
+        source: outcome.source,
+        previous_source: previous,
+        changed: true,
+        diff: Some(diff),
+    })
+}
+
+pub fn source_versions(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceVersionHistory> {
+    ensure_kb_exists(kb_id)?;
+    let versions = registry()?.source_versions(kb_id, source_id)?;
+    if versions.is_empty() {
+        bail!("source not found: {source_id}");
+    }
+    let current = versions
+        .iter()
+        .find(|source| source.superseded_by_source_id.is_none())
+        .or_else(|| versions.first())
+        .expect("non-empty versions");
+    let root_source_id = versions
+        .iter()
+        .find(|source| source.version_of_source_id.is_none())
+        .map(|source| source.id.clone())
+        .or_else(|| {
+            versions
+                .first()
+                .and_then(|source| source.version_of_source_id.clone())
+        })
+        .unwrap_or_else(|| source_id.to_string());
+    Ok(KnowledgeSourceVersionHistory {
+        root_source_id,
+        current_source_id: current.id.clone(),
+        versions,
+    })
+}
+
+pub fn diff_sources(
+    kb_id: &str,
+    from_source_id: &str,
+    to_source_id: &str,
+) -> Result<KnowledgeSourceDiff> {
+    ensure_kb_exists(kb_id)?;
+    let from = registry()?
+        .get_source(kb_id, from_source_id)?
+        .ok_or_else(|| anyhow!("source not found: {from_source_id}"))?;
+    let to = registry()?
+        .get_source(kb_id, to_source_id)?
+        .ok_or_else(|| anyhow!("source not found: {to_source_id}"))?;
+    let from_content = read_source_content(kb_id, &from)?;
+    let to_content = read_source_content(kb_id, &to)?;
+    Ok(build_source_diff(&from, &to, &from_content, &to_content))
 }
 
 pub fn reextract_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSource> {
@@ -469,6 +557,90 @@ pub fn delete_source(kb_id: &str, source_id: &str) -> Result<bool> {
     }
     emit(kb_id, "source_delete");
     Ok(true)
+}
+
+fn read_source_content(kb_id: &str, source: &KnowledgeSource) -> Result<String> {
+    let path = source_path(kb_id, &source.stored_path)?;
+    let bytes = std::fs::read(&path)?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+fn build_source_diff(
+    from: &KnowledgeSource,
+    to: &KnowledgeSource,
+    from_content: &str,
+    to_content: &str,
+) -> KnowledgeSourceDiff {
+    let diff = TextDiff::from_lines(from_content, to_content);
+    let mut lines = Vec::new();
+    let mut added_lines = 0u32;
+    let mut removed_lines = 0u32;
+    let mut context_lines = 0u32;
+    let mut truncated = false;
+
+    for change in diff.iter_all_changes() {
+        let kind = match change.tag() {
+            ChangeTag::Delete => {
+                removed_lines = removed_lines.saturating_add(1);
+                KnowledgeSourceDiffLineKind::Removed
+            }
+            ChangeTag::Insert => {
+                added_lines = added_lines.saturating_add(1);
+                KnowledgeSourceDiffLineKind::Added
+            }
+            ChangeTag::Equal => {
+                context_lines = context_lines.saturating_add(1);
+                KnowledgeSourceDiffLineKind::Context
+            }
+        };
+        if lines.len() < MAX_SOURCE_DIFF_LINES {
+            lines.push(KnowledgeSourceDiffLine {
+                kind,
+                old_line: change.old_index().map(|idx| idx.saturating_add(1) as u32),
+                new_line: change.new_index().map(|idx| idx.saturating_add(1) as u32),
+                text: change
+                    .value()
+                    .trim_end_matches(&['\r', '\n'][..])
+                    .to_string(),
+            });
+        } else {
+            truncated = true;
+        }
+    }
+
+    KnowledgeSourceDiff {
+        from_source_id: from.id.clone(),
+        to_source_id: to.id.clone(),
+        from_title: from.title.clone(),
+        to_title: to.title.clone(),
+        from_content_hash: from.content_hash.clone(),
+        to_content_hash: to.content_hash.clone(),
+        added_lines,
+        removed_lines,
+        context_lines,
+        truncated,
+        lines,
+    }
+}
+
+fn same_refresh_url(expected: &str, actual: &str) -> bool {
+    fn normalized(
+        raw: &str,
+    ) -> Option<(String, Option<String>, Option<u16>, String, Option<String>)> {
+        let mut url = url::Url::parse(raw).ok()?;
+        url.set_fragment(None);
+        Some((
+            url.scheme().to_ascii_lowercase(),
+            url.host_str().map(|host| host.to_ascii_lowercase()),
+            url.port_or_known_default(),
+            url.path().to_string(),
+            url.query().map(str::to_string),
+        ))
+    }
+    match (normalized(expected), normalized(actual)) {
+        (Some(a), Some(b)) => a == b,
+        _ => expected.trim() == actual.trim(),
+    }
 }
 
 fn import_text_snapshot(
@@ -596,6 +768,67 @@ struct BrowserCapturePayload {
     selection_text: String,
     #[serde(default)]
     page_text: String,
+}
+
+async fn capture_browser_snapshot(
+    input: KnowledgeBrowserSourceImportInput,
+) -> Result<SourceSnapshotDraft> {
+    let backend = crate::browser::acquire_backend_for(
+        crate::browser::BrowserBackendContext::default(),
+        crate::browser::BrowserBackendRequirement::ExtensionPreferred,
+    )
+    .await?;
+    let active = backend
+        .active_tab_info()
+        .await?
+        .ok_or_else(|| anyhow!("no active browser tab to capture"))?;
+    if !active.target_id.trim().is_empty() {
+        backend.select_page(&active.target_id).await?;
+    }
+    let raw = backend.evaluate(BROWSER_CAPTURE_JS).await?;
+    let capture: BrowserCapturePayload = serde_json::from_value(raw)
+        .map_err(|e| anyhow!("browser capture returned invalid payload: {e}"))?;
+    let selected = !capture.selection_text.trim().is_empty();
+    let (capture_mode, text) = match input.mode {
+        KnowledgeBrowserCaptureMode::Selection => {
+            if !selected {
+                bail!("browser selection capture requires selected text in the active tab");
+            }
+            ("selection", capture.selection_text)
+        }
+        KnowledgeBrowserCaptureMode::Page => ("page", capture.page_text),
+        KnowledgeBrowserCaptureMode::Auto => {
+            if selected {
+                ("selection", capture.selection_text)
+            } else {
+                ("page", capture.page_text)
+            }
+        }
+    };
+    let text = normalize_capture_text(&text)?;
+    let url = normalize_optional_owned(Some(capture.url))
+        .unwrap_or_else(|| active.url.clone())
+        .trim()
+        .to_string();
+    let extracted_title = normalize_optional_owned(Some(capture.title))
+        .or_else(|| normalize_optional_owned(Some(active.title.clone())));
+    let title = choose_title(input.title, None, extracted_title.as_deref());
+    let captured_at = chrono::Utc::now().to_rfc3339();
+    let mut snapshot = format!(
+        "# {title}\n\nSource: {url}\nCaptured: {captured_at}\nSource-Type: browser_snapshot\nCapture-Mode: {capture_mode}\nSelected: {}\n\n---\n\n",
+        capture_mode == "selection"
+    );
+    snapshot.push_str(&text);
+    snapshot.push('\n');
+
+    Ok(SourceSnapshotDraft {
+        kind: KnowledgeSourceKind::BrowserSnapshot,
+        title,
+        origin_uri: Some(url),
+        ext: "md",
+        content: snapshot,
+        extracted_text: text,
+    })
 }
 
 fn normalize_capture_text(text: &str) -> Result<String> {
@@ -930,6 +1163,14 @@ async fn import_url_snapshot(
     url: &str,
     requested_title: Option<String>,
 ) -> Result<ImportedSourceOutcome> {
+    let draft = fetch_url_snapshot(url, requested_title).await?;
+    persist_source_draft(kb_id, draft, true, None)
+}
+
+async fn fetch_url_snapshot(
+    url: &str,
+    requested_title: Option<String>,
+) -> Result<SourceSnapshotDraft> {
     let cfg = crate::config::cached_config();
     let ssrf_cfg = cfg.ssrf.clone();
     let web_cfg = cfg.web_fetch.clone();
@@ -1019,15 +1260,14 @@ async fn import_url_snapshot(
     snapshot.push_str(text.trim());
     snapshot.push('\n');
 
-    persist_source(
-        kb_id,
-        KnowledgeSourceKind::UrlSnapshot,
+    Ok(SourceSnapshotDraft {
+        kind: KnowledgeSourceKind::UrlSnapshot,
         title,
-        Some(final_url),
-        "md",
-        snapshot,
-        Some(&text),
-    )
+        origin_uri: Some(final_url),
+        ext: "md",
+        content: snapshot,
+        extracted_text: text,
+    })
 }
 
 fn persist_source(
@@ -1039,34 +1279,57 @@ fn persist_source(
     content: String,
     extracted_text: Option<&str>,
 ) -> Result<ImportedSourceOutcome> {
-    let extracted_text_hash = extracted_text
-        .and_then(|text| normalize_optional(Some(text)).map(stable_text_hash))
-        .unwrap_or_else(|| super::blake3_hex(content.as_bytes()));
-    if let Some(existing) =
-        registry()?.find_source_by_extracted_text_hash(kb_id, &extracted_text_hash)?
-    {
-        let duplicate_of_id = existing.id.clone();
-        return Ok(ImportedSourceOutcome {
-            source: existing,
-            duplicate_of_id: Some(duplicate_of_id),
-        });
-    }
-
-    let id = uuid::Uuid::new_v4().to_string();
-    let stored_path = format!("{id}.{}", sanitize_ext(ext));
-    let dir = source_dir(kb_id)?;
-    let path = dir.join(&stored_path);
-    crate::platform::write_atomic(&path, content.as_bytes())?;
-
-    let now = chrono::Utc::now().timestamp_millis();
-    let content_hash = super::blake3_hex(content.as_bytes());
-    let chunks = build_chunks(&id, &content);
-    let source = KnowledgeSource {
-        id,
-        kb_id: kb_id.to_string(),
+    let draft = SourceSnapshotDraft {
         kind,
         title,
         origin_uri,
+        ext: sanitize_ext(ext),
+        content,
+        extracted_text: extracted_text.unwrap_or("").to_string(),
+    };
+    persist_source_draft(kb_id, draft, true, None)
+}
+
+fn persist_source_draft(
+    kb_id: &str,
+    draft: SourceSnapshotDraft,
+    dedupe: bool,
+    version: Option<SourceVersionLink>,
+) -> Result<ImportedSourceOutcome> {
+    let extracted_text_hash = normalize_optional(Some(&draft.extracted_text))
+        .map(stable_text_hash)
+        .unwrap_or_else(|| super::blake3_hex(draft.content.as_bytes()));
+    if dedupe {
+        if let Some(existing) =
+            registry()?.find_source_by_extracted_text_hash(kb_id, &extracted_text_hash)?
+        {
+            let duplicate_of_id = existing.id.clone();
+            return Ok(ImportedSourceOutcome {
+                source: existing,
+                duplicate_of_id: Some(duplicate_of_id),
+            });
+        }
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let stored_path = format!("{id}.{}", draft.ext);
+    let dir = source_dir(kb_id)?;
+    let path = dir.join(&stored_path);
+    crate::platform::write_atomic(&path, draft.content.as_bytes())?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let content_hash = super::blake3_hex(draft.content.as_bytes());
+    let chunks = build_chunks(&id, &draft.content);
+    let (version_of_source_id, version_index) = version
+        .as_ref()
+        .map(|link| (Some(link.root_source_id.clone()), link.version_index))
+        .unwrap_or((None, 1));
+    let source = KnowledgeSource {
+        id,
+        kb_id: kb_id.to_string(),
+        kind: draft.kind,
+        title: draft.title,
+        origin_uri: draft.origin_uri,
         stored_path,
         content_hash,
         extracted_text_hash: Some(extracted_text_hash),
@@ -1074,10 +1337,21 @@ fn persist_source(
         compiled_at: None,
         created_at: now,
         updated_at: now,
-        size: content.as_bytes().len() as i64,
+        size: draft.content.as_bytes().len() as i64,
         chunk_count: chunks.len() as u32,
+        version_of_source_id,
+        version_index,
+        superseded_by_source_id: None,
+        superseded_at: None,
     };
-    if let Err(e) = registry().and_then(|reg| reg.insert_source(&source, &chunks)) {
+    let insert_result = registry().and_then(|reg| {
+        if let Some(link) = &version {
+            reg.insert_source_version(&link.previous_source_id, &source, &chunks)
+        } else {
+            reg.insert_source(&source, &chunks)
+        }
+    });
+    if let Err(e) = insert_result {
         if let Err(cleanup_err) = std::fs::remove_file(&path) {
             crate::app_warn!(
                 "knowledge",
@@ -1743,6 +2017,30 @@ mod tests {
             general_purpose::STANDARD.encode(b"hello")
         );
         assert_eq!(decode_base64_source(&encoded).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn same_refresh_url_ignores_fragment_only() {
+        assert!(same_refresh_url(
+            "https://Example.com/Docs?a=1#old",
+            "https://example.com/Docs?a=1#new"
+        ));
+        assert!(same_refresh_url(
+            "https://example.com",
+            "https://example.com/"
+        ));
+        assert!(!same_refresh_url(
+            "https://example.com/Docs?a=1",
+            "https://example.com/docs?a=1"
+        ));
+        assert!(!same_refresh_url(
+            "https://example.com/docs?a=One",
+            "https://example.com/docs?a=one"
+        ));
+        assert!(!same_refresh_url(
+            "https://example.com/foo",
+            "https://example.com/foo/"
+        ));
     }
 
     #[test]

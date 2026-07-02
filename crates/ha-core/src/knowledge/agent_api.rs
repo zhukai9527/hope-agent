@@ -247,7 +247,8 @@ fn source_item(
     let stale = source
         .compiled_at
         .map(|compiled| source.updated_at > compiled)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || source.superseded_by_source_id.is_some();
     KnowledgeAgentSourceItem {
         kind: KnowledgeAgentItemKind::Source,
         kb_id: source.kb_id,
@@ -263,6 +264,10 @@ fn source_item(
         updated_at: source.updated_at,
         size: source.size,
         chunk_count: source.chunk_count,
+        version_of_source_id: source.version_of_source_id,
+        version_index: source.version_index,
+        superseded_by_source_id: source.superseded_by_source_id,
+        superseded_at: source.superseded_at,
         snippet,
         content: include_content
             .then(|| content.map(|s| s.to_string()))

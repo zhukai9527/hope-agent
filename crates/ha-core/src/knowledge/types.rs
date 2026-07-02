@@ -355,6 +355,14 @@ pub struct KnowledgeSource {
     pub size: i64,
     #[serde(default)]
     pub chunk_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_of_source_id: Option<String>,
+    #[serde(default = "default_source_version_index")]
+    pub version_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by_source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_at: Option<i64>,
 }
 
 /// Source read response: metadata + stored snapshot text.
@@ -364,6 +372,83 @@ pub struct KnowledgeSourceReadResult {
     #[serde(flatten)]
     pub source: KnowledgeSource,
     pub content: String,
+}
+
+fn default_source_version_index() -> u32 {
+    1
+}
+
+/// Refresh options for a raw source. Refresh is deliberately narrower than
+/// import: it re-acquires refreshable snapshots and records a new immutable
+/// version when the extracted body changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceRefreshInput {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub browser_mode: KnowledgeBrowserCaptureMode,
+    #[serde(default = "default_require_same_url")]
+    pub require_same_url: bool,
+}
+
+fn default_require_same_url() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceDiffLineKind {
+    Context,
+    Added,
+    Removed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceDiffLine {
+    pub kind: KnowledgeSourceDiffLineKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_line: Option<u32>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceDiff {
+    pub from_source_id: String,
+    pub to_source_id: String,
+    pub from_title: String,
+    pub to_title: String,
+    pub from_content_hash: String,
+    pub to_content_hash: String,
+    pub added_lines: u32,
+    pub removed_lines: u32,
+    pub context_lines: u32,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub lines: Vec<KnowledgeSourceDiffLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceRefreshResult {
+    pub source: KnowledgeSource,
+    pub previous_source: KnowledgeSource,
+    pub changed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<KnowledgeSourceDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceVersionHistory {
+    pub root_source_id: String,
+    pub current_source_id: String,
+    pub versions: Vec<KnowledgeSource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -631,6 +716,10 @@ pub struct NoteSourceRef {
     pub origin_uri: Option<String>,
     pub missing: bool,
     pub stale: bool,
+    #[serde(default)]
+    pub superseded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_updated_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -704,6 +793,14 @@ pub struct KnowledgeAgentSourceItem {
     pub updated_at: i64,
     pub size: i64,
     pub chunk_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_of_source_id: Option<String>,
+    #[serde(default = "default_source_version_index")]
+    pub version_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by_source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

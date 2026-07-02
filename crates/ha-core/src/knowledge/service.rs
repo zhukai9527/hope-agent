@@ -13,10 +13,12 @@ use super::index;
 use super::types::{
     Backlink, CompileProposal, CompileProposalStatus, CompileRun, CompileStartInput,
     CreateKnowledgeBaseInput, KbAccess, KbAttachInput, KbChatThread, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceImportBatchInput,
-    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
-    KnowledgeSourceReadResult, KnowledgeSourceSimilarityGroup, Note, NoteReadResult, NoteSearchHit,
-    NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceDiff,
+    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
+    KnowledgeSourceImportRunDetail, KnowledgeSourceReadResult, KnowledgeSourceRefreshInput,
+    KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory,
+    Note, NoteReadResult, NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote,
+    RenameOutcome, SchemaIssue, SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -114,6 +116,30 @@ pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimila
 /// Owner read: source metadata + stored snapshot text.
 pub fn source_read(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadResult> {
     super::source::read_source(kb_id, source_id)
+}
+
+/// Owner refresh: re-acquire a refreshable source and create a new immutable
+/// version only when its extracted body changed.
+pub async fn source_refresh(
+    kb_id: &str,
+    source_id: &str,
+    input: KnowledgeSourceRefreshInput,
+) -> Result<KnowledgeSourceRefreshResult> {
+    super::source::refresh_source(kb_id, source_id, input).await
+}
+
+/// Owner versions: list all immutable snapshots in a source's version chain.
+pub fn source_versions(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceVersionHistory> {
+    super::source::source_versions(kb_id, source_id)
+}
+
+/// Owner diff: compare two source snapshots in the same KB.
+pub fn source_diff(
+    kb_id: &str,
+    from_source_id: &str,
+    to_source_id: &str,
+) -> Result<KnowledgeSourceDiff> {
+    super::source::diff_sources(kb_id, from_source_id, to_source_id)
 }
 
 /// Owner re-extract: rebuild source chunks + hashes from the stored snapshot.

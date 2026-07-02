@@ -174,20 +174,38 @@ fn note_source_refs_from_content(kb_id: &str, content: &str) -> Result<Vec<NoteS
     let mut out = Vec::new();
     for (source_id, cited_in) in snapshot.source_refs {
         let source = registry()?.get_source(kb_id, &source_id)?;
-        let (title, origin_uri, source_updated_at, missing) = match source {
-            Some(s) => (Some(s.title), s.origin_uri, Some(s.updated_at), false),
-            None => (None, None, None, true),
-        };
-        let stale = source_updated_at
+        let (title, origin_uri, source_updated_at, missing, superseded, latest_source_id) =
+            match source {
+                Some(s) => {
+                    let latest = registry()?.current_source_for(kb_id, &s.id)?;
+                    let latest_source_id = latest
+                        .as_ref()
+                        .map(|latest| latest.id.clone())
+                        .filter(|latest_id| latest_id != &s.id);
+                    (
+                        Some(s.title),
+                        s.origin_uri,
+                        Some(s.updated_at),
+                        false,
+                        s.superseded_by_source_id.is_some() || latest_source_id.is_some(),
+                        latest_source_id,
+                    )
+                }
+                None => (None, None, None, true, false, None),
+            };
+        let changed_after_compile = source_updated_at
             .zip(snapshot.last_compiled_at)
             .map(|(source_updated, last_compiled)| source_updated > last_compiled)
             .unwrap_or(false);
+        let stale = superseded || changed_after_compile;
         out.push(NoteSourceRef {
             source_id,
             title,
             origin_uri,
             missing,
             stale,
+            superseded,
+            latest_source_id,
             source_updated_at,
             note_last_compiled_at: snapshot.last_compiled_at,
             cited_in,
