@@ -1650,6 +1650,71 @@ export interface CodingBenchmarkCampaign {
   error?: string | null;
 }
 
+export interface CodingBenchmarkLeaderboardInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  windowDays?: number | null;
+  campaignIds?: string[];
+  limit?: number | null;
+  minItems?: number | null;
+}
+
+export type CodingBenchmarkComparisonInput = CodingBenchmarkLeaderboardInput;
+
+export interface CodingBenchmarkLeaderboardEvidence {
+  campaignId: string;
+  campaignName: string;
+  itemId: string;
+  packRunId?: string | null;
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+  status: string;
+  updatedAt: string;
+  error?: string | null;
+}
+
+export interface CodingBenchmarkLeaderboardRow {
+  rank: number;
+  label: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  taskPackId: string;
+  sourceDoc: string;
+  executionMode: string;
+  baselineKind: string;
+  campaigns: number;
+  items: number;
+  passedItems: number;
+  failedItems: number;
+  skippedItems: number;
+  cancelledItems: number;
+  interruptedItems: number;
+  attempts: number;
+  selectedCases: number;
+  passedCases: number;
+  failedCases: number;
+  skippedCases: number;
+  totalChecks: number;
+  itemPassRate?: number | null;
+  casePassRate?: number | null;
+  warnings: string[];
+  evidence: CodingBenchmarkLeaderboardEvidence[];
+}
+
+export interface CodingBenchmarkLeaderboardReport {
+  generatedAt: string;
+  status: string;
+  scope: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  windowDays: number;
+  since: string;
+  minItems: number;
+  rows: CodingBenchmarkLeaderboardRow[];
+  checks: CodingBenchmarkCenterCheck[];
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

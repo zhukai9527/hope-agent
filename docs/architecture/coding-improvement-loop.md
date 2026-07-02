@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 6.2 已实现。本文是 `ha-core::coding_improvement`、`dashboard::coding_improvement`、Coding Trend Report、Transcript Distillation、Failure Feedback、Workflow Retro、Improvement Proposal 队列、Proposal-to-Action、Draft Promotion、Gold Pack / Strategy Effect history、External Model Baseline、Release Gate、Learning Generalization Gate、Benchmark Run Center、Benchmark Campaign Runner、owner API、Workspace 质量趋势区块与 Dashboard 全局学习视图的单一技术事实源。
+> 状态：Phase 6.3 已实现。本文是 `ha-core::coding_improvement`、`dashboard::coding_improvement`、Coding Trend Report、Transcript Distillation、Failure Feedback、Workflow Retro、Improvement Proposal 队列、Proposal-to-Action、Draft Promotion、Gold Pack / Strategy Effect history、External Model Baseline、Release Gate、Learning Generalization Gate、Benchmark Run Center、Benchmark Campaign Runner、Cross-model Leaderboard、owner API、Workspace 质量趋势区块与 Dashboard 全局学习视图的单一技术事实源。
 
 ## 目标
 
@@ -21,6 +21,7 @@ Coding Improvement Loop 把已经持久化的 coding 控制面数据转成可审
 - Learning Generalization Gate 读取多个项目的 promoted learning、Gold Pack history 与 Strategy Effect history，判断 guidance / workflow / skill 学习成果是否跨项目成立，而不是只优化单项目 fixture。
 - Benchmark Run Center 聚合 Gold Pack history、baseline kind、最近 run、Release Gate 与 Learning Generalization Gate，让用户在 Dashboard 里看到当前 coding benchmark 是否可发布、是否有外部模型基线、最近失败 case 是什么，并能显式启动安全 deterministic Benchmark Campaign。
 - Benchmark Campaign Runner 把单次 Gold Pack run 包装成 durable campaign：记录 task filter、provider/model matrix、子 item 状态、attempt、pack run 关联、取消与 retry 入口，且 campaign history 不保存 provider secret。
+- Cross-model Leaderboard 基于 campaign item history 聚合同一 task pack / source doc / execution mode / baseline kind 下的 provider/model 表现，显示 case pass rate、item pass rate、样本量 warning，并保留 evidence 链回 campaign item 与 pack run。
 
 ## 数据模型
 
@@ -245,6 +246,8 @@ Phase 4.3 新增只读全局聚合 API：
 | `get_coding_benchmark_campaign` | `GET /api/coding-benchmark/campaigns/{id}` | 读取单个 campaign、summary 与 item 明细。 |
 | `cancel_coding_benchmark_campaign` | `POST /api/coding-benchmark/campaigns/{id}/cancel` | 请求取消 campaign，并把未运行 queued item 标记为 cancelled。 |
 | `run_coding_benchmark_campaign` | `POST /api/coding-benchmark/campaigns/run` | 后台运行 queued item；`retryFailedOnly=true` 时只重排失败 / interrupted / cancelled item。 |
+| `get_benchmark_leaderboard` | `POST /api/coding-benchmark/leaderboard` | 基于 campaign item history 生成跨模型 leaderboard。 |
+| `compare_benchmark_models` | `POST /api/coding-benchmark/compare` | 使用同一聚合器按输入 campaign/window 生成可追溯 comparison report。 |
 
 `dashboard_coding_improvement` 输入为 `{ filter, limit? }`，其中 `filter` 使用 Dashboard 既有时间 / agent / provider / model 过滤。gate / benchmark API 输入为 `{ input: ... }`，按各自 scope/window/threshold 字段解析；campaign API 同样是 owner plane，不经 agent 工具面。`dashboard_coding_improvement` 返回 `CodingImprovementDashboard`：
 
@@ -400,6 +403,26 @@ Phase 6.2 新增 `SessionDB::create_coding_benchmark_campaign`、`list_coding_be
 
 真实外部模型 benchmark 必须通过 Dashboard External campaign 控制区或 owner API 显式选择 provider/model matrix，并在 `run_coding_benchmark_campaign` / `create(... runNow=true)` 调用中提供或由本机 cached config 解析 provider configs；history 只记录 provider/model id 与 report summary，不保存 API key。默认 Dashboard Run 只创建 deterministic campaign，不触发外部网络或费用。
 
+## Cross-model Leaderboard
+
+Phase 6.3 新增 `SessionDB::get_benchmark_leaderboard(input)` 与 `compare_benchmark_models(input)`，并通过 Tauri / HTTP / transport 暴露为 `get_benchmark_leaderboard`、`compare_benchmark_models`、`POST /api/coding-benchmark/leaderboard`、`POST /api/coding-benchmark/compare`。
+
+聚合边界：
+
+- scope 沿用 Benchmark Center：`sessionId` / `projectId` / global，session 绑定 project 时按 project 聚合；incognito fail-closed。
+- `windowDays` 默认 30，钳制到 `[1, 180]`；`campaignIds[]` 可把 report 收窄到指定 campaign。
+- leaderboard key = `taskPackId + sourceDoc + executionMode + baselineKind + providerId + modelId`，因此不会把不同任务包、不同 source doc、不同 execution mode 或不同 baseline kind 混成一个榜单。
+- 排序优先 `casePassRate`，再看 `itemPassRate`、`totalChecks`、`items` 和 label；样本不足、campaign 未完成、取消/interrupted item 都会进入 `warnings[]`。
+
+输出 `CodingBenchmarkLeaderboardReport`：
+
+- `status="passed"`：至少有 2 行可比较 model/baseline row。
+- `status="insufficient_data"`：少于 2 行，或 sample-size check 给出 advisory insufficient data。
+- `rows[]`：rank、label、provider/model、task pack/source、execution/baseline、campaign/item/case/check 汇总、pass rate、warnings。
+- `evidence[]`：每行最多保留 6 条 evidence，包含 campaign id/name、item id、packRunId、provider/model、status、updatedAt 与 error，保证 leaderboard 数字能回到原始 campaign item 和 pack run。
+
+Dashboard Benchmark Center 在 Campaign 控制区上方展示 Model leaderboard：rank、label、baseline/execution/task pack、case pass rate、item pass 和 warning 标记。P6.3 先做可信表格与 owner API；趋势图、成本/延迟、任务类型下钻会在 P6.4-P6.6 随真实任务集和报告导出继续增强。
+
 ## Eval
 
 `coding_eval.rs` 的 fixture harness 增加 `runs.improvement` 和 `checks.improvement`：
@@ -436,7 +459,7 @@ Phase 5.9 为 Gold Task Pack 增加外部模型基线 runner。`run_coding_eval_
 
 Phase 5.10 为 Learning Loop 增加跨项目泛化门禁。核心单测覆盖：两个项目均有 promoted guidance、pack history 与 improved strategy effect 时通过；任一项目出现 regressed strategy effect / validation delta / scope creep delta 时整体失败。它证明的是“学习成果在多个项目的 durable evidence 下没有退化”，而不是训练或自动发布新策略。
 
-Phase 6.1 为 Dashboard 增加 Benchmark Run Center。核心单测覆盖：干净 deterministic pack history 通过；latest pack run failed 时 center 与 release gate 失败；配置要求 external model baseline 但只有 deterministic history 时返回 `insufficient_data`。Phase 6.2 为 Benchmark Campaign Runner 增加核心单测：deterministic campaign 可运行 Gold Pack 子集并写回 `pack_run_id` / case 汇总；创建 external model campaign 时 `task_filter_json` 会剥离 provider config、modelChain 和 API key。前端 typecheck 覆盖 Tauri / HTTP transport 类型、Dashboard 状态、Campaign 列表和 Run/Cancel/Retry 调用形态。
+Phase 6.1 为 Dashboard 增加 Benchmark Run Center。核心单测覆盖：干净 deterministic pack history 通过；latest pack run failed 时 center 与 release gate 失败；配置要求 external model baseline 但只有 deterministic history 时返回 `insufficient_data`。Phase 6.2 为 Benchmark Campaign Runner 增加核心单测：deterministic campaign 可运行 Gold Pack 子集并写回 `pack_run_id` / case 汇总；创建 external model campaign 时 `task_filter_json` 会剥离 provider config、modelChain 和 API key。Phase 6.3 为 leaderboard 增加核心单测：deterministic passed campaign 与 external failed campaign 可生成两行 comparison，deterministic 按 pass rate 排第一，失败行保留 error evidence。前端 typecheck 覆盖 Tauri / HTTP transport 类型、Dashboard 状态、Campaign 列表、External campaign 控制与 Leaderboard 展示。
 
 ## 红线
 

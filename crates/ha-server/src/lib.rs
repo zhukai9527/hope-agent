@@ -1496,6 +1496,14 @@ fn build_router_with_cors(
             "/coding-benchmark/campaigns/{id}/cancel",
             post(routes::coding_improvement::cancel_coding_benchmark_campaign),
         )
+        .route(
+            "/coding-benchmark/leaderboard",
+            post(routes::coding_improvement::get_benchmark_leaderboard),
+        )
+        .route(
+            "/coding-benchmark/compare",
+            post(routes::coding_improvement::compare_benchmark_models),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

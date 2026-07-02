@@ -420,6 +420,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_coding_benchmark_campaign: { method: "GET", path: "/api/coding-benchmark/campaigns/{campaignId}" },
   cancel_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/{campaignId}/cancel" },
   run_coding_benchmark_campaign: { method: "POST", path: "/api/coding-benchmark/campaigns/run" },
+  get_benchmark_leaderboard: { method: "POST", path: "/api/coding-benchmark/leaderboard" },
+  compare_benchmark_models: { method: "POST", path: "/api/coding-benchmark/compare" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

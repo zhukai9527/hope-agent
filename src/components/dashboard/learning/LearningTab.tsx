@@ -20,6 +20,7 @@ import { logger } from "@/lib/logger"
 import type {
   CodingBenchmarkCampaign,
   CodingBenchmarkCenterReport,
+  CodingBenchmarkLeaderboardReport,
   CodingEvalReleaseGateReport,
   CodingLearningGeneralizationReport,
 } from "@/lib/transport"
@@ -98,6 +99,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [coding, setCoding] = useState<CodingImprovementDashboard | null>(null)
   const [benchmark, setBenchmark] = useState<CodingBenchmarkCenterReport | null>(null)
   const [benchmarkCampaigns, setBenchmarkCampaigns] = useState<CodingBenchmarkCampaign[]>([])
+  const [benchmarkLeaderboard, setBenchmarkLeaderboard] =
+    useState<CodingBenchmarkLeaderboardReport | null>(null)
   const [benchmarkProviders, setBenchmarkProviders] = useState<BenchmarkProviderOption[]>([])
   const [selectedBenchmarkModels, setSelectedBenchmarkModels] = useState<string[]>([])
   const [benchmarkMaxTasks, setBenchmarkMaxTasks] = useState(3)
@@ -113,7 +116,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
     setLoading(true)
     setBenchmarkError(null)
     try {
-      const [ov, tl, ts, rs, ci, bc, campaigns, providers, rg, gen] = await Promise.all([
+      const [ov, tl, ts, rs, ci, bc, campaigns, leaderboard, providers, rg, gen] = await Promise.all([
         getTransport().call<LearningOverview>("dashboard_learning_overview", {
           windowDays,
         }),
@@ -140,6 +143,13 @@ export default function LearningTab({ filter }: LearningTabProps) {
         getTransport().call<CodingBenchmarkCampaign[]>("list_coding_benchmark_campaigns", {
           input: {
             limit: 6,
+          },
+        }),
+        getTransport().call<CodingBenchmarkLeaderboardReport>("get_benchmark_leaderboard", {
+          input: {
+            windowDays: releaseGateWindowDays(filter, windowDays),
+            limit: 6,
+            minItems: 1,
           },
         }),
         getTransport()
@@ -174,6 +184,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setCoding(ci)
       setBenchmark(bc)
       setBenchmarkCampaigns(campaigns ?? [])
+      setBenchmarkLeaderboard(leaderboard)
       setBenchmarkProviders(providers ?? [])
       setReleaseGate(rg)
       setGeneralization(gen)
@@ -374,6 +385,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         coding={coding}
         benchmark={benchmark}
         benchmarkCampaigns={benchmarkCampaigns}
+        benchmarkLeaderboard={benchmarkLeaderboard}
         benchmarkModelOptions={benchmarkModelOptions}
         selectedBenchmarkModels={selectedBenchmarkModels}
         benchmarkMaxTasks={benchmarkMaxTasks}
@@ -551,6 +563,7 @@ function CodingImprovementSection({
   coding,
   benchmark,
   benchmarkCampaigns,
+  benchmarkLeaderboard,
   benchmarkModelOptions,
   selectedBenchmarkModels,
   benchmarkMaxTasks,
@@ -571,6 +584,7 @@ function CodingImprovementSection({
   coding: CodingImprovementDashboard | null
   benchmark: CodingBenchmarkCenterReport | null
   benchmarkCampaigns: CodingBenchmarkCampaign[]
+  benchmarkLeaderboard: CodingBenchmarkLeaderboardReport | null
   benchmarkModelOptions: BenchmarkModelOption[]
   selectedBenchmarkModels: string[]
   benchmarkMaxTasks: number
@@ -701,6 +715,7 @@ function CodingImprovementSection({
       <BenchmarkCenterPanel
         report={benchmark}
         campaigns={benchmarkCampaigns}
+        leaderboard={benchmarkLeaderboard}
         modelOptions={benchmarkModelOptions}
         selectedModelKeys={selectedBenchmarkModels}
         maxTasks={benchmarkMaxTasks}
@@ -933,6 +948,7 @@ function CodingImprovementSection({
 function BenchmarkCenterPanel({
   report,
   campaigns,
+  leaderboard,
   modelOptions,
   selectedModelKeys,
   maxTasks,
@@ -950,6 +966,7 @@ function BenchmarkCenterPanel({
 }: {
   report: CodingBenchmarkCenterReport | null
   campaigns: CodingBenchmarkCampaign[]
+  leaderboard: CodingBenchmarkLeaderboardReport | null
   modelOptions: BenchmarkModelOption[]
   selectedModelKeys: string[]
   maxTasks: number
@@ -1089,6 +1106,63 @@ function BenchmarkCenterPanel({
                 </span>
               )}
             </div>
+          </div>
+
+          <div className="border-t border-border/40 pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                {t("dashboard.learning.modelLeaderboard", {
+                  defaultValue: "Model leaderboard",
+                })}
+              </span>
+              <span className={`rounded px-1.5 py-0.5 text-[10px] ${releaseGateTone(leaderboard?.status)}`}>
+                {leaderboard?.status ?? "loading"}
+              </span>
+            </div>
+            {leaderboard?.rows.length ? (
+              <div className="space-y-1.5">
+                {leaderboard.rows.slice(0, 6).map((row) => (
+                  <div
+                    key={`${row.rank}-${row.taskPackId}-${row.providerId ?? "det"}-${row.modelId ?? "det"}`}
+                    className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 text-xs"
+                  >
+                    <span className="w-6 text-muted-foreground tabular-nums">#{row.rank}</span>
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{row.label}</div>
+                      <div className="truncate text-[10px] text-muted-foreground">
+                        {row.baselineKind} · {row.executionMode} · {row.taskPackId}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      <MetricPill
+                        label="CS"
+                        value={formatPct(row.casePassRate)}
+                        tone={row.failedCases > 0 ? "warn" : "accent"}
+                      />
+                      <MetricPill
+                        label="IT"
+                        value={`${row.passedItems}/${row.items}`}
+                        tone={row.failedItems > 0 ? "warn" : "accent"}
+                      />
+                      {row.warnings.length > 0 && (
+                        <span
+                          className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
+                          title={row.warnings.join(", ")}
+                        >
+                          !
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyLine
+                label={t("dashboard.learning.noBenchmarkLeaderboard", {
+                  defaultValue: "No comparable model rows",
+                })}
+              />
+            )}
           </div>
 
           <div className="border-t border-border/40 pt-3">

@@ -4,11 +4,13 @@ use ha_core::coding_improvement::{
     ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
     CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
-    CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
-    CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
-    CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
-    DistillCodingImprovementResult, GenerateCodingImprovementProposalsResult,
-    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
+    CodingBenchmarkComparisonInput, CodingBenchmarkLeaderboardInput,
+    CodingBenchmarkLeaderboardReport, CodingEvalReleaseGateInput, CodingEvalReleaseGateReport,
+    CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
+    CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
+    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
+    RecordCodingEvalRunInput,
 };
 use serde::Deserialize;
 
@@ -73,6 +75,18 @@ pub struct BenchmarkCampaignListBody {
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkCampaignRunBody {
     pub input: CodingBenchmarkCampaignRunInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkLeaderboardBody {
+    pub input: CodingBenchmarkLeaderboardInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkComparisonBody {
+    pub input: CodingBenchmarkComparisonInput,
 }
 
 pub async fn get_coding_trend_report(
@@ -255,6 +269,24 @@ pub async fn run_coding_benchmark_campaign(
     });
     session_db()?
         .get_coding_benchmark_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn get_benchmark_leaderboard(
+    Json(body): Json<BenchmarkLeaderboardBody>,
+) -> Result<Json<CodingBenchmarkLeaderboardReport>, AppError> {
+    session_db()?
+        .get_benchmark_leaderboard(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn compare_benchmark_models(
+    Json(body): Json<BenchmarkComparisonBody>,
+) -> Result<Json<CodingBenchmarkLeaderboardReport>, AppError> {
+    session_db()?
+        .compare_benchmark_models(body.input)
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

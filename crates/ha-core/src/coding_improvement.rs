@@ -18,7 +18,7 @@ use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -53,6 +53,9 @@ const MAX_BENCHMARK_CENTER_LIMIT: usize = 50;
 const DEFAULT_BENCHMARK_CAMPAIGN_LIMIT: usize = 20;
 const MAX_BENCHMARK_CAMPAIGN_LIMIT: usize = 100;
 const MAX_BENCHMARK_CAMPAIGN_MODELS: usize = 16;
+const DEFAULT_BENCHMARK_LEADERBOARD_LIMIT: usize = 12;
+const MAX_BENCHMARK_LEADERBOARD_LIMIT: usize = 50;
+const DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS: usize = 1;
 const MAX_SCOPE_SESSIONS: usize = 200;
 const MAX_CONTENT_PREVIEW_BYTES: usize = 12 * 1024;
 const MAX_DISTILLATION_SESSIONS: usize = 12;
@@ -1141,6 +1144,112 @@ pub struct CodingBenchmarkCampaign {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkLeaderboardInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub campaign_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_items: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkComparisonInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub campaign_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_items: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkLeaderboardEvidence {
+    pub campaign_id: String,
+    pub campaign_name: String,
+    pub item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub status: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkLeaderboardRow {
+    pub rank: usize,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub task_pack_id: String,
+    pub source_doc: String,
+    pub execution_mode: String,
+    pub baseline_kind: String,
+    pub campaigns: usize,
+    pub items: usize,
+    pub passed_items: usize,
+    pub failed_items: usize,
+    pub skipped_items: usize,
+    pub cancelled_items: usize,
+    pub interrupted_items: usize,
+    pub attempts: usize,
+    pub selected_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    pub skipped_cases: usize,
+    pub total_checks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_pass_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_pass_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    pub evidence: Vec<CodingBenchmarkLeaderboardEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkLeaderboardReport {
+    pub generated_at: String,
+    pub status: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub window_days: u32,
+    pub since: String,
+    pub min_items: usize,
+    pub rows: Vec<CodingBenchmarkLeaderboardRow>,
+    pub checks: Vec<CodingBenchmarkCenterCheck>,
+}
+
 struct ReportScope {
     session_id: String,
     project_id: Option<String>,
@@ -1175,6 +1284,17 @@ struct BenchmarkCenterScope {
     window_days: u32,
     since: String,
     limit: usize,
+}
+
+struct BenchmarkLeaderboardScope {
+    session_id: Option<String>,
+    project_id: Option<String>,
+    scope: String,
+    window_days: u32,
+    since: String,
+    limit: usize,
+    min_items: usize,
+    campaign_ids: Vec<String>,
 }
 
 #[derive(Default)]
@@ -2859,6 +2979,36 @@ impl SessionDB {
         Ok(())
     }
 
+    pub fn get_benchmark_leaderboard(
+        &self,
+        input: CodingBenchmarkLeaderboardInput,
+    ) -> Result<CodingBenchmarkLeaderboardReport> {
+        let scope = self.resolve_benchmark_leaderboard_scope(
+            input.session_id,
+            input.project_id,
+            input.window_days,
+            input.campaign_ids,
+            input.limit,
+            input.min_items,
+        )?;
+        self.build_benchmark_leaderboard(scope)
+    }
+
+    pub fn compare_benchmark_models(
+        &self,
+        input: CodingBenchmarkComparisonInput,
+    ) -> Result<CodingBenchmarkLeaderboardReport> {
+        let scope = self.resolve_benchmark_leaderboard_scope(
+            input.session_id,
+            input.project_id,
+            input.window_days,
+            input.campaign_ids,
+            input.limit,
+            input.min_items,
+        )?;
+        self.build_benchmark_leaderboard(scope)
+    }
+
     fn coding_benchmark_campaign_items_locked(
         &self,
         conn: &Connection,
@@ -3089,6 +3239,212 @@ impl SessionDB {
             since,
             limit,
         })
+    }
+
+    fn resolve_benchmark_leaderboard_scope(
+        &self,
+        session_id: Option<String>,
+        project_id: Option<String>,
+        window_days: Option<u32>,
+        campaign_ids: Vec<String>,
+        limit: Option<usize>,
+        min_items: Option<usize>,
+    ) -> Result<BenchmarkLeaderboardScope> {
+        let window_days = window_days
+            .unwrap_or(DEFAULT_WINDOW_DAYS)
+            .clamp(1, MAX_WINDOW_DAYS);
+        let since = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(window_days as i64))
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let session_id = session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let explicit_project_id = project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let session_project_id = if let Some(session_id) = session_id.as_deref() {
+            let meta = self
+                .get_session(session_id)?
+                .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+            if meta.incognito {
+                bail!("Cannot build benchmark leaderboard for incognito session {session_id}");
+            }
+            meta.project_id
+        } else {
+            None
+        };
+        let project_id = explicit_project_id.or(session_project_id);
+        let scope = if project_id.is_some() {
+            "project"
+        } else if session_id.is_some() {
+            "session"
+        } else {
+            "global"
+        }
+        .to_string();
+        let campaign_ids = campaign_ids
+            .into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .take(MAX_BENCHMARK_CAMPAIGN_LIMIT)
+            .collect::<Vec<_>>();
+        let limit = limit
+            .unwrap_or(DEFAULT_BENCHMARK_LEADERBOARD_LIMIT)
+            .clamp(1, MAX_BENCHMARK_LEADERBOARD_LIMIT);
+        let min_items = min_items
+            .unwrap_or(DEFAULT_BENCHMARK_LEADERBOARD_MIN_ITEMS)
+            .clamp(1, MAX_BENCHMARK_CAMPAIGN_LIMIT);
+
+        Ok(BenchmarkLeaderboardScope {
+            session_id,
+            project_id,
+            scope,
+            window_days,
+            since,
+            limit,
+            min_items,
+            campaign_ids,
+        })
+    }
+
+    fn build_benchmark_leaderboard(
+        &self,
+        scope: BenchmarkLeaderboardScope,
+    ) -> Result<CodingBenchmarkLeaderboardReport> {
+        let item_rows = self.list_benchmark_leaderboard_item_rows(&scope)?;
+        let mut grouped: BTreeMap<BenchmarkLeaderboardKey, BenchmarkLeaderboardAccumulator> =
+            BTreeMap::new();
+        for row in item_rows {
+            let key = BenchmarkLeaderboardKey::from(&row);
+            grouped.entry(key).or_default().add(row);
+        }
+        let mut rows = grouped
+            .into_iter()
+            .map(|(key, acc)| acc.into_row(key, scope.min_items))
+            .collect::<Vec<_>>();
+        rows.sort_by(compare_benchmark_leaderboard_rows);
+        rows.truncate(scope.limit);
+        for (idx, row) in rows.iter_mut().enumerate() {
+            row.rank = idx + 1;
+        }
+
+        let mut checks = Vec::new();
+        push_benchmark_check(
+            &mut checks,
+            "model_count",
+            if rows.len() >= 2 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            if rows.len() >= 2 { "info" } else { "advisory" },
+            "at least 2 comparable model rows",
+            rows.len().to_string(),
+            "Cross-model comparison needs at least two model/baseline rows in the selected window.",
+        );
+        let under_sampled = rows
+            .iter()
+            .filter(|row| row.items < scope.min_items)
+            .count();
+        push_benchmark_check(
+            &mut checks,
+            "sample_size",
+            if under_sampled == 0 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            if under_sampled == 0 { "info" } else { "advisory" },
+            format!("each row has >= {} items", scope.min_items),
+            format!("{under_sampled} under-sampled rows"),
+            "Rows with too few campaign items remain visible but are marked with a sample-size warning.",
+        );
+        let status = if rows.len() >= 2 {
+            "passed"
+        } else {
+            "insufficient_data"
+        }
+        .to_string();
+
+        Ok(CodingBenchmarkLeaderboardReport {
+            generated_at: now_rfc3339(),
+            status,
+            scope: scope.scope,
+            session_id: scope.session_id,
+            project_id: scope.project_id,
+            window_days: scope.window_days,
+            since: scope.since,
+            min_items: scope.min_items,
+            rows,
+            checks,
+        })
+    }
+
+    fn list_benchmark_leaderboard_item_rows(
+        &self,
+        scope: &BenchmarkLeaderboardScope,
+    ) -> Result<Vec<BenchmarkLeaderboardItemRow>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = vec!["c.updated_at >= ?".to_string()];
+        let mut params = vec![scope.since.clone()];
+        if let Some(project_id) = scope.project_id.as_ref() {
+            clauses.push("c.project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = scope.session_id.as_ref() {
+            clauses.push("c.session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        if !scope.campaign_ids.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(scope.campaign_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("c.id IN ({placeholders})"));
+            params.extend(scope.campaign_ids.iter().cloned());
+        }
+        let where_sql = clauses.join(" AND ");
+        let sql = format!(
+            "SELECT c.id, c.name, c.task_pack_id, c.source_doc, c.execution_mode,
+                    c.baseline_kind, i.id, i.provider_id, i.model_id, i.label,
+                    i.status, i.attempt, i.pack_run_id, i.selected_cases,
+                    i.passed_cases, i.failed_cases, i.skipped_cases, i.total_checks,
+                    i.updated_at, i.error
+             FROM coding_benchmark_campaign_items i
+             JOIN coding_benchmark_campaigns c ON c.id = i.campaign_id
+             WHERE {where_sql}
+             ORDER BY c.updated_at DESC, i.updated_at DESC, i.id DESC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+            Ok(BenchmarkLeaderboardItemRow {
+                campaign_id: row.get(0)?,
+                campaign_name: row.get(1)?,
+                task_pack_id: row.get(2)?,
+                source_doc: row.get(3)?,
+                execution_mode: row.get(4)?,
+                baseline_kind: row.get(5)?,
+                item_id: row.get(6)?,
+                provider_id: row.get(7)?,
+                model_id: row.get(8)?,
+                label: row.get(9)?,
+                status: row.get(10)?,
+                attempt: nonnegative_usize(row.get::<_, i64>(11)?),
+                pack_run_id: row.get(12)?,
+                selected_cases: nonnegative_usize(row.get::<_, i64>(13)?),
+                passed_cases: nonnegative_usize(row.get::<_, i64>(14)?),
+                failed_cases: nonnegative_usize(row.get::<_, i64>(15)?),
+                skipped_cases: nonnegative_usize(row.get::<_, i64>(16)?),
+                total_checks: nonnegative_usize(row.get::<_, i64>(17)?),
+                updated_at: row.get(18)?,
+                error: row.get(19)?,
+            })
+        })?;
+        collect_rows(rows)
     }
 
     fn coding_benchmark_center_summary(
@@ -5912,6 +6268,182 @@ fn push_benchmark_check(
         actual: actual.into(),
         detail: detail.into(),
     });
+}
+
+#[derive(Debug, Clone)]
+struct BenchmarkLeaderboardItemRow {
+    campaign_id: String,
+    campaign_name: String,
+    task_pack_id: String,
+    source_doc: String,
+    execution_mode: String,
+    baseline_kind: String,
+    item_id: String,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    label: Option<String>,
+    status: String,
+    attempt: usize,
+    pack_run_id: Option<String>,
+    selected_cases: usize,
+    passed_cases: usize,
+    failed_cases: usize,
+    skipped_cases: usize,
+    total_checks: usize,
+    updated_at: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct BenchmarkLeaderboardKey {
+    task_pack_id: String,
+    source_doc: String,
+    execution_mode: String,
+    baseline_kind: String,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+}
+
+impl From<&BenchmarkLeaderboardItemRow> for BenchmarkLeaderboardKey {
+    fn from(row: &BenchmarkLeaderboardItemRow) -> Self {
+        Self {
+            task_pack_id: row.task_pack_id.clone(),
+            source_doc: row.source_doc.clone(),
+            execution_mode: row.execution_mode.clone(),
+            baseline_kind: row.baseline_kind.clone(),
+            provider_id: row.provider_id.clone(),
+            model_id: row.model_id.clone(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkLeaderboardAccumulator {
+    label: Option<String>,
+    campaign_ids: BTreeSet<String>,
+    items: usize,
+    passed_items: usize,
+    failed_items: usize,
+    skipped_items: usize,
+    cancelled_items: usize,
+    interrupted_items: usize,
+    running_items: usize,
+    queued_items: usize,
+    attempts: usize,
+    selected_cases: usize,
+    passed_cases: usize,
+    failed_cases: usize,
+    skipped_cases: usize,
+    total_checks: usize,
+    evidence: Vec<CodingBenchmarkLeaderboardEvidence>,
+}
+
+impl BenchmarkLeaderboardAccumulator {
+    fn add(&mut self, row: BenchmarkLeaderboardItemRow) {
+        if self.label.is_none() {
+            self.label = row.label.clone();
+        }
+        self.campaign_ids.insert(row.campaign_id.clone());
+        self.items += 1;
+        match row.status.as_str() {
+            "passed" => self.passed_items += 1,
+            "failed" => self.failed_items += 1,
+            "skipped" => self.skipped_items += 1,
+            "cancelled" => self.cancelled_items += 1,
+            "interrupted" => self.interrupted_items += 1,
+            "running" => self.running_items += 1,
+            "queued" => self.queued_items += 1,
+            _ => {}
+        }
+        self.attempts += row.attempt;
+        self.selected_cases += row.selected_cases;
+        self.passed_cases += row.passed_cases;
+        self.failed_cases += row.failed_cases;
+        self.skipped_cases += row.skipped_cases;
+        self.total_checks += row.total_checks;
+        self.evidence.push(CodingBenchmarkLeaderboardEvidence {
+            campaign_id: row.campaign_id,
+            campaign_name: row.campaign_name,
+            item_id: row.item_id,
+            pack_run_id: row.pack_run_id,
+            provider_id: row.provider_id,
+            model_id: row.model_id,
+            label: row.label,
+            status: row.status,
+            updated_at: row.updated_at,
+            error: row.error,
+        });
+    }
+
+    fn into_row(
+        mut self,
+        key: BenchmarkLeaderboardKey,
+        min_items: usize,
+    ) -> CodingBenchmarkLeaderboardRow {
+        self.evidence.truncate(6);
+        let mut warnings = Vec::new();
+        if self.items < min_items {
+            warnings.push(format!("sample_size_below_{min_items}"));
+        }
+        if self.running_items > 0 || self.queued_items > 0 {
+            warnings.push("campaign_incomplete".to_string());
+        }
+        if self.cancelled_items > 0 || self.interrupted_items > 0 {
+            warnings.push("contains_cancelled_or_interrupted_items".to_string());
+        }
+        let label = self.label.unwrap_or_else(|| {
+            key.provider_id
+                .as_ref()
+                .zip(key.model_id.as_ref())
+                .map(|(provider, model)| format!("{provider}/{model}"))
+                .unwrap_or_else(|| key.baseline_kind.clone())
+        });
+        CodingBenchmarkLeaderboardRow {
+            rank: 0,
+            label,
+            provider_id: key.provider_id,
+            model_id: key.model_id,
+            task_pack_id: key.task_pack_id,
+            source_doc: key.source_doc,
+            execution_mode: key.execution_mode,
+            baseline_kind: key.baseline_kind,
+            campaigns: self.campaign_ids.len(),
+            items: self.items,
+            passed_items: self.passed_items,
+            failed_items: self.failed_items,
+            skipped_items: self.skipped_items,
+            cancelled_items: self.cancelled_items,
+            interrupted_items: self.interrupted_items,
+            attempts: self.attempts,
+            selected_cases: self.selected_cases,
+            passed_cases: self.passed_cases,
+            failed_cases: self.failed_cases,
+            skipped_cases: self.skipped_cases,
+            total_checks: self.total_checks,
+            item_pass_rate: ratio(self.passed_items, self.passed_items + self.failed_items),
+            case_pass_rate: ratio(self.passed_cases, self.passed_cases + self.failed_cases),
+            warnings,
+            evidence: self.evidence,
+        }
+    }
+}
+
+fn compare_benchmark_leaderboard_rows(
+    left: &CodingBenchmarkLeaderboardRow,
+    right: &CodingBenchmarkLeaderboardRow,
+) -> std::cmp::Ordering {
+    f64_sort_key(right.case_pass_rate)
+        .cmp(&f64_sort_key(left.case_pass_rate))
+        .then_with(|| f64_sort_key(right.item_pass_rate).cmp(&f64_sort_key(left.item_pass_rate)))
+        .then_with(|| right.total_checks.cmp(&left.total_checks))
+        .then_with(|| right.items.cmp(&left.items))
+        .then_with(|| left.label.cmp(&right.label))
+}
+
+fn f64_sort_key(value: Option<f64>) -> i64 {
+    value
+        .map(|value| (value.clamp(0.0, 1.0) * 1_000_000.0).round() as i64)
+        .unwrap_or(-1)
 }
 
 fn normalize_benchmark_campaign_models(

@@ -854,6 +854,8 @@ pub fn run() {
             commands::coding_improvement::get_coding_benchmark_campaign,
             commands::coding_improvement::cancel_coding_benchmark_campaign,
             commands::coding_improvement::run_coding_benchmark_campaign,
+            commands::coding_improvement::get_benchmark_leaderboard,
+            commands::coding_improvement::compare_benchmark_models,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

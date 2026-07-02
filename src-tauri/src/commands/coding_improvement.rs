@@ -3,11 +3,13 @@ use ha_core::coding_improvement::{
     ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
     CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
-    CodingEvalReleaseGateInput, CodingEvalReleaseGateReport, CodingEvalRunRecord,
-    CodingImprovementActionPlan, CodingImprovementPromotionPlan, CodingImprovementProposal,
-    CodingLearningGeneralizationInput, CodingLearningGeneralizationReport, CodingTrendReport,
-    DistillCodingImprovementResult, GenerateCodingImprovementProposalsResult,
-    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
+    CodingBenchmarkComparisonInput, CodingBenchmarkLeaderboardInput,
+    CodingBenchmarkLeaderboardReport, CodingEvalReleaseGateInput, CodingEvalReleaseGateReport,
+    CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
+    CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
+    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
+    RecordCodingEvalRunInput,
 };
 
 #[tauri::command]
@@ -229,5 +231,27 @@ pub async fn run_coding_benchmark_campaign(
     app_state
         .session_db
         .get_coding_benchmark_campaign(&campaign_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_benchmark_leaderboard(
+    input: CodingBenchmarkLeaderboardInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkLeaderboardReport, CmdError> {
+    app_state
+        .session_db
+        .get_benchmark_leaderboard(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn compare_benchmark_models(
+    input: CodingBenchmarkComparisonInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkLeaderboardReport, CmdError> {
+    app_state
+        .session_db
+        .compare_benchmark_models(input)
         .map_err(Into::into)
 }

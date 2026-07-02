@@ -5504,6 +5504,97 @@ mod tests {
         assert_eq!(pack_runs, 1);
     }
 
+    #[tokio::test]
+    async fn benchmark_leaderboard_ranks_comparable_campaign_items() {
+        let (_dir, db) = temp_session_db();
+        let session = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .expect("create session");
+        let deterministic = db
+            .create_coding_benchmark_campaign(
+                crate::coding_improvement::CodingBenchmarkCampaignCreateInput {
+                    session_id: Some(session.id.clone()),
+                    name: Some("leaderboard deterministic".to_string()),
+                    gold_task_input: GoldTaskPackRunInput {
+                        ids: vec!["CE-TEST-004".to_string()],
+                        max_tasks: Some(1),
+                        record_eval_runs: true,
+                        record_pack_run: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .expect("create deterministic campaign");
+        run_benchmark_campaign(
+            db.clone(),
+            crate::coding_improvement::CodingBenchmarkCampaignRunInput {
+                campaign_id: deterministic.id.clone(),
+                providers: Vec::new(),
+                retry_failed_only: false,
+            },
+        )
+        .await
+        .expect("run deterministic campaign");
+
+        let external = db
+            .create_coding_benchmark_campaign(
+                crate::coding_improvement::CodingBenchmarkCampaignCreateInput {
+                    session_id: Some(session.id.clone()),
+                    name: Some("leaderboard external missing provider".to_string()),
+                    gold_task_input: GoldTaskPackRunInput {
+                        ids: vec!["CE-TEST-004".to_string()],
+                        max_tasks: Some(1),
+                        execution_mode: Some("agent".to_string()),
+                        baseline_kind: Some("external_model".to_string()),
+                        record_eval_runs: true,
+                        record_pack_run: true,
+                        ..Default::default()
+                    },
+                    models: vec![crate::coding_improvement::CodingBenchmarkCampaignModel {
+                        provider_id: Some("missing-provider-for-leaderboard-unit".to_string()),
+                        model_id: Some("missing-model-for-leaderboard-unit".to_string()),
+                        label: Some("missing provider model".to_string()),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .expect("create external campaign");
+        run_benchmark_campaign(
+            db.clone(),
+            crate::coding_improvement::CodingBenchmarkCampaignRunInput {
+                campaign_id: external.id,
+                providers: Vec::new(),
+                retry_failed_only: false,
+            },
+        )
+        .await
+        .expect("run missing-provider campaign");
+
+        let leaderboard = db
+            .get_benchmark_leaderboard(crate::coding_improvement::CodingBenchmarkLeaderboardInput {
+                session_id: Some(session.id),
+                min_items: Some(1),
+                ..Default::default()
+            })
+            .expect("leaderboard");
+
+        assert_eq!(leaderboard.status, "passed");
+        assert_eq!(leaderboard.rows.len(), 2);
+        assert_eq!(leaderboard.rows[0].baseline_kind, "deterministic_mock");
+        assert_eq!(leaderboard.rows[0].case_pass_rate, Some(1.0));
+        assert_eq!(leaderboard.rows[0].evidence.len(), 1);
+        assert!(leaderboard.rows[0].evidence[0].pack_run_id.is_some());
+        assert_eq!(leaderboard.rows[1].baseline_kind, "external_model");
+        assert_eq!(leaderboard.rows[1].failed_items, 1);
+        assert!(leaderboard.rows[1].evidence.iter().any(|evidence| evidence
+            .error
+            .as_deref()
+            .is_some_and(|error| {
+                error.contains("Provider config for missing-provider-for-leaderboard-unit")
+            })));
+    }
+
     #[test]
     fn benchmark_campaign_history_strips_provider_secrets() {
         let server_url = "http://127.0.0.1:9".to_string();
