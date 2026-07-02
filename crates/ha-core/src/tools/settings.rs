@@ -103,6 +103,10 @@ fn risk_level(category: &str) -> &'static str {
         // Autonomous maintenance can write to the user's notes (auto_approve =
         // approval policy) — treat as HIGH so the skill confirms before changes.
         | "knowledge_maintenance"
+        // Retained original audio/video/image source files can store private
+        // binary evidence on disk. HIGH so the skill confirms before enabling or
+        // raising quotas.
+        | "knowledge_media_retention"
         // Unattended-approval action can flip surface-less approvals to auto-run
         // (proceed) — a security loosening; HIGH so the skill confirms first.
         | "unattended_approval"
@@ -200,6 +204,9 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "knowledge_maintenance" => Some(
             "Layer-2 autonomous maintenance scans knowledge bases and queues note-maintenance proposals (auto-link, dedup merge, tagging, MOC, memory→note, …) for review. Changes take effect on the next cycle. ⚠️ `enabled` lets background cycles run; `autoApprove` makes approved-free writes to the user's notes happen automatically (skipping the review queue) — confirm with the user before enabling either."
+        ),
+        "knowledge_media_retention" => Some(
+            "Optional original-media retention for Knowledge Compiler sources. Disabled by default; enabling stores imported audio/video/image originals and image thumbnails under Hope's internal knowledge source directory. HIGH/privacy: confirm with the user before enabling, raising quota, or turning on pruneWhenOverQuota."
         ),
         "knowledge_search" => Some(
             "Knowledge hybrid `note_search` ranking. note_search runs keyword (BM25) + semantic (vector) search over note chunks, fuses them with RRF, then re-ranks for diversity with MMR. Pure query-time (no reindex). `textWeight`/`vectorWeight` = fusion balance (ratio matters; raise textWeight for code/jargon, vectorWeight for meaning); `rrfK` = fusion smoothing (lower trusts each method's top hit more); `mmrLambda` = relevance↔diversity (1.0 pure relevance, lower trims near-duplicates); `candidateMultiplier` = candidate pool before MMR (×limit). Defaults (0.4/0.6/60/0.7/3) suit most libraries; send those to restore defaults."
@@ -540,6 +547,7 @@ fn read_category(category: &str) -> Result<Value> {
         "multimodal" => Ok(serde_json::to_value(&cfg.multimodal)?),
         "dreaming" => Ok(serde_json::to_value(&cfg.dreaming)?),
         "knowledge_maintenance" => Ok(serde_json::to_value(&cfg.knowledge_maintenance)?),
+        "knowledge_media_retention" => Ok(serde_json::to_value(&cfg.knowledge_media_retention)?),
         "knowledge_passive_recall" => Ok(serde_json::to_value(&cfg.knowledge_passive_recall)?),
         "knowledge_search" => Ok(serde_json::to_value(&cfg.knowledge_search)?),
         "sprite" => Ok(serde_json::to_value(&cfg.sprite)?),
@@ -707,7 +715,7 @@ fn get_all_overview() -> Result<String> {
         "high": [
             "proxy", "embedding", "shortcuts", "skills", "server",
             "acp_control", "skill_env", "security", "security.ssrf",
-            "smart_mode", "mcp_global", "knowledge_maintenance", "unattended_approval", "auto_update",
+            "smart_mode", "mcp_global", "knowledge_maintenance", "knowledge_media_retention", "unattended_approval", "auto_update",
             "browser"
         ],
         "read_only": [
@@ -1073,6 +1081,11 @@ async fn update_app_config(category: &str, values: &Value) -> Result<String> {
             // Clamp so a skill write can't persist out-of-range values (the GUI path
             // clamps in `service::set_maintenance_config`).
             store.knowledge_maintenance = store.knowledge_maintenance.clamped();
+        }
+        "knowledge_media_retention" => {
+            merge_field(&mut store.knowledge_media_retention, values)?;
+            // Clamp (mirrors `service::set_media_retention_config`).
+            store.knowledge_media_retention = store.knowledge_media_retention.clamped();
         }
         "knowledge_passive_recall" => {
             merge_field(&mut store.knowledge_passive_recall, values)?;

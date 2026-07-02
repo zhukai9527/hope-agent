@@ -293,6 +293,151 @@ impl KnowledgeSourceStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeSourceAssetKind {
+    Original,
+    Thumbnail,
+}
+
+impl KnowledgeSourceAssetKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeSourceAssetKind::Original => "original",
+            KnowledgeSourceAssetKind::Thumbnail => "thumbnail",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> KnowledgeSourceAssetKind {
+        match s {
+            "thumbnail" | "thumb" => KnowledgeSourceAssetKind::Thumbnail,
+            _ => KnowledgeSourceAssetKind::Original,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceAsset {
+    pub kind: KnowledgeSourceAssetKind,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Path relative to the Hope-managed source directory.
+    pub stored_path: String,
+    /// Absolute owner-plane path for desktop open / HTTP asset URL resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceAssets {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<KnowledgeSourceAsset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<KnowledgeSourceAsset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceAssetLink {
+    pub kb_id: String,
+    pub source_id: String,
+    pub kind: KnowledgeSourceAssetKind,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+const MEDIA_RETENTION_DEFAULT_MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MEDIA_RETENTION_DEFAULT_MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
+const MEDIA_RETENTION_DEFAULT_THUMBNAIL_MAX_EDGE_PX: u32 = 512;
+const MEDIA_RETENTION_MIN_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MEDIA_RETENTION_MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024 * 1024;
+const MEDIA_RETENTION_MIN_SOURCE_BYTES: u64 = 1 * 1024 * 1024;
+const MEDIA_RETENTION_MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MEDIA_RETENTION_MIN_THUMBNAIL_EDGE_PX: u32 = 128;
+const MEDIA_RETENTION_MAX_THUMBNAIL_EDGE_PX: u32 = 2048;
+
+fn default_media_retention_max_total_bytes() -> u64 {
+    MEDIA_RETENTION_DEFAULT_MAX_TOTAL_BYTES
+}
+
+fn default_media_retention_max_source_bytes() -> u64 {
+    MEDIA_RETENTION_DEFAULT_MAX_SOURCE_BYTES
+}
+
+fn default_media_retention_thumbnail_max_edge_px() -> u32 {
+    MEDIA_RETENTION_DEFAULT_THUMBNAIL_MAX_EDGE_PX
+}
+
+fn default_media_retention_prune_when_over_quota() -> bool {
+    true
+}
+
+/// Privacy-gated optional retention for original media imported into raw
+/// sources. Disabled by default; text snapshots remain the durable source of
+/// truth even when this is off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeMediaRetentionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_media_retention_max_total_bytes")]
+    pub max_total_bytes: u64,
+    #[serde(default = "default_media_retention_max_source_bytes")]
+    pub max_source_bytes: u64,
+    #[serde(default = "default_media_retention_thumbnail_max_edge_px")]
+    pub thumbnail_max_edge_px: u32,
+    #[serde(default = "default_media_retention_prune_when_over_quota")]
+    pub prune_when_over_quota: bool,
+}
+
+impl Default for KnowledgeMediaRetentionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_total_bytes: MEDIA_RETENTION_DEFAULT_MAX_TOTAL_BYTES,
+            max_source_bytes: MEDIA_RETENTION_DEFAULT_MAX_SOURCE_BYTES,
+            thumbnail_max_edge_px: MEDIA_RETENTION_DEFAULT_THUMBNAIL_MAX_EDGE_PX,
+            prune_when_over_quota: true,
+        }
+    }
+}
+
+impl KnowledgeMediaRetentionConfig {
+    pub fn clamped(mut self) -> Self {
+        self.max_total_bytes = self.max_total_bytes.clamp(
+            MEDIA_RETENTION_MIN_TOTAL_BYTES,
+            MEDIA_RETENTION_MAX_TOTAL_BYTES,
+        );
+        self.max_source_bytes = self.max_source_bytes.clamp(
+            MEDIA_RETENTION_MIN_SOURCE_BYTES,
+            MEDIA_RETENTION_MAX_SOURCE_BYTES,
+        );
+        if self.max_source_bytes > self.max_total_bytes {
+            self.max_source_bytes = self.max_total_bytes;
+        }
+        self.thumbnail_max_edge_px = self.thumbnail_max_edge_px.clamp(
+            MEDIA_RETENTION_MIN_THUMBNAIL_EDGE_PX,
+            MEDIA_RETENTION_MAX_THUMBNAIL_EDGE_PX,
+        );
+        self
+    }
+}
+
 /// Import request for Phase 1 raw sources. Exactly one of `content` or `url`
 /// must be supplied. File imports are intentionally text-over-JSON so desktop
 /// and HTTP/server mode behave the same and no endpoint reads arbitrary host
@@ -378,6 +523,8 @@ pub struct KnowledgeSource {
     pub superseded_by_source_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<KnowledgeSourceAssets>,
 }
 
 /// Source read response: metadata + stored snapshot text.

@@ -1,5 +1,7 @@
 import {
   Check,
+  Download,
+  ExternalLink,
   FileAudio,
   FileText,
   FileVideo,
@@ -628,8 +630,8 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                   onClick={() => void openSource(source)}
                 >
                   <SourceKindIcon
-                    kind={source.kind}
-                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                    source={source}
+                    className="mt-0.5 h-7 w-7 shrink-0"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-foreground/90">
@@ -659,6 +661,12 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                         <>
                           <span>·</span>
                           <Link2 className="h-2.5 w-2.5" />
+                        </>
+                      ) : null}
+                      {source.assets?.original ? (
+                        <>
+                          <span>·</span>
+                          <span>{t("knowledge.sources.mediaRetained", "Media retained")}</span>
                         </>
                       ) : null}
                     </span>
@@ -872,6 +880,9 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
               <DialogDescription className="truncate">{selected.originUri}</DialogDescription>
             ) : null}
           </DialogHeader>
+          {selected?.assets?.original || selected?.assets?.thumbnail ? (
+            <SourceAssetSummary source={selected} />
+          ) : null}
           <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-md border border-border-soft/60 bg-muted/30 p-3 text-xs leading-relaxed">
             {reading ? t("knowledge.sources.loading", "Loading…") : selected?.content}
           </pre>
@@ -1327,13 +1338,120 @@ function sourceKindLabel(kind: KnowledgeSourceKind): string {
   }
 }
 
+function SourceAssetSummary({ source }: { source: KnowledgeSource }) {
+  const { t } = useTranslation()
+  const transport = getTransport()
+  const original = source.assets?.original ?? null
+  const thumbnail = source.assets?.thumbnail ?? null
+  const thumbnailUrl = thumbnail?.localPath ? transport.resolveAssetUrl(thumbnail.localPath) : null
+  const originalUrl = original?.localPath ? transport.resolveAssetUrl(original.localPath) : null
+
+  function openOriginal() {
+    if (!original?.localPath) return
+    if (transport.supportsLocalFileOps()) {
+      void transport.openFilePath(original.localPath)
+      return
+    }
+    if (originalUrl) window.open(originalUrl, "_blank", "noopener,noreferrer")
+  }
+
+  function downloadOriginal() {
+    if (!original?.localPath) return
+    if (transport.supportsLocalFileOps()) {
+      void transport.downloadFilePath(original.localPath, { filename: original.fileName })
+      return
+    }
+    if (originalUrl) {
+      const url = new URL(originalUrl)
+      url.searchParams.set("download", "1")
+      const a = document.createElement("a")
+      a.href = url.toString()
+      a.download = original.fileName
+      a.rel = "noopener noreferrer"
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-border-soft/60 bg-muted/20 p-2 text-xs">
+      {thumbnailUrl ? (
+        <img
+          src={thumbnailUrl}
+          alt=""
+          className="h-14 w-14 shrink-0 rounded border border-border-soft/60 object-cover"
+        />
+      ) : (
+        <SourceKindIcon
+          kind={source.kind}
+          className="h-10 w-10 shrink-0 rounded border border-border-soft/60 p-2 text-muted-foreground"
+        />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">
+          {original?.fileName ?? t("knowledge.sources.retainedMedia", "Retained media")}
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+          {original ? (
+            <>
+              <span>{original.mimeType}</span>
+              <span>·</span>
+              <span>{formatBytes(original.size)}</span>
+              {original.width && original.height ? (
+                <>
+                  <span>·</span>
+                  <span>{original.width}x{original.height}</span>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <span>{t("knowledge.sources.thumbnailOnly", "Thumbnail only")}</span>
+          )}
+        </div>
+      </div>
+      {original?.localPath ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <IconTip label={t("knowledge.sources.openOriginal", "Open original")}>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={openOriginal}>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          </IconTip>
+          <IconTip label={t("knowledge.sources.downloadOriginal", "Download original")}>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={downloadOriginal}>
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+          </IconTip>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function SourceKindIcon({
   kind,
+  source,
   className,
 }: {
-  kind: KnowledgeSourceKind
+  kind?: KnowledgeSourceKind
+  source?: KnowledgeSource
   className?: string
 }) {
+  if (source) {
+    const thumbnail = source.assets?.thumbnail
+    const thumbnailUrl = thumbnail?.localPath ? getTransport().resolveAssetUrl(thumbnail.localPath) : null
+    if (thumbnailUrl) {
+      return (
+        <img
+          src={thumbnailUrl}
+          alt=""
+          className={cn("rounded border border-border-soft/60 object-cover", className)}
+        />
+      )
+    }
+    kind = source.kind
+  }
+  kind = kind ?? "text"
   switch (kind) {
     case "audio_transcript":
       return <FileAudio className={className} />

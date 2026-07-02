@@ -21,7 +21,8 @@ use crate::stt::{AudioPayload, Transcript};
 
 use super::types::{
     KnowledgeBrowserCaptureMode, KnowledgeBrowserSourceImportInput, KnowledgeSource,
-    KnowledgeSourceChunk, KnowledgeSourceDiff, KnowledgeSourceDiffLine,
+    KnowledgeSourceAsset, KnowledgeSourceAssetKind, KnowledgeSourceAssetLink,
+    KnowledgeSourceAssets, KnowledgeSourceChunk, KnowledgeSourceDiff, KnowledgeSourceDiffLine,
     KnowledgeSourceDiffLineKind, KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput,
     KnowledgeSourceImportItemStatus, KnowledgeSourceImportRunDetail,
     KnowledgeSourceImportRunStatus, KnowledgeSourceImportSessionAttachmentInput,
@@ -139,6 +140,32 @@ struct SourceSnapshotDraft {
     ext: &'static str,
     content: String,
     extracted_text: String,
+    asset: Option<SourceMediaAssetDraft>,
+}
+
+struct SourceMediaAssetDraft {
+    original_file_name: String,
+    original_mime_type: String,
+    original_bytes: Vec<u8>,
+    original_width: Option<u32>,
+    original_height: Option<u32>,
+    thumbnail: Option<SourceThumbnailDraft>,
+}
+
+struct SourceThumbnailDraft {
+    bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+struct PreparedSourceAssets {
+    metadata: KnowledgeSourceAssets,
+    files: Vec<PreparedSourceAssetFile>,
+}
+
+struct PreparedSourceAssetFile {
+    stored_path: String,
+    bytes: Vec<u8>,
 }
 
 struct SourceVersionLink {
@@ -486,6 +513,52 @@ pub fn read_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadRe
     Ok(KnowledgeSourceReadResult { source, content })
 }
 
+pub fn source_asset_link(
+    kb_id: &str,
+    source_id: &str,
+    kind: KnowledgeSourceAssetKind,
+) -> Result<Option<KnowledgeSourceAssetLink>> {
+    ensure_kb_exists(kb_id)?;
+    let Some(asset) = registry()?.source_asset(kb_id, source_id, kind)? else {
+        return Ok(None);
+    };
+    Ok(Some(KnowledgeSourceAssetLink {
+        kb_id: kb_id.to_string(),
+        source_id: source_id.to_string(),
+        kind: asset.kind,
+        file_name: asset.file_name,
+        mime_type: asset.mime_type,
+        size: asset.size,
+        width: asset.width,
+        height: asset.height,
+        local_path: asset.local_path,
+    }))
+}
+
+pub fn source_asset_file(
+    kb_id: &str,
+    source_id: &str,
+    kind: KnowledgeSourceAssetKind,
+) -> Result<Option<(KnowledgeSourceAssetLink, PathBuf)>> {
+    ensure_kb_exists(kb_id)?;
+    let Some(asset) = registry()?.source_asset(kb_id, source_id, kind)? else {
+        return Ok(None);
+    };
+    let path = source_asset_path(kb_id, &asset.stored_path)?;
+    let link = KnowledgeSourceAssetLink {
+        kb_id: kb_id.to_string(),
+        source_id: source_id.to_string(),
+        kind: asset.kind,
+        file_name: asset.file_name,
+        mime_type: asset.mime_type,
+        size: asset.size,
+        width: asset.width,
+        height: asset.height,
+        local_path: asset.local_path,
+    };
+    Ok(Some((link, path)))
+}
+
 pub async fn refresh_source(
     kb_id: &str,
     source_id: &str,
@@ -657,13 +730,14 @@ pub fn reextract_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSource>
 
 pub fn delete_source(kb_id: &str, source_id: &str) -> Result<bool> {
     ensure_kb_exists(kb_id)?;
-    let Some(stored_path) = registry()?.delete_source(kb_id, source_id)? else {
+    let Some(deleted) = registry()?.delete_source(kb_id, source_id)? else {
         return Ok(false);
     };
-    let path = source_path(kb_id, &stored_path)?;
+    let path = source_path(kb_id, &deleted.stored_path)?;
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
+    remove_source_asset_files(kb_id, &deleted.asset_paths)?;
     emit(kb_id, "source_delete");
     Ok(true)
 }
@@ -940,6 +1014,7 @@ async fn capture_browser_snapshot(
         ext: "md",
         content: snapshot,
         extracted_text: text,
+        asset: None,
     })
 }
 
@@ -1183,14 +1258,16 @@ async fn transcribe_media_bytes(
     snapshot.push_str(&format_transcript_markdown(&transcript));
     snapshot.push('\n');
 
-    persist_source(
+    let asset = build_media_asset_draft(kind, &provenance, &bytes);
+    persist_source_with_asset(
         kb_id,
         kind,
         title,
-        Some(provenance.origin_uri),
+        Some(provenance.origin_uri.clone()),
         "md",
         snapshot,
         Some(&transcript_text),
+        asset,
     )
 }
 
@@ -1257,14 +1334,16 @@ async fn ocr_image_bytes(
     snapshot.push_str(&ocr_text);
     snapshot.push('\n');
 
-    persist_source(
+    let asset = build_media_asset_draft(KnowledgeSourceKind::ImageOcr, &provenance, &bytes);
+    persist_source_with_asset(
         kb_id,
         KnowledgeSourceKind::ImageOcr,
         title,
-        Some(provenance.origin_uri),
+        Some(provenance.origin_uri.clone()),
         "md",
         snapshot,
         Some(&ocr_text),
+        asset,
     )
 }
 
@@ -1599,6 +1678,7 @@ async fn fetch_url_snapshot(
         ext: "md",
         content: snapshot,
         extracted_text: text,
+        asset: None,
     })
 }
 
@@ -1611,6 +1691,28 @@ fn persist_source(
     content: String,
     extracted_text: Option<&str>,
 ) -> Result<ImportedSourceOutcome> {
+    persist_source_with_asset(
+        kb_id,
+        kind,
+        title,
+        origin_uri,
+        ext,
+        content,
+        extracted_text,
+        None,
+    )
+}
+
+fn persist_source_with_asset(
+    kb_id: &str,
+    kind: KnowledgeSourceKind,
+    title: String,
+    origin_uri: Option<String>,
+    ext: &str,
+    content: String,
+    extracted_text: Option<&str>,
+    asset: Option<SourceMediaAssetDraft>,
+) -> Result<ImportedSourceOutcome> {
     let draft = SourceSnapshotDraft {
         kind,
         title,
@@ -1618,13 +1720,14 @@ fn persist_source(
         ext: sanitize_ext(ext),
         content,
         extracted_text: extracted_text.unwrap_or("").to_string(),
+        asset,
     };
     persist_source_draft(kb_id, draft, true, None)
 }
 
 fn persist_source_draft(
     kb_id: &str,
-    draft: SourceSnapshotDraft,
+    mut draft: SourceSnapshotDraft,
     dedupe: bool,
     version: Option<SourceVersionLink>,
 ) -> Result<ImportedSourceOutcome> {
@@ -1647,7 +1750,38 @@ fn persist_source_draft(
     let stored_path = format!("{id}.{}", draft.ext);
     let dir = source_dir(kb_id)?;
     let path = dir.join(&stored_path);
+    let mut prepared_assets = match draft.asset.take() {
+        Some(asset) => prepare_source_assets(kb_id, &id, asset)?,
+        None => None,
+    };
     crate::platform::write_atomic(&path, draft.content.as_bytes())?;
+    let mut written_asset_paths = Vec::new();
+    if let Some(prepared) = prepared_assets.as_ref() {
+        let mut failed = None;
+        for file in &prepared.files {
+            let asset_path = source_asset_path(kb_id, &file.stored_path)?;
+            match crate::platform::write_atomic(&asset_path, &file.bytes) {
+                Ok(()) => written_asset_paths.push(asset_path),
+                Err(e) => {
+                    failed = Some((asset_path, e));
+                    break;
+                }
+            }
+        }
+        if let Some((asset_path, e)) = failed {
+            crate::app_warn!(
+                "knowledge",
+                "source_import",
+                "source media retention skipped after write failure at {}: {}",
+                asset_path.display(),
+                e
+            );
+            for written in written_asset_paths.drain(..) {
+                let _ = std::fs::remove_file(written);
+            }
+            prepared_assets = None;
+        }
+    }
 
     let now = chrono::Utc::now().timestamp_millis();
     let content_hash = super::blake3_hex(draft.content.as_bytes());
@@ -1675,6 +1809,9 @@ fn persist_source_draft(
         version_index,
         superseded_by_source_id: None,
         superseded_at: None,
+        assets: prepared_assets
+            .as_ref()
+            .map(|prepared| prepared.metadata.clone()),
     };
     let insert_result = registry().and_then(|reg| {
         if let Some(link) = &version {
@@ -1693,12 +1830,276 @@ fn persist_source_draft(
                 cleanup_err
             );
         }
+        for asset_path in written_asset_paths {
+            if let Err(cleanup_err) = std::fs::remove_file(&asset_path) {
+                crate::app_warn!(
+                    "knowledge",
+                    "source_import",
+                    "cleanup orphan source asset {} failed after registry insert error: {}",
+                    asset_path.display(),
+                    cleanup_err
+                );
+            }
+        }
         return Err(e);
     }
     Ok(ImportedSourceOutcome {
         source,
         duplicate_of_id: None,
     })
+}
+
+fn build_media_asset_draft(
+    kind: KnowledgeSourceKind,
+    provenance: &BinarySourceProvenance,
+    bytes: &[u8],
+) -> Option<SourceMediaAssetDraft> {
+    let cfg = super::service::get_media_retention_config();
+    if !cfg.enabled {
+        return None;
+    }
+
+    let file_name = sanitize_remote_file_name(&provenance.file_name)
+        .unwrap_or_else(|| default_file_name(kind).to_string());
+    let (original_width, original_height, thumbnail) = if kind == KnowledgeSourceKind::ImageOcr {
+        inspect_image_asset(bytes, cfg.thumbnail_max_edge_px)
+    } else {
+        (None, None, None)
+    };
+
+    Some(SourceMediaAssetDraft {
+        original_file_name: file_name,
+        original_mime_type: provenance.mime_type.clone(),
+        original_bytes: bytes.to_vec(),
+        original_width,
+        original_height,
+        thumbnail,
+    })
+}
+
+fn inspect_image_asset(
+    bytes: &[u8],
+    max_edge: u32,
+) -> (Option<u32>, Option<u32>, Option<SourceThumbnailDraft>) {
+    let Ok(image) = image::load_from_memory(bytes) else {
+        crate::app_warn!(
+            "knowledge",
+            "source_import",
+            "image source retained without thumbnail because image decoding failed"
+        );
+        return (None, None, None);
+    };
+    let width = image.width();
+    let height = image.height();
+    let thumbnail = image.thumbnail(max_edge, max_edge);
+    let thumb_width = thumbnail.width();
+    let thumb_height = thumbnail.height();
+    let mut out = Vec::new();
+    let rgb = thumbnail.to_rgb8();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 82);
+    if let Err(e) = encoder.encode_image(&rgb) {
+        crate::app_warn!(
+            "knowledge",
+            "source_import",
+            "image source retained without thumbnail because JPEG encoding failed: {}",
+            e
+        );
+        return (Some(width), Some(height), None);
+    }
+    (
+        Some(width),
+        Some(height),
+        Some(SourceThumbnailDraft {
+            bytes: out,
+            width: thumb_width,
+            height: thumb_height,
+        }),
+    )
+}
+
+fn prepare_source_assets(
+    kb_id: &str,
+    source_id: &str,
+    asset: SourceMediaAssetDraft,
+) -> Result<Option<PreparedSourceAssets>> {
+    let cfg = super::service::get_media_retention_config();
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    let original_size = asset.original_bytes.len() as u64;
+    if original_size == 0 {
+        return Ok(None);
+    }
+    if original_size > cfg.max_source_bytes {
+        crate::app_warn!(
+            "knowledge",
+            "source_import",
+            "source media retention skipped: original file is {} bytes, per-source limit is {}",
+            original_size,
+            cfg.max_source_bytes
+        );
+        return Ok(None);
+    }
+    let thumbnail_size = asset
+        .thumbnail
+        .as_ref()
+        .map(|thumbnail| thumbnail.bytes.len() as u64)
+        .unwrap_or(0);
+    let required_bytes = original_size.saturating_add(thumbnail_size);
+    if !reserve_media_retention_bytes(required_bytes, &cfg)? {
+        crate::app_warn!(
+            "knowledge",
+            "source_import",
+            "source media retention skipped: quota requires {} bytes, total limit is {}",
+            required_bytes,
+            cfg.max_total_bytes
+        );
+        return Ok(None);
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let original_ext = media_asset_extension(&asset.original_file_name, &asset.original_mime_type);
+    let original_stored_path = format!("assets/{source_id}/original.{original_ext}");
+    let original_path = source_asset_path(kb_id, &original_stored_path)?;
+    let original = KnowledgeSourceAsset {
+        kind: KnowledgeSourceAssetKind::Original,
+        file_name: asset.original_file_name.clone(),
+        mime_type: asset.original_mime_type.clone(),
+        size: asset.original_bytes.len() as i64,
+        width: asset.original_width,
+        height: asset.original_height,
+        stored_path: original_stored_path.clone(),
+        local_path: Some(original_path.to_string_lossy().to_string()),
+        created_at: now,
+    };
+    let mut files = vec![PreparedSourceAssetFile {
+        stored_path: original_stored_path,
+        bytes: asset.original_bytes,
+    }];
+
+    let thumbnail = asset.thumbnail.map(|thumbnail| {
+        let stored_path = format!("assets/{source_id}/thumbnail.jpg");
+        let local_path = source_asset_path(kb_id, &stored_path)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+        files.push(PreparedSourceAssetFile {
+            stored_path: stored_path.clone(),
+            bytes: thumbnail.bytes,
+        });
+        KnowledgeSourceAsset {
+            kind: KnowledgeSourceAssetKind::Thumbnail,
+            file_name: "thumbnail.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            size: files
+                .last()
+                .map(|file| file.bytes.len() as i64)
+                .unwrap_or_default(),
+            width: Some(thumbnail.width),
+            height: Some(thumbnail.height),
+            stored_path,
+            local_path,
+            created_at: now,
+        }
+    });
+
+    Ok(Some(PreparedSourceAssets {
+        metadata: KnowledgeSourceAssets {
+            original: Some(original),
+            thumbnail,
+        },
+        files,
+    }))
+}
+
+fn reserve_media_retention_bytes(
+    required_bytes: u64,
+    cfg: &super::KnowledgeMediaRetentionConfig,
+) -> Result<bool> {
+    if required_bytes == 0 {
+        return Ok(false);
+    }
+    if required_bytes > cfg.max_total_bytes {
+        return Ok(false);
+    }
+    let reg = registry()?;
+    let total = reg.total_source_asset_bytes()?;
+    if total.saturating_add(required_bytes) <= cfg.max_total_bytes {
+        return Ok(true);
+    }
+    if !cfg.prune_when_over_quota {
+        return Ok(false);
+    }
+
+    let mut freed = 0u64;
+    for candidate in reg.list_source_asset_prune_candidates()? {
+        let stored_paths = reg.delete_source_assets(&candidate.kb_id, &candidate.source_id)?;
+        remove_source_asset_files(&candidate.kb_id, &stored_paths)?;
+        freed = freed.saturating_add(candidate.bytes);
+        if total.saturating_sub(freed).saturating_add(required_bytes) <= cfg.max_total_bytes {
+            return Ok(true);
+        }
+    }
+    Ok(total.saturating_sub(freed).saturating_add(required_bytes) <= cfg.max_total_bytes)
+}
+
+fn remove_source_asset_files(kb_id: &str, stored_paths: &[String]) -> Result<()> {
+    for stored_path in stored_paths {
+        let path = match source_asset_path(kb_id, stored_path) {
+            Ok(path) => path,
+            Err(e) => {
+                crate::app_warn!(
+                    "knowledge",
+                    "source_import",
+                    "skip invalid source asset path {}: {}",
+                    stored_path,
+                    e
+                );
+                continue;
+            }
+        };
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                crate::app_warn!(
+                    "knowledge",
+                    "source_import",
+                    "remove source asset {} failed: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn media_asset_extension(file_name: &str, mime_type: &str) -> String {
+    if let Some(ext) = Path::new(file_name)
+        .extension()
+        .and_then(|v| v.to_str())
+        .map(|v| v.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|v| {
+            !v.is_empty() && v.len() <= 12 && v.chars().all(|ch| ch.is_ascii_alphanumeric())
+        })
+    {
+        return ext;
+    }
+    match mime_type.to_ascii_lowercase().as_str() {
+        "audio/mpeg" => "mp3",
+        "audio/mp4" | "audio/x-m4a" => "m4a",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/ogg" => "ogg",
+        "audio/opus" => "opus",
+        "audio/flac" => "flac",
+        "video/mp4" => "mp4",
+        "video/quicktime" => "mov",
+        "video/webm" => "webm",
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "bin",
+    }
+    .to_string()
 }
 
 fn build_chunks(source_id: &str, content: &str) -> Vec<KnowledgeSourceChunk> {
@@ -1753,6 +2154,26 @@ fn source_path(kb_id: &str, stored_path: &str) -> Result<PathBuf> {
         .canonicalize()?;
     if !parent.starts_with(&dir) {
         bail!("source path escapes source directory");
+    }
+    Ok(path)
+}
+
+fn source_asset_path(kb_id: &str, stored_path: &str) -> Result<PathBuf> {
+    let stored = Path::new(stored_path);
+    if stored.is_absolute()
+        || stored.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        bail!("invalid source asset stored path");
+    }
+    let dir = source_dir(kb_id)?;
+    let path = dir.join(stored);
+    if !path.starts_with(&dir) {
+        bail!("source asset path escapes source directory");
     }
     Ok(path)
 }

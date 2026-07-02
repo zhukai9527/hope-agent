@@ -24,7 +24,12 @@ import { Switch } from "@/components/ui/switch"
 import { getTransport } from "@/lib/transport-provider"
 import { cn } from "@/lib/utils"
 import { logger } from "@/lib/logger"
-import type { ChunkConfig, KnowledgeSearchConfig, PassiveRecallConfig } from "@/types/knowledge"
+import type {
+  ChunkConfig,
+  KnowledgeMediaRetentionConfig,
+  KnowledgeSearchConfig,
+  PassiveRecallConfig,
+} from "@/types/knowledge"
 import { KNOWLEDGE_SEARCH_DEFAULTS } from "@/types/knowledge"
 import {
   isLocalModelJobActive,
@@ -208,6 +213,8 @@ export default function KnowledgePanel() {
       <SearchRankingSection />
 
       <PassiveRecallSection />
+
+      <MediaRetentionSection />
 
       <KnowledgeMaintenanceSection />
 
@@ -502,6 +509,186 @@ function PassiveRecallSection() {
             <Switch
               checked={draft.showSnippet}
               onCheckedChange={(v) => setDraft({ ...draft, showSnippet: v })}
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabled={!dirty || saving}
+              onClick={() => void persist(draft, true)}
+              className={cn(saveStatus === "failed" && "bg-destructive hover:bg-destructive/90")}
+            >
+              {saving ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : saveStatus === "saved" ? (
+                <Check className="mr-1.5 h-3.5 w-3.5 text-emerald-300" />
+              ) : null}
+              {t("common.save", "Save")}
+            </Button>
+          </div>
+        </div>
+      </AnimatedCollapse>
+    </div>
+  )
+}
+
+const MIB = 1024 * 1024
+
+/**
+ * Optional original-media retention for Knowledge Compiler sources. This is a
+ * privacy/space setting: the text raw-source snapshot remains the durable truth
+ * even when original audio/video/image files are not retained.
+ */
+function MediaRetentionSection() {
+  const { t } = useTranslation()
+  const [loaded, setLoaded] = useState<KnowledgeMediaRetentionConfig | null>(null)
+  const [draft, setDraft] = useState<KnowledgeMediaRetentionConfig | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "failed">("idle")
+
+  useEffect(() => {
+    let cancelled = false
+    getTransport()
+      .call<KnowledgeMediaRetentionConfig>("knowledge_media_retention_config_get_cmd")
+      .then((c) => {
+        if (cancelled) return
+        setLoaded(c)
+        setDraft(c)
+      })
+      .catch((e) =>
+        logger.error("settings", "MediaRetentionSection::load", "Failed to load config", e),
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const persist = useCallback(
+    async (next: KnowledgeMediaRetentionConfig, viaButton: boolean) => {
+      if (viaButton) setSaving(true)
+      try {
+        const saved = await getTransport().call<KnowledgeMediaRetentionConfig>(
+          "knowledge_media_retention_config_set_cmd",
+          { config: next },
+        )
+        setLoaded(saved)
+        if (viaButton) {
+          setDraft(saved)
+          setSaving(false)
+          setSaveStatus("saved")
+          setTimeout(() => setSaveStatus("idle"), 2000)
+          toast.success(t("settings.knowledgeMediaRetention.saved", "Saved"))
+        } else {
+          setDraft((d) => (d ? { ...d, enabled: saved.enabled } : saved))
+        }
+      } catch (e) {
+        logger.error("settings", "MediaRetentionSection::save", "Failed to save config", e)
+        if (viaButton) {
+          setSaving(false)
+          setSaveStatus("failed")
+          setTimeout(() => setSaveStatus("idle"), 2000)
+        } else {
+          setDraft((d) => (d ? { ...d, enabled: !next.enabled } : d))
+        }
+        toast.error(String(e))
+      }
+    },
+    [t],
+  )
+
+  if (!draft || !loaded) return null
+
+  const enabled = draft.enabled
+  const totalMiB = Math.round(draft.maxTotalBytes / MIB)
+  const sourceMiB = Math.round(draft.maxSourceBytes / MIB)
+  const dirty =
+    loaded.maxTotalBytes !== draft.maxTotalBytes ||
+    loaded.maxSourceBytes !== draft.maxSourceBytes ||
+    loaded.thumbnailMaxEdgePx !== draft.thumbnailMaxEdgePx ||
+    loaded.pruneWhenOverQuota !== draft.pruneWhenOverQuota
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">
+            {t("settings.knowledgeMediaRetention.title", "Original media retention")}
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            {t(
+              "settings.knowledgeMediaRetention.description",
+              "Optionally keep imported audio, video, and image originals for source evidence review.",
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => {
+            setDraft({ ...draft, enabled: v })
+            void persist({ ...loaded, enabled: v }, false)
+          }}
+        />
+      </div>
+
+      <AnimatedCollapse open={enabled}>
+        <div className="space-y-3 border-t border-border px-4 py-3">
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgeMediaRetention.maxTotal", "Total quota (MiB)")}
+              </span>
+              <DeferredNumberInput
+                min={10}
+                max={102400}
+                value={totalMiB}
+                onValueCommit={(value) =>
+                  setDraft({ ...draft, maxTotalBytes: Math.max(10, value) * MIB })
+                }
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgeMediaRetention.maxSource", "Per source (MiB)")}
+              </span>
+              <DeferredNumberInput
+                min={1}
+                max={2048}
+                value={sourceMiB}
+                onValueCommit={(value) =>
+                  setDraft({ ...draft, maxSourceBytes: Math.max(1, value) * MIB })
+                }
+                className="h-8 text-xs"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-medium">
+                {t("settings.knowledgeMediaRetention.thumbnail", "Thumbnail edge (px)")}
+              </span>
+              <DeferredNumberInput
+                min={128}
+                max={2048}
+                value={draft.thumbnailMaxEdgePx}
+                onValueCommit={(value) => setDraft({ ...draft, thumbnailMaxEdgePx: value })}
+                className="h-8 text-xs"
+              />
+            </label>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="min-w-0 pr-3">
+              <div className="text-xs font-medium">
+                {t("settings.knowledgeMediaRetention.prune", "Prune oldest media over quota")}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                {t(
+                  "settings.knowledgeMediaRetention.pruneDesc",
+                  "When a new retained file would exceed the quota, remove the oldest retained originals before skipping the new file.",
+                )}
+              </div>
+            </div>
+            <Switch
+              checked={draft.pruneWhenOverQuota}
+              onCheckedChange={(v) => setDraft({ ...draft, pruneWhenOverQuota: v })}
             />
           </div>
           <div className="flex justify-end">

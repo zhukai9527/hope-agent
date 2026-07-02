@@ -77,6 +77,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_source_import_retry_failed_cmd:{ method: "POST",  path: "/api/knowledge/{kbId}/sources/import-runs/{runId}/retry-failed" },
   kb_source_similarity_groups_cmd: { method: "GET",    path: "/api/knowledge/{kbId}/sources/similar" },
   kb_source_read_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}" },
+  kb_source_asset_link_cmd:         { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/assets/{kind}/link" },
   kb_source_refresh_cmd:           { method: "POST",   path: "/api/knowledge/{kbId}/sources/{sourceId}/refresh" },
   kb_source_versions_cmd:          { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/versions" },
   kb_source_diff_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/diff" },
@@ -146,6 +147,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_maintenance_config_set_cmd:   { method: "POST",   path: "/api/knowledge/maintenance/config" },
   kb_passive_recall_config_get_cmd:{ method: "GET",    path: "/api/knowledge/passive-recall/config" },
   kb_passive_recall_config_set_cmd:{ method: "POST",   path: "/api/knowledge/passive-recall/config" },
+  knowledge_media_retention_config_get_cmd: { method: "GET", path: "/api/knowledge/media-retention/config" },
+  knowledge_media_retention_config_set_cmd: { method: "POST", path: "/api/knowledge/media-retention/config" },
   kb_sprite_observe_cmd:           { method: "POST",   path: "/api/knowledge/sprite/observe" },
   sprite_config_get_cmd:           { method: "GET",    path: "/api/knowledge/sprite/config" },
   sprite_config_set_cmd:           { method: "POST",   path: "/api/knowledge/sprite/config" },
@@ -1324,6 +1327,17 @@ export class HttpTransport implements Transport {
     if (attachmentMatch) {
       return stamped(
         `${this.baseUrl}/api/attachments/${encodeURIComponent(attachmentMatch[1])}/${encodeURIComponent(attachmentMatch[2])}`,
+      );
+    }
+
+    // Retained knowledge source assets:
+    // `~/.hope-agent/knowledge/{kbId}/sources/assets/{sourceId}/{original|thumbnail}.{ext}`
+    const sourceAssetMatch = path.match(
+      /[\\/]knowledge[\\/]([^\\/]+)[\\/]sources[\\/]assets[\\/]([^\\/]+)[\\/](original|thumbnail)\.[^\\/]+$/,
+    );
+    if (sourceAssetMatch) {
+      return stamped(
+        `${this.baseUrl}/api/knowledge/${encodeURIComponent(sourceAssetMatch[1])}/sources/${encodeURIComponent(sourceAssetMatch[2])}/assets/${encodeURIComponent(sourceAssetMatch[3])}`,
       );
     }
 

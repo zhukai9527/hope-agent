@@ -950,6 +950,11 @@ pub struct AppConfig {
     /// `update_settings`.
     #[serde(default)]
     pub knowledge_passive_recall: crate::knowledge::PassiveRecallConfig,
+    /// Optional retention for original audio/video/image source files and image
+    /// thumbnails. HIGH/privacy setting; disabled by default and controlled by
+    /// owner-plane settings only.
+    #[serde(default)]
+    pub knowledge_media_retention: crate::knowledge::KnowledgeMediaRetentionConfig,
     /// Deprecated legacy embedding config. Kept as a deserialization sink only;
     /// user-facing embedding config lives in `embedding_models` +
     /// `memory_embedding`.
@@ -1283,6 +1288,7 @@ impl Default for AppConfig {
             knowledge_search: crate::knowledge::KnowledgeSearchConfig::default(),
             knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig::default(),
             knowledge_passive_recall: crate::knowledge::PassiveRecallConfig::default(),
+            knowledge_media_retention: crate::knowledge::KnowledgeMediaRetentionConfig::default(),
             embedding: crate::memory::EmbeddingConfig::default(),
             memory_extract: crate::memory::MemoryExtractConfig::default(),
             memory_selection: crate::memory::MemorySelectionConfig::default(),

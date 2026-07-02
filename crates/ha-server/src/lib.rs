@@ -313,6 +313,14 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_source_similarity_groups),
         )
         .route(
+            "/knowledge/{kb_id}/sources/{source_id}/assets/{asset_kind}/link",
+            get(routes::knowledge::kb_source_asset_link),
+        )
+        .route(
+            "/knowledge/{kb_id}/sources/{source_id}/assets/{asset_kind}",
+            get(routes::knowledge::kb_source_asset_file),
+        )
+        .route(
             "/knowledge/{kb_id}/sources/{source_id}",
             get(routes::knowledge::kb_source_read).delete(routes::knowledge::kb_source_delete),
         )
@@ -475,6 +483,11 @@ fn build_router_with_cors(
             "/knowledge/passive-recall/config",
             get(routes::knowledge::kb_passive_recall_config_get)
                 .post(routes::knowledge::kb_passive_recall_config_set),
+        )
+        .route(
+            "/knowledge/media-retention/config",
+            get(routes::knowledge::knowledge_media_retention_config_get)
+                .post(routes::knowledge::knowledge_media_retention_config_set),
         )
         .route(
             "/knowledge/sprite/observe",

@@ -1735,6 +1735,7 @@ mod tests {
             version_index,
             superseded_by_source_id: None,
             superseded_at: None,
+            assets: None,
         }
     }
 

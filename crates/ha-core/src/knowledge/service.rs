@@ -13,13 +13,13 @@ use super::index;
 use super::types::{
     Backlink, CompileProposal, CompileProposalStatus, CompileRun, CompileStartInput,
     CreateKnowledgeBaseInput, KbAccess, KbAttachInput, KbChatThread, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceDiff,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
-    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile,
+    KnowledgeBrowserSourceImportInput, KnowledgeSource, KnowledgeSourceAssetKind,
+    KnowledgeSourceAssetLink, KnowledgeSourceDiff, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceReadResult,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
 };
 use crate::filesystem::{self, WorkspaceScope};
 use crate::session::{SessionKind, SessionMeta};
@@ -125,6 +125,15 @@ pub fn source_similarity_groups(kb_id: &str) -> Result<Vec<KnowledgeSourceSimila
 /// Owner read: source metadata + stored snapshot text.
 pub fn source_read(kb_id: &str, source_id: &str) -> Result<KnowledgeSourceReadResult> {
     super::source::read_source(kb_id, source_id)
+}
+
+/// Owner source asset metadata for retained original media / thumbnails.
+pub fn source_asset_link(
+    kb_id: &str,
+    source_id: &str,
+    kind: KnowledgeSourceAssetKind,
+) -> Result<Option<KnowledgeSourceAssetLink>> {
+    super::source::source_asset_link(kb_id, source_id, kind)
 }
 
 /// Owner refresh: re-acquire a refreshable source and create a new immutable
@@ -890,6 +899,32 @@ pub fn set_passive_recall_config(
     let to_save = clamped.clone();
     crate::config::mutate_config(("knowledge_passive_recall", source), move |store| {
         store.knowledge_passive_recall = to_save.clone();
+        Ok(())
+    })?;
+    Ok(clamped)
+}
+
+// ── Media retention config (owner plane GUI; privacy HIGH) ──────
+
+/// Current optional source-media retention config. Disabled by default; the
+/// returned shape is clamped so UI and import paths share the same bounds.
+pub fn get_media_retention_config() -> super::KnowledgeMediaRetentionConfig {
+    crate::config::cached_config()
+        .knowledge_media_retention
+        .clone()
+        .clamped()
+}
+
+/// Persist optional source-media retention config (clamped). This only affects
+/// future imports; already-retained assets remain governed by quota/prune.
+pub fn set_media_retention_config(
+    cfg: super::KnowledgeMediaRetentionConfig,
+    source: &str,
+) -> Result<super::KnowledgeMediaRetentionConfig> {
+    let clamped = cfg.clamped();
+    let to_save = clamped.clone();
+    crate::config::mutate_config(("knowledge_media_retention", source), move |store| {
+        store.knowledge_media_retention = to_save.clone();
         Ok(())
     })?;
     Ok(clamped)

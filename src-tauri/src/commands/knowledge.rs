@@ -14,13 +14,14 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
-    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceAssetKind,
+    KnowledgeSourceAssetLink, KnowledgeSourceDiff, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceReadResult,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -197,6 +198,15 @@ pub async fn kb_source_read_cmd(
     source_id: String,
 ) -> Result<KnowledgeSourceReadResult, CmdError> {
     service::source_read(&kb_id, &source_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn kb_source_asset_link_cmd(
+    kb_id: String,
+    source_id: String,
+    kind: KnowledgeSourceAssetKind,
+) -> Result<Option<KnowledgeSourceAssetLink>, CmdError> {
+    service::source_asset_link(&kb_id, &source_id, kind).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -835,6 +845,21 @@ pub async fn kb_passive_recall_config_set_cmd(
     config: knowledge::PassiveRecallConfig,
 ) -> Result<knowledge::PassiveRecallConfig, CmdError> {
     service::set_passive_recall_config(config, "gui").map_err(Into::into)
+}
+
+/// Read optional original-media retention config (GUI panel).
+#[tauri::command]
+pub async fn knowledge_media_retention_config_get_cmd(
+) -> Result<knowledge::KnowledgeMediaRetentionConfig, CmdError> {
+    Ok(service::get_media_retention_config())
+}
+
+/// Persist optional original-media retention config (GUI panel).
+#[tauri::command]
+pub async fn knowledge_media_retention_config_set_cmd(
+    config: knowledge::KnowledgeMediaRetentionConfig,
+) -> Result<knowledge::KnowledgeMediaRetentionConfig, CmdError> {
+    service::set_media_retention_config(config, "gui").map_err(Into::into)
 }
 
 /// Resolve a `[[ ]]` reference to a note and return its full read result (for

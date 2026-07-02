@@ -84,6 +84,44 @@ export type KnowledgeSourceKind =
   | "url_snapshot"
 export type KnowledgeSourceStatus = "ready" | "failed"
 export type KnowledgeBrowserCaptureMode = "auto" | "selection" | "page"
+export type KnowledgeSourceAssetKind = "original" | "thumbnail"
+
+export interface KnowledgeSourceAsset {
+  kind: KnowledgeSourceAssetKind
+  fileName: string
+  mimeType: string
+  size: number
+  width?: number | null
+  height?: number | null
+  storedPath: string
+  localPath?: string | null
+  createdAt: number
+}
+
+export interface KnowledgeSourceAssets {
+  original?: KnowledgeSourceAsset | null
+  thumbnail?: KnowledgeSourceAsset | null
+}
+
+export interface KnowledgeSourceAssetLink {
+  kbId: string
+  sourceId: string
+  kind: KnowledgeSourceAssetKind
+  fileName: string
+  mimeType: string
+  size: number
+  width?: number | null
+  height?: number | null
+  localPath?: string | null
+}
+
+export interface KnowledgeMediaRetentionConfig {
+  enabled: boolean
+  maxTotalBytes: number
+  maxSourceBytes: number
+  thumbnailMaxEdgePx: number
+  pruneWhenOverQuota: boolean
+}
 
 export interface KnowledgeSourceImportInput {
   kind?: KnowledgeSourceKind | null
@@ -138,6 +176,7 @@ export interface KnowledgeSource {
   versionIndex: number
   supersededBySourceId?: string | null
   supersededAt?: number | null
+  assets?: KnowledgeSourceAssets | null
 }
 
 export interface KnowledgeSourceReadResult extends KnowledgeSource {

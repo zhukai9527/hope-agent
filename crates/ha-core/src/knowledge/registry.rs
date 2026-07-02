@@ -13,7 +13,8 @@ use std::sync::Arc;
 use super::types::{
     CompileProposal, CompileProposalAction, CompileProposalKind, CompileProposalStatus, CompileRun,
     CompileRunStatus, CreateKnowledgeBaseInput, GraphNodePosition, KbAccess, KnowledgeBase,
-    KnowledgeBaseMeta, KnowledgeSource, KnowledgeSourceChunk, KnowledgeSourceImportItem,
+    KnowledgeBaseMeta, KnowledgeSource, KnowledgeSourceAsset, KnowledgeSourceAssetKind,
+    KnowledgeSourceAssets, KnowledgeSourceChunk, KnowledgeSourceImportItem,
     KnowledgeSourceImportItemStatus, KnowledgeSourceImportRun, KnowledgeSourceImportRunStatus,
     KnowledgeSourceKind, KnowledgeSourceStatus, NewCompileProposal, SchemaProfile,
     UpdateKnowledgeBaseInput,
@@ -29,6 +30,18 @@ pub struct KnowledgeRegistry {
 pub struct StoredSourceImportItem {
     pub item: KnowledgeSourceImportItem,
     pub input_json: String,
+}
+
+pub struct DeletedSourceFiles {
+    pub stored_path: String,
+    pub asset_paths: Vec<String>,
+}
+
+pub struct SourceAssetPruneCandidate {
+    pub kb_id: String,
+    pub source_id: String,
+    pub stored_paths: Vec<String>,
+    pub bytes: u64,
 }
 
 impl KnowledgeRegistry {
@@ -177,6 +190,29 @@ impl KnowledgeRegistry {
                 ON knowledge_sources(kb_id, version_of_source_id, version_index DESC);
             CREATE INDEX IF NOT EXISTS idx_knowledge_sources_superseded
                 ON knowledge_sources(kb_id, superseded_by_source_id);
+
+            -- Optional original-media retention for source imports. Metadata is
+            -- truth-source state so retained binaries can be quota-managed and
+            -- cleaned when sources are deleted. Files live under the internal
+            -- Hope-managed sources directory, never an external vault.
+            CREATE TABLE IF NOT EXISTS knowledge_source_assets (
+                id          TEXT PRIMARY KEY,
+                kb_id       TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                source_id   TEXT NOT NULL REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+                asset_kind  TEXT NOT NULL,
+                stored_path TEXT NOT NULL,
+                file_name   TEXT NOT NULL,
+                mime_type   TEXT NOT NULL,
+                size        INTEGER NOT NULL DEFAULT 0,
+                width       INTEGER,
+                height      INTEGER,
+                created_at  INTEGER NOT NULL,
+                UNIQUE(source_id, asset_kind)
+            );
+            CREATE INDEX IF NOT EXISTS idx_knowledge_source_assets_kb
+                ON knowledge_source_assets(kb_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_knowledge_source_assets_source
+                ON knowledge_source_assets(source_id, asset_kind);
 
             CREATE TABLE IF NOT EXISTS knowledge_source_chunks (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -912,6 +948,7 @@ impl KnowledgeRegistry {
                 ],
             )?;
         }
+        insert_source_assets_tx(&tx, source)?;
         tx.commit()?;
         Ok(())
     }
@@ -967,6 +1004,7 @@ impl KnowledgeRegistry {
                 ],
             )?;
         }
+        insert_source_assets_tx(&tx, source)?;
         tx.execute(
             "UPDATE knowledge_sources
              SET superseded_by_source_id = ?3, superseded_at = ?4
@@ -1001,8 +1039,9 @@ impl KnowledgeRegistry {
              ORDER BY s.created_at DESC, s.id DESC",
         )?;
         let rows = stmt.query_map(params![kb_id], row_to_source)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        let mut sources = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        hydrate_source_assets_locked(&conn, &mut sources)?;
+        Ok(sources)
     }
 
     pub fn get_source(&self, kb_id: &str, source_id: &str) -> Result<Option<KnowledgeSource>> {
@@ -1011,8 +1050,9 @@ impl KnowledgeRegistry {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-        conn.query_row(
-            "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
+        let mut source = conn
+            .query_row(
+                "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
                     s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
                     s.created_at, s.updated_at, s.size, s.version_of_source_id,
                     s.version_index, s.superseded_by_source_id, s.superseded_at,
@@ -1021,11 +1061,14 @@ impl KnowledgeRegistry {
              LEFT JOIN knowledge_source_chunks c ON c.source_id = s.id
              WHERE s.kb_id = ?1 AND s.id = ?2
              GROUP BY s.id",
-            params![kb_id, source_id],
-            row_to_source,
-        )
-        .optional()
-        .map_err(Into::into)
+                params![kb_id, source_id],
+                row_to_source,
+            )
+            .optional()?;
+        if let Some(source) = source.as_mut() {
+            hydrate_source_assets_locked(&conn, std::slice::from_mut(source))?;
+        }
+        Ok(source)
     }
 
     pub fn find_source_by_extracted_text_hash(
@@ -1038,8 +1081,9 @@ impl KnowledgeRegistry {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
-        conn.query_row(
-            "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
+        let mut source = conn
+            .query_row(
+                "SELECT s.id, s.kb_id, s.kind, s.title, s.origin_uri, s.stored_path,
                     s.content_hash, s.extracted_text_hash, s.status, s.compiled_at,
                     s.created_at, s.updated_at, s.size, s.version_of_source_id,
                     s.version_index, s.superseded_by_source_id, s.superseded_at,
@@ -1051,11 +1095,14 @@ impl KnowledgeRegistry {
              GROUP BY s.id
              ORDER BY s.created_at ASC, s.id ASC
              LIMIT 1",
-            params![kb_id, extracted_text_hash],
-            row_to_source,
-        )
-        .optional()
-        .map_err(Into::into)
+                params![kb_id, extracted_text_hash],
+                row_to_source,
+            )
+            .optional()?;
+        if let Some(source) = source.as_mut() {
+            hydrate_source_assets_locked(&conn, std::slice::from_mut(source))?;
+        }
+        Ok(source)
     }
 
     pub fn source_versions(&self, kb_id: &str, source_id: &str) -> Result<Vec<KnowledgeSource>> {
@@ -1084,8 +1131,9 @@ impl KnowledgeRegistry {
              ORDER BY s.version_index DESC, s.created_at DESC, s.id DESC",
         )?;
         let rows = stmt.query_map(params![kb_id, root_id], row_to_source)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        let mut sources = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        hydrate_source_assets_locked(&conn, &mut sources)?;
+        Ok(sources)
     }
 
     pub fn current_source_for(
@@ -1120,13 +1168,18 @@ impl KnowledgeRegistry {
         Ok(max_index.max(1).saturating_add(1) as u32)
     }
 
-    pub fn delete_source(&self, kb_id: &str, source_id: &str) -> Result<Option<String>> {
+    pub fn delete_source(
+        &self,
+        kb_id: &str,
+        source_id: &str,
+    ) -> Result<Option<DeletedSourceFiles>> {
         let mut conn = self
             .session_db
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
         let tx = conn.transaction()?;
+        let asset_paths = source_asset_stored_paths_tx(&tx, kb_id, source_id)?;
         let row: Option<(String, Option<String>)> = tx
             .query_row(
                 "SELECT stored_path, superseded_by_source_id
@@ -1150,7 +1203,107 @@ impl KnowledgeRegistry {
             )?;
         }
         tx.commit()?;
-        Ok(row.map(|(stored_path, _)| stored_path))
+        Ok(row.map(|(stored_path, _)| DeletedSourceFiles {
+            stored_path,
+            asset_paths,
+        }))
+    }
+
+    pub fn source_asset(
+        &self,
+        kb_id: &str,
+        source_id: &str,
+        kind: KnowledgeSourceAssetKind,
+    ) -> Result<Option<KnowledgeSourceAsset>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut asset = conn
+            .query_row(
+                "SELECT asset_kind, file_name, mime_type, size, width, height, stored_path, created_at
+                 FROM knowledge_source_assets
+                 WHERE kb_id = ?1 AND source_id = ?2 AND asset_kind = ?3",
+                params![kb_id, source_id, kind.as_str()],
+                row_to_source_asset,
+            )
+            .optional()?;
+        if let Some(asset) = asset.as_mut() {
+            set_asset_local_path(kb_id, asset);
+        }
+        Ok(asset)
+    }
+
+    pub fn source_asset_stored_paths(&self, kb_id: &str, source_id: &str) -> Result<Vec<String>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        source_asset_stored_paths_conn(&conn, kb_id, source_id)
+    }
+
+    pub fn total_source_asset_bytes(&self) -> Result<u64> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let total: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(size), 0) FROM knowledge_source_assets",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(total.max(0) as u64)
+    }
+
+    pub fn list_source_asset_prune_candidates(&self) -> Result<Vec<SourceAssetPruneCandidate>> {
+        let conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT kb_id, source_id, COALESCE(SUM(size), 0) AS total_bytes,
+                    GROUP_CONCAT(stored_path, char(10)) AS stored_paths,
+                    MIN(created_at) AS oldest
+             FROM knowledge_source_assets
+             GROUP BY kb_id, source_id
+             ORDER BY oldest ASC, source_id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let paths: Option<String> = row.get(3)?;
+            Ok(SourceAssetPruneCandidate {
+                kb_id: row.get(0)?,
+                source_id: row.get(1)?,
+                bytes: row.get::<_, i64>(2)?.max(0) as u64,
+                stored_paths: paths
+                    .unwrap_or_default()
+                    .lines()
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn delete_source_assets(&self, kb_id: &str, source_id: &str) -> Result<Vec<String>> {
+        let mut conn = self
+            .session_db
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        let paths = source_asset_stored_paths_tx(&tx, kb_id, source_id)?;
+        tx.execute(
+            "DELETE FROM knowledge_source_assets WHERE kb_id = ?1 AND source_id = ?2",
+            params![kb_id, source_id],
+        )?;
+        tx.commit()?;
+        Ok(paths)
     }
 
     pub fn replace_source_chunks(
@@ -2124,7 +2277,128 @@ fn row_to_source(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSource> {
         version_index: row.get::<_, i64>(14).unwrap_or(1).max(1) as u32,
         superseded_by_source_id: row.get::<_, Option<String>>(15).unwrap_or(None),
         superseded_at: row.get::<_, Option<i64>>(16).unwrap_or(None),
+        assets: None,
     })
+}
+
+fn insert_source_assets_tx(tx: &rusqlite::Transaction<'_>, source: &KnowledgeSource) -> Result<()> {
+    let Some(assets) = source.assets.as_ref() else {
+        return Ok(());
+    };
+    for asset in [assets.original.as_ref(), assets.thumbnail.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        tx.execute(
+            "INSERT INTO knowledge_source_assets
+                (id, kb_id, source_id, asset_kind, stored_path, file_name, mime_type,
+                 size, width, height, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(source_id, asset_kind) DO UPDATE SET
+                stored_path = excluded.stored_path,
+                file_name = excluded.file_name,
+                mime_type = excluded.mime_type,
+                size = excluded.size,
+                width = excluded.width,
+                height = excluded.height,
+                created_at = excluded.created_at",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                source.kb_id,
+                source.id,
+                asset.kind.as_str(),
+                asset.stored_path,
+                asset.file_name,
+                asset.mime_type,
+                asset.size,
+                asset.width.map(|v| v as i64),
+                asset.height.map(|v| v as i64),
+                asset.created_at,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn hydrate_source_assets_locked(
+    conn: &rusqlite::Connection,
+    sources: &mut [KnowledgeSource],
+) -> Result<()> {
+    for source in sources {
+        let mut stmt = conn.prepare(
+            "SELECT asset_kind, file_name, mime_type, size, width, height, stored_path, created_at
+             FROM knowledge_source_assets
+             WHERE kb_id = ?1 AND source_id = ?2
+             ORDER BY asset_kind ASC",
+        )?;
+        let rows = stmt.query_map(params![source.kb_id, source.id], row_to_source_asset)?;
+        let mut assets = KnowledgeSourceAssets::default();
+        for row in rows {
+            let mut asset = row?;
+            set_asset_local_path(&source.kb_id, &mut asset);
+            match asset.kind {
+                KnowledgeSourceAssetKind::Original => assets.original = Some(asset),
+                KnowledgeSourceAssetKind::Thumbnail => assets.thumbnail = Some(asset),
+            }
+        }
+        if assets.original.is_some() || assets.thumbnail.is_some() {
+            source.assets = Some(assets);
+        }
+    }
+    Ok(())
+}
+
+fn row_to_source_asset(row: &rusqlite::Row) -> rusqlite::Result<KnowledgeSourceAsset> {
+    let kind_s: String = row.get(0)?;
+    Ok(KnowledgeSourceAsset {
+        kind: KnowledgeSourceAssetKind::from_str_lenient(&kind_s),
+        file_name: row.get(1)?,
+        mime_type: row.get(2)?,
+        size: row.get::<_, i64>(3).unwrap_or(0),
+        width: row
+            .get::<_, Option<i64>>(4)
+            .unwrap_or(None)
+            .map(|v| v.max(0) as u32),
+        height: row
+            .get::<_, Option<i64>>(5)
+            .unwrap_or(None)
+            .map(|v| v.max(0) as u32),
+        stored_path: row.get(6)?,
+        local_path: None,
+        created_at: row.get(7)?,
+    })
+}
+
+fn set_asset_local_path(kb_id: &str, asset: &mut KnowledgeSourceAsset) {
+    if let Ok(root) = crate::paths::knowledge_kb_sources_dir(kb_id) {
+        asset.local_path = Some(root.join(&asset.stored_path).to_string_lossy().to_string());
+    }
+}
+
+fn source_asset_stored_paths_conn(
+    conn: &rusqlite::Connection,
+    kb_id: &str,
+    source_id: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT stored_path FROM knowledge_source_assets WHERE kb_id = ?1 AND source_id = ?2",
+    )?;
+    let rows = stmt.query_map(params![kb_id, source_id], |row| row.get::<_, String>(0))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+fn source_asset_stored_paths_tx(
+    tx: &rusqlite::Transaction<'_>,
+    kb_id: &str,
+    source_id: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = tx.prepare(
+        "SELECT stored_path FROM knowledge_source_assets WHERE kb_id = ?1 AND source_id = ?2",
+    )?;
+    let rows = stmt.query_map(params![kb_id, source_id], |row| row.get::<_, String>(0))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 const SOURCE_IMPORT_RUN_SELECT: &str = "
@@ -2422,6 +2696,20 @@ mod tests {
             version_index: 1,
             superseded_by_source_id: None,
             superseded_at: None,
+            assets: Some(KnowledgeSourceAssets {
+                original: Some(KnowledgeSourceAsset {
+                    kind: KnowledgeSourceAssetKind::Original,
+                    file_name: "recording.mp3".into(),
+                    mime_type: "audio/mpeg".into(),
+                    size: 123,
+                    width: None,
+                    height: None,
+                    stored_path: "assets/src-1/original.mp3".into(),
+                    local_path: None,
+                    created_at: now,
+                }),
+                thumbnail: None,
+            }),
         };
         let chunks = vec![
             KnowledgeSourceChunk {
@@ -2449,11 +2737,30 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].title, "Article");
         assert_eq!(listed[0].chunk_count, 2);
+        let listed_asset = listed[0]
+            .assets
+            .as_ref()
+            .and_then(|assets| assets.original.as_ref())
+            .expect("source asset is hydrated");
+        assert_eq!(listed_asset.file_name, "recording.mp3");
+        assert!(listed_asset
+            .local_path
+            .as_deref()
+            .unwrap_or("")
+            .contains("original.mp3"));
 
         let fetched = reg.get_source(&kb.id, &source.id).unwrap().unwrap();
         assert_eq!(fetched.origin_uri.as_deref(), Some("https://example.com/a"));
         assert_eq!(fetched.size, 42);
         assert_eq!(fetched.chunk_count, 2);
+        assert_eq!(
+            fetched
+                .assets
+                .as_ref()
+                .and_then(|assets| assets.original.as_ref())
+                .map(|asset| asset.size),
+            Some(123)
+        );
 
         let rebuilt = reg
             .replace_source_chunks(
@@ -2478,8 +2785,9 @@ mod tests {
         assert_eq!(rebuilt.chunk_count, 1);
         assert_eq!(rebuilt.size, 5);
 
-        let stored_path = reg.delete_source(&kb.id, &source.id).unwrap();
-        assert_eq!(stored_path.as_deref(), Some("src-1.md"));
+        let deleted = reg.delete_source(&kb.id, &source.id).unwrap().unwrap();
+        assert_eq!(deleted.stored_path, "src-1.md");
+        assert_eq!(deleted.asset_paths, vec!["assets/src-1/original.mp3"]);
         assert!(reg.get_source(&kb.id, &source.id).unwrap().is_none());
         assert!(reg.list_sources(&kb.id).unwrap().is_empty());
     }
@@ -2514,6 +2822,7 @@ mod tests {
             version_index: 1,
             superseded_by_source_id: None,
             superseded_at: None,
+            assets: None,
         };
         reg.insert_source(&source, &[]).unwrap();
 
@@ -2536,6 +2845,7 @@ mod tests {
             version_index: 2,
             superseded_by_source_id: None,
             superseded_at: None,
+            assets: None,
         };
         reg.insert_source_version(&source.id, &version, &[])
             .unwrap();

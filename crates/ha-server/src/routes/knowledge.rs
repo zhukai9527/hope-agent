@@ -27,13 +27,14 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceDiff,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
-    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
-    KnowledgeSourceSimilarityGroup, KnowledgeSourceVersionHistory, Note, NoteReadResult,
-    NoteSearchHit, NoteSourceRef, QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue,
-    SchemaProfile, UpdateKnowledgeBaseInput,
+    KnowledgeBrowserSourceImportInput, KnowledgeGraph, KnowledgeSource, KnowledgeSourceAssetKind,
+    KnowledgeSourceAssetLink, KnowledgeSourceDiff, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceReadResult,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult, KnowledgeSourceSimilarityGroup,
+    KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
+    QueryFileInput, ReferenceableNote, RenameOutcome, SchemaIssue, SchemaProfile,
+    UpdateKnowledgeBaseInput,
 };
 use ha_core::session::SessionMeta;
 
@@ -453,6 +454,67 @@ pub async fn kb_source_read(
     Path((kb_id, source_id)): Path<(String, String)>,
 ) -> Result<Json<KnowledgeSourceReadResult>, AppError> {
     Ok(Json(service::source_read(&kb_id, &source_id)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/{source_id}/assets/{asset_kind}/link`
+pub async fn kb_source_asset_link(
+    Path((kb_id, source_id, asset_kind)): Path<(String, String, String)>,
+) -> Result<Json<Option<KnowledgeSourceAssetLink>>, AppError> {
+    let kind = parse_source_asset_kind(&asset_kind)?;
+    Ok(Json(service::source_asset_link(&kb_id, &source_id, kind)?))
+}
+
+/// `GET /api/knowledge/{kb_id}/sources/{source_id}/assets/{asset_kind}?download=`
+pub async fn kb_source_asset_file(
+    Path((kb_id, source_id, asset_kind)): Path<(String, String, String)>,
+    Query(q): Query<KbFileQuery>,
+    request: Request,
+) -> Result<Response, AppError> {
+    let kind = parse_source_asset_kind(&asset_kind)?;
+    let Some((link, abs)) = knowledge::source::source_asset_file(&kb_id, &source_id, kind)? else {
+        return Err(AppError::not_found("source asset not found"));
+    };
+    if !abs.exists() {
+        return Err(AppError::not_found("source asset file is missing"));
+    }
+    let mime = if link.mime_type.trim().is_empty() {
+        resolve_mime_for_path(
+            &abs,
+            MimeOpts {
+                html_charset: false,
+                sniff_fallback: true,
+            },
+        )
+        .await
+    } else {
+        link.mime_type
+    };
+    let disposition = safe_content_disposition(&abs, &mime, q.download.unwrap_or(0) == 1);
+    let mut response = ServeFile::new(&abs)
+        .oneshot(request)
+        .await
+        .map_err(|e| AppError::internal(format!("serve source asset: {e}")))?
+        .into_response();
+    apply_inline_media_headers(
+        &mut response,
+        HeaderOpts {
+            mime: &mime,
+            cache_secs: 0,
+            disposition: &disposition,
+            no_referrer: false,
+        },
+    );
+    Ok(response)
+}
+
+fn parse_source_asset_kind(raw: &str) -> Result<KnowledgeSourceAssetKind, AppError> {
+    match raw {
+        "original" => Ok(KnowledgeSourceAssetKind::Original),
+        "thumbnail" => Ok(KnowledgeSourceAssetKind::Thumbnail),
+        _ => Err(AppError::bad_request(
+            "source asset kind must be original or thumbnail",
+        )),
+    }
 }
 
 /// `POST /api/knowledge/{kb_id}/sources/{source_id}/refresh`
@@ -1158,6 +1220,22 @@ pub async fn kb_passive_recall_config_set(
     Json(body): Json<crate::routes::config::ConfigBody<knowledge::PassiveRecallConfig>>,
 ) -> Result<Json<knowledge::PassiveRecallConfig>, AppError> {
     Ok(Json(service::set_passive_recall_config(
+        body.config,
+        "http",
+    )?))
+}
+
+/// `GET /api/knowledge/media-retention/config`
+pub async fn knowledge_media_retention_config_get(
+) -> Result<Json<knowledge::KnowledgeMediaRetentionConfig>, AppError> {
+    Ok(Json(service::get_media_retention_config()))
+}
+
+/// `POST /api/knowledge/media-retention/config` — body `{ config: KnowledgeMediaRetentionConfig }`.
+pub async fn knowledge_media_retention_config_set(
+    Json(body): Json<crate::routes::config::ConfigBody<knowledge::KnowledgeMediaRetentionConfig>>,
+) -> Result<Json<knowledge::KnowledgeMediaRetentionConfig>, AppError> {
+    Ok(Json(service::set_media_retention_config(
         body.config,
         "http",
     )?))
