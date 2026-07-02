@@ -2,7 +2,7 @@
 
 > 返回 [文档索引](../README.md)
 >
-> 更新时间：2026-07-01
+> 更新时间：2026-07-02
 
 ## 目录
 
@@ -45,10 +45,10 @@ Phase 2 已经完成 Workflow + Execution Mode 的第一版产品化：长任务
 新的优先级以 [Agent 控制平面路线图](agent-control-plane-roadmap.md) 为准：
 
 1. **Phase 2.6：语义收口**，已完成。`/loop off|guarded|deep|autonomous` 收口为 `/mode off|guarded|deep|autonomous`。
-2. **Phase 2.7：`/goal` MVP**，下一步。补一等目标对象：objective、completion criteria、budget、evidence、status、final audit。
+2. **Phase 2.7：`/goal` MVP**，已完成第一版。补一等目标对象：objective、completion criteria、budget、evidence、status、final audit。
 3. **Phase 2.8：Goal-driven Workflow**。Goal 派生 workflow run，失败后生成 repair run，workflow evidence 回写 goal，最终 evaluator 收口。
 4. **Phase 2.9：真正 `/loop`**。只做定时、重复、轮询或条件触发，复用 cron / wakeup / automation。
-5. **Phase 3：coding-specific 能力**。再做 managed worktree、LSP、review engine、diagnostics、智能验证选择等。
+5. **Phase 3：coding-specific 能力**。Managed Worktree、LSP、Review Engine、Smart Verification、Context Retrieval v2 已完成；后续继续做更深 review / verification / context 闭环。
 
 这次调整的核心不是降低 coding 优先级，而是把 coding 能力挂到更稳的控制平面上。`/goal` 负责最终完成标准，`/workflow` 负责一次具体执行，`/mode` 负责推进强度，`/loop` 第一版负责重复触发，`/worktree` 才是 coding 场景的隔离环境。
 
@@ -180,7 +180,7 @@ Hope 已经具备很多 coding agent 需要的基础能力：
 - `tool_search` 仍偏基础关键词匹配，缺少 search hint、alias、BM25、多来源 schema 组装。
 - Managed Worktree 创建、恢复、归档、交接已在 Phase 3.1 补齐；后续缺口转为 detail 页面、清理策略和 review/LSP evidence 接入。
 - LSP 语义代码工具和被动 diagnostics 注入已在 Phase 3.2 补齐；后续缺口是项目级配置、doctor 和 IDE context envelope。
-- 独立 `/review` engine、verifier 三态和 Workspace 审查区块已在 Phase 3.3 补齐；Smart Verification 已在 Phase 3.4 补齐最小验证选择、后台低风险执行和 Goal validation evidence；后续缺口是 LLM reviewer、profiles、Workflow review/verify host API 和 focused re-review。
+- 独立 `/review` engine、verifier 三态和 Workspace 审查区块已在 Phase 3.3 补齐；Smart Verification 已在 Phase 3.4 补齐最小验证选择、后台低风险执行和 Goal validation evidence；Context Retrieval v2 已在 Phase 3.5 补齐任务感知上下文推荐、file search v2 + LSP symbols + diff/artifact/review/verification 聚合；后续缺口是 LLM reviewer、profiles、Workflow review/verify host API、focused re-review、workflow/task/goal evidence 关联召回和 context eval。
 - 缺少 coding eval harness 和系统级 improvement loop。
 - 内置 coding skills 还偏“说明书”，尚未产品化为稳定 workflow policy。
 
@@ -456,7 +456,7 @@ StopPolicy
 
 ### Phase 2.8：Goal-driven Workflow
 
-状态：核心已完成。Goal durable store、Workflow 绑定、validation/diff/file evidence link、GUI Goal detail、Evaluator v2、Budget v2 已落地；`/loop` 已接入 Goal evidence，Managed Worktree 已落地为 Phase 3.1；LSP、review engine 接入继续排后续。详细方案见 [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)。
+状态：核心已完成。Goal durable store、Workflow 绑定、validation/diff/file evidence link、GUI Goal detail、Evaluator v2、Budget v2 已落地；`/loop` 已接入 Goal evidence；Managed Worktree、LSP、Review Engine、Smart Verification、Context Retrieval v2 已分别作为 Phase 3.1-3.5 落地。详细方案见 [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)。
 
 目标：让 Workflow 成为 Goal 的执行手段，而不是独立漂浮的 run。
 
@@ -606,6 +606,28 @@ StopPolicy
 - Workflow host API：`workflow.verify()`。
 - 验证选择质量进入 coding eval。
 
+### Phase 3.5：Context Retrieval v2 / 推荐上下文
+
+状态：已完成。最终架构见 [Context Retrieval v2](../architecture/context-retrieval.md)。
+
+目标：把 file search v2 从“文件名搜索”升级为任务感知上下文推荐，让用户和后续 agent 步骤能快速看到当前最该看的文件、诊断、审查项、验证项、符号和来源。
+
+已完成：
+
+- `ha-core::context_retrieval` 只读聚合器：Git diff、历史 artifacts、LSP diagnostics、Review findings、Verification steps、file search v2、LSP workspace symbols、URL sources。
+- 统一 `ContextCandidate` 模型：`file` / `symbol` / `diagnostic` / `review_finding` / `verification_step` / `url_source`。
+- 排序策略：高危 review/diagnostic/verification 与当前 diff 优先，query 作为 boost，不因搜索词隐藏高危信号。
+- Tauri + HTTP owner API：`get_context_retrieval` / `GET /api/sessions/{sid}/context-retrieval`。
+- Workspace GUI “推荐上下文”区块：默认推荐、关键词召回、手动刷新、事件驱动刷新；文件项复用统一文件操作策略。
+- 无痕会话 fail-closed；LSP symbol 查询失败降级 warning，不阻断其它候选。
+
+后续增强：
+
+- workflow op / task / goal evidence 关联召回。
+- 候选行 focused review / focused verification。
+- document symbols fallback、IDE selection envelope、ACP 当前文件信号。
+- context precision / critical context recall 进入 coding eval。
+
 ### Phase 5：Review 与 Verification Engine 后续增强
 
 目标：在 Phase 3.3 Review Engine 与 Phase 3.4 Smart Verification 的基础上，把 review 和 verification 组合成更强的闭环。
@@ -712,9 +734,10 @@ StopPolicy
 4. [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)：已落地 Goal detail、validation/diff/file/review evidence、Evaluator v2、Budget v2；继续跟踪 artifact/diagnostic evidence、可选 LLM auditor 和后续系统接入。
 5. [Loop 控制平面](../architecture/loop.md)：真正 `/loop` 的调度、预算、审批和 trace。
 6. [Managed Worktree 控制平面](../architecture/worktree.md)：已完成的隔离工作区、handoff、UI、hooks 架构。
-7. `docs/roadmap/lsp.md`：LSP manager、tools、diagnostics pipeline。
+7. [LSP 与语义代码智能](../architecture/lsp.md)：LSP manager、tools、diagnostics pipeline。
 8. [Review Engine 控制平面](../architecture/review-engine.md)：diff scan、candidate、verifier、inline finding 与 Goal evidence。
 9. [Smart Verification 控制平面](../architecture/verification-engine.md)：最小验证选择、后台低风险执行、Goal validation evidence 与 Workspace 验证区块。
-10. `docs/roadmap/coding-improvement-loop.md`：retro、eval candidate、skill/guidance distillation。
+10. [Context Retrieval v2](../architecture/context-retrieval.md)：任务感知上下文推荐、file search v2、LSP symbols、diff/artifact/review/verification 聚合。
+11. `docs/roadmap/coding-improvement-loop.md`：retro、eval candidate、skill/guidance distillation。
 
 这些文档完成后，再进入逐项实现。实现顺序应优先保证可评测、可回滚、可审计，而不是先堆最显眼的 UI。

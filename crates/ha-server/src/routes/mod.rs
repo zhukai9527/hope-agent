@@ -11,6 +11,7 @@ pub mod canvas;
 pub mod channel;
 pub mod chat;
 pub mod config;
+pub mod context_retrieval;
 pub mod crash;
 pub mod cron;
 pub mod dashboard;

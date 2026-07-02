@@ -79,6 +79,8 @@ import { useDangerousModeStatus } from "@/hooks/useDangerousModeStatus"
 import { type BackgroundJobSnapshot, isBackgroundJobActive } from "@/types/background-jobs"
 import { SessionBackgroundJobsList } from "../background-jobs/SessionBackgroundJobsList"
 import type {
+  ContextCandidate,
+  ContextCandidateKind,
   LspDiagnostic,
   ManagedWorktree,
   ReviewFinding,
@@ -132,6 +134,7 @@ import { useWorkspaceEnvironment } from "./useWorkspaceEnvironment"
 import { useScrollPagedRender } from "./useScrollPagedRender"
 import { useSessionKnowledge } from "./useSessionKnowledge"
 import { useManagedWorktrees } from "./useManagedWorktrees"
+import { useContextRetrieval } from "./useContextRetrieval"
 import { useLspDiagnostics } from "./useLspDiagnostics"
 import { useReviewRuns } from "./useReviewRuns"
 import { useVerificationRuns } from "./useVerificationRuns"
@@ -1471,6 +1474,318 @@ function KnowledgeSection({
       ) : (
         <EmptyHint>{t("workspace.emptyKnowledge", "未挂载知识空间")}</EmptyHint>
       )}
+    </WorkspaceSection>
+  )
+}
+
+function contextKindIcon(kind: ContextCandidateKind): LucideIcon {
+  switch (kind) {
+    case "file":
+      return FileText
+    case "symbol":
+      return Hash
+    case "diagnostic":
+      return CircleAlert
+    case "review_finding":
+      return GitPullRequest
+    case "verification_step":
+      return CheckCircle2
+    case "url_source":
+      return Globe
+  }
+}
+
+function contextKindLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: ContextCandidateKind,
+): string {
+  switch (kind) {
+    case "file":
+      return t("workspace.context.kindFile", "文件")
+    case "symbol":
+      return t("workspace.context.kindSymbol", "符号")
+    case "diagnostic":
+      return t("workspace.context.kindDiagnostic", "诊断")
+    case "review_finding":
+      return t("workspace.context.kindReview", "审查")
+    case "verification_step":
+      return t("workspace.context.kindVerification", "验证")
+    case "url_source":
+      return t("workspace.context.kindUrl", "来源")
+  }
+}
+
+function contextCandidateTone(candidate: ContextCandidate): StatusTone {
+  const status = candidate.status ?? ""
+  if (
+    status.includes("p0") ||
+    status.includes("p1") ||
+    status.includes("error") ||
+    status.includes("failed") ||
+    status.includes("timed_out")
+  ) {
+    return "danger"
+  }
+  if (
+    status.includes("p2") ||
+    status.includes("warning") ||
+    status.includes("pending") ||
+    status.includes("skipped")
+  ) {
+    return "warn"
+  }
+  if (status.includes("passed") || status.includes("completed")) return "good"
+  if (candidate.kind === "symbol") return "info"
+  return "muted"
+}
+
+function contextLocationLabel(candidate: ContextCandidate): string | null {
+  const path = candidate.path ?? candidate.url ?? candidate.subtitle ?? null
+  if (!path) return null
+  const base = candidate.url ? domainOf(candidate.url) : basename(path)
+  if (candidate.line != null) return `${base}:${candidate.line}`
+  return base
+}
+
+function ContextFileCandidateRow({
+  candidate,
+  sessionId,
+  onPreviewFile,
+}: {
+  candidate: ContextCandidate
+  sessionId?: string | null
+  onPreviewFile?: (target: PreviewTarget) => void
+}) {
+  const { t } = useTranslation()
+  const Icon = contextKindIcon(candidate.kind)
+  const path = candidate.path ?? ""
+  const target = useMemo<PreviewTarget>(
+    () => ({ kind: "path", path, name: basename(path) || candidate.title }),
+    [candidate.title, path],
+  )
+  const overrides = useMemo(() => ({ sessionId, onPreviewFile }), [sessionId, onPreviewFile])
+  const { primary, run } = useFileActions(target, overrides)
+  return (
+    <IconTip label={path}>
+      <button
+        type="button"
+        onClick={() => run(primary)}
+        className="flex w-full min-w-0 items-start gap-2 rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/45"
+      >
+        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+              {candidate.title}
+            </span>
+            {candidate.status ? (
+              <StatusPill label={candidate.status} tone={contextCandidateTone(candidate)} />
+            ) : null}
+          </div>
+          <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+            {candidate.reasons[0] ?? contextKindLabel(t, candidate.kind)}
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/65">
+            <span className="truncate">{contextLocationLabel(candidate) ?? candidate.subtitle}</span>
+            <span className="shrink-0">{contextKindLabel(t, candidate.kind)}</span>
+          </div>
+        </div>
+      </button>
+    </IconTip>
+  )
+}
+
+function ContextGenericCandidateRow({ candidate }: { candidate: ContextCandidate }) {
+  const { t } = useTranslation()
+  const Icon = contextKindIcon(candidate.kind)
+  const label = candidate.url ?? candidate.subtitle ?? candidate.path ?? candidate.title
+  const clickable = Boolean(candidate.url)
+  const content = (
+    <>
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {candidate.title}
+          </span>
+          {candidate.status ? (
+            <StatusPill label={candidate.status} tone={contextCandidateTone(candidate)} />
+          ) : null}
+        </div>
+        <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+          {candidate.reasons[0] ?? contextKindLabel(t, candidate.kind)}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/65">
+          <span className="truncate">{contextLocationLabel(candidate) ?? candidate.subtitle}</span>
+          <span className="shrink-0">{contextKindLabel(t, candidate.kind)}</span>
+        </div>
+      </div>
+    </>
+  )
+  return (
+    <IconTip label={label}>
+      {clickable ? (
+        <button
+          type="button"
+          onClick={() => candidate.url && openExternalUrl(candidate.url)}
+          className="flex w-full min-w-0 items-start gap-2 rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary/45"
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="flex min-w-0 items-start gap-2 rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+          {content}
+        </div>
+      )}
+    </IconTip>
+  )
+}
+
+function ContextRetrievalSection({
+  sessionId,
+  incognito,
+  turnActive,
+  workingDir,
+  onPreviewFile,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  turnActive?: boolean
+  workingDir?: string | null
+  onPreviewFile?: (target: PreviewTarget) => void
+}) {
+  const { t } = useTranslation()
+  const [query, setQuery] = useState("")
+  const { snapshot, loading, error, refresh } = useContextRetrieval(sessionId, {
+    incognito,
+    turnActive,
+    query,
+    limit: 24,
+    disabled: !workingDir,
+  })
+  const candidates = snapshot?.candidates ?? []
+  const visible = candidates.slice(0, 8)
+  const stats = snapshot?.stats
+  const disabled = !sessionId || incognito || !workingDir
+
+  const meta =
+    loading && !snapshot ? (
+      <StatusPill label={t("workspace.context.loading", "召回中")} tone="info" loading />
+    ) : error ? (
+      <StatusPill label={t("workspace.context.failed", "失败")} tone="danger" />
+    ) : candidates.length > 0 ? (
+      <StatusPill
+        label={t("workspace.context.count", "{{count}} 条", { count: candidates.length })}
+        tone="info"
+      />
+    ) : disabled ? (
+      <StatusPill label={t("workspace.context.disabled", "未启用")} tone="muted" />
+    ) : (
+      <StatusPill label={t("workspace.context.emptyMeta", "待召回")} tone="muted" />
+    )
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.context.title", "推荐上下文")}
+      count={candidates.length}
+      icon={Search}
+      meta={meta}
+      defaultExpanded={candidates.length > 0 || !!error}
+    >
+      <div className="space-y-2">
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            refresh()
+          }}
+        >
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              disabled={disabled}
+              className="h-8 pl-7 text-xs"
+              placeholder={t("workspace.context.searchPlaceholder", "文件、符号、错误")}
+            />
+          </div>
+          <IconTip label={t("workspace.context.refresh", "刷新推荐上下文")}>
+            <button
+              type="submit"
+              disabled={disabled || loading}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </IconTip>
+        </form>
+
+        {stats ? (
+          <div className="grid grid-cols-4 gap-1.5">
+            {[
+              [t("workspace.context.statDiff", "diff"), stats.gitChanges],
+              [t("workspace.context.statFiles", "文件"), stats.artifactFiles + stats.fileSearchMatches],
+              [t("workspace.context.statSignals", "信号"), stats.diagnostics + stats.reviewFindings],
+              [t("workspace.context.statProof", "验证"), stats.verificationSteps + stats.symbols],
+            ].map(([label, count]) => (
+              <div
+                key={label as string}
+                className="rounded-md border border-border/50 bg-secondary/25 px-2 py-1.5"
+              >
+                <div className="truncate text-[10px] text-muted-foreground">{label as string}</div>
+                <div className="text-xs font-medium tabular-nums text-foreground">
+                  {count as number}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {!workingDir ? (
+          <EmptyHint>{t("workspace.context.noWorkspace", "选择工作目录后可召回上下文")}</EmptyHint>
+        ) : incognito ? (
+          <EmptyHint>{t("workspace.context.incognito", "无痕会话不读取历史上下文")}</EmptyHint>
+        ) : error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : visible.length > 0 ? (
+          <div className="space-y-1">
+            {visible.map((candidate) =>
+              candidate.path ? (
+                <ContextFileCandidateRow
+                  key={candidate.id}
+                  candidate={candidate}
+                  sessionId={sessionId}
+                  onPreviewFile={onPreviewFile}
+                />
+              ) : (
+                <ContextGenericCandidateRow key={candidate.id} candidate={candidate} />
+              ),
+            )}
+            {candidates.length > visible.length || snapshot?.truncated ? (
+              <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
+                {t("workspace.context.more", "还有 {{count}} 条", {
+                  count: Math.max(candidates.length - visible.length, 0),
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <EmptyHint>{t("workspace.context.empty", "暂无推荐上下文")}</EmptyHint>
+        )}
+
+        {stats?.warnings.length ? (
+          <div className="px-2 text-[10px] text-muted-foreground/60">
+            {stats.warnings.slice(0, 2).join(" · ")}
+          </div>
+        ) : null}
+      </div>
     </WorkspaceSection>
   )
 }
@@ -7209,6 +7524,14 @@ export default function WorkspacePanel({
           planState={planState}
           turnActive={turnActive}
           onOpenDiff={onOpenDiff}
+        />
+
+        <ContextRetrievalSection
+          sessionId={sessionId}
+          incognito={incognito}
+          turnActive={turnActive}
+          workingDir={effectiveWorkingDir}
+          onPreviewFile={onPreviewFile}
         />
 
         <LspDiagnosticsSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />

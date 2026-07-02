@@ -102,6 +102,28 @@ pub struct LspDiagnosticsSnapshot {
     pub warnings: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LspSymbol {
+    pub name: String,
+    pub kind: Option<String>,
+    pub detail: Option<String>,
+    pub path: Option<String>,
+    pub uri: Option<String>,
+    pub range: Option<LspRange>,
+    pub server: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LspWorkspaceSymbolsSnapshot {
+    pub session_id: String,
+    pub workspace_root: Option<String>,
+    pub query: String,
+    pub symbols: Vec<LspSymbol>,
+    pub errors: Vec<String>,
+}
+
 #[derive(Debug)]
 struct LspClient {
     config: LspServerConfig,
@@ -449,6 +471,70 @@ pub async fn diagnostics_for_session(
         files,
         errors,
         warnings,
+    })
+}
+
+pub async fn workspace_symbols_for_session(
+    db: &SessionDB,
+    session_id: &str,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<LspWorkspaceSymbolsSnapshot> {
+    let query = query.trim();
+    let meta = db
+        .get_session(session_id)?
+        .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+    let workspace_root = effective_working_dir_for_meta(&meta)
+        .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok());
+    let Some(root) = workspace_root.clone() else {
+        return Ok(LspWorkspaceSymbolsSnapshot {
+            session_id: session_id.to_string(),
+            workspace_root,
+            query: query.to_string(),
+            symbols: Vec::new(),
+            errors: Vec::new(),
+        });
+    };
+
+    let limit = limit.unwrap_or(50).clamp(1, 100);
+    let clients = match ensure_clients_for_root(&root).await {
+        Ok(clients) => clients,
+        Err(e) => {
+            return Ok(LspWorkspaceSymbolsSnapshot {
+                session_id: session_id.to_string(),
+                workspace_root: Some(root),
+                query: query.to_string(),
+                symbols: Vec::new(),
+                errors: vec![e.to_string()],
+            });
+        }
+    };
+
+    let mut symbols = Vec::new();
+    let mut errors = Vec::new();
+    for client in clients {
+        if symbols.len() >= limit {
+            break;
+        }
+        let server = client.config.id.to_string();
+        match client
+            .request("workspace/symbol", json!({ "query": query }))
+            .await
+        {
+            Ok(result) => {
+                let normalized = normalize_symbols(&result);
+                collect_symbols(&normalized, &server, &mut symbols, limit);
+            }
+            Err(e) => errors.push(format!("{}: {}", server, e)),
+        }
+    }
+
+    Ok(LspWorkspaceSymbolsSnapshot {
+        session_id: session_id.to_string(),
+        workspace_root: Some(root),
+        query: query.to_string(),
+        symbols,
+        errors,
     })
 }
 
@@ -1069,6 +1155,51 @@ fn normalize_symbol(value: &Value) -> Value {
         "uri": uri,
         "range": range,
         "children": children,
+    })
+}
+
+fn collect_symbols(value: &Value, server: &str, out: &mut Vec<LspSymbol>, limit: usize) {
+    if out.len() >= limit {
+        return;
+    }
+    let Some(arr) = value.as_array() else {
+        return;
+    };
+    for item in arr {
+        if out.len() >= limit {
+            break;
+        }
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !name.is_empty() {
+            out.push(LspSymbol {
+                name: name.to_string(),
+                kind: item.get("kind").and_then(Value::as_str).map(str::to_string),
+                detail: item
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                path: item.get("path").and_then(Value::as_str).map(str::to_string),
+                uri: item.get("uri").and_then(Value::as_str).map(str::to_string),
+                range: item.get("range").and_then(parse_normalized_range),
+                server: server.to_string(),
+            });
+        }
+        if let Some(children) = item.get("children") {
+            collect_symbols(children, server, out, limit);
+        }
+    }
+}
+
+fn parse_normalized_range(value: &Value) -> Option<LspRange> {
+    Some(LspRange {
+        start_line: value.get("startLine")?.as_u64()? as u32,
+        start_column: value.get("startColumn")?.as_u64()? as u32,
+        end_line: value.get("endLine")?.as_u64()? as u32,
+        end_column: value.get("endColumn")?.as_u64()? as u32,
     })
 }
 

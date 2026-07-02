@@ -813,6 +813,8 @@ pub fn run() {
             // LSP diagnostics and semantic navigation (Phase 3.2)
             commands::lsp::get_lsp_status,
             commands::lsp::get_lsp_diagnostics,
+            // Context Retrieval v2 (Phase 3.5 task-aware context ranking)
+            commands::context_retrieval::get_context_retrieval,
             // Review Engine (Phase 3.3 durable local code review)
             commands::review::list_review_runs,
             commands::review::get_review_run,

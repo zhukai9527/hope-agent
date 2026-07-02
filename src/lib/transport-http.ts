@@ -384,6 +384,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   // -- LSP diagnostics --
   get_lsp_status:                  { method: "GET",    path: "/api/sessions/{sessionId}/lsp/status" },
   get_lsp_diagnostics:             { method: "GET",    path: "/api/sessions/{sessionId}/lsp/diagnostics" },
+  get_context_retrieval:           { method: "GET",    path: "/api/sessions/{sessionId}/context-retrieval" },
 
   // -- Review Engine --
   list_review_runs:                { method: "GET",    path: "/api/sessions/{sessionId}/review-runs" },

@@ -641,6 +641,52 @@ export interface LspStatusSnapshot {
   servers: LspServerInfo[];
 }
 
+export type ContextCandidateKind =
+  | "file"
+  | "symbol"
+  | "diagnostic"
+  | "review_finding"
+  | "verification_step"
+  | "url_source";
+
+export interface ContextCandidate {
+  id: string;
+  kind: ContextCandidateKind;
+  title: string;
+  subtitle?: string | null;
+  path?: string | null;
+  line?: number | null;
+  url?: string | null;
+  score: number;
+  reasons: string[];
+  sources: string[];
+  status?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface ContextRetrievalStats {
+  gitChanges: number;
+  artifactFiles: number;
+  diagnostics: number;
+  reviewFindings: number;
+  verificationSteps: number;
+  fileSearchMatches: number;
+  symbols: number;
+  urlSources: number;
+  warnings: string[];
+}
+
+export interface ContextRetrievalSnapshot {
+  sessionId: string;
+  query?: string | null;
+  workspaceRoot?: string | null;
+  candidates: ContextCandidate[];
+  stats: ContextRetrievalStats;
+  truncated: boolean;
+  disabledReason?: string | null;
+  generatedAt: string;
+}
+
 export type ReviewRunState = "running" | "completed" | "failed" | "cancelled";
 export type ReviewSeverity = "p0" | "p1" | "p2" | "p3";
 export type ReviewVerdict = "confirmed" | "plausible" | "refuted";

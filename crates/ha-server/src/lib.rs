@@ -1383,6 +1383,11 @@ fn build_router_with_cors(
             "/sessions/{sid}/lsp/diagnostics",
             get(routes::lsp::get_lsp_diagnostics),
         )
+        // Context Retrieval v2 (Phase 3.5 task-aware context ranking)
+        .route(
+            "/sessions/{sid}/context-retrieval",
+            get(routes::context_retrieval::get_context_retrieval),
+        )
         // Review Engine (Phase 3.3 durable local code review)
         .route(
             "/sessions/{sid}/review-runs",
