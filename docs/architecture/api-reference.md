@@ -465,8 +465,12 @@ Smart Verification owner API 管理 durable validation run。`plan_smart_verific
 | Tauri Command | HTTP | 状态 |
 |---|---|---|
 | `run_coding_task_eval_fixture` | `POST /api/coding-eval/task-fixtures/run` | ✅ |
+| `list_coding_eval_gold_tasks` | `GET /api/coding-eval/gold-tasks` | ✅ |
+| `run_coding_eval_gold_task_pack` | `POST /api/coding-eval/gold-tasks/run` | ✅ |
 
-Coding Eval owner API 运行一份完整 fixture JSON，创建临时 git repo 与真实 session / goal / task / workflow seed。`runs.execution.mode="agent"` 会按 fixture 提供的 `providers` / `modelChain` 调用 `run_chat_engine`，创建 user message + chat turn，让 agent 从 task prompt 开始执行；`mode="fixture_patch"` 用于无模型回归，只在执行阶段写入 `repo.changes`。随后 API 调用生产 Review / Smart Verification / Context Retrieval，并按 `fixture.task` 对候选 diff 做 task-level scoring。它返回 `FixtureReport`，可包含 `execution` / `task` report；`runs.task.recordEvalRun` 默认把结果写入 `coding_eval_runs(suite='task_level_coding_eval')` 供 Improvement Loop / Dashboard 消费。完整契约见 [Coding Eval 控制面评测](coding-eval.md)。
+Coding Eval owner API 运行一份完整 fixture JSON，创建临时 git repo 与真实 session / goal / task / workflow seed。`runs.execution.mode="agent"` 会按 fixture 提供的 `providers` / `modelChain` 调用 `run_chat_engine`，创建 user message + chat turn，让 agent 从 task prompt 开始执行；`mode="fixture_patch"` 用于无模型回归，只在执行阶段写入 `repo.changes`。随后 API 调用生产 Review / Smart Verification / Context Retrieval，并按 `fixture.task` 对候选 diff 做 task-level scoring。它返回 `FixtureReport`，可包含 `execution` / `task` report；`runs.task.recordEvalRun` 默认把结果写入 `coding_eval_runs(suite='task_level_coding_eval')` 供 Improvement Loop / Dashboard 消费。
+
+Gold Task Pack API 是 Phase 5.3 的批量入口：`list_coding_eval_gold_tasks` 返回内置 active gold task registry；`run_coding_eval_gold_task_pack` / `POST /api/coding-eval/gold-tasks/run` 接收 `{ "input": { "ids": [], "statuses": [], "taskTypes": [], "maxTasks": 2, "recordEvalRuns": true, "evaluateGoal": true } }`，把自动化 gold tasks materialize 成普通 fixture 后批量运行，返回 `GoldTaskPackReport`。默认只跑已自动化的 active cases，且默认走 `fixture_patch`，不访问外部模型。完整契约见 [Coding Eval 控制面评测](coding-eval.md)。
 
 ### Coding Improvement Loop
 

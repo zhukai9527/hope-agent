@@ -1135,6 +1135,62 @@ export interface CodingDistilledCandidate {
   fingerprint: string;
 }
 
+export interface CodingEvalGoldTaskPackRunInput {
+  ids?: string[];
+  statuses?: string[];
+  taskTypes?: string[];
+  includeUnautomated?: boolean;
+  maxTasks?: number | null;
+  recordEvalRuns?: boolean;
+  evaluateGoal?: boolean;
+}
+
+export interface CodingEvalGoldTaskPackSummary {
+  packId: string;
+  sourceDoc: string;
+  totalCases: number;
+  automatedCases: number;
+  activeCases: number;
+  cases: CodingEvalGoldTaskCaseSummary[];
+}
+
+export interface CodingEvalGoldTaskCaseSummary {
+  id: string;
+  taskType: string;
+  title: string;
+  status: string;
+  source: string;
+  executionMode: string;
+  automationStatus: string;
+  fixtureName?: string | null;
+  expectedArtifacts: string[];
+  requiresSeededState: boolean;
+  likelyFiles: string[];
+  allowedValidation: string[];
+  successCriteria: string[];
+}
+
+export interface CodingEvalGoldTaskPackReport {
+  packId: string;
+  sourceDoc: string;
+  selectedCases: number;
+  automatedCases: number;
+  skippedCases: number;
+  passedCases: number;
+  failedCases: number;
+  totalChecks: number;
+  passed: boolean;
+  cases: CodingEvalGoldTaskCaseRunReport[];
+}
+
+export interface CodingEvalGoldTaskCaseRunReport {
+  case: CodingEvalGoldTaskCaseSummary;
+  status: string;
+  fixtureName?: string | null;
+  report?: CodingEvalFixtureReport | null;
+  error?: string | null;
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

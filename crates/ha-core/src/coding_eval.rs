@@ -2,9 +2,9 @@
 //!
 //! Fixtures create temporary git repositories, seed real session / goal / task /
 //! workflow state, then drive production Context Retrieval, Review, Smart
-//! Verification, and task-level eval scoring APIs. No LLM is involved; project
-//! validation commands only run when a fixture explicitly opts into workflow
-//! validation.
+//! Verification, optional Agent execution, and task-level eval scoring APIs.
+//! Project validation commands only run when a fixture explicitly opts into
+//! workflow validation.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -49,6 +49,83 @@ pub struct CodingEvalFixture {
     pub runs: FixtureRuns,
     #[serde(default)]
     pub checks: FixtureChecks,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoldTaskPackRunInput {
+    #[serde(default)]
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub statuses: Vec<String>,
+    #[serde(default)]
+    pub task_types: Vec<String>,
+    #[serde(default)]
+    pub include_unautomated: bool,
+    #[serde(default)]
+    pub max_tasks: Option<usize>,
+    #[serde(default = "default_true")]
+    pub record_eval_runs: bool,
+    #[serde(default = "default_true")]
+    pub evaluate_goal: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoldTaskPackSummary {
+    pub pack_id: String,
+    pub source_doc: String,
+    pub total_cases: usize,
+    pub automated_cases: usize,
+    pub active_cases: usize,
+    pub cases: Vec<GoldTaskCaseSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoldTaskCaseSummary {
+    pub id: String,
+    pub task_type: String,
+    pub title: String,
+    pub status: String,
+    pub source: String,
+    pub execution_mode: String,
+    pub automation_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixture_name: Option<String>,
+    pub expected_artifacts: Vec<String>,
+    pub requires_seeded_state: bool,
+    pub likely_files: Vec<String>,
+    pub allowed_validation: Vec<String>,
+    pub success_criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoldTaskPackReport {
+    pub pack_id: String,
+    pub source_doc: String,
+    pub selected_cases: usize,
+    pub automated_cases: usize,
+    pub skipped_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    pub total_checks: usize,
+    pub passed: bool,
+    pub cases: Vec<GoldTaskCaseRunReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoldTaskCaseRunReport {
+    pub case: GoldTaskCaseSummary,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixture_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<FixtureReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -686,6 +763,90 @@ pub fn load_fixtures() -> Result<Vec<CodingEvalFixture>> {
         out.push(fixture);
     }
     Ok(out)
+}
+
+pub fn gold_task_pack_summary() -> GoldTaskPackSummary {
+    let cases = gold_task_cases();
+    summarize_gold_task_pack(&cases)
+}
+
+pub async fn run_gold_task_pack(
+    db: Arc<SessionDB>,
+    input: GoldTaskPackRunInput,
+) -> Result<GoldTaskPackReport> {
+    let selected = select_gold_task_cases(&gold_task_cases(), &input);
+    let mut cases = Vec::new();
+    let mut automated_cases = 0usize;
+    let mut skipped_cases = 0usize;
+    let mut passed_cases = 0usize;
+    let mut failed_cases = 0usize;
+    let mut total_checks = 0usize;
+
+    for case in selected {
+        let summary = case.summary();
+        let Some(automation) = case.automation.clone() else {
+            skipped_cases += 1;
+            cases.push(GoldTaskCaseRunReport {
+                case: summary,
+                status: "skipped".to_string(),
+                fixture_name: None,
+                report: None,
+                error: Some("gold task is not automated yet".to_string()),
+            });
+            continue;
+        };
+
+        automated_cases += 1;
+        let fixture = materialize_gold_task_fixture(&case, automation, &input);
+        let fixture_name = fixture.name.clone();
+        match evaluate(db.clone(), &fixture).await {
+            Ok(report) => {
+                total_checks += report.outcomes.len();
+                if report.passed() {
+                    passed_cases += 1;
+                    cases.push(GoldTaskCaseRunReport {
+                        case: summary,
+                        status: "passed".to_string(),
+                        fixture_name: Some(fixture_name),
+                        report: Some(report),
+                        error: None,
+                    });
+                } else {
+                    failed_cases += 1;
+                    cases.push(GoldTaskCaseRunReport {
+                        case: summary,
+                        status: "failed".to_string(),
+                        fixture_name: Some(fixture_name),
+                        report: Some(report),
+                        error: None,
+                    });
+                }
+            }
+            Err(err) => {
+                failed_cases += 1;
+                cases.push(GoldTaskCaseRunReport {
+                    case: summary,
+                    status: "error".to_string(),
+                    fixture_name: Some(fixture_name),
+                    report: None,
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok(GoldTaskPackReport {
+        pack_id: GOLD_TASK_PACK_ID.to_string(),
+        source_doc: GOLD_TASK_SOURCE_DOC.to_string(),
+        selected_cases: cases.len(),
+        automated_cases,
+        skipped_cases,
+        passed_cases,
+        failed_cases,
+        total_checks,
+        passed: failed_cases == 0 && automated_cases > 0,
+        cases,
+    })
 }
 
 pub async fn evaluate(db: Arc<SessionDB>, fixture: &CodingEvalFixture) -> Result<FixtureReport> {
@@ -2538,6 +2699,614 @@ fn check_improvement(
     }
 }
 
+const GOLD_TASK_PACK_ID: &str = "phase5-gold-task-pack";
+const GOLD_TASK_SOURCE_DOC: &str = "docs/roadmap/coding-eval-tasks.md";
+
+#[derive(Debug, Clone)]
+struct GoldTaskCase {
+    id: String,
+    task_type: String,
+    title: String,
+    status: String,
+    source: String,
+    execution_mode: String,
+    prompt: String,
+    expected_behavior: Vec<String>,
+    forbidden_behavior: Vec<String>,
+    likely_files: Vec<String>,
+    expected_artifacts: Vec<String>,
+    requires_seeded_state: bool,
+    allowed_validation: Vec<String>,
+    success_criteria: Vec<String>,
+    failure_notes: Vec<String>,
+    automation: Option<GoldTaskAutomation>,
+}
+
+#[derive(Debug, Clone)]
+struct GoldTaskAutomation {
+    fixture_name: String,
+    baseline_path: String,
+    baseline_text: String,
+    candidate_text: String,
+    required_diff_contains: Vec<String>,
+    context_query: String,
+    goal_objective: String,
+    goal_completion_criteria: String,
+    completed_task: String,
+}
+
+impl GoldTaskCase {
+    fn summary(&self) -> GoldTaskCaseSummary {
+        GoldTaskCaseSummary {
+            id: self.id.clone(),
+            task_type: self.task_type.clone(),
+            title: self.title.clone(),
+            status: self.status.clone(),
+            source: self.source.clone(),
+            execution_mode: self.execution_mode.clone(),
+            automation_status: if self.automation.is_some() {
+                "automated".to_string()
+            } else {
+                "manual".to_string()
+            },
+            fixture_name: self
+                .automation
+                .as_ref()
+                .map(|automation| automation.fixture_name.clone()),
+            expected_artifacts: self.expected_artifacts.clone(),
+            requires_seeded_state: self.requires_seeded_state,
+            likely_files: self.likely_files.clone(),
+            allowed_validation: self.allowed_validation.clone(),
+            success_criteria: self.success_criteria.clone(),
+        }
+    }
+}
+
+fn summarize_gold_task_pack(cases: &[GoldTaskCase]) -> GoldTaskPackSummary {
+    GoldTaskPackSummary {
+        pack_id: GOLD_TASK_PACK_ID.to_string(),
+        source_doc: GOLD_TASK_SOURCE_DOC.to_string(),
+        total_cases: cases.len(),
+        automated_cases: cases
+            .iter()
+            .filter(|case| case.automation.is_some())
+            .count(),
+        active_cases: cases.iter().filter(|case| case.status == "active").count(),
+        cases: cases.iter().map(GoldTaskCase::summary).collect(),
+    }
+}
+
+fn select_gold_task_cases(
+    cases: &[GoldTaskCase],
+    input: &GoldTaskPackRunInput,
+) -> Vec<GoldTaskCase> {
+    let id_filter = input
+        .ids
+        .iter()
+        .map(|id| id.trim().to_ascii_uppercase())
+        .filter(|id| !id.is_empty())
+        .collect::<HashSet<_>>();
+    let status_filter = input
+        .statuses
+        .iter()
+        .map(|status| status.trim().to_ascii_lowercase())
+        .filter(|status| !status.is_empty())
+        .collect::<HashSet<_>>();
+    let type_filter = input
+        .task_types
+        .iter()
+        .map(|task_type| task_type.trim().to_ascii_lowercase())
+        .filter(|task_type| !task_type.is_empty())
+        .collect::<HashSet<_>>();
+
+    let mut selected = cases
+        .iter()
+        .filter(|case| {
+            (id_filter.is_empty() || id_filter.contains(&case.id.to_ascii_uppercase()))
+                && if status_filter.is_empty() {
+                    !id_filter.is_empty() || case.status == "active"
+                } else {
+                    status_filter.contains(&case.status.to_ascii_lowercase())
+                }
+                && (type_filter.is_empty()
+                    || type_filter.contains(&case.task_type.to_ascii_lowercase()))
+                && (input.include_unautomated || !id_filter.is_empty() || case.automation.is_some())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(max) = input.max_tasks {
+        selected.truncate(max);
+    }
+    selected
+}
+
+fn materialize_gold_task_fixture(
+    case: &GoldTaskCase,
+    automation: GoldTaskAutomation,
+    input: &GoldTaskPackRunInput,
+) -> CodingEvalFixture {
+    let candidate_path = automation.baseline_path.clone();
+    let fixture_name = automation.fixture_name.clone();
+    let forbidden_files = vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()];
+    let mut required_context = vec![CandidateExpectation {
+        kind: Some("file".to_string()),
+        path_suffix: Some(candidate_path.clone()),
+        ..Default::default()
+    }];
+    required_context.push(CandidateExpectation {
+        kind: Some("verification_step".to_string()),
+        title_contains: Some("Check diff whitespace".to_string()),
+        ..Default::default()
+    });
+
+    CodingEvalFixture {
+        name: fixture_name,
+        description: format!(
+            "Gold task {} materialized from {} for deterministic replay.",
+            case.id, GOLD_TASK_SOURCE_DOC
+        ),
+        task: Some(CodingTaskEvalSpec {
+            id: case.id.clone(),
+            task_type: case.task_type.clone(),
+            title: case.title.clone(),
+            source: case.source.clone(),
+            prompt: case.prompt.clone(),
+            execution_mode: case.execution_mode.clone(),
+            expected_behavior: case.expected_behavior.clone(),
+            forbidden_behavior: case.forbidden_behavior.clone(),
+            likely_files: case.likely_files.clone(),
+            expected_artifacts: case.expected_artifacts.clone(),
+            requires_seeded_state: case.requires_seeded_state,
+            allowed_validation: case.allowed_validation.clone(),
+            success_criteria: case.success_criteria.clone(),
+            failure_notes: case.failure_notes.clone(),
+        }),
+        repo: RepoFixture {
+            files: vec![FileFixture {
+                path: candidate_path.clone(),
+                text: automation.baseline_text,
+            }],
+            changes: vec![FileFixture {
+                path: candidate_path.clone(),
+                text: automation.candidate_text,
+            }],
+        },
+        setup: FixtureSetup {
+            goal: Some(GoalFixture {
+                objective: automation.goal_objective,
+                completion_criteria: automation.goal_completion_criteria,
+            }),
+            tasks: vec![TaskFixture {
+                content: automation.completed_task,
+                active_form: None,
+                status: "completed".to_string(),
+            }],
+            workflow: None,
+        },
+        runs: FixtureRuns {
+            execution: Some(AgentExecutionEvalRun {
+                mode: "fixture_patch".to_string(),
+                ..Default::default()
+            }),
+            review: Some(ReviewEvalRun::default()),
+            verification: Some(VerificationEvalRun::default()),
+            context: Some(ContextEvalRun {
+                query: Some(automation.context_query),
+                limit: Some(12),
+                ..Default::default()
+            }),
+            task: Some(TaskLevelEvalRun {
+                record_eval_run: input.record_eval_runs,
+                evaluate_goal: input.evaluate_goal,
+            }),
+            ..Default::default()
+        },
+        checks: FixtureChecks {
+            execution: Some(AgentExecutionCheck {
+                expected_mode: Some("fixture_patch".to_string()),
+                expected_status: Some("completed".to_string()),
+                expected_changed_files: vec![candidate_path.clone()],
+                forbidden_changed_files: forbidden_files.clone(),
+                require_turn: Some(false),
+                response_contains: vec!["fixture patch applied".to_string()],
+                ..Default::default()
+            }),
+            review: Some(ReviewCheck {
+                max_findings: Some(0),
+                expect_focused: Some(false),
+                ..Default::default()
+            }),
+            verification: Some(VerificationCheck {
+                expected_commands: vec!["git diff --check".to_string()],
+                forbidden_commands: vec!["cargo test --workspace".to_string()],
+                expect_focused: Some(false),
+                ..Default::default()
+            }),
+            context: Some(ContextCheck {
+                critical: required_context.clone(),
+                min_critical_recall: Some(1.0),
+                min_precision: Some(0.25),
+                max_candidates: Some(12),
+                expect_action_paths: vec![candidate_path.clone()],
+            }),
+            task: Some(TaskLevelCheck {
+                expected_outcome: Some("pass".to_string()),
+                min_score: Some(1.0),
+                expected_changed_files: vec![candidate_path.clone()],
+                forbidden_changed_files: forbidden_files,
+                required_diff_contains: automation.required_diff_contains,
+                forbidden_diff_contains: vec!["println!".to_string(), "TODO:".to_string()],
+                expected_validation_commands: vec!["git diff --check".to_string()],
+                forbidden_validation_commands: vec!["cargo test --workspace".to_string()],
+                max_changed_files: Some(1),
+                require_review: Some(true),
+                require_verification: Some(true),
+                require_context: Some(true),
+                require_goal_evaluation: Some(input.evaluate_goal),
+                required_context,
+            }),
+            ..Default::default()
+        },
+    }
+}
+
+fn gold_task_cases() -> Vec<GoldTaskCase> {
+    vec![
+        manual_gold_task_case(
+            "CE-BUG-001",
+            "bugfix",
+            "修复 tool_search select 查询大小写与空格容错",
+        ),
+        manual_gold_task_case(
+            "CE-BUG-002",
+            "bugfix",
+            "修复 Plan quality 文案误导导致执行期仍修改 plan",
+        ),
+        manual_gold_task_case(
+            "CE-BUG-003",
+            "bugfix",
+            "修复文件预览鉴权说明遗漏 HTTP by-path 场景",
+        ),
+        manual_gold_task_case(
+            "CE-BUG-004",
+            "bugfix",
+            "修复 async job 配置中 0 语义解释不一致",
+        ),
+        manual_gold_task_case(
+            "CE-BUG-005",
+            "bugfix",
+            "修复 knowledge access 文档中 owner/agent 平面混写",
+        ),
+        manual_gold_task_case(
+            "CE-TEST-001",
+            "test_gap",
+            "为 Plan 状态机非法转移补 fixture 说明",
+        ),
+        manual_gold_task_case(
+            "CE-TEST-002",
+            "test_gap",
+            "为 ToolDefinition deferred 过滤补回归用例设计",
+        ),
+        manual_gold_task_case(
+            "CE-TEST-003",
+            "test_gap",
+            "为 incognito 文件预览旁路补测试计划",
+        ),
+        gold_task_case(
+            "CE-TEST-004",
+            "test_gap",
+            "为 workflow loop 停止条件补 eval fixture",
+            "active",
+            "roadmap",
+            "design",
+            "基于 coding roadmap，设计一个 eval fixture，用来测试自动 repair loop 在连续两轮没有有效 diff 时必须停止并 ask_user。",
+            &[
+                "明确初始条件、loop 行为、停止条件",
+                "不要求实现 workflow engine",
+            ],
+            &["不写生产代码"],
+            &[
+                "docs/roadmap/coding-eval.md",
+                "docs/roadmap/coding-capability-roadmap.md",
+            ],
+            &["eval_fixture", "design_notes"],
+            false,
+            &["git diff --check"],
+            &["fixture 可被未来 workflow eval 复用"],
+            &["连续两轮无有效 diff 后必须停止并 ask_user"],
+            Some(gold_task_automation(
+                "gold_task_ce_test_004_repair_loop_stop",
+                "docs/evals/ce-test-004-repair-loop-stop.md",
+                "# CE-TEST-004\n\nBaseline repair loop eval notes.\n",
+                "# CE-TEST-004\n\nBaseline repair loop eval notes.\n\n## Replay Fixture Design\n\nThe repair loop fixture seeds a run with two consecutive no-effective-diff attempts, then expects the workflow to stop, mark the loop blocked, and ask the user for new direction instead of spinning forever.\n\n## Required Evidence\n\n- initial failing validation\n- attempt 1 produced no effective diff\n- attempt 2 produced no effective diff\n- terminal ask_user checkpoint\n",
+                &[
+                    "two consecutive no-effective-diff attempts",
+                    "terminal ask_user checkpoint",
+                ],
+                "repair loop no effective diff ask user",
+                "Design repair loop stop fixture",
+                "A replayable fixture design exists for stopping after two no-effective-diff attempts.",
+                "Design CE-TEST-004 repair loop stop fixture",
+            )),
+        ),
+        manual_gold_task_case(
+            "CE-FE-001",
+            "frontend_ts",
+            "调整 Workspace 面板空态文案但不改布局",
+        ),
+        manual_gold_task_case(
+            "CE-FE-002",
+            "frontend_ts",
+            "给 loop 模式控制设计前端状态入口草案",
+        ),
+        manual_gold_task_case(
+            "CE-FE-003",
+            "frontend_ts",
+            "修复文件类型图标 fallback 的类型收窄",
+        ),
+        manual_gold_task_case(
+            "CE-FE-004",
+            "frontend_ts",
+            "调整 PlanPanel 执行期只读提示的 i18n key 规划",
+        ),
+        gold_task_case(
+            "CE-RUST-001",
+            "rust_logic",
+            "为 ToolDefinition v2 增加只读/破坏性枚举设计",
+            "active",
+            "roadmap",
+            "design",
+            "基于现有 ToolDefinition，设计 read_only/destructive 元数据应该如何表达。只输出设计和迁移步骤，不写代码。",
+            &[
+                "区分只读、写入、破坏性、开放世界",
+                "说明和 permission engine 的关系",
+            ],
+            &["不绕过现有 permission::engine"],
+            &[
+                "crates/ha-core/src/tools/definitions/types.rs",
+                "crates/ha-core/src/tools/execution.rs",
+                "docs/architecture/tool-system.md",
+            ],
+            &["design_notes"],
+            false,
+            &["git diff --check"],
+            &["设计可渐进迁移"],
+            &["permission::engine 仍是执行期安全边界"],
+            Some(gold_task_automation(
+                "gold_task_ce_rust_001_tool_definition_safety",
+                "docs/evals/ce-rust-001-tool-definition-safety.md",
+                "# CE-RUST-001\n\nBaseline ToolDefinition v2 design notes.\n",
+                "# CE-RUST-001\n\nBaseline ToolDefinition v2 design notes.\n\n## Safety Metadata Shape\n\nToolDefinition v2 should expose capability_kind as one of read_only, write, destructive, or open_world. This metadata is descriptive for planning, search, and review surfaces.\n\n## Permission Boundary\n\npermission::engine remains the execution-time safety boundary. The metadata can help route review and verification, but it must never auto-approve protected paths, dangerous commands, or strict approval reasons.\n\n## Migration\n\nStart by annotating core read-only tools, then write tools, then destructive/open-world tools. Unknown tools default to open_world until explicitly classified.\n",
+                &[
+                    "permission::engine remains the execution-time safety boundary",
+                    "Unknown tools default to open_world",
+                ],
+                "ToolDefinition read only destructive permission engine",
+                "Design ToolDefinition v2 safety metadata",
+                "ToolDefinition v2 design keeps permission::engine as the runtime boundary.",
+                "Design CE-RUST-001 ToolDefinition v2 safety metadata",
+            )),
+        ),
+        manual_gold_task_case(
+            "CE-RUST-002",
+            "rust_logic",
+            "设计 WorkflowRun trace 的 Rust 类型边界",
+        ),
+        manual_gold_task_case(
+            "CE-RUST-003",
+            "rust_logic",
+            "收敛 validation command 选择器的 crate 边界",
+        ),
+        manual_gold_task_case(
+            "CE-REV-001",
+            "review",
+            "审查一个 seeded diff 中的无关重构和验证缺口",
+        ),
+        gold_task_case(
+            "CE-REV-002",
+            "review",
+            "审查 review verifier 三态结果是否过度自信",
+            "active",
+            "roadmap",
+            "review",
+            "审查 review-engine 方案中的 verifier 三态设计。重点判断 CONFIRMED / PLAUSIBLE / REFUTED 的边界是否会导致过度自信。",
+            &[
+                "能指出 PLAUSIBLE 的保守价值",
+                "REFUTED 必须有代码证据",
+            ],
+            &["不把所有不确定问题都降为 REFUTED"],
+            &["docs/roadmap/coding-capability-roadmap.md"],
+            &["review_findings"],
+            false,
+            &["git diff --check"],
+            &["能产出可执行的 review-engine 设计反馈"],
+            &["REFUTED 必须有代码证据，不能只是未复现"],
+            Some(gold_task_automation(
+                "gold_task_ce_rev_002_review_verifier_tristate",
+                "docs/evals/ce-rev-002-review-verifier-tristate.md",
+                "# CE-REV-002\n\nBaseline verifier review notes.\n",
+                "# CE-REV-002\n\nBaseline verifier review notes.\n\n## Review Finding\n\nThe verifier should keep PLAUSIBLE as the conservative outcome when evidence is incomplete. REFUTED requires positive code evidence that contradicts the finding, not merely an inability to reproduce it.\n\n## Actionable Recommendation\n\nDocument the evidence threshold beside the tri-state labels and keep unresolved uncertainty out of REFUTED.\n",
+                &[
+                    "REFUTED requires positive code evidence",
+                    "keep PLAUSIBLE as the conservative outcome",
+                ],
+                "review verifier PLAUSIBLE REFUTED evidence threshold",
+                "Review verifier tri-state confidence",
+                "The tri-state review notes explain why REFUTED requires positive code evidence.",
+                "Review CE-REV-002 verifier tri-state semantics",
+            )),
+        ),
+        gold_task_case(
+            "CE-NAV-001",
+            "repo_navigation",
+            "定位新增 coding workflow 应接入哪些现有模块",
+            "active",
+            "roadmap",
+            "navigation",
+            "不写代码。请调研如果新增 ha-core::workflow，应该接入哪些现有模块，哪些模块不能被绕过。",
+            &[
+                "覆盖 Chat Engine、Plan、Task、Subagent、Async Jobs、Hooks、Permission、SessionDB",
+                "明确不要新建平行 job API",
+            ],
+            &["不写代码", "不只凭文件名猜测"],
+            &[
+                "crates/ha-core/src/chat_engine",
+                "crates/ha-core/src/plan",
+                "crates/ha-core/src/subagent",
+                "crates/ha-core/src/async_jobs",
+                "crates/ha-core/src/hooks",
+            ],
+            &["navigation_report"],
+            false,
+            &["git diff --check"],
+            &["输出能作为 workflow.md 的输入"],
+            &["不能绕过 JobManager、HookDispatcher、permission engine 和 Plan/Task 状态机"],
+            Some(gold_task_automation(
+                "gold_task_ce_nav_001_workflow_module_boundaries",
+                "docs/evals/ce-nav-001-workflow-boundaries.md",
+                "# CE-NAV-001\n\nBaseline workflow navigation notes.\n",
+                "# CE-NAV-001\n\nBaseline workflow navigation notes.\n\n## Required Integration Points\n\nA new coding workflow path must enter through Chat Engine turn boundaries, persist state in SessionDB, represent visible progress through Task, delegate background work through JobManager, fire hooks through HookDispatcher, and keep permission::engine as the execution gate.\n\n## Red Lines\n\nDo not create a parallel background job API, bypass Plan/Task state, or directly execute tools outside the permission system.\n",
+                &[
+                    "delegate background work through JobManager",
+                    "fire hooks through HookDispatcher",
+                    "keep permission::engine as the execution gate",
+                ],
+                "workflow module boundaries JobManager HookDispatcher permission engine",
+                "Map workflow module boundaries",
+                "The navigation report identifies workflow integration points and red lines.",
+                "Map CE-NAV-001 workflow module boundaries",
+            )),
+        ),
+        gold_task_case(
+            "CE-NAV-002",
+            "repo_navigation",
+            "分析 LSP 能力与 ACP/IDE 上下文的接合点",
+            "active",
+            "roadmap",
+            "navigation",
+            "不写代码。请调研 LSP 能力未来应该如何接入 ACP/IDE 场景。重点看 open files、selection、diagnostics、symbols 应该进入 prompt、tool 还是事件。",
+            &[
+                "区分 prompt context、tool call、passive diagnostics",
+                "说明和 ACP 现有事件/工具的关系",
+            ],
+            &["不实现 LSP", "不把 IDE 上下文无预算地塞进 system prompt 前缀"],
+            &[
+                "docs/architecture/acp.md",
+                "docs/architecture/prompt-system.md",
+                "crates/ha-core/src/acp",
+            ],
+            &["navigation_report"],
+            false,
+            &["git diff --check"],
+            &["输出能作为 lsp.md 的输入"],
+            &["必须区分 prompt tail、按需工具和 passive diagnostics"],
+            Some(gold_task_automation(
+                "gold_task_ce_nav_002_lsp_acp_context",
+                "docs/evals/ce-nav-002-lsp-acp-context.md",
+                "# CE-NAV-002\n\nBaseline LSP/ACP navigation notes.\n",
+                "# CE-NAV-002\n\nBaseline LSP/ACP navigation notes.\n\n## Context Placement\n\nOpen files and selection belong in prompt tail or per-turn IDE context, diagnostics can flow as passive signals and review/context candidates, and symbols should be available through bounded tools instead of being stuffed into the cacheable system prompt prefix.\n\n## ACP Relationship\n\nACP should transport IDE context snapshots and events, while the agent chooses explicit tools for deeper symbol reads.\n",
+                &[
+                    "Open files and selection belong in prompt tail",
+                    "symbols should be available through bounded tools",
+                    "ACP should transport IDE context snapshots",
+                ],
+                "LSP ACP IDE prompt tail diagnostics symbols",
+                "Map LSP and ACP context boundaries",
+                "The navigation report separates prompt tail, passive diagnostics, and bounded symbol tools.",
+                "Map CE-NAV-002 LSP ACP context boundaries",
+            )),
+        ),
+    ]
+}
+
+fn manual_gold_task_case(id: &str, task_type: &str, title: &str) -> GoldTaskCase {
+    gold_task_case(
+        id,
+        task_type,
+        title,
+        "draft",
+        "roadmap",
+        "manual",
+        "See docs/roadmap/coding-eval-tasks.md for the calibrated manual task prompt.",
+        &["Manual task is defined in the roadmap source document."],
+        &["Do not run as an automated fixture until calibrated and materialized."],
+        &[],
+        &[],
+        false,
+        &[],
+        &["Manual calibration is complete before automation."],
+        &[],
+        None,
+    )
+}
+
+fn gold_task_case(
+    id: &str,
+    task_type: &str,
+    title: &str,
+    status: &str,
+    source: &str,
+    execution_mode: &str,
+    prompt: &str,
+    expected_behavior: &[&str],
+    forbidden_behavior: &[&str],
+    likely_files: &[&str],
+    expected_artifacts: &[&str],
+    requires_seeded_state: bool,
+    allowed_validation: &[&str],
+    success_criteria: &[&str],
+    failure_notes: &[&str],
+    automation: Option<GoldTaskAutomation>,
+) -> GoldTaskCase {
+    GoldTaskCase {
+        id: id.to_string(),
+        task_type: task_type.to_string(),
+        title: title.to_string(),
+        status: status.to_string(),
+        source: source.to_string(),
+        execution_mode: execution_mode.to_string(),
+        prompt: prompt.to_string(),
+        expected_behavior: strings(expected_behavior),
+        forbidden_behavior: strings(forbidden_behavior),
+        likely_files: strings(likely_files),
+        expected_artifacts: strings(expected_artifacts),
+        requires_seeded_state,
+        allowed_validation: strings(allowed_validation),
+        success_criteria: strings(success_criteria),
+        failure_notes: strings(failure_notes),
+        automation,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gold_task_automation(
+    fixture_name: &str,
+    baseline_path: &str,
+    baseline_text: &str,
+    candidate_text: &str,
+    required_diff_contains: &[&str],
+    context_query: &str,
+    goal_objective: &str,
+    goal_completion_criteria: &str,
+    completed_task: &str,
+) -> GoldTaskAutomation {
+    GoldTaskAutomation {
+        fixture_name: fixture_name.to_string(),
+        baseline_path: baseline_path.to_string(),
+        baseline_text: baseline_text.to_string(),
+        candidate_text: candidate_text.to_string(),
+        required_diff_contains: strings(required_diff_contains),
+        context_query: context_query.to_string(),
+        goal_objective: goal_objective.to_string(),
+        goal_completion_criteria: goal_completion_criteria.to_string(),
+        completed_task: completed_task.to_string(),
+    }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
 fn prepare_repo(base: &Path, fixture: &CodingEvalFixture) -> Result<PathBuf> {
     let repo_root = base.join(sanitize_name(&fixture.name));
     std::fs::create_dir_all(&repo_root)?;
@@ -2959,5 +3728,75 @@ mod tests {
             execution.response.as_deref(),
             Some("agent execution completed")
         );
+    }
+
+    #[test]
+    fn gold_task_pack_summary_exposes_active_automated_cases() {
+        let summary = gold_task_pack_summary();
+        assert_eq!(summary.pack_id, GOLD_TASK_PACK_ID);
+        assert_eq!(summary.source_doc, GOLD_TASK_SOURCE_DOC);
+        assert_eq!(summary.total_cases, 20);
+        assert_eq!(summary.active_cases, 5);
+        assert_eq!(summary.automated_cases, 5);
+        assert!(summary.cases.iter().any(|case| case.id == "CE-TEST-004"
+            && case.automation_status == "automated"
+            && case.fixture_name.is_some()));
+    }
+
+    #[tokio::test]
+    async fn gold_task_pack_runs_fixture_patch_subset() {
+        let dir = tempfile::tempdir().expect("temp db dir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel db migration");
+        let report = run_gold_task_pack(
+            db,
+            GoldTaskPackRunInput {
+                ids: vec!["CE-TEST-004".to_string(), "CE-RUST-001".to_string()],
+                max_tasks: Some(2),
+                record_eval_runs: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run gold task pack");
+
+        assert!(report.passed, "gold task pack failed: {:?}", report.cases);
+        assert_eq!(report.selected_cases, 2);
+        assert_eq!(report.automated_cases, 2);
+        assert_eq!(report.skipped_cases, 0);
+        assert_eq!(report.passed_cases, 2);
+        assert!(report.total_checks > 0);
+        assert!(report
+            .cases
+            .iter()
+            .all(|case| case.report.as_ref().is_some_and(FixtureReport::passed)));
+    }
+
+    #[tokio::test]
+    async fn gold_task_pack_skipped_only_is_not_passed() {
+        let dir = tempfile::tempdir().expect("temp db dir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("session db"));
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel db migration");
+        let report = run_gold_task_pack(
+            db,
+            GoldTaskPackRunInput {
+                ids: vec!["CE-BUG-001".to_string()],
+                include_unautomated: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("run gold task pack");
+
+        assert!(!report.passed, "skipped-only pack must not pass");
+        assert_eq!(report.selected_cases, 1);
+        assert_eq!(report.automated_cases, 0);
+        assert_eq!(report.skipped_cases, 1);
+        assert_eq!(report.failed_cases, 0);
+        assert_eq!(report.cases[0].status, "skipped");
     }
 }

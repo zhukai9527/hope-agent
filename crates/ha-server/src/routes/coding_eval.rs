@@ -1,5 +1,8 @@
 use axum::Json;
-use ha_core::coding_eval::{self, CodingEvalFixture, FixtureReport};
+use ha_core::coding_eval::{
+    self, CodingEvalFixture, FixtureReport, GoldTaskPackReport, GoldTaskPackRunInput,
+    GoldTaskPackSummary,
+};
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -11,11 +14,31 @@ pub struct RunCodingTaskEvalFixtureBody {
     pub fixture: CodingEvalFixture,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunCodingEvalGoldTaskPackBody {
+    pub input: GoldTaskPackRunInput,
+}
+
 pub async fn run_coding_task_eval_fixture(
     Json(body): Json<RunCodingTaskEvalFixtureBody>,
 ) -> Result<Json<FixtureReport>, AppError> {
     let db = session_db()?.clone();
     coding_eval::evaluate(db, &body.fixture)
+        .await
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
+}
+
+pub async fn list_coding_eval_gold_tasks() -> Result<Json<GoldTaskPackSummary>, AppError> {
+    Ok(Json(coding_eval::gold_task_pack_summary()))
+}
+
+pub async fn run_coding_eval_gold_task_pack(
+    Json(body): Json<RunCodingEvalGoldTaskPackBody>,
+) -> Result<Json<GoldTaskPackReport>, AppError> {
+    let db = session_db()?.clone();
+    coding_eval::run_gold_task_pack(db, body.input)
         .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))

@@ -4,11 +4,11 @@
 >
 > 更新时间：2026-06-29
 >
-> 状态：Roadmap / Phase 0 任务草案，尚未自动化
+> 状态：Phase 0 任务草案 + Phase 5.3 Gold Task Pack v1。5 个 `active` 任务已自动化为内置 pack；其余 `draft` 任务仍待试跑校准后逐步纳入。
 
 ## 说明
 
-本文定义第一批 20 个 coding eval 任务草案。它们先用于人工试跑和评估标准校准，不要求立即自动化。
+本文定义第一批 20 个 coding eval 任务草案。Phase 5.3 已把 5 个 `active` 任务接入 `ha-core::coding_eval` 的 Gold Task Pack v1，支持 owner API 批量 materialize / run；其余 `draft` 任务继续用于人工试跑和评估标准校准。
 
 约定：
 
@@ -16,6 +16,7 @@
 - `allowed_validation` 是推荐的最小相关验证，不代表必须全部执行。
 - 所有任务都必须遵守项目 AGENTS：默认单点验证，不主动跑全套 clippy/test/lint。
 - `status=draft` 表示任务还需要试跑校准；通过 1-2 次人工试跑后再改为 `active`。
+- `status=active` 且已进入 Gold Task Pack v1 的任务，会由代码内 typed registry 生成 fixture；文档仍是任务语义来源，运行时不从 Markdown 脆弱解析。
 
 ## 任务总表
 

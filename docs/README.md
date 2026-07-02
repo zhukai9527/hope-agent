@@ -11,8 +11,8 @@
 | 文档 | 说明 |
 | --- | --- |
 | [Coding 能力强化总纲](roadmap/coding-capability-roadmap.md) | 面向 coding-first 的总体路线：调研线索、能力模型、动态 workflow / loop、阶段计划与验收指标 |
-| [Coding Eval 体系方案](roadmap/coding-eval.md) | Phase 0 评测体系：任务 schema、trace、指标、失败分类、人工试跑流程 |
-| [Coding Eval 首批 Gold Tasks](roadmap/coding-eval-tasks.md) | 首批 20 个 coding eval 任务草案，用于人工试跑和指标校准 |
+| [Coding Eval 体系方案](roadmap/coding-eval.md) | Phase 0 评测体系 + Phase 5.1-5.3 task scorer / agent execution / Gold Task Pack v1 索引 |
+| [Coding Eval 首批 Gold Tasks](roadmap/coding-eval-tasks.md) | 首批 20 个 coding eval 任务草案；5 个 active 任务已进入 Gold Task Pack v1 |
 | [Coding Eval Phase 0 完成报告](roadmap/coding-eval-phase0-report.md) | Phase 0 完成审计：5 个校准试跑、schema 修订、失败分类补充与 Phase 1 决策 |
 | [ToolDefinition v2 RFC](roadmap/tool-definition-v2.md) | Phase 1 工具元数据、tool_search v2、deferred 默认策略和 prompt render debug 设计 |
 | [ToolDefinition v2 迁移 Checklist](roadmap/tool-definition-v2-checklist.md) | Phase 1 工具覆盖、默认 deferred 清单和验收状态 |
@@ -74,7 +74,7 @@
 | [Review Engine 控制平面](architecture/review-engine.md) | Durable 本地代码审查：review run/finding/event、profiles、Deep Review 降级、symbol/IDE evidence、Goal evidence、Workspace 代码审查面板与 `/review` | `review.rs`, `slash_commands/`, `components/chat/workspace/` |
 | [Smart Verification 控制平面](architecture/verification-engine.md) | Durable 智能验证选择：基于 diff/项目规则推荐最小检查、后台执行低风险 step、Goal validation evidence、Workspace 验证区块 | `verification.rs`, `components/chat/workspace/` |
 | [Context Retrieval v2](architecture/context-retrieval.md) | 任务感知上下文推荐与行动入口：聚合 Git diff、历史 artifacts、LSP diagnostics/symbols、Review findings、Verification steps、Goal evidence、Tasks、Workflow ops、IDE/ACP context、file search v2 与 URL 来源，并在候选行触发 focused review / verification | `context_retrieval.rs`, `lsp.rs`, `components/chat/workspace/` |
-| [Coding Eval 控制面评测](architecture/coding-eval.md) | Phase 3.7-5.2 确定性 fixture harness + agent execution runner + task-level scorer：临时 git repo + 真实 session/goal/task/workflow/IDE context/improvement state，回归 Review / Smart Verification / Context Retrieval / Improvement Loop 协同质量，并可从 task prompt 执行 agent 后评估候选 diff 是否满足任务级成功标准 | `coding_eval.rs`, `tests/fixtures/coding_eval/` |
+| [Coding Eval 控制面评测](architecture/coding-eval.md) | Phase 3.7-5.3 确定性 fixture harness + agent execution runner + task-level scorer + Gold Task Pack v1：临时 git repo + 真实 session/goal/task/workflow/IDE context/improvement state，回归 Review / Smart Verification / Context Retrieval / Improvement Loop 协同质量，并可从 task prompt 执行 agent 后评估候选 diff 是否满足任务级成功标准 | `coding_eval.rs`, `tests/fixtures/coding_eval/` |
 | [Coding Improvement Loop](architecture/coding-improvement-loop.md) | Phase 4.4 质量趋势与学习闭环：基于 durable Goal/Workflow/Review/Verification/Eval/transcript 数据生成 trend report、workflow retro、transcript distillation、failure feedback、proposal 队列，可预览/应用/晋升 eval、workflow、guidance、skill 产物，并在 Dashboard Learning 中提供全局 / 项目级学习视图 | `coding_improvement.rs`, `dashboard/coding_improvement.rs`, `coding_eval.rs`, `components/chat/workspace/`, `components/dashboard/learning/` |
 | [权限/审批系统](architecture/permission-system.md) | 统一规则引擎 + Default/Smart/Yolo 三模式、Plan 正交、保护路径/危险命令/编辑命令三 list、Smart judge_model + self_confidence、审批弹窗倒计时 | `permission/`, `tools/approval.rs` |
 | [Hooks 系统](architecture/hooks.md)          | 事件 → 可拔插处理器，字段级对齐 Claude Code 协议；28 事件（24 触发 + 4 保留）+ 5 种 handler（command/http/mcp_tool/prompt/agent）+ user/managed/project/local 四 scope UNION + 配置热重载 + JSONL transcript 镜像 | `hooks/`, `agent/preflight.rs` |
