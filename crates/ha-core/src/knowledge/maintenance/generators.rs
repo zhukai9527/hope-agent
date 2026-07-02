@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 
 use super::config::MaintenanceConfig;
 use super::types::{NewProposal, ProposalAction, ProposalKind, ProposalStatus};
-use crate::knowledge::{index, service};
+use crate::knowledge::{index, service, types::KnowledgeSource};
 
 /// Max notes scanned per deterministic task (bounds work on large KBs).
 const SCAN_CAP: usize = 400;
@@ -20,6 +20,10 @@ const SCAN_CAP: usize = 400;
 const PER_TASK_CAP: usize = 8;
 /// Body chars fed to an LLM per note.
 const EXCERPT_CHARS: usize = 1200;
+/// Max notes scanned when a refreshed source asks for immediate recompile hints.
+const SOURCE_REFRESH_SCAN_CAP: usize = 1000;
+/// Max affected-note paths shown in a refresh-driven proposal detail.
+const SOURCE_REFRESH_DETAIL_NOTE_CAP: usize = 6;
 
 /// Generate proposals for one KB: deterministic scan (blocking) + LLM tasks.
 /// `run_global` gates KB-independent tasks (memory→note distils the *global*
@@ -76,6 +80,121 @@ pub async fn generate(
 
     out.truncate(cfg.max_proposals_per_cycle);
     Ok(out)
+}
+
+/// Build the immediate SourceCompile proposal created by source refresh. This is
+/// user-action driven, so it does not depend on the autonomous-maintenance master
+/// switch; it still lands as a draft and only starts compile after owner approval.
+pub(crate) fn source_refresh_compile_proposal(
+    kb_id: &str,
+    previous: &KnowledgeSource,
+    current: &KnowledgeSource,
+) -> Result<Option<NewProposal>> {
+    if previous.id == current.id || previous.content_hash == current.content_hash {
+        return Ok(None);
+    }
+    if super::super::resolve_kb_dir(kb_id)
+        .map(|root| root.is_external)
+        .unwrap_or(true)
+    {
+        return Ok(None);
+    }
+    let affected = source_refresh_affected_notes(kb_id, &current.id)?;
+    Ok(source_refresh_compile_proposal_from_notes(
+        previous, current, &affected,
+    ))
+}
+
+fn source_refresh_affected_notes(
+    kb_id: &str,
+    latest_source_id: &str,
+) -> Result<Vec<AffectedSourceNote>> {
+    let mut out = Vec::new();
+    for note in service::list_notes(kb_id)?
+        .into_iter()
+        .take(SOURCE_REFRESH_SCAN_CAP)
+    {
+        let refs = match service::note_source_refs(kb_id, &note.rel_path) {
+            Ok(refs) => refs,
+            Err(e) => {
+                app_warn!(
+                    "knowledge",
+                    "maintenance::source_refresh",
+                    "skip note {} while scanning source refs: {}",
+                    note.rel_path,
+                    e
+                );
+                continue;
+            }
+        };
+        if refs
+            .iter()
+            .any(|r| r.stale && r.latest_source_id.as_deref() == Some(latest_source_id))
+        {
+            out.push(AffectedSourceNote {
+                rel_path: note.rel_path,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    Ok(out)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AffectedSourceNote {
+    rel_path: String,
+}
+
+fn source_refresh_compile_proposal_from_notes(
+    previous: &KnowledgeSource,
+    current: &KnowledgeSource,
+    affected: &[AffectedSourceNote],
+) -> Option<NewProposal> {
+    if affected.is_empty() {
+        return None;
+    }
+    let note_list = affected
+        .iter()
+        .take(SOURCE_REFRESH_DETAIL_NOTE_CAP)
+        .map(|note| format!("`{}`", note.rel_path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = affected
+        .len()
+        .saturating_sub(SOURCE_REFRESH_DETAIL_NOTE_CAP);
+    let more_suffix = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    let affected_word = if affected.len() == 1 { "note" } else { "notes" };
+    let reason = format!(
+        "Source `{}` refreshed from v{} to v{}; {} compiled {} still cite an older source version.",
+        current.title,
+        previous.version_index,
+        current.version_index,
+        affected.len(),
+        affected_word
+    );
+    Some(NewProposal {
+        kind: ProposalKind::SourceCompile,
+        title: format!(
+            "Recompile {} stale {} from refreshed source",
+            affected.len(),
+            affected_word
+        ),
+        detail: format!("{reason} Affected: {note_list}{more_suffix}."),
+        action: ProposalAction::CompileSources {
+            source_ids: vec![current.id.clone()],
+            reason,
+        },
+        // New refresh versions are uncompiled current sources, so share the
+        // existing source_compile bucket used by the periodic scanner.
+        fingerprint: format!(
+            "source_compile:uncompiled:{}:{}",
+            current.id, current.content_hash
+        ),
+    })
 }
 
 /// Sync deterministic tasks. Runs inside `spawn_blocking`.
@@ -1550,6 +1669,73 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn source_refresh_compile_proposal_targets_latest_source_and_notes() {
+        let previous = test_source("src-v1", "hash-old", 1);
+        let current = test_source("src-v2", "hash-new", 2);
+        let affected = vec![
+            AffectedSourceNote {
+                rel_path: "Notes/A.md".to_string(),
+            },
+            AffectedSourceNote {
+                rel_path: "Notes/B.md".to_string(),
+            },
+        ];
+
+        let proposal =
+            source_refresh_compile_proposal_from_notes(&previous, &current, &affected).unwrap();
+
+        assert_eq!(proposal.kind, ProposalKind::SourceCompile);
+        assert_eq!(
+            proposal.fingerprint,
+            "source_compile:uncompiled:src-v2:hash-new"
+        );
+        assert!(proposal.detail.contains("Notes/A.md"));
+        assert!(proposal.detail.contains("Notes/B.md"));
+        match &proposal.action {
+            ProposalAction::CompileSources { source_ids, reason } => {
+                assert_eq!(source_ids, &vec!["src-v2".to_string()]);
+                assert!(reason.contains("v1 to v2"));
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_refresh_compile_proposal_skips_without_affected_notes() {
+        let previous = test_source("src-v1", "hash-old", 1);
+        let current = test_source("src-v2", "hash-new", 2);
+
+        assert!(source_refresh_compile_proposal_from_notes(&previous, &current, &[]).is_none());
+    }
+
+    fn test_source(id: &str, hash: &str, version_index: u32) -> KnowledgeSource {
+        KnowledgeSource {
+            id: id.to_string(),
+            kb_id: "kb".to_string(),
+            kind: crate::knowledge::types::KnowledgeSourceKind::UrlSnapshot,
+            title: "Example Source".to_string(),
+            origin_uri: Some("https://example.com".to_string()),
+            stored_path: format!("{id}.md"),
+            content_hash: hash.to_string(),
+            extracted_text_hash: Some(hash.to_string()),
+            status: crate::knowledge::types::KnowledgeSourceStatus::Ready,
+            compiled_at: None,
+            created_at: 1,
+            updated_at: 1,
+            size: 12,
+            chunk_count: 1,
+            version_of_source_id: if version_index == 1 {
+                None
+            } else {
+                Some("src-v1".to_string())
+            },
+            version_index,
+            superseded_by_source_id: None,
+            superseded_at: None,
+        }
     }
 
     #[test]

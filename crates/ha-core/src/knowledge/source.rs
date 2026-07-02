@@ -469,6 +469,16 @@ pub async fn refresh_source(
         }),
     )?;
     let diff = build_source_diff(&previous, &outcome.source, &old_content, &new_content);
+    if let Err(e) =
+        super::maintenance::queue_source_refresh_compile_proposal(kb_id, &previous, &outcome.source)
+    {
+        app_warn!(
+            "knowledge",
+            "source_refresh",
+            "queue source refresh compile proposal failed: {}",
+            e
+        );
+    }
     emit(kb_id, "source_refresh");
     Ok(KnowledgeSourceRefreshResult {
         source: outcome.source,
