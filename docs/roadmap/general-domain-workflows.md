@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-03
 >
-> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md) 与 [Domain Quality 控制平面](../architecture/domain-quality.md)。Phase 7.5-7.6 仍为后续路线。
+> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md) 与 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)。Phase 7.6 General Eval & Quality Gate 仍为后续路线。
 
 ## 1. 背景
 
@@ -193,23 +193,30 @@ DomainWorkflow
 - Domain verification 失败会阻止 Goal completed：`domain_quality_blocked/failed/needs_user` 与 P0/P1 `domain_quality_check` 都进入 Goal blocker，后续 `domain_quality_passed` 可解除较早阻塞。
 - 最终架构见 [Domain Quality 控制平面](../architecture/domain-quality.md)。
 
-### Phase 7.5 Domain Learning Loop（待做）
+### Phase 7.5 Domain Learning Loop（已完成第一版）
 
 目标：把通用任务中的成功/失败沉淀为 workflow、guidance、skill、eval 草稿，让通用场景也能持续变强。
 
-要做：
+已完成：
 
-- 从 domain workflow run、evidence、review、verification、用户反馈中生成 improvement proposals。
-- Proposal kinds 扩展：`domain_workflow_template`、`domain_guidance`、`domain_review_profile`、`domain_eval_case`、`connector_usage_pattern`。
-- Draft apply / promotion 复用现有安全链路，不直接改生产模板。
+- `generate_coding_improvement_proposals()` 与 `distill_coding_improvement_proposals()` 已读取当前 scope 内的 Domain Quality run/check snapshot。
+- Proposal kinds 已扩展：`domain_workflow_template`、`domain_guidance`、`domain_review_profile`、`domain_eval_case`、`connector_usage_pattern`。
+- 成功的 Domain Quality run 会生成 workflow / guidance 草稿；blocked / failed / needs_user run 会生成 review profile / eval case；高风险 approval 卡点会生成 connector usage pattern。
+- Draft apply / promotion 复用现有 Coding Improvement 安全链路：先预览、再生成 `.hope-agent/coding-improvement/` 草稿，只有显式 promotion 才进入 promoted domain workflow / guidance / review profile / eval case / connector pattern。
+- Workspace proposal 列表已显示领域类 proposal 的中文标签。
+- 新增回归测试覆盖 Research / Writing / Data Analysis / Inbox quality run 生成学习 proposal、apply 草稿和 promotion preview。
+
+后续待补：
+
 - Dashboard Learning 增加通用场景趋势：完成率、blocked 原因、review catch、verification failure、source quality、用户确认卡点。
-- 支持用户显式从成功 run 提炼“下次类似任务怎么做”。
+- 支持用户从 GUI 直接选择成功 run 提炼“下次类似任务怎么做”，而不是只通过 proposal 生成入口。
 
 验收：
 
-- 至少 Research / Writing / Data Analysis 三类任务能生成可预览的改进 proposal。
-- 已应用草稿必须显式 promotion 才能成为正式 domain workflow 或 guidance。
-- 学习不会跨越用户/项目/连接器权限边界。
+- Research / Writing / Data Analysis 三类任务已能从 `completed` Domain Quality run 生成可预览的 workflow / guidance proposal。
+- Inbox 高风险发送类任务已能从 approval 卡点生成 `connector_usage_pattern`。
+- 已应用草稿必须显式 promotion 才能成为正式 domain workflow、guidance、review profile、eval case 或 connector pattern。
+- 学习不会跨越用户/项目/连接器权限边界；incognito session 仍拒绝 domain quality / proposal 持久化。
 
 ### Phase 7.6 General Eval & Quality Gate（待做）
 
@@ -274,5 +281,5 @@ P6 完成后，建议按下列顺序推进：
 1. Phase 7.1 + 7.2：已完成第一版 domain workflow registry 和 general evidence，通用层地基已具备。
 2. Phase 7.3：已完成第一版 domain context retrieval，通用 workflow 已有来源 / 证据 / 缺口推荐面。
 3. Phase 7.4：已补 domain review / verification 与 Workspace 领域复核，形成第一版质量闭环。
-4. Phase 7.5：下一步接 learning loop，让通用场景能沉淀。
-5. Phase 7.6：最后做通用 eval / gate，避免过早为未稳定模板写大量测试。
+4. Phase 7.5：已接入 learning loop，让通用场景能沉淀 draft-only proposal。
+5. Phase 7.6：下一步做通用 eval / gate，避免只靠单次质量复核判断泛化能力。

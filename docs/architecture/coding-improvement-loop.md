@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 6.6 已实现。本文是 `ha-core::coding_improvement`、`dashboard::coding_improvement`、Coding Trend Report、Transcript Distillation、Failure Feedback、Workflow Retro、Improvement Proposal 队列、Proposal-to-Action、Draft Promotion、Gold Pack / Strategy Effect history、External Model Baseline、Release Gate、Learning Generalization Gate、Benchmark Run Center、Benchmark Campaign Runner、Cross-model Leaderboard、Benchmark Task Corpus、Benchmark Report Export、Continuous Benchmark Gate、Benchmark Improvement Backlog、owner API、Workspace 质量趋势区块与 Dashboard 全局学习视图的单一技术事实源。
+> 状态：Phase 7.5 已实现。本文是 `ha-core::coding_improvement`、`dashboard::coding_improvement`、Coding Trend Report、Transcript Distillation、Failure Feedback、Workflow Retro、Improvement Proposal 队列、Proposal-to-Action、Draft Promotion、Domain Learning proposals、Gold Pack / Strategy Effect history、External Model Baseline、Release Gate、Learning Generalization Gate、Benchmark Run Center、Benchmark Campaign Runner、Cross-model Leaderboard、Benchmark Task Corpus、Benchmark Report Export、Continuous Benchmark Gate、Benchmark Improvement Backlog、owner API、Workspace 质量趋势区块与 Dashboard 全局学习视图的单一技术事实源。
 
 ## 目标
 
@@ -26,6 +26,7 @@ Coding Improvement Loop 把已经持久化的 coding 控制面数据转成可审
 - Benchmark Report Export 把 campaign / comparison / release benchmark 生成 Markdown / JSON / HTML snapshot，记录 report history，并允许用户显式标记 release evidence。
 - Continuous Benchmark Gate 把 release gate、release evidence report、recent campaign、corpus health、leaderboard、失败 backlog、外部模型 opt-in、预算和可靠性指标合成一条可发布 / 可阻断的持续 benchmark 结论。
 - Benchmark Improvement Backlog 把 failed / interrupted / cancelled campaign item 物化成可处理 backlog item，保留 task id、model、baseline、失败分类、pack report evidence 和 campaign evidence，避免失败只停留在红色数字。
+- Phase 7.5 复用同一 proposal queue 承接通用领域学习：从 Domain Quality run/check/evidence 中生成 `domain_workflow_template`、`domain_guidance`、`domain_review_profile`、`domain_eval_case`、`connector_usage_pattern` 草稿，仍然必须 preview/apply/promotion，不能直接改生产模板或连接器策略。
 
 ## 数据模型
 
@@ -128,6 +129,11 @@ Phase 4.4 新增显式 owner-plane action：`distill_coding_improvement_proposal
 | `workflow_template` | repair loop 近期有成功 run，可人工审查后沉淀 workflow 草稿。 |
 | `guidance_candidate` | review blocker 或 verification failure 暗示项目规则/流程需要补充。 |
 | `skill_candidate` | workflow 成功且无已分类 blocker，可人工审查后沉淀 skill 草稿。 |
+| `domain_workflow_template` | Domain Quality `completed` run，可把成功领域任务沉淀成可审查 workflow 模板草稿。 |
+| `domain_guidance` | Domain Quality `completed` run，可把证据、approval 和完成习惯沉淀成领域 guidance 草稿。 |
+| `domain_review_profile` | Domain Quality `blocked` / `failed` / `needs_user` run，可把漏检点沉淀成领域复核 profile 草稿。 |
+| `domain_eval_case` | Domain Quality `blocked` / `failed` / `needs_user` run，可把失败模式沉淀成通用领域 eval case 草稿。 |
+| `connector_usage_pattern` | Domain Quality 中高风险 approval check 进入 `needs_user`，可沉淀连接器使用和审批规则草稿。 |
 | retro recommendation | `coding_workflow_retros.recommendations_json` 中的 `eval_candidate` / `workflow_template` / `guidance_candidate` / `skill_candidate`。 |
 
 Proposal 状态：
@@ -144,6 +150,8 @@ Proposal 状态：
 `update_coding_improvement_proposal_status` 只允许 `draft` / `rejected` 这类人工队列状态；`applied` / `promoting` / `promoted` / `promotion_failed` 不可被普通状态更新改写，promotion retry 只能走 promotion API；`failed` 只能由 apply 路径写入但可回到 `draft` 让用户修复环境后重试，避免把“采纳意向”伪装成“产物已落地”。
 
 Phase 4.4 的 transcript distillation 也写入同一张 proposal queue。它不会创建新状态机，也不会绕过 preview/apply/promotion；只是让 `payload_json` 包含 `distillation`、`workflowPattern`、`failureFeedback` 或 `toolFeedback`，从而让后续草稿产物带上更具体的证据。
+
+Phase 7.5 的 Domain Learning 也写入同一张 proposal queue。它从当前 scope 的 `domain_quality_runs` 读取 snapshot，按 run state 派生候选：成功 run 只产生可复用 workflow/guidance 草稿，失败或需用户确认的 run 产生 review profile / eval case，approval gate 卡点再补 connector usage pattern。`payload_json` 保留 domain、quality run、checks、blocking checks、scope、project/window 信息，方便草稿和后续 promotion 可审计。
 
 ## Workflow Retro
 
@@ -167,6 +175,11 @@ Phase 4.1 新增确定性 action plan：
 | `workflow_template` | 创建 `.hope-agent/coding-improvement/workflows/<slug>.md`，包含 workflow script 草稿和 promotion checklist。 |
 | `guidance_candidate` | 创建 `.hope-agent/coding-improvement/guidance/<slug>.md`，包含信号、建议规则和原始 payload。 |
 | `skill_candidate` | 通过 `skills::author::create_skill` 创建 `~/.hope-agent/skills/ha-learned-*/SKILL.md`，状态为 `draft`，进入既有 Skills 草稿审核流。 |
+| `domain_workflow_template` | 创建 `.hope-agent/coding-improvement/domain-workflows/<slug>.md`，包含领域、quality evidence、draft workflow shape 和 promotion checklist。 |
+| `domain_guidance` | 创建 `.hope-agent/coding-improvement/domain-guidance/<slug>.md`，包含领域完成规则、必需 evidence、approval discipline 和 source payload。 |
+| `domain_review_profile` | 创建 `.hope-agent/coding-improvement/domain-review-profiles/<slug>.md`，包含应提前捕获的 blocking checks 和复核 profile 草稿。 |
+| `domain_eval_case` | 创建 `.hope-agent/coding-improvement/domain-eval-cases/<slug>.json`，包含 deterministic / semi-deterministic 通用 eval fixture 草稿。 |
+| `connector_usage_pattern` | 创建 `.hope-agent/coding-improvement/connector-patterns/<slug>.md`，包含连接器读取、草稿、审批和 fail-closed 规则草稿。 |
 
 如果 session 有有效工作目录，文件型草稿落在该工作目录的 `.hope-agent/coding-improvement/` 下；否则落在 `~/.hope-agent/sessions/{session_id}/.hope-agent/coding-improvement/`，仍然是 owner-plane 可审计产物。
 
@@ -195,6 +208,11 @@ Phase 4.2 新增显式 promotion plan：
 | `workflow_template` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/workflows/`，并在 `AGENTS.md` managed block 中加入 `@./...` 引用。 |
 | `guidance_candidate` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/guidance/`，并在 `AGENTS.md` managed block 中加入 `@./...` 引用。 |
 | `skill_candidate` | 调 `skills::author::set_skill_status(skill_id, Active)` 激活 managed draft skill。 |
+| `domain_workflow_template` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/domain-workflows/`，并在 `AGENTS.md` managed block 中加入引用。 |
+| `domain_guidance` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/domain-guidance/`，并在 `AGENTS.md` managed block 中加入引用。 |
+| `domain_review_profile` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/domain-review-profiles/`，并在 `AGENTS.md` managed block 中加入引用。 |
+| `domain_eval_case` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/domain-eval-cases/`，作为 Phase 7.6 通用 eval/gate 的候选 fixture。 |
+| `connector_usage_pattern` | 把草稿复制到 `.hope-agent/coding-improvement/promoted/connector-patterns/`，并在 `AGENTS.md` managed block 中加入引用。 |
 
 `preview_coding_improvement_proposal_promotion(proposal_id)` 返回 `CodingImprovementPromotionPlan`，包含 source path、target path、target existence、source hash 和内容预览。
 

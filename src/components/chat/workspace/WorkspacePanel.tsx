@@ -3339,6 +3339,16 @@ function codingProposalKindLabel(
       return t("workspace.codingTrend.kindGuidance", "规则候选")
     case "skill_candidate":
       return t("workspace.codingTrend.kindSkill", "Skill 候选")
+    case "domain_workflow_template":
+      return t("workspace.codingTrend.kindDomainWorkflow", "领域工作流")
+    case "domain_guidance":
+      return t("workspace.codingTrend.kindDomainGuidance", "领域规则")
+    case "domain_review_profile":
+      return t("workspace.codingTrend.kindDomainReview", "领域复核")
+    case "domain_eval_case":
+      return t("workspace.codingTrend.kindDomainEval", "领域评测")
+    case "connector_usage_pattern":
+      return t("workspace.codingTrend.kindConnectorPattern", "连接器模式")
     default:
       return kind
   }
