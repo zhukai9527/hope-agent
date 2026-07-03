@@ -1580,6 +1580,18 @@ fn build_router_with_cors(
             "/domain-evidence",
             post(routes::domain_workflow::list_domain_evidence),
         )
+        .route(
+            "/sessions/{sid}/domain-quality-runs",
+            get(routes::domain_quality::list_domain_quality_runs),
+        )
+        .route(
+            "/domain-quality-runs/run",
+            post(routes::domain_quality::run_domain_quality),
+        )
+        .route(
+            "/domain-quality-runs/{id}",
+            get(routes::domain_quality::get_domain_quality_run),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

@@ -1425,6 +1425,8 @@ fn active_blocking_evidence(evidence: &[GoalEvidenceItem]) -> Vec<&GoalEvidenceI
     let latest_workflow_repair = latest_evidence_time(evidence, |item| {
         item.relation == "workflow_completed" || item.relation == "validation_passed"
     });
+    let latest_domain_quality_pass =
+        latest_evidence_time(evidence, |item| item.relation == "domain_quality_passed");
     evidence
         .iter()
         .filter(|item| match item.relation.as_str() {
@@ -1437,6 +1439,17 @@ fn active_blocking_evidence(evidence: &[GoalEvidenceItem]) -> Vec<&GoalEvidenceI
                     .unwrap_or(false)
             }
             "review_finding" => review_finding_is_blocking(item),
+            "domain_quality_failed" | "domain_quality_blocked" | "domain_quality_needs_user" => {
+                !latest_domain_quality_pass
+                    .map(|latest| latest > item.created_at.as_str())
+                    .unwrap_or(false)
+            }
+            "domain_quality_check" => {
+                domain_quality_check_is_blocking(item)
+                    && !latest_domain_quality_pass
+                        .map(|latest| latest > item.created_at.as_str())
+                        .unwrap_or(false)
+            }
             _ => false,
         })
         .collect()
@@ -1469,6 +1482,17 @@ fn review_finding_is_blocking(item: &GoalEvidenceItem) -> bool {
             status.as_str(),
             "resolved" | "closed" | "fixed" | "dismissed" | "false_positive" | "false-positive"
         )
+}
+
+fn domain_quality_check_is_blocking(item: &GoalEvidenceItem) -> bool {
+    let severity = metadata_string(&item.metadata, "severity")
+        .unwrap_or_default()
+        .to_lowercase();
+    let status = metadata_string(&item.metadata, "status")
+        .unwrap_or_default()
+        .to_lowercase();
+    matches!(severity.as_str(), "p0" | "p1" | "critical" | "high")
+        && matches!(status.as_str(), "failed" | "blocked" | "needs_user")
 }
 
 fn dedup_json_items(items: &mut Vec<Value>) {
@@ -1597,6 +1621,11 @@ fn is_goal_evidence_relation(relation: &str) -> bool {
             | "citation_audited"
             | "message_draft_approved"
             | "meeting_context_collected"
+            | "domain_quality_passed"
+            | "domain_quality_failed"
+            | "domain_quality_blocked"
+            | "domain_quality_needs_user"
+            | "domain_quality_check"
     )
 }
 
@@ -1618,6 +1647,7 @@ fn goal_evidence_is_positive(item: &GoalEvidenceItem) -> bool {
             | "citation_audited"
             | "message_draft_approved"
             | "meeting_context_collected"
+            | "domain_quality_passed"
             | "task_completed"
     )
 }
@@ -1625,7 +1655,7 @@ fn goal_evidence_is_positive(item: &GoalEvidenceItem) -> bool {
 fn goal_evidence_is_strong_positive(item: &GoalEvidenceItem) -> bool {
     matches!(
         item.relation.as_str(),
-        "workflow_completed" | "validation_passed" | "task_completed"
+        "workflow_completed" | "validation_passed" | "domain_quality_passed" | "task_completed"
     )
 }
 
@@ -1674,6 +1704,12 @@ fn goal_link_title(link: &GoalLink) -> String {
             .unwrap_or_else(|| "Message draft approved".to_string()),
         "meeting_context_collected" => metadata_string(&link.metadata, "title")
             .unwrap_or_else(|| "Meeting context collected".to_string()),
+        "domain_quality_passed" => "Domain quality passed".to_string(),
+        "domain_quality_failed" => "Domain quality failed".to_string(),
+        "domain_quality_blocked" => "Domain quality blocked".to_string(),
+        "domain_quality_needs_user" => "Domain quality needs user".to_string(),
+        "domain_quality_check" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Domain quality check".to_string()),
         other => other.replace('_', " "),
     }
 }

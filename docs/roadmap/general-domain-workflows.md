@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-03
 >
-> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md) 与 [Context Retrieval v2](../architecture/context-retrieval.md)。Phase 7.4-7.6 仍为后续路线。
+> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md) 与 [Domain Quality 控制平面](../architecture/domain-quality.md)。Phase 7.5-7.6 仍为后续路线。
 
 ## 1. 背景
 
@@ -169,24 +169,29 @@ DomainWorkflow
 - Data Analysis workflow 能看到数据源、查询结果、口径说明和数据质量 issue；缺少 sheet/data quality evidence 时显示 access issue。
 - 新增单测覆盖 research domain evidence 召回 web source 和 required evidence 缺口。
 
-### Phase 7.4 Domain Verification & Review（待做）
+### Phase 7.4 Domain Verification & Review（已完成第一版）
 
 目标：把“验证”从代码检查扩展成领域质量检查，让报告、分析、会议 brief、邮件草稿和知识整理都有最小复核路径。
 
-要做：
+已完成：
 
-- Research verification：引用存在、来源时效、关键 claim 至少双来源、冲突点显式标注。
-- Writing review：结构、读者适配、术语一致、未满足用户要求、引用缺口。
-- Data verification：数据质量、口径、样本量、异常值、图表误导、计算复核。
-- Meeting prep review：参会人、时间、材料、决策点、风险、未读附件。
-- Inbox review：事实准确、语气、收件人、附件、发送前确认。
-- 复用 Review / Verification 控制面，但新增 domain profiles 和 result schema。
+- 新增 `ha-core::domain_quality` durable 控制面：`domain_quality_runs` / `domain_quality_checks` / `domain_quality_events`。
+- Research verification 已检查 source count、claim check、citation audit 与来源日期 / 时效 metadata。
+- Writing review 已检查 draft artifact、audience / requirement review，并提示术语 / 读者适配 / 引用缺口 advisory。
+- Data verification 已检查 data quality evidence、metric interpretation、dataset / denominator / sample metadata。
+- Meeting prep review 已检查 meeting context、brief / agenda，并提示 decision points / risks / unread materials advisory。
+- Inbox review 已检查 thread source、facts / commitments、send 前 approval。
+- Knowledge Curation 与 Project Ops 也有 source / dedupe / artifact / owner / risk 等基础 profile。
+- 高风险动作通过 `sourceMetadata.requestedAction` 或 `highRiskAction=true` 触发 `needs_user`，缺少 `explicitUserApproval` 时 fail closed。
+- Domain quality 结果写回 Goal evidence：`domain_quality_passed` / `domain_quality_blocked` / `domain_quality_failed` / `domain_quality_needs_user` / `domain_quality_check`。
+- Workspace 新增「领域复核」区块，展示通过、缺失、需确认、建议项，可直接运行 / 刷新，不依赖工作目录。
 
 验收：
 
-- 非 coding 产物能进入 Workspace 的 Review / Verification 区块，不再只展示代码结果。
-- 关键高风险动作必须用户确认，尤其是发送、分享、修改外部系统。
-- Domain verification 失败能阻止 Goal completed，或明确进入 blocked / needs_user。
+- 非 coding 产物能进入 Workspace「领域复核」区块，不再只展示代码结果。
+- 关键高风险动作必须用户确认，尤其是发送、分享、修改外部系统；当前通过 `needs_user` run state 和 Goal blocking evidence 表达。
+- Domain verification 失败会阻止 Goal completed：`domain_quality_blocked/failed/needs_user` 与 P0/P1 `domain_quality_check` 都进入 Goal blocker，后续 `domain_quality_passed` 可解除较早阻塞。
+- 最终架构见 [Domain Quality 控制平面](../architecture/domain-quality.md)。
 
 ### Phase 7.5 Domain Learning Loop（待做）
 
@@ -268,6 +273,6 @@ P6 完成后，建议按下列顺序推进：
 
 1. Phase 7.1 + 7.2：已完成第一版 domain workflow registry 和 general evidence，通用层地基已具备。
 2. Phase 7.3：已完成第一版 domain context retrieval，通用 workflow 已有来源 / 证据 / 缺口推荐面。
-3. Phase 7.4：下一步补 domain review / verification，形成质量闭环。
-4. Phase 7.5：接 learning loop，让通用场景能沉淀。
+3. Phase 7.4：已补 domain review / verification 与 Workspace 领域复核，形成第一版质量闭环。
+4. Phase 7.5：下一步接 learning loop，让通用场景能沉淀。
 5. Phase 7.6：最后做通用 eval / gate，避免过早为未稳定模板写大量测试。

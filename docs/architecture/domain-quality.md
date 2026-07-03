@@ -1,0 +1,162 @@
+# Domain Quality 控制平面
+
+> 返回 [技术文档索引](../README.md)
+>
+> 状态：Phase 7.4 已实现。本文记录 `ha-core::domain_quality` 的最终技术事实：通用领域 review / verification run、check、event、Goal evidence 阻塞语义、owner API 与 Workspace「领域复核」交互。
+
+## 目标
+
+Domain Quality 把“复核 / 验证”从 coding diff 扩展到非编程长任务。它覆盖 Research、Writing、Data Analysis、Meeting Prep、Knowledge Curation、Inbox、Project Ops 等任务，但不改造既有代码 Review Engine 和 Smart Verification：
+
+- 代码审查仍由 `review.rs` 负责，finding 仍绑定文件 / 行号。
+- 代码验证仍由 `verification.rs` 负责，step 仍绑定命令 / cwd / 风险。
+- 非 coding 产物由 `domain_quality.rs` 生成 domain run / check / event，基于 Domain Workflow template、domain evidence 和 approval gates 做确定性复核。
+
+这样不会把报告、邮件、会议 brief 伪装成代码 finding，也不会把“引用缺失”伪装成 shell command 失败。
+
+## 数据模型
+
+`SessionDB::open()` 调用 `domain_quality::ensure_tables()` 创建三张表：
+
+| 表 | 说明 |
+| --- | --- |
+| `domain_quality_runs` | 一次领域质量复核。字段包括 session、goal、domain、template、state、summary、stats、error、created/updated/completed。 |
+| `domain_quality_checks` | run 下的复核项。字段包括 check type、profile、title、body、severity、status、evidence type、source metadata。 |
+| `domain_quality_events` | run timeline，记录 started、check recorded、completed、failed 等事件；payload 落库前截断到 64KB preview。 |
+
+Run state：
+
+| State | 语义 |
+| --- | --- |
+| `running` | 正在复核。当前实现为同步确定性检查，通常很短暂。 |
+| `completed` | 所有阻塞检查通过，可能仍有 advisory。 |
+| `blocked` | 存在 P0/P1 的 failed / blocked check。 |
+| `needs_user` | 高风险动作需要用户确认，且缺少显式确认。 |
+| `failed` | 复核流程自身失败。 |
+| `cancelled` | 保留状态，当前 owner API 暂不暴露取消。 |
+
+Check status：
+
+| Status | 语义 |
+| --- | --- |
+| `passed` | 检查通过。 |
+| `failed` | 必需 evidence 或领域质量要求缺失。 |
+| `blocked` | 预留给未来连接器 / 外部系统阻塞。 |
+| `needs_user` | 必须用户确认后才能继续高风险动作。 |
+| `advisory` | 建议项，不阻塞 Goal。 |
+
+## 复核输入
+
+`run_domain_quality(input)` 使用 `RunDomainQualityInput`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `sessionId` | 必填；incognito session 拒绝持久化。 |
+| `goalId` | 可选；不传时自动绑定当前 active/open Goal。 |
+| `domain` | 可选；不传时从 template、Goal 文本、domain evidence、artifact kind 推断。 |
+| `templateId` | 可选；指定 Domain Workflow template。 |
+| `profiles[]` | 可选；当前用于 stats / trace，默认包含 domain、`required_evidence`、`approval_gate`。 |
+| `artifactTitle` / `artifactKind` | 可选；用于后续产物复核和 domain 推断。 |
+| `sourceMetadata` | 可选；可放 `requestedAction`、`highRiskAction` 等上下文。 |
+| `explicitUserApproval` | 高风险动作的显式用户确认。 |
+
+Domain 解析优先级：
+
+1. `templateId` 指定的 template。
+2. 显式 `domain`。
+3. `artifactKind` / active Goal objective / completion criteria 的关键词推断。
+4. 当前 session / goal 的 domain evidence 计数。
+5. fallback 到 `writing`。
+
+## 领域规则
+
+Domain Quality 复用 Domain Workflow template 的三类信号：
+
+- `requiredEvidence`：缺少必需 evidence 会生成 P1 failed check。
+- `verificationPolicy`：当前以 domain profile 的确定性规则落地，后续可继续细化 profile。
+- `approvalGates`：只有当 `sourceMetadata.requestedAction` 匹配 gate，或 `highRiskAction=true` 时才强制 `needs_user`；普通草稿复核不会因为存在发布/发送 gate 而提前阻塞。
+
+已落地的 domain profile：
+
+| Domain | 检查重点 |
+| --- | --- |
+| `research` | 至少 3 个 source、至少 2 个 claim check、citation audit、来源日期 / 时效 metadata。 |
+| `writing` | draft artifact、audience / requirement review、术语和引用缺口 advisory。 |
+| `data_analysis` | data quality evidence、metric interpretation、dataset / denominator / sample metadata。 |
+| `meeting_prep` | meeting context、brief / agenda、decision points / risks advisory。 |
+| `inbox` | thread source、facts / commitments check、send 前 approval。 |
+| `knowledge_curation` | source notes、dedupe / gap review、curated note / index。 |
+| `project_ops` | status / plan artifact、risks / dependencies、owners / tradeoffs。 |
+
+## Goal 语义
+
+Domain Quality 会写入 `goal_links`：
+
+| Relation | Goal 影响 |
+| --- | --- |
+| `domain_quality_passed` | 正向强证据；可解除较早的 domain quality 阻塞。 |
+| `domain_quality_failed` | 阻塞证据。 |
+| `domain_quality_blocked` | 阻塞证据。 |
+| `domain_quality_needs_user` | 阻塞证据，metadata 指明需要用户确认。 |
+| `domain_quality_check` | 仅对 P0/P1 且 failed / blocked / needs_user 的 check 写入；作为细粒度阻塞证据。 |
+
+写入后调用 `evaluate_goal(goal_id)`。因此非 coding 产物缺少关键证据或高风险动作缺少确认时，Goal 会进入 `blocked`，不会被错误标记为完成。Goal 本身没有独立 `needs_user` state，所以 `needs_user` 保留在 DomainQualityRun 和 Goal evidence metadata 中。
+
+## Owner API
+
+Tauri / HTTP / transport 均已注册：
+
+| Tauri Command | HTTP | 说明 |
+| --- | --- | --- |
+| `list_domain_quality_runs` | `GET /api/sessions/{sessionId}/domain-quality-runs` | 列出当前 session 的领域复核 run。 |
+| `get_domain_quality_run` | `GET /api/domain-quality-runs/{runId}` | 返回 run + checks + events snapshot。 |
+| `run_domain_quality` | `POST /api/domain-quality-runs/run` | 执行一次同步确定性领域复核。HTTP body 为 `{ input }`。 |
+
+EventBus：
+
+| 事件名 | 触发点 |
+| --- | --- |
+| `domain_quality:created` | run 创建。 |
+| `domain_quality:updated` | run completed / failed。 |
+| `domain_quality:check_updated` | check 记录。 |
+| `domain_quality:event` | run event 追加。 |
+
+## Workspace 交互
+
+Workspace 面板新增「领域复核」区块，位于「代码审查」和「验证」之后：
+
+- 无需工作目录，适合纯调研 / 写作 / 邮件 / 会议任务。
+- 展示通过、缺失、需确认、建议四类计数。
+- 展示最近 run summary、domain、template id。
+- 优先列出非 passed check；全部通过时展示少量 passed/advisory。
+- 支持运行领域复核和刷新。
+- 监听 `domain_quality:*` 事件，长任务完成或事件到达时自动刷新。
+- incognito session 不显示 durable 结果，只显示禁用提示。
+
+## 红线
+
+- 不破坏 coding：不改 `review_runs/review_findings`、`verification_runs/verification_steps` 的语义。
+- 不伪造外部事实：Domain Quality 只检查已记录 evidence 和输入 metadata，不主动访问连接器。
+- 不默认越权：高风险 action 只有在明确请求时才需要 approval；缺少 approval 时 fail closed 为 `needs_user`。
+- 不写无痕：incognito session 拒绝创建 durable run。
+- 不自动发送 / 发布 / 修改外部系统：该模块只产出质量结论和 Goal evidence。
+
+## 验证
+
+定向测试：
+
+```bash
+cargo test -p ha-core domain_quality --locked
+```
+
+覆盖：
+
+- Research 缺少 required evidence 时生成 failed check、run 进入 blocked，并阻塞 Goal。
+- Inbox `send_message` 高风险动作缺少显式确认时生成 P0 `needs_user` approval check。
+
+跨运行模式编译：
+
+```bash
+cargo check -p ha-server -p hope-agent --locked
+pnpm typecheck
+```

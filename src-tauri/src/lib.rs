@@ -876,6 +876,9 @@ pub fn run() {
             commands::domain_workflow::preview_domain_workflow,
             commands::domain_workflow::record_domain_evidence,
             commands::domain_workflow::list_domain_evidence,
+            commands::domain_quality::list_domain_quality_runs,
+            commands::domain_quality::get_domain_quality_run,
+            commands::domain_quality::run_domain_quality,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

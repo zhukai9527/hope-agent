@@ -876,6 +876,80 @@ export interface VerificationRunSnapshot {
   events: VerificationEvent[];
 }
 
+export type DomainQualityRunState =
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "needs_user"
+  | "cancelled";
+export type DomainQualitySeverity = "p0" | "p1" | "p2" | "p3";
+export type DomainQualityCheckStatus =
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "needs_user"
+  | "advisory";
+
+export interface DomainQualityRun {
+  id: string;
+  sessionId: string;
+  goalId?: string | null;
+  domain: string;
+  templateId?: string | null;
+  state: DomainQualityRunState;
+  summary: string;
+  stats: Record<string, unknown>;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface DomainQualityCheck {
+  id: string;
+  runId: string;
+  sessionId: string;
+  seq: number;
+  checkType: string;
+  profile: string;
+  title: string;
+  body: string;
+  severity: DomainQualitySeverity;
+  status: DomainQualityCheckStatus;
+  evidenceType?: string | null;
+  sourceMetadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DomainQualityEvent {
+  id: number;
+  runId: string;
+  seq: number;
+  kind: string;
+  payload: unknown;
+  createdAt: string;
+}
+
+export interface DomainQualityRunSnapshot {
+  run: DomainQualityRun;
+  checks: DomainQualityCheck[];
+  events: DomainQualityEvent[];
+}
+
+export interface RunDomainQualityInput {
+  sessionId: string;
+  goalId?: string | null;
+  domain?: string | null;
+  templateId?: string | null;
+  profiles?: string[];
+  artifactTitle?: string | null;
+  artifactKind?: string | null;
+  sourceMetadata?: Record<string, unknown>;
+  explicitUserApproval?: boolean;
+}
+
 export interface CodingTrendOverview {
   sessions: number;
   goals: number;

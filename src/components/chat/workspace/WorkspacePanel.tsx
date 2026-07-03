@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ChevronUp,
   CheckCircle2,
+  ClipboardCheck,
   CircleAlert,
   Clock,
   Copy,
@@ -89,6 +90,11 @@ import type {
   CodingWorkflowRetro,
   ContextCandidate,
   ContextCandidateKind,
+  DomainQualityCheck,
+  DomainQualityCheckStatus,
+  DomainQualityRunSnapshot,
+  DomainQualityRunState,
+  DomainQualitySeverity,
   LspDiagnostic,
   ManagedWorktree,
   ReviewFinding,
@@ -143,6 +149,7 @@ import { useScrollPagedRender } from "./useScrollPagedRender"
 import { useSessionKnowledge } from "./useSessionKnowledge"
 import { useManagedWorktrees } from "./useManagedWorktrees"
 import { useContextRetrieval } from "./useContextRetrieval"
+import { useDomainQualityRuns } from "./useDomainQualityRuns"
 import { useLspDiagnostics } from "./useLspDiagnostics"
 import { useReviewRuns } from "./useReviewRuns"
 import { useVerificationRuns } from "./useVerificationRuns"
@@ -2984,6 +2991,290 @@ function VerificationSection({
               <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
                 {t("workspace.verification.more", "还有 {{count}} 条", {
                   count: steps.length - visibleSteps.length,
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </WorkspaceSection>
+  )
+}
+
+function domainQualityStatsNumber(snapshot: DomainQualityRunSnapshot | null, key: string): number {
+  const value = snapshot?.run.stats?.[key]
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
+}
+
+function domainQualityStateTone(state?: DomainQualityRunState | null): StatusTone {
+  switch (state) {
+    case "completed":
+      return "good"
+    case "blocked":
+    case "failed":
+      return "danger"
+    case "needs_user":
+      return "warn"
+    case "running":
+      return "info"
+    case "cancelled":
+      return "muted"
+    default:
+      return "muted"
+  }
+}
+
+function domainQualityStateLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  state?: DomainQualityRunState | null,
+): string {
+  switch (state) {
+    case "completed":
+      return t("workspace.domainQuality.passed", "已通过")
+    case "blocked":
+      return t("workspace.domainQuality.blocked", "已阻塞")
+    case "failed":
+      return t("workspace.domainQuality.failed", "失败")
+    case "needs_user":
+      return t("workspace.domainQuality.needsUser", "需确认")
+    case "running":
+      return t("workspace.domainQuality.running", "复核中")
+    case "cancelled":
+      return t("workspace.domainQuality.cancelled", "已取消")
+    default:
+      return t("workspace.domainQuality.idle", "待复核")
+  }
+}
+
+function domainQualityCheckTone(status: DomainQualityCheckStatus): StatusTone {
+  switch (status) {
+    case "passed":
+      return "good"
+    case "failed":
+    case "blocked":
+      return "danger"
+    case "needs_user":
+      return "warn"
+    case "advisory":
+      return "muted"
+  }
+}
+
+function domainQualityCheckLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  status: DomainQualityCheckStatus,
+): string {
+  switch (status) {
+    case "passed":
+      return t("workspace.domainQuality.checkPassed", "通过")
+    case "failed":
+      return t("workspace.domainQuality.checkFailed", "缺失")
+    case "blocked":
+      return t("workspace.domainQuality.checkBlocked", "阻塞")
+    case "needs_user":
+      return t("workspace.domainQuality.checkNeedsUser", "需确认")
+    case "advisory":
+      return t("workspace.domainQuality.checkAdvisory", "建议")
+  }
+}
+
+function domainQualitySeverityTone(severity: DomainQualitySeverity): StatusTone {
+  switch (severity) {
+    case "p0":
+    case "p1":
+      return "danger"
+    case "p2":
+      return "warn"
+    case "p3":
+      return "muted"
+  }
+}
+
+function domainLabel(domain?: string | null): string {
+  return domain ? domain.replace(/_/g, " ") : "domain"
+}
+
+function DomainQualityCheckRow({ check }: { check: DomainQualityCheck }) {
+  const { t } = useTranslation()
+  const icon =
+    check.status === "passed" ? (
+      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+    ) : check.status === "failed" || check.status === "blocked" ? (
+      <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+    ) : check.status === "needs_user" ? (
+      <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+    ) : (
+      <Gauge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+    )
+  return (
+    <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        {icon}
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+          {check.title}
+        </span>
+        <StatusPill
+          label={check.severity.toUpperCase()}
+          tone={domainQualitySeverityTone(check.severity)}
+        />
+        <StatusPill
+          label={domainQualityCheckLabel(t, check.status)}
+          tone={domainQualityCheckTone(check.status)}
+        />
+      </div>
+      <div className="mt-1 line-clamp-2 pl-5 text-[11px] leading-snug text-muted-foreground">
+        {check.body}
+      </div>
+      <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted-foreground/65">
+        <span className="truncate">{check.profile}</span>
+        <span className="truncate">{check.checkType}</span>
+        {check.evidenceType ? <span className="truncate">{check.evidenceType}</span> : null}
+      </div>
+    </div>
+  )
+}
+
+function DomainQualitySection({
+  sessionId,
+  incognito,
+  turnActive,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  turnActive?: boolean
+}) {
+  const { t } = useTranslation()
+  const { runs, snapshot, loading, running, error, refresh, runDomainQuality } =
+    useDomainQualityRuns(sessionId, { incognito, turnActive })
+  const latest = snapshot?.run ?? runs[0]
+  const checks = snapshot?.checks ?? []
+  const focusChecks = checks.filter((check) => check.status !== "passed")
+  const visibleChecks = (focusChecks.length > 0 ? focusChecks : checks).slice(0, 6)
+  const passed = domainQualityStatsNumber(snapshot, "passed")
+  const failed = domainQualityStatsNumber(snapshot, "failed")
+  const needsUser = domainQualityStatsNumber(snapshot, "needsUser")
+  const advisory = domainQualityStatsNumber(snapshot, "advisory")
+  const active = running || latest?.state === "running"
+  const disabled = !sessionId || incognito || active || loading
+  const meta =
+    active ? (
+      <StatusPill label={t("workspace.domainQuality.running", "复核中")} tone="info" loading />
+    ) : latest ? (
+      <StatusPill
+        label={domainQualityStateLabel(t, latest.state)}
+        tone={domainQualityStateTone(latest.state)}
+      />
+    ) : (
+      <StatusPill label={t("workspace.domainQuality.idle", "待复核")} tone="muted" />
+    )
+
+  const handleRun = async () => {
+    const next = await runDomainQuality()
+    if (next) {
+      if (next.run.state === "completed") {
+        toast.success(t("workspace.domainQuality.runDoneClean", "领域复核通过"))
+      } else if (next.run.state === "needs_user") {
+        toast.warning(t("workspace.domainQuality.runNeedsUser", "领域复核需要用户确认"))
+      } else {
+        toast.error(t("workspace.domainQuality.runBlocked", "领域复核发现阻塞项"))
+      }
+    }
+  }
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.domainQuality.title", "领域复核")}
+      count={focusChecks.length}
+      icon={ClipboardCheck}
+      meta={meta}
+      defaultExpanded={!!error || focusChecks.length > 0 || latest?.state === "needs_user"}
+    >
+      <div className="space-y-2">
+        <div className="grid grid-cols-4 gap-1.5">
+          {[
+            [t("workspace.domainQuality.passedShort", "通过"), passed, "good" as StatusTone],
+            [t("workspace.domainQuality.failedShort", "缺失"), failed, "danger" as StatusTone],
+            [t("workspace.domainQuality.needsUserShort", "确认"), needsUser, "warn" as StatusTone],
+            [t("workspace.domainQuality.advisoryShort", "建议"), advisory, "muted" as StatusTone],
+          ].map(([label, count, tone]) => (
+            <div
+              key={label as string}
+              className={cn(
+                "rounded-md border px-2 py-1.5",
+                STATUS_TONE_CLASS[tone as StatusTone],
+              )}
+            >
+              <div className="truncate text-[10px]">{label as string}</div>
+              <div className="text-xs font-semibold tabular-nums">{count as number}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={disabled}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {active ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ClipboardCheck className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.domainQuality.run", "运行领域复核")}</span>
+          </button>
+          <IconTip label={t("workspace.domainQuality.refresh", "刷新领域复核")}>
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading || active}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </IconTip>
+        </div>
+
+        {incognito ? (
+          <EmptyHint>{t("workspace.domainQuality.incognito", "无痕会话不持久化领域复核")}</EmptyHint>
+        ) : error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : latest ? (
+          <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+                {latest.summary || t("workspace.domainQuality.summaryPending", "复核结果待生成")}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {latest.id.slice(0, 10)}
+              </span>
+            </div>
+            <div className="mt-1 flex min-w-0 flex-wrap gap-1 pl-5">
+              <StatusPill label={domainLabel(latest.domain)} tone="info" />
+              {latest.templateId ? <StatusPill label={latest.templateId} tone="muted" /> : null}
+            </div>
+          </div>
+        ) : (
+          <EmptyHint>{t("workspace.domainQuality.empty", "还没有领域复核记录")}</EmptyHint>
+        )}
+
+        {visibleChecks.length > 0 ? (
+          <div className="space-y-1">
+            {visibleChecks.map((check) => (
+              <DomainQualityCheckRow key={check.id} check={check} />
+            ))}
+            {checks.length > visibleChecks.length ? (
+              <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
+                {t("workspace.domainQuality.more", "还有 {{count}} 条", {
+                  count: checks.length - visibleChecks.length,
                 })}
               </div>
             ) : null}
@@ -8868,6 +9159,12 @@ export default function WorkspacePanel({
           incognito={incognito}
           turnActive={turnActive}
           workingDir={effectiveWorkingDir}
+        />
+
+        <DomainQualitySection
+          sessionId={sessionId}
+          incognito={incognito}
+          turnActive={turnActive}
         />
 
         <CodingTrendSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />

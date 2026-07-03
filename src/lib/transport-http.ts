@@ -441,6 +441,9 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   preview_domain_workflow: { method: "POST", path: "/api/domain-workflows/preview" },
   record_domain_evidence: { method: "POST", path: "/api/domain-evidence/record" },
   list_domain_evidence: { method: "POST", path: "/api/domain-evidence" },
+  list_domain_quality_runs: { method: "GET", path: "/api/sessions/{sessionId}/domain-quality-runs" },
+  get_domain_quality_run: { method: "GET", path: "/api/domain-quality-runs/{runId}" },
+  run_domain_quality: { method: "POST", path: "/api/domain-quality-runs/run" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },
