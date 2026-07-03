@@ -293,7 +293,7 @@ Primary-only 启动：
 | `workflow.task.create({ title, label? })` | idempotent | 创建 session task，返回 task handle。 |
 | `workflow.task.update({ task, status?, title?, content?, activeForm? })` | idempotent | 按 `task.create` 返回 handle 更新 task。 |
 | `workflow.fileSearch({ query, root?, limit?, label? })` | pure | 调 `filesystem::search_files`，默认 root 为 session working dir。 |
-| `workflow.tool({ name, args, label? })` | 取决于工具 | 走 `tools::execute_tool_with_context`，继承权限、hooks、working dir。 |
+| `workflow.tool({ name, args, label? })` | 取决于工具 | 走 `tools::execute_tool_with_context`，继承权限、hooks、working dir；`lsp` 的 `diagnostics` / `sync_file` 结果会写入 `diagnostic_result` Goal evidence。 |
 | `workflow.read(args)` | pure | `read` 工具快捷入口。 |
 | `workflow.grep(args)` | pure | `grep` 工具快捷入口。 |
 | `workflow.spawnAgent(args)` | non-idempotent | 走 `subagent` 工具，预分配 child run id。 |
@@ -308,7 +308,7 @@ Primary-only 启动：
 | `workflow.trace({ label?, payload? })` | pure | 写入 `workflow_events(type='trace')`。 |
 | `workflow.now()` | pure | 返回 run 创建时间的 epoch milliseconds，替代 `Date.now()` / 无参 `new Date()`。 |
 | `workflow.random(seed)` | pure | 按 run id、当前执行位置和 seed 派生 `[0,1)` 稳定随机数，替代 `Math.random()`。 |
-| `workflow.finish(result)` | pure | 设置 runtime 输出并把 run 转 `completed`。 |
+| `workflow.finish(result)` | pure | 设置 runtime 输出并把 run 转 `completed`；`result.artifact` / `result.artifacts[]` 会写入 `artifact_created` Goal evidence。 |
 | `workflow.map(label, list, fn)` | pure/materialized | 先物化 fan-out 列表，再给每个 item 建嵌套 op scope。 |
 
 身份规则：

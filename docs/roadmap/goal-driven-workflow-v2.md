@@ -2,7 +2,7 @@
 
 > 返回 [路线图索引](README.md)
 >
-> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；`/loop` 第一版已接入 Goal evidence，Managed Worktree 已在 Phase 3.1 落地 workflow 绑定；LSP / Diagnostics 已在 Phase 3.2 落地为语义诊断控制面，强类型 diagnostic evidence 仍属后续增强；Review Engine 已在 Phase 3.3 接入 Goal evidence；Smart Verification 已在 Phase 3.4 接入 validation evidence。最终架构见 [Goal 控制平面](../architecture/goal.md)、[Review Engine 控制平面](../architecture/review-engine.md) 与 [Smart Verification 控制平面](../architecture/verification-engine.md)。
+> 状态：Phase 2.8 核心已完成。Milestone A/B/C 已落地；`/loop` 第一版已接入 Goal evidence，Managed Worktree 已在 Phase 3.1 落地 workflow 绑定；LSP / Diagnostics 已在 Phase 3.2 落地为语义诊断控制面，workflow 内 `lsp diagnostics/sync_file` 已接入强类型 `diagnostic_result` Goal evidence；Review Engine 已在 Phase 3.3 接入 Goal evidence；Smart Verification 已在 Phase 3.4 接入 validation evidence；`workflow.finish.artifacts` 已接入 `artifact_created` evidence。最终架构见 [Goal 控制平面](../architecture/goal.md)、[Review Engine 控制平面](../architecture/review-engine.md) 与 [Smart Verification 控制平面](../architecture/verification-engine.md)。
 >
 > 更新时间：2026-07-01
 
@@ -96,9 +96,9 @@ goal_evidence
 | `validation_completed` | Phase 3.4 Smart Verification | 已落地：表示已完成验证选择但没有可运行通过命令；不作为 strong completion evidence。 |
 | `diff_snapshot` | `workflow.diff` | 已落地：包含 changed files、行数统计、截断标记。 |
 | `file_changed` | `workflow.diff` changes | 已落地：关联具体文件路径、action、line delta、language；每个 diff op 最多 50 个文件。 |
-| `artifact_created` | canvas / report / generated file | 关联产物 id 或路径。 |
+| `artifact_created` | `workflow.finish.artifact(s)`、canvas / report / generated file | 已落地第一版：关联产物 id/path/title/kind/hash，作为实现/交付证据，不单独构成 strong completion evidence。 |
 | `review_finding` | Phase 3.3 Review Engine | 关联 finding severity、status、file/line；P0/P1 open finding 阻止 completed。 |
-| `diagnostic_result` | 后续 LSP diagnostics | 关联 symbol/file/range 和 diagnostic severity。 |
+| `diagnostic_result` | workflow 内 `lsp diagnostics/sync_file` | 已落地第一版：关联 file/range/message/severity；error 级诊断作为 hard blocker，后续 passing validation 或 clean diagnostics 可解除较早 blocker。 |
 
 ## 2. Goal Detail UI
 
@@ -215,7 +215,7 @@ Goal budget 不只保存字段，还要能解释：
 
 ### 5.2 运行中
 
-- workflow host API 写 task / validate / diff / artifact 时同步追加 Goal evidence。
+- workflow host API 写 task / validate / diff / artifact / diagnostic 时同步追加 Goal evidence。
 - `workflow.trace` 可选择 `evidence: true`，但默认 trace 不全部进入 Goal，避免噪音。
 - `workflow.finish` 的 summary / verification / residualRisk 进入 Goal audit input。
 
@@ -286,13 +286,13 @@ Goal budget 不只保存字段，还要能解释：
 
 - `/loop` run evidence（已落地第一版）。
 - workflow worktree 绑定（已落地第一版）；Goal detail 的 worktree 展示和 handoff 状态仍可继续增强。
-- LSP diagnostics evidence。
+- LSP diagnostics evidence（已落地第一版）。
 - review finding evidence。
 
 验收：
 
 - review P1 unresolved 时 Goal 不能 completed。
-- LSP fatal diagnostic 可作为 blocker。
+- LSP error diagnostic 可作为 blocker（已落地第一版）。
 - loop 每次触发都能在 Goal timeline 追溯。
 
 ## 8. 测试与验证

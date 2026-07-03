@@ -14,6 +14,8 @@ use crate::workflow::{WorkflowOp, WorkflowOpState, WorkflowRun, WorkflowRunState
 
 const GOAL_EVENT_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
 const GOAL_EVIDENCE_MAX_FILE_LINKS: usize = 50;
+const GOAL_EVIDENCE_MAX_ARTIFACT_LINKS: usize = 25;
+const GOAL_EVIDENCE_MAX_DIAGNOSTIC_LINKS: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -900,6 +902,12 @@ impl SessionDB {
             return Ok(());
         };
         match op.op_type.as_str() {
+            "finish" => {
+                if op.state != WorkflowOpState::Completed {
+                    return Ok(());
+                }
+                self.link_goal_artifact_evidence_for_workflow_finish(goal_id, run, op)?;
+            }
             "validate" => {
                 if !op.state.is_terminal() {
                     return Ok(());
@@ -995,7 +1003,173 @@ impl SessionDB {
                         self.link_goal_target(goal_id, "file", path, "file_changed", metadata)?;
                 }
             }
+            "tool:lsp" => {
+                if op.state != WorkflowOpState::Completed {
+                    return Ok(());
+                }
+                self.link_goal_diagnostic_evidence_for_workflow_lsp(goal_id, run, op)?;
+            }
             _ => {}
+        }
+        Ok(())
+    }
+
+    fn link_goal_artifact_evidence_for_workflow_finish(
+        &self,
+        goal_id: &str,
+        run: &WorkflowRun,
+        op: &WorkflowOp,
+    ) -> Result<()> {
+        let Some(output) = op.output.as_ref() else {
+            return Ok(());
+        };
+        for (index, artifact) in goal_artifacts_from_finish_output(output)
+            .into_iter()
+            .take(GOAL_EVIDENCE_MAX_ARTIFACT_LINKS)
+            .enumerate()
+        {
+            let target_id = artifact_target_id(&artifact)
+                .unwrap_or_else(|| format!("{}:{}:artifact#{}", run.id, op.op_key, index + 1));
+            let title = artifact_title(&artifact, &target_id);
+            let metadata = json!({
+                "runId": run.id,
+                "opKey": op.op_key,
+                "opType": op.op_type,
+                "kind": run.kind,
+                "title": title,
+                "summary": artifact_summary(&artifact),
+                "artifactKind": artifact_string_any(&artifact, &["kind", "type", "artifactKind", "artifact_kind"]),
+                "path": artifact_string_any(&artifact, &["path", "filePath", "file_path"]),
+                "artifactId": artifact_string_any(&artifact, &["id", "artifactId", "artifact_id"]),
+                "url": artifact_string_any(&artifact, &["url", "href"]),
+                "hash": artifact_string_any(&artifact, &["hash", "contentHash", "content_hash"]),
+                "completedAt": op.completed_at,
+                "source": "workflow.finish",
+            });
+            let _ = self.link_goal_target(
+                goal_id,
+                "artifact",
+                &target_id,
+                "artifact_created",
+                metadata,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn link_goal_diagnostic_evidence_for_workflow_lsp(
+        &self,
+        goal_id: &str,
+        run: &WorkflowRun,
+        op: &WorkflowOp,
+    ) -> Result<()> {
+        let action = op
+            .input
+            .get("args")
+            .and_then(|args| args.get("action"))
+            .and_then(Value::as_str)
+            .unwrap_or("diagnostics");
+        if !matches!(action, "diagnostics" | "sync_file") {
+            return Ok(());
+        }
+        let Some(output) = op.output.as_ref() else {
+            return Ok(());
+        };
+        let parsed = parse_workflow_tool_json_output(output).unwrap_or_else(|| output.clone());
+        let output_action = parsed
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or(action);
+        if !matches!(output_action, "diagnostics" | "sync_file") {
+            return Ok(());
+        }
+        let diagnostics = parsed
+            .get("diagnostics")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let errors = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic_severity(diagnostic) == "error")
+            .count();
+        let warnings = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic_severity(diagnostic) == "warning")
+            .count();
+        let summary = if diagnostics.is_empty() {
+            "No LSP diagnostics reported".to_string()
+        } else {
+            format!(
+                "{} LSP diagnostic(s): {} error(s), {} warning(s)",
+                diagnostics.len(),
+                errors,
+                warnings
+            )
+        };
+        let summary_status = if errors > 0 { "failed" } else { "passed" };
+        let workspace_root = parsed.get("workspaceRoot").cloned().unwrap_or(Value::Null);
+        let path = lsp_diagnostic_scope_path(&op.input, &parsed);
+        let _ = self.link_goal_target(
+            goal_id,
+            "diagnostic",
+            &format!("{}:{}:summary", run.id, op.op_key),
+            "diagnostic_result",
+            json!({
+                "runId": run.id,
+                "opKey": op.op_key,
+                "opType": op.op_type,
+                "kind": run.kind,
+                "action": output_action,
+                "status": summary_status,
+                "severity": if errors > 0 { "error" } else { "none" },
+                "summary": summary,
+                "diagnostics": diagnostics.len(),
+                "errors": errors,
+                "warnings": warnings,
+                "path": path,
+                "workspaceRoot": workspace_root,
+                "completedAt": op.completed_at,
+                "source": "workflow.tool:lsp",
+                "truncated": diagnostics.len() > GOAL_EVIDENCE_MAX_DIAGNOSTIC_LINKS,
+            }),
+        )?;
+        for diagnostic in diagnostics.iter().take(GOAL_EVIDENCE_MAX_DIAGNOSTIC_LINKS) {
+            let target_id = diagnostic_target_id(run, op, diagnostic);
+            let severity = diagnostic_severity(diagnostic);
+            let message = diagnostic_message(diagnostic);
+            let path = diagnostic_path(diagnostic);
+            let metadata = json!({
+                "runId": run.id,
+                "opKey": op.op_key,
+                "opType": op.op_type,
+                "kind": run.kind,
+                "action": output_action,
+                "path": path,
+                "uri": diagnostic.get("uri").cloned().unwrap_or(Value::Null),
+                "range": diagnostic.get("range").cloned().unwrap_or(Value::Null),
+                "line": diagnostic
+                    .get("range")
+                    .and_then(|range| range.get("startLine"))
+                    .and_then(Value::as_u64),
+                "column": diagnostic
+                    .get("range")
+                    .and_then(|range| range.get("startColumn"))
+                    .and_then(Value::as_u64),
+                "severity": severity,
+                "status": if severity == "error" { "failed" } else { "reported" },
+                "source": diagnostic.get("source").cloned().unwrap_or_else(|| json!("lsp")),
+                "code": diagnostic.get("code").cloned().unwrap_or(Value::Null),
+                "message": message,
+                "summary": format!("{}: {}", severity, message),
+                "completedAt": op.completed_at,
+            });
+            let _ = self.link_goal_target(
+                goal_id,
+                "diagnostic",
+                &target_id,
+                "diagnostic_result",
+                metadata,
+            )?;
         }
         Ok(())
     }
@@ -1547,6 +1721,13 @@ fn active_blocking_evidence(evidence: &[GoalEvidenceItem]) -> Vec<&GoalEvidenceI
                         .map(|latest| latest > item.created_at.as_str())
                         .unwrap_or(false)
             }
+            "diagnostic_result" => {
+                diagnostic_result_is_blocking(item)
+                    && !latest_validation_pass
+                        .map(|latest| latest > item.created_at.as_str())
+                        .unwrap_or(false)
+                    && !diagnostic_result_resolved_by_newer_clean(item, evidence)
+            }
             _ => false,
         })
         .collect()
@@ -1590,6 +1771,46 @@ fn domain_quality_check_is_blocking(item: &GoalEvidenceItem) -> bool {
         .to_lowercase();
     matches!(severity.as_str(), "p0" | "p1" | "critical" | "high")
         && matches!(status.as_str(), "failed" | "blocked" | "needs_user")
+}
+
+fn diagnostic_result_is_blocking(item: &GoalEvidenceItem) -> bool {
+    let severity = metadata_string(&item.metadata, "severity")
+        .unwrap_or_default()
+        .to_lowercase();
+    let status = metadata_string(&item.metadata, "status")
+        .unwrap_or_default()
+        .to_lowercase();
+    let errors = metadata_u64(&item.metadata, "errors").unwrap_or(0);
+    errors > 0
+        || matches!(severity.as_str(), "error" | "critical" | "high")
+        || matches!(status.as_str(), "failed" | "blocked")
+}
+
+fn diagnostic_result_is_clean(item: &GoalEvidenceItem) -> bool {
+    let status = metadata_string(&item.metadata, "status")
+        .unwrap_or_default()
+        .to_lowercase();
+    let errors = metadata_u64(&item.metadata, "errors").unwrap_or(0);
+    item.relation == "diagnostic_result" && status == "passed" && errors == 0
+}
+
+fn diagnostic_result_resolved_by_newer_clean(
+    item: &GoalEvidenceItem,
+    evidence: &[GoalEvidenceItem],
+) -> bool {
+    evidence.iter().any(|candidate| {
+        candidate.created_at > item.created_at
+            && diagnostic_result_is_clean(candidate)
+            && diagnostic_clean_scope_matches(item, candidate)
+    })
+}
+
+fn diagnostic_clean_scope_matches(item: &GoalEvidenceItem, clean: &GoalEvidenceItem) -> bool {
+    let clean_path = metadata_string(&clean.metadata, "path");
+    let Some(clean_path) = clean_path.as_deref() else {
+        return true;
+    };
+    metadata_string(&item.metadata, "path").as_deref() == Some(clean_path)
 }
 
 fn dedup_json_items(items: &mut Vec<Value>) {
@@ -1735,7 +1956,6 @@ fn goal_evidence_is_positive(item: &GoalEvidenceItem) -> bool {
             | "file_changed"
             | "artifact_created"
             | "review_passed"
-            | "diagnostic_result"
             | "source_cited"
             | "claim_checked"
             | "user_decision"
@@ -1746,7 +1966,7 @@ fn goal_evidence_is_positive(item: &GoalEvidenceItem) -> bool {
             | "meeting_context_collected"
             | "domain_quality_passed"
             | "task_completed"
-    )
+    ) || (item.relation == "diagnostic_result" && !diagnostic_result_is_blocking(item))
 }
 
 fn goal_evidence_is_strong_positive(item: &GoalEvidenceItem) -> bool {
@@ -1777,11 +1997,14 @@ fn goal_link_title(link: &GoalLink) -> String {
             )
         }
         "file_changed" => format!("File changed: {}", link.target_id),
-        "artifact_created" => "Artifact created".to_string(),
+        "artifact_created" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Artifact created".to_string()),
         "review_passed" => "Review passed".to_string(),
         "review_completed" => "Review completed".to_string(),
         "review_finding" => "Review finding".to_string(),
-        "diagnostic_result" => "Diagnostic result".to_string(),
+        "diagnostic_result" => metadata_string(&link.metadata, "message")
+            .or_else(|| metadata_string(&link.metadata, "summary"))
+            .unwrap_or_else(|| "Diagnostic result".to_string()),
         "source_cited" => {
             metadata_string(&link.metadata, "title").unwrap_or_else(|| "Source cited".to_string())
         }
@@ -1826,6 +2049,158 @@ fn goal_link_summary(link: &GoalLink) -> Option<String> {
                 None
             }
         })
+}
+
+fn goal_artifacts_from_finish_output(output: &Value) -> Vec<Value> {
+    let mut artifacts = Vec::new();
+    if let Some(items) = output.get("artifacts").and_then(Value::as_array) {
+        artifacts.extend(items.iter().cloned());
+    }
+    if let Some(item) = output.get("artifact") {
+        artifacts.push(item.clone());
+    }
+    artifacts
+}
+
+fn artifact_target_id(artifact: &Value) -> Option<String> {
+    if let Some(raw) = artifact.as_str() {
+        return non_empty(raw).map(str::to_string);
+    }
+    artifact_string_any(
+        artifact,
+        &[
+            "id",
+            "artifactId",
+            "artifact_id",
+            "path",
+            "filePath",
+            "file_path",
+            "url",
+            "href",
+        ],
+    )
+}
+
+fn artifact_title(artifact: &Value, fallback: &str) -> String {
+    artifact_string_any(artifact, &["title", "name", "label"])
+        .or_else(|| {
+            artifact_string_any(artifact, &["path", "filePath", "file_path"]).map(|path| {
+                std::path::Path::new(&path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(path.as_str())
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn artifact_summary(artifact: &Value) -> Option<String> {
+    if let Some(raw) = artifact.as_str() {
+        return Some(raw.to_string());
+    }
+    artifact_string_any(artifact, &["summary", "description", "body", "path", "url"])
+}
+
+fn artifact_string_any(artifact: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        artifact
+            .get(*key)
+            .and_then(Value::as_str)
+            .and_then(non_empty)
+            .map(str::to_string)
+    })
+}
+
+fn parse_workflow_tool_json_output(output: &Value) -> Option<Value> {
+    match output {
+        Value::String(raw) => serde_json::from_str(raw).ok(),
+        Value::Object(_) => Some(output.clone()),
+        _ => None,
+    }
+}
+
+fn diagnostic_target_id(run: &WorkflowRun, op: &WorkflowOp, diagnostic: &Value) -> String {
+    let path = diagnostic_path(diagnostic);
+    let line = diagnostic
+        .get("range")
+        .and_then(|range| range.get("startLine"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let column = diagnostic
+        .get("range")
+        .and_then(|range| range.get("startColumn"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let message = diagnostic_message(diagnostic);
+    let fingerprint = blake3::hash(
+        format!(
+            "{}\n{}\n{}\n{}\n{}",
+            path,
+            line,
+            column,
+            diagnostic_severity(diagnostic),
+            message
+        )
+        .as_bytes(),
+    );
+    format!(
+        "{}:{}:{}:{}:{}",
+        run.id,
+        op.op_key,
+        path,
+        line,
+        &fingerprint.to_hex()[..12]
+    )
+}
+
+fn diagnostic_path(diagnostic: &Value) -> String {
+    diagnostic
+        .get("path")
+        .and_then(Value::as_str)
+        .or_else(|| diagnostic.get("uri").and_then(Value::as_str))
+        .unwrap_or("<unknown>")
+        .to_string()
+}
+
+fn diagnostic_severity(diagnostic: &Value) -> String {
+    diagnostic
+        .get("severity")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_lowercase()
+}
+
+fn diagnostic_message(diagnostic: &Value) -> String {
+    diagnostic
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("LSP diagnostic")
+        .replace('\n', " ")
+}
+
+fn lsp_diagnostic_scope_path(input: &Value, output: &Value) -> Option<String> {
+    input
+        .get("args")
+        .and_then(|args| args.get("path"))
+        .and_then(Value::as_str)
+        .and_then(non_empty)
+        .or_else(|| {
+            output
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+        })
+        .map(str::to_string)
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 fn goal_event_title(kind: &str) -> &'static str {
@@ -2289,6 +2664,207 @@ mod tests {
             .evidence
             .iter()
             .any(|item| item.relation == "file_changed"));
+    }
+
+    #[test]
+    fn workflow_finish_op_links_artifact_evidence() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run.id.clone(),
+            op_key: "finish-1".to_string(),
+            op_type: "finish".to_string(),
+            effect_class: WorkflowEffectClass::Pure,
+            input: json!({}),
+            child_handle: None,
+        })
+        .expect("start finish op");
+        db.complete_workflow_op(
+            &run.id,
+            "finish-1",
+            json!({
+                "summary": "created release notes",
+                "artifacts": [{
+                    "path": "docs/release-notes.md",
+                    "title": "Release notes",
+                    "kind": "markdown",
+                    "summary": "Draft release notes for review",
+                    "hash": "abc123",
+                }],
+            }),
+        )
+        .expect("complete finish");
+
+        let snapshot = db
+            .goal_snapshot(&goal.goal.id, 200)
+            .expect("goal snapshot")
+            .expect("goal exists");
+        assert!(snapshot.links.iter().any(|link| {
+            link.target_type == "artifact"
+                && link.target_id == "docs/release-notes.md"
+                && link.relation == "artifact_created"
+                && link.metadata.get("title").and_then(Value::as_str) == Some("Release notes")
+        }));
+        assert!(snapshot
+            .evidence
+            .iter()
+            .any(|item| { item.relation == "artifact_created" && item.title == "Release notes" }));
+    }
+
+    #[test]
+    fn workflow_lsp_diagnostics_link_goal_blocker_until_clean_result() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run.id.clone(),
+            op_key: "lsp-1".to_string(),
+            op_type: "tool:lsp".to_string(),
+            effect_class: WorkflowEffectClass::Pure,
+            input: json!({
+                "name": "lsp",
+                "args": { "action": "diagnostics" },
+            }),
+            child_handle: None,
+        })
+        .expect("start lsp op");
+        db.complete_workflow_op(
+            &run.id,
+            "lsp-1",
+            Value::String(
+                json!({
+                    "action": "diagnostics",
+                    "workspaceRoot": "/repo",
+                    "diagnostics": [{
+                        "uri": "file:///repo/src/lib.rs",
+                        "path": "/repo/src/lib.rs",
+                        "range": {
+                            "startLine": 12,
+                            "startColumn": 5,
+                            "endLine": 12,
+                            "endColumn": 16,
+                        },
+                        "severity": "error",
+                        "code": "E0308",
+                        "source": "rust-analyzer",
+                        "message": "mismatched types",
+                    }],
+                })
+                .to_string(),
+            ),
+        )
+        .expect("complete lsp diagnostics");
+
+        let blocked = db.evaluate_goal(&goal.goal.id).expect("evaluate goal");
+        assert_eq!(blocked.goal.state, GoalState::Blocked);
+        assert!(blocked.links.iter().any(|link| {
+            link.target_type == "diagnostic"
+                && link.relation == "diagnostic_result"
+                && link.metadata.get("severity").and_then(Value::as_str) == Some("error")
+        }));
+        let blockers = blocked
+            .goal
+            .final_evidence
+            .get("blockers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(blockers.iter().any(|item| {
+            item.as_str()
+                .is_some_and(|text| text.contains("mismatched types"))
+        }));
+
+        db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run.id.clone(),
+            op_key: "lsp-2".to_string(),
+            op_type: "tool:lsp".to_string(),
+            effect_class: WorkflowEffectClass::Pure,
+            input: json!({
+                "name": "lsp",
+                "args": { "action": "sync_file", "path": "/repo/src/other.rs" },
+            }),
+            child_handle: None,
+        })
+        .expect("start unrelated clean lsp op");
+        db.complete_workflow_op(
+            &run.id,
+            "lsp-2",
+            Value::String(
+                json!({
+                    "action": "sync_file",
+                    "workspaceRoot": "/repo",
+                    "path": "/repo/src/other.rs",
+                    "diagnostics": [],
+                })
+                .to_string(),
+            ),
+        )
+        .expect("complete unrelated clean diagnostics");
+
+        let still_blocked = db
+            .evaluate_goal(&goal.goal.id)
+            .expect("re-evaluate goal after unrelated clean diagnostics");
+        let blockers = still_blocked
+            .goal
+            .final_evidence
+            .get("blockers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(blockers.iter().any(|item| {
+            item.as_str()
+                .is_some_and(|text| text.contains("mismatched types"))
+        }));
+
+        db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run.id.clone(),
+            op_key: "lsp-3".to_string(),
+            op_type: "tool:lsp".to_string(),
+            effect_class: WorkflowEffectClass::Pure,
+            input: json!({
+                "name": "lsp",
+                "args": { "action": "diagnostics" },
+            }),
+            child_handle: None,
+        })
+        .expect("start workspace clean lsp op");
+        db.complete_workflow_op(
+            &run.id,
+            "lsp-3",
+            Value::String(
+                json!({
+                    "action": "diagnostics",
+                    "workspaceRoot": "/repo",
+                    "diagnostics": [],
+                })
+                .to_string(),
+            ),
+        )
+        .expect("complete workspace clean diagnostics");
+
+        let clean = db
+            .evaluate_goal(&goal.goal.id)
+            .expect("re-evaluate goal after workspace clean diagnostics");
+        let blockers = clean
+            .goal
+            .final_evidence
+            .get("blockers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(!blockers.iter().any(|item| {
+            item.as_str()
+                .is_some_and(|text| text.contains("mismatched types"))
+        }));
     }
 
     #[test]

@@ -78,10 +78,10 @@ UNIQUE(session_id) WHERE state IN ('active','paused','evaluating','blocked')
 | 字段 | 说明 |
 | --- | --- |
 | `goal_id` | 所属 Goal。 |
-| `target_type` | `workflow_run` / `validation` / `diff` / `file` / `review`；预留 `task` / `artifact` / `diagnostic`。 |
+| `target_type` | `workflow_run` / `validation` / `diff` / `file` / `artifact` / `diagnostic` / `review`；预留 `task` / `worktree`。 |
 | `target_id` | 被关联对象 id。 |
-| `relation` | `execution_run`、`repair_run`、`workflow_completed`、`workflow_failed`、`workflow_blocked`、`validation_passed`、`validation_failed`、`diff_snapshot`、`file_changed`、`review_passed`、`review_completed`、`review_finding` 等。 |
-| `metadata_json` | 关联时的状态、kind、origin、blocked reason、op key、summary、changed files、line delta 等摘要。 |
+| `relation` | `execution_run`、`repair_run`、`workflow_completed`、`workflow_failed`、`workflow_blocked`、`validation_passed`、`validation_failed`、`diff_snapshot`、`file_changed`、`artifact_created`、`diagnostic_result`、`review_passed`、`review_completed`、`review_finding` 等。 |
+| `metadata_json` | 关联时的状态、kind、origin、blocked reason、op key、summary、changed files、line delta、artifact path/hash、diagnostic severity/range 等摘要。 |
 
 `GoalSnapshot` 额外派生 GUI 友好字段，不单独落表：
 
@@ -132,6 +132,8 @@ stateDiagram-v2
 - run 进入 `completed` / `failed` / `blocked` 后 best-effort 触发 `evaluate_goal`。
 - `workflow.validate` op 结束后写 `validation_passed` / `validation_failed` evidence。
 - `workflow.diff` op 结束后写 `diff_snapshot`，并为最多 50 个 changed file 写 `file_changed` evidence。
+- `workflow.finish({ artifact | artifacts })` 结束后写 `artifact_created` evidence，记录产物 id/path/title/kind/hash 等摘要。
+- workflow 内 `workflow.tool({ name: "lsp", args: { action: "diagnostics" | "sync_file" } })` 结束后写 `diagnostic_result` evidence；error 级诊断是 hard blocker，后续 passing validation 或 clean diagnostics 可解除较早诊断 blocker。
 - Review Engine 完成后写 `review_passed` / `review_completed`；P0/P1 open finding 写 `review_finding`，finding 状态变更会刷新 link metadata。
 - Smart Verification 完成后写 `validation_passed` / `validation_failed` / `validation_completed`；只有 `validation_passed` 是 strong completion evidence，`validation_completed` 只表示已完成验证选择。
 - 创建新 workflow 前会检查绑定 Goal 的 budget；若 token/time/turn 任一正数上限已耗尽，拒绝创建新 run，并写一次 `budget_warning(level='exhausted')`。
@@ -146,7 +148,7 @@ Evaluator v2 是确定性规则门禁，输入为：
 - completion criteria。
 - linked workflow runs。
 - session tasks。
-- `goal_links` 中的 workflow / validation / diff / file / review evidence。
+- `goal_links` 中的 workflow / validation / diff / file / artifact / diagnostic / review evidence。
 - workflow blocked/failed/cancelled 状态。
 - budget snapshot。
 
@@ -161,7 +163,7 @@ Evaluator v2 是确定性规则门禁，输入为：
 | `missing` | 缺少证据或未完成项。 |
 | `blockers` | 明确阻塞项。 |
 | `criteriaStatus` | 逐条 completion criteria 的状态、原因和 evidence ids。 |
-| `evidence` | workflow / validation / diff / file / review / task 证据。 |
+| `evidence` | workflow / validation / diff / file / artifact / diagnostic / review / task 证据。 |
 | `nextEvidenceNeeded` | 下一步需要补的证据，如 final verification、repair workflow、criterion evidence、budget 扩容。 |
 | `budget` | 本次 audit 使用的预算快照。 |
 | `ruleGate` | 规则门禁结果、hard blocker evidence ids、strong evidence ids、LLM auditor 跳过原因。 |
@@ -250,6 +252,6 @@ Workspace / Workflow Control Center 内有 Goal strip：
 - agent 工具面直接修改 Goal。
 - LLM side-query evaluator。
 - 独立 Goal detail 全屏页面。
-- artifact / Worktree / LSP diagnostic 强类型证据接入。
+- Worktree 强类型证据接入。
 
 这些后续仍在 `docs/roadmap/` 跟踪；实现稳定后再沉淀到对应 architecture 文档。

@@ -281,7 +281,7 @@ Goal
 - 已落地：Review Engine 写 `review_passed` / `review_completed` / `review_finding` evidence。
 - 已落地：Smart Verification 写 `validation_passed` / `validation_failed` / `validation_completed` evidence。
 - 已落地：`/workflow status` 显示当前 active Goal，`/workflow runs` / `trace` 显示 run 归属目标。
-- 后续增强：artifact / diagnostic 强类型 evidence 接入。
+- 已落地：workflow finish artifacts 写 `artifact_created` evidence，workflow 内 LSP diagnostics 写 `diagnostic_result` evidence，error 级 diagnostic 会阻止 Goal completed。
 - 后续增强：独立 Goal detail 全屏页面。
 
 增强细节见 [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)。
@@ -420,7 +420,7 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 
 后续增强：
 
-- Goal evaluator 的强类型 diagnostics evidence。
+- 更丰富的 diagnostic lifecycle evidence，例如按 LSP publishDiagnostics 事件自动刷新已解决诊断。
 - Workflow validation summary 汇总 diagnostics。
 - 更完整的 ACP / IDE 双向 RPC；轻量 IDE context envelope 已在 Phase 3.10 落地。
 
