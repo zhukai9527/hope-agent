@@ -280,9 +280,9 @@ Goal
 - 已落地：Goal budget 展示 token/time/turn 使用，接近上限写 warning event，耗尽后阻止新 workflow。
 - 已落地：Review Engine 写 `review_passed` / `review_completed` / `review_finding` evidence。
 - 已落地：Smart Verification 写 `validation_passed` / `validation_failed` / `validation_completed` evidence。
+- 已落地：`/workflow status` 显示当前 active Goal，`/workflow runs` / `trace` 显示 run 归属目标。
 - 后续增强：artifact / diagnostic 强类型 evidence 接入。
 - 后续增强：独立 Goal detail 全屏页面。
-- 后续增强：`/workflow` status 显示归属目标。
 
 增强细节见 [Goal-driven Workflow v2 路线图](goal-driven-workflow-v2.md)。
 

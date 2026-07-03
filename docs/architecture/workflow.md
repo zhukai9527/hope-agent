@@ -497,6 +497,8 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 
 `run_id` 可省略；省略时 handler 会按状态选择当前 active run 或最近 run。短 id prefix 在唯一时可用。
 
+`/workflow status` 会显示当前 active Goal；`/workflow runs` 会在每条 run 后显示已绑定 Goal；`/workflow trace` 会显示当前 run 的 Linked Goal。命令面因此和 Workspace / Workflow Control Center 一样，不把 workflow run 从最终目标语义里拆开。
+
 `/mode` 控制 session execution mode：
 
 ```text

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::execution_mode::ExecutionMode;
+use crate::goal::Goal;
 use crate::session::SessionDB;
 use crate::slash_commands::types::{CommandAction, CommandResult};
 use crate::workflow::{WorkflowOp, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState};
@@ -10,6 +11,9 @@ const WORKFLOW_LIST_LIMIT: usize = 12;
 const WORKFLOW_EVENT_LIMIT: usize = 40;
 const WORKFLOW_TRACE_OP_LIMIT: usize = 8;
 const WORKFLOW_TRACE_EVENT_LIMIT: usize = 8;
+const GOAL_OBJECTIVE_STATUS_LIMIT: usize = 120;
+const GOAL_OBJECTIVE_LIST_LIMIT: usize = 72;
+const GOAL_OBJECTIVE_TRACE_LIMIT: usize = 160;
 
 pub fn handle_workflow(
     session_db: &Arc<SessionDB>,
@@ -206,13 +210,15 @@ fn render_workflow_status(session_db: &Arc<SessionDB>, sid: &str) -> Result<Comm
         active,
         runs.len()
     ));
+    lines.push(format_active_goal_line(session_db, sid)?);
     if let Some(run) = runs.first() {
         lines.push(format!(
-            "Latest: `{}` · **{}** · `{}` · updated `{}`",
+            "Latest: `{}` · **{}** · `{}` · updated `{}`{}",
             short_id(&run.id),
             run.state.as_str(),
             run.kind,
-            run.updated_at
+            run.updated_at,
+            workflow_goal_suffix(session_db, run)?
         ));
     }
     lines.push(
@@ -259,12 +265,13 @@ fn render_workflow_list(session_db: &Arc<SessionDB>, sid: &str) -> Result<Comman
     )];
     for run in runs {
         lines.push(format!(
-            "- `{}` · **{}** · `{}` · {} · updated `{}`{}",
+            "- `{}` · **{}** · `{}` · {} · updated `{}`{}{}",
             short_id(&run.id),
             run.state.as_str(),
             run.execution_mode,
             run.kind,
             run.updated_at,
+            workflow_goal_suffix(session_db, &run)?,
             run.blocked_reason
                 .as_deref()
                 .map(|reason| format!(" · blocked: {}", truncate(reason, 80)))
@@ -289,6 +296,10 @@ fn render_workflow_trace(
         snapshot.run.execution_mode,
         snapshot.run.updated_at
     )];
+
+    if let Some(goal_line) = workflow_goal_trace_line(session_db, &snapshot.run)? {
+        lines.push(goal_line);
+    }
 
     if let Some(reason) = snapshot.run.blocked_reason.as_deref() {
         lines.push(format!("Blocked: {}", truncate(reason, 180)));
@@ -511,6 +522,65 @@ fn workflow_op_summary(ops: &[WorkflowOp]) -> String {
     }
 }
 
+fn format_active_goal_line(session_db: &Arc<SessionDB>, sid: &str) -> Result<String, String> {
+    let goal = session_db
+        .active_goal_for_session(sid)
+        .map_err(|e| e.to_string())?
+        .map(|snapshot| snapshot.goal);
+    Ok(match goal {
+        Some(goal) => format!(
+            "Active Goal: {}",
+            format_goal_reference(&goal, GOAL_OBJECTIVE_STATUS_LIMIT)
+        ),
+        None => "Active Goal: none".to_string(),
+    })
+}
+
+fn workflow_goal_suffix(session_db: &Arc<SessionDB>, run: &WorkflowRun) -> Result<String, String> {
+    let Some(goal) = workflow_goal(session_db, run)? else {
+        return Ok(String::new());
+    };
+    Ok(format!(
+        " · Goal: {}",
+        format_goal_reference(&goal, GOAL_OBJECTIVE_LIST_LIMIT)
+    ))
+}
+
+fn workflow_goal_trace_line(
+    session_db: &Arc<SessionDB>,
+    run: &WorkflowRun,
+) -> Result<Option<String>, String> {
+    let Some(goal_id) = run.goal_id.as_deref() else {
+        return Ok(Some("Linked Goal: none".to_string()));
+    };
+    match session_db.get_goal(goal_id).map_err(|e| e.to_string())? {
+        Some(goal) => Ok(Some(format!(
+            "Linked Goal: {}",
+            format_goal_reference(&goal, GOAL_OBJECTIVE_TRACE_LIMIT)
+        ))),
+        None => Ok(Some(format!(
+            "Linked Goal: `{}` · missing",
+            short_id(goal_id)
+        ))),
+    }
+}
+
+fn workflow_goal(session_db: &Arc<SessionDB>, run: &WorkflowRun) -> Result<Option<Goal>, String> {
+    let Some(goal_id) = run.goal_id.as_deref() else {
+        return Ok(None);
+    };
+    session_db.get_goal(goal_id).map_err(|e| e.to_string())
+}
+
+fn format_goal_reference(goal: &Goal, objective_limit: usize) -> String {
+    format!(
+        "`{}` · **{}** · {}",
+        short_id(&goal.id),
+        goal.state.as_str(),
+        truncate(goal.objective.trim(), objective_limit)
+    )
+}
+
 fn display_only(content: impl Into<String>) -> CommandResult {
     CommandResult {
         content: content.into(),
@@ -643,6 +713,59 @@ mod tests {
         assert!(result.content.contains("Workflow Mode"));
         assert!(result.content.contains("Ultracode"));
         assert!(result.content.contains("Runs: **0** active"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn workflow_commands_show_linked_goal_context() {
+        let (db_path, db) = open_workflow_test_db("goal-context");
+        let session = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .expect("create session");
+        let goal = db
+            .create_goal(crate::goal::CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Ship slash workflow goal visibility".to_string(),
+                completion_criteria: "workflow commands show linked Goal context".to_string(),
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+        let run = db
+            .create_workflow_run(crate::workflow::CreateWorkflowRunInput {
+                session_id: session.id.clone(),
+                kind: "general.workflow".to_string(),
+                execution_mode: "guarded".to_string(),
+                script_source:
+                    "export default async function main(workflow) { await workflow.finish({ summary: 'done' }); }"
+                        .to_string(),
+                budget: serde_json::json!({}),
+                parent_run_id: None,
+                origin: None,
+                goal_id: None,
+                worktree_id: None,
+            })
+            .expect("create workflow run");
+        assert_eq!(run.goal_id.as_deref(), Some(goal.goal.id.as_str()));
+
+        let status = handle_workflow(&db, Some(&session.id), "").expect("workflow status");
+        assert!(status.content.contains("Active Goal:"));
+        assert!(status
+            .content
+            .contains("Ship slash workflow goal visibility"));
+        assert!(status.content.contains("Goal:"));
+
+        let runs = handle_workflow(&db, Some(&session.id), "runs").expect("workflow runs");
+        assert!(runs.content.contains("Goal:"));
+        assert!(runs.content.contains("Ship slash workflow goal visibility"));
+
+        let trace = handle_workflow(&db, Some(&session.id), "trace").expect("workflow trace");
+        assert!(trace.content.contains("Linked Goal:"));
+        assert!(trace
+            .content
+            .contains("Ship slash workflow goal visibility"));
 
         let _ = std::fs::remove_file(&db_path);
     }

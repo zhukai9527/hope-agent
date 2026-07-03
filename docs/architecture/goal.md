@@ -238,6 +238,7 @@ Workspace / Workflow Control Center 内有 Goal strip：
 - 目标模式发送时始终走 `/goal <objective>`；无 active Goal 时创建，有 active Goal 时更新同一个 Goal。控制词只有在完整参数精确等于 `status` / `pause` / `resume` / `evaluate` / `clear` 等时才作为命令，较长文本一律按目标正文处理。
 - 渲染用户消息时不显示 `/goal` 字符，而是在气泡内展示 Goal 模式标记。
 - 输入框上方常驻展示当前 active Goal 摘要、状态和编辑/评估/暂停/恢复/清除操作，用户不用打开 Workspace 也能掌握目标状态。
+- `/workflow status` / `/workflow runs` / `/workflow trace` 也会显示 active / linked Goal，命令面和 GUI 面保持同一条“目标 -> workflow run -> evidence”链路。
 
 每轮主对话 system prompt 会注入当前 active Goal 的 state、objective、completion criteria、blocked reason / latest audit 摘要。Goal 更新后，下一轮 prompt 重新构建即可让模型感知最新目标。
 
