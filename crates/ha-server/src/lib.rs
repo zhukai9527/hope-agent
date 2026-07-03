@@ -1544,6 +1544,22 @@ fn build_router_with_cors(
             "/coding-benchmark/reports/release-evidence",
             post(routes::coding_improvement::mark_benchmark_report_release_evidence),
         )
+        .route(
+            "/coding-benchmark/continuous-gate/evaluate",
+            post(routes::coding_improvement::evaluate_continuous_benchmark_gate),
+        )
+        .route(
+            "/coding-benchmark/backlog/materialize",
+            post(routes::coding_improvement::materialize_benchmark_backlog),
+        )
+        .route(
+            "/coding-benchmark/backlog",
+            post(routes::coding_improvement::list_benchmark_backlog),
+        )
+        .route(
+            "/coding-benchmark/backlog/status",
+            post(routes::coding_improvement::update_benchmark_backlog_status),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

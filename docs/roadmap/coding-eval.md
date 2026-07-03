@@ -299,7 +299,7 @@ cargo test -p ha-core --test coding_eval --locked
 - Phase 6.3 Cross-model Comparison & Leaderboard 已落地：同 pack/source/execution/baseline 的 campaign item 聚合、sample-size warning、Dashboard leaderboard 与 evidence 链回 campaign item / pack run。
 - Phase 6.4 Real Task Corpus Expansion 已落地：多项目、多语言、多难度、多任务类型 task pack manifest，支持版本、来源、校准记录、privacy / license note、redaction 状态、显式导入、activation validation 与 corpus health。
 - Phase 6.5 Benchmark Report Export 已落地：从 campaign / comparison / release gate 生成 Markdown / JSON / HTML snapshot，记录 report history，并可标记 release evidence。
-- Phase 6.6 Continuous Benchmark Gate & Improvement Backlog：发布前/策略变更后 benchmark policy、持续 gate、失败 case 转 improvement backlog。
+- Phase 6.6 Continuous Benchmark Gate & Improvement Backlog 已落地：发布前/策略变更后 benchmark policy、持续 gate、失败 case 转 benchmark improvement backlog。
 
 后续自动化必须复用现有 Goal / Workflow / Review / Verification / Context Retrieval 记录，不再造一套旁路 trace。
 
@@ -328,4 +328,4 @@ Phase 0 完成的最低标准：
 - [x] Phase 6.3：落地 Cross-model Comparison & Leaderboard，在同 pack / source / execution / baseline 下可信对标 provider/model。
 - [x] Phase 6.4：落地 Real Task Corpus Expansion，扩展真实任务集并管理 task pack version / source / calibration。
 - [x] Phase 6.5：落地 Benchmark Report Export，生成可复盘、可分享、可归档的 benchmark snapshot。
-- [ ] Phase 6.6：落地 Continuous Benchmark Gate & Improvement Backlog，把 benchmark 变成持续质量守门和改进输入。
+- [x] Phase 6.6：落地 Continuous Benchmark Gate & Improvement Backlog，把 benchmark 变成持续质量守门和改进输入。

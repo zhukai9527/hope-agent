@@ -866,6 +866,10 @@ pub fn run() {
             commands::coding_improvement::list_benchmark_reports,
             commands::coding_improvement::get_benchmark_report,
             commands::coding_improvement::mark_benchmark_report_release_evidence,
+            commands::coding_improvement::evaluate_continuous_benchmark_gate,
+            commands::coding_improvement::materialize_benchmark_backlog,
+            commands::coding_improvement::list_benchmark_backlog,
+            commands::coding_improvement::update_benchmark_backlog_status,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

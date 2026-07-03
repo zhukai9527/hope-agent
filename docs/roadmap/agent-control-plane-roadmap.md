@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-03
 >
-> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；Coding Eval 控制面评测已作为 Phase 3.7 落地并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)；Deep Review / Profiles / IDE Context 已作为 Phase 3.10 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md) 与 [Context Retrieval v2](../architecture/context-retrieval.md)；Trend Report / Improvement Loop 已作为 Phase 3.11 落地，Proposal-to-Action Learning Loop 已作为 Phase 4.1 落地，Draft Promotion + Workflow Retro Loop 已作为 Phase 4.2 落地，Dashboard 全局学习视图已作为 Phase 4.3 落地，Transcript Distillation + Failure Feedback 已作为 Phase 4.4 落地，均沉淀到 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)；Task-level Eval Runner 已作为 Phase 5.1 落地，Agent Execution Runner 已作为 Phase 5.2 落地，Gold Task Pack v1 已作为 Phase 5.3 落地，Strategy Effect Evaluator 已作为 Phase 5.4 落地，Gold Task Pack 全量自动化已作为 Phase 5.5 落地，Mock Tool-call 基线与执行指标已作为 Phase 5.6 落地，Strategy Effect 趋势持久化 / Dashboard 已作为 Phase 5.7 落地，Release Gate 已作为 Phase 5.8 落地，外部模型基线 runner 已作为 Phase 5.9 落地，Learning Generalization Gate 已作为 Phase 5.10 落地，Benchmark Run Center v1 已作为 Phase 6.1 落地，Benchmark Campaign Runner 已作为 Phase 6.2 落地，Cross-model Leaderboard 已作为 Phase 6.3 落地，Real Task Corpus Expansion 已作为 Phase 6.4 落地，Benchmark Report Export 已作为 Phase 6.5 落地，沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md) 与 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)；Phase 6.6 规划补齐 Continuous Benchmark Gate；Phase 7 规划 P6 后通用场景层，详见 [通用场景层与 Domain Workflow 路线图](general-domain-workflows.md)。
+> 状态：路线调整与方案设计。`/goal` 第一版已落地并沉淀到 [Goal 控制平面](../architecture/goal.md)；`/loop` 第一版已落地并沉淀到 [Loop 控制平面](../architecture/loop.md)；Managed Worktree 已作为 Phase 3.1 落地并沉淀到 [Managed Worktree 控制平面](../architecture/worktree.md)；LSP / Diagnostics 已作为 Phase 3.2 落地并沉淀到 [LSP 与语义代码智能](../architecture/lsp.md)；Review Engine 已作为 Phase 3.3 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md)；Smart Verification 已作为 Phase 3.4 落地并沉淀到 [Smart Verification 控制平面](../architecture/verification-engine.md)；Context Retrieval v2 与 Actionable Context Loop 已作为 Phase 3.5-3.6 落地并沉淀到 [Context Retrieval v2](../architecture/context-retrieval.md)；Coding Eval 控制面评测已作为 Phase 3.7 落地并沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md)；Deep Review / Profiles / IDE Context 已作为 Phase 3.10 落地并沉淀到 [Review Engine 控制平面](../architecture/review-engine.md) 与 [Context Retrieval v2](../architecture/context-retrieval.md)；Trend Report / Improvement Loop 已作为 Phase 3.11 落地，Proposal-to-Action Learning Loop 已作为 Phase 4.1 落地，Draft Promotion + Workflow Retro Loop 已作为 Phase 4.2 落地，Dashboard 全局学习视图已作为 Phase 4.3 落地，Transcript Distillation + Failure Feedback 已作为 Phase 4.4 落地，均沉淀到 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)；Task-level Eval Runner 已作为 Phase 5.1 落地，Agent Execution Runner 已作为 Phase 5.2 落地，Gold Task Pack v1 已作为 Phase 5.3 落地，Strategy Effect Evaluator 已作为 Phase 5.4 落地，Gold Task Pack 全量自动化已作为 Phase 5.5 落地，Mock Tool-call 基线与执行指标已作为 Phase 5.6 落地，Strategy Effect 趋势持久化 / Dashboard 已作为 Phase 5.7 落地，Release Gate 已作为 Phase 5.8 落地，外部模型基线 runner 已作为 Phase 5.9 落地，Learning Generalization Gate 已作为 Phase 5.10 落地，Benchmark Run Center v1 已作为 Phase 6.1 落地，Benchmark Campaign Runner 已作为 Phase 6.2 落地，Cross-model Leaderboard 已作为 Phase 6.3 落地，Real Task Corpus Expansion 已作为 Phase 6.4 落地，Benchmark Report Export 已作为 Phase 6.5 落地，Continuous Benchmark Gate & Improvement Backlog 已作为 Phase 6.6 落地，沉淀到 [Coding Eval 控制面评测](../architecture/coding-eval.md) 与 [Coding Improvement Loop](../architecture/coding-improvement-loop.md)；Phase 7 规划 P6 后通用场景层，详见 [通用场景层与 Domain Workflow 路线图](general-domain-workflows.md)。
 
 ## 1. 路线调整结论
 
@@ -67,7 +67,7 @@ Phase 6.2  Benchmark Campaign Runner（已完成）
 Phase 6.3  Cross-model Comparison & Leaderboard（已完成）
 Phase 6.4  Real Task Corpus Expansion（已完成）
 Phase 6.5  Benchmark Report Export（已完成）
-Phase 6.6  Continuous Benchmark Gate & Improvement Backlog（待做）
+Phase 6.6  Continuous Benchmark Gate & Improvement Backlog（已完成）
 Phase 7.1  Domain Workflow Registry（待做）
 Phase 7.2  General Evidence Model（待做）
 Phase 7.3  Domain Context Retrieval（待做）
@@ -99,7 +99,7 @@ Phase 7.6  General Eval & Quality Gate（待做）
 | Loop | 通用 | 已实现第一版 | 是否按时间、事件或条件重复触发。 |
 | Worktree | coding-specific | 已实现 Phase 3.1 | 代码改动落在哪个隔离环境。 |
 | Context Retrieval | 通用 owner-plane，当前 coding-first | 已实现 Phase 3.6 | 当前任务下一步最该看哪些上下文，以及能否直接进入 focused review / verification。 |
-| Coding Eval | coding-first 质量闸，harness 可复用于通用控制面 | 已实现 Phase 6.5 | 控制面协同是否可回归，关键上下文是否被召回，focused action 是否真实收窄，Agent 是否能从 prompt 生成候选结果，候选 diff 是否满足任务级成功标准；20 个 active gold tasks 是否可批量回放；mock tool-call 是否真实调用写文件工具；策略改动前后是否真的改善质量；持久化历史是否满足发布质量门禁；真实 provider 是否能在受控 Gold Pack 中从 prompt 产出可评分候选 diff；promoted learning 是否有跨项目泛化证据；Dashboard 是否能以 Benchmark Run Center / Campaign Runner / Leaderboard / Report History 形式展示、运行、取消、重试、对标、归档和审计当前 benchmark readiness。 |
+| Coding Eval | coding-first 质量闸，harness 可复用于通用控制面 | 已实现 Phase 6.6 | 控制面协同是否可回归，关键上下文是否被召回，focused action 是否真实收窄，Agent 是否能从 prompt 生成候选结果，候选 diff 是否满足任务级成功标准；20 个 active gold tasks 是否可批量回放；mock tool-call 是否真实调用写文件工具；策略改动前后是否真的改善质量；持久化历史是否满足发布质量门禁；真实 provider 是否能在受控 Gold Pack 中从 prompt 产出可评分候选 diff；promoted learning 是否有跨项目泛化证据；Dashboard 是否能以 Benchmark Run Center / Campaign Runner / Leaderboard / Report History / Continuous Gate / Improvement Backlog 形式展示、运行、取消、重试、对标、归档、守门和审计当前 benchmark readiness。 |
 | Coding Improvement | coding-first 改进回路，报告形态可复用于通用控制面 | 已实现 Phase 3.11 | 最近任务为什么完成/阻塞，下一步应补 eval、workflow、guidance 还是 skill。 |
 | Learning Loop | coding-first，后续可通用化 | 已实现 Phase 4.4 | 把改进 proposal 安全落成 eval / workflow / guidance / skill 草稿产物，把已应用草稿显式晋升为正式 eval fixture / project guidance / active skill，并支持用户显式从 transcript / workflow / failure feedback 提炼更高质量候选。 |
 | Domain Workflow | 通用场景层 | Phase 7 规划 | 把 Goal / Mode / Workflow / Loop / Evidence / Review / Verification / Learning Loop 产品化到调研、写作、数据分析、会议准备、知识整理、邮件沟通和项目运营等非编程任务。 |
@@ -672,7 +672,7 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - `coding_benchmark_campaigns.task_filter_json` 清空 provider config / modelChain 后落库，history 不保存 API key；runner 只使用本次 owner 调用传入的 provider configs。
 - Dashboard 增加 Campaign 列表：排队、运行、完成、失败、取消、interrupted 都可见，可取消，可 retry failed / interrupted / cancelled items。
 - 默认 Run 仍是 deterministic campaign，不访问外部模型；External campaign 控制区可显式选择 provider/model、max tasks 与预算 contract，外部模型 runner 会从本次输入或本机 cached config 解析 provider configs。
-- 当前 runner 是 owner-plane 后台 task + durable item 状态；跨模型 leaderboard 已在 P6.3 补齐，真实任务集 registry / health 已在 P6.4 补齐，报告导出已在 P6.5 补齐；跨进程恢复、成本/延迟聚合和更强 gate policy 留给 P6.6 继续补齐。
+- 当前 runner 是 owner-plane 后台 task + durable item 状态；跨模型 leaderboard 已在 P6.3 补齐，真实任务集 registry / health 已在 P6.4 补齐，报告导出已在 P6.5 补齐；P6.6 已把持续 gate、失败 backlog、可靠性和预算指标接入 owner-plane。跨进程恢复仍是后续运行时能力，不再阻塞 Phase 6 完成。
 
 ### Phase 6.3 Cross-model Comparison & Leaderboard（已完成）
 
@@ -695,12 +695,13 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - 已在 snapshot 中保留 campaign、pack run、leaderboard、release gate、benchmark center 与 corpus health evidence。
 - Dashboard 已增加 report history，可生成 Comparison / Release / 最新 Campaign 报告、复制路径、标记为 release evidence。
 
-### Phase 6.6 Continuous Benchmark Gate & Improvement Backlog（待做）
+### Phase 6.6 Continuous Benchmark Gate & Improvement Backlog（已完成）
 
-- 支持手动、发布前、策略变更后、task pack 更新后、周期触发的 benchmark policy；外部模型 policy 默认关闭。
-- 扩展 Release Gate：可要求最近 campaign、指定模型 baseline、指定 task pack、最小样本量、最大 regression、最大成本。
-- 把失败 case 转入 improvement backlog，保留 task id、model、失败分类、transcript/diff/review/verification evidence，并复用 proposal / retro / failure feedback 链路。
-- 增加 retention / cleanup 和运行可靠性指标，避免 benchmark history、raw artifact、队列和费用失控。
+- 已支持手动 / 发布前 / 策略变更后 / task pack 更新后 / 周期触发语义的 continuous benchmark gate 输入；外部模型要求默认 fail-closed，必须显式 `externalModelPolicyEnabled=true`。
+- 已把 release gate、release evidence report、recent campaign、指定 task pack、指定 provider/model/baseline、最小样本量、case pass rate、open backlog、pending failure、corpus health、预算 contract 和可靠性指标合成三态 gate report。
+- 已把 failed / interrupted / cancelled campaign item 转入 benchmark improvement backlog，保留 task id、model、baseline、失败分类、pack report evidence 与 campaign evidence；重复物化靠 `(campaign_item_id, task_id)` 去重。
+- Dashboard 已增加 Continuous Gate / Benchmark Backlog 面板：展示阻塞原因、推荐下一步、可靠性/预算摘要，可一键创建 backlog、标记 resolved。
+- 已暴露 retention summary knobs：`retentionDays` / `rawArtifactRetentionDays`。P6.6 不做静默删除，真实 cleanup 必须是后续显式 owner action，避免破坏 report snapshot evidence。
 
 ## 8.4 Phase 7：通用场景层与 Domain Workflow
 

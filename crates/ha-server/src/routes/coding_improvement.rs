@@ -1,8 +1,10 @@
 use axum::extract::{Path, Query};
 use axum::Json;
 use ha_core::coding_improvement::{
-    ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
-    CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
+    ApplyCodingImprovementProposalResult, CodingBenchmarkBacklogItem,
+    CodingBenchmarkBacklogListInput, CodingBenchmarkBacklogMaterializeInput,
+    CodingBenchmarkBacklogMaterializeResult, CodingBenchmarkBacklogStatusInput,
+    CodingBenchmarkCampaign, CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingBenchmarkComparisonInput, CodingBenchmarkCorpusHealthInput,
     CodingBenchmarkCorpusHealthReport, CodingBenchmarkLeaderboardInput,
@@ -10,9 +12,10 @@ use ha_core::coding_improvement::{
     CodingBenchmarkReportListInput, CodingBenchmarkReportMarkInput, CodingBenchmarkTaskPack,
     CodingBenchmarkTaskPackImportInput, CodingBenchmarkTaskPackListInput,
     CodingBenchmarkTaskPackStatusInput, CodingBenchmarkTaskPackValidateInput,
-    CodingBenchmarkTaskPackValidationReport, CodingEvalReleaseGateInput,
-    CodingEvalReleaseGateReport, CodingEvalRunRecord, CodingImprovementActionPlan,
-    CodingImprovementPromotionPlan, CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingBenchmarkTaskPackValidationReport, CodingContinuousBenchmarkGateInput,
+    CodingContinuousBenchmarkGateReport, CodingEvalReleaseGateInput, CodingEvalReleaseGateReport,
+    CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
+    CodingImprovementProposal, CodingLearningGeneralizationInput,
     CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
     GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
     RecordCodingEvalRunInput,
@@ -140,6 +143,30 @@ pub struct BenchmarkReportListBody {
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkReportMarkBody {
     pub input: CodingBenchmarkReportMarkInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuousBenchmarkGateBody {
+    pub input: CodingContinuousBenchmarkGateInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkBacklogMaterializeBody {
+    pub input: CodingBenchmarkBacklogMaterializeInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkBacklogListBody {
+    pub input: CodingBenchmarkBacklogListInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkBacklogStatusBody {
+    pub input: CodingBenchmarkBacklogStatusInput,
 }
 
 pub async fn get_coding_trend_report(
@@ -430,6 +457,42 @@ pub async fn mark_benchmark_report_release_evidence(
 ) -> Result<Json<CodingBenchmarkReport>, AppError> {
     session_db()?
         .mark_benchmark_report_release_evidence(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn evaluate_continuous_benchmark_gate(
+    Json(body): Json<ContinuousBenchmarkGateBody>,
+) -> Result<Json<CodingContinuousBenchmarkGateReport>, AppError> {
+    session_db()?
+        .evaluate_continuous_benchmark_gate(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn materialize_benchmark_backlog(
+    Json(body): Json<BenchmarkBacklogMaterializeBody>,
+) -> Result<Json<CodingBenchmarkBacklogMaterializeResult>, AppError> {
+    session_db()?
+        .materialize_benchmark_backlog(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn list_benchmark_backlog(
+    Json(body): Json<BenchmarkBacklogListBody>,
+) -> Result<Json<Vec<CodingBenchmarkBacklogItem>>, AppError> {
+    session_db()?
+        .list_benchmark_backlog(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn update_benchmark_backlog_status(
+    Json(body): Json<BenchmarkBacklogStatusBody>,
+) -> Result<Json<CodingBenchmarkBacklogItem>, AppError> {
+    session_db()?
+        .update_benchmark_backlog_status(body.input)
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

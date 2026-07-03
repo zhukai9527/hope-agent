@@ -63,6 +63,12 @@ const DEFAULT_BENCHMARK_CORPUS_STALE_DAYS: u32 = 90;
 const MAX_BENCHMARK_CORPUS_STALE_DAYS: u32 = 365;
 const DEFAULT_BENCHMARK_REPORT_LIMIT: usize = 20;
 const MAX_BENCHMARK_REPORT_LIMIT: usize = 100;
+const DEFAULT_CONTINUOUS_GATE_MAX_EVIDENCE_AGE_DAYS: u32 = 14;
+const MAX_CONTINUOUS_GATE_MAX_EVIDENCE_AGE_DAYS: u32 = 180;
+const DEFAULT_CONTINUOUS_GATE_MIN_CAMPAIGN_ITEMS: usize = 1;
+const DEFAULT_CONTINUOUS_GATE_MIN_CASE_PASS_RATE: f64 = 1.0;
+const DEFAULT_BENCHMARK_BACKLOG_LIMIT: usize = 20;
+const MAX_BENCHMARK_BACKLOG_LIMIT: usize = 100;
 const MAX_SCOPE_SESSIONS: usize = 200;
 const MAX_CONTENT_PREVIEW_BYTES: usize = 12 * 1024;
 const MAX_DISTILLATION_SESSIONS: usize = 12;
@@ -1543,6 +1549,234 @@ pub struct CodingBenchmarkReport {
     pub marked_release_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingContinuousBenchmarkGateInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_evidence_age_days: Option<u32>,
+    #[serde(default = "serde_default_true")]
+    pub require_release_report_evidence: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_recent_campaign: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_task_pack_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_baseline_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_model_id: Option<String>,
+    #[serde(default)]
+    pub require_external_model: bool,
+    #[serde(default)]
+    pub external_model_policy_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_campaign_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_case_pass_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_open_backlog_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_interrupted_campaigns: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_provider_error_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_exhausted_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingContinuousBenchmarkGateThresholds {
+    pub trigger_kind: String,
+    pub window_days: u32,
+    pub max_evidence_age_days: u32,
+    pub require_release_report_evidence: bool,
+    pub require_recent_campaign: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_task_pack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_baseline_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_model_id: Option<String>,
+    pub require_external_model: bool,
+    pub external_model_policy_enabled: bool,
+    pub min_campaign_items: usize,
+    pub min_case_pass_rate: f64,
+    pub max_open_backlog_items: usize,
+    pub max_interrupted_campaigns: usize,
+    pub max_provider_error_items: usize,
+    pub max_budget_exhausted_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingContinuousBenchmarkReliability {
+    pub campaigns: usize,
+    pub passed_campaigns: usize,
+    pub failed_campaigns: usize,
+    pub partial_campaigns: usize,
+    pub interrupted_campaigns: usize,
+    pub cancelled_campaigns: usize,
+    pub retry_attempts: usize,
+    pub retry_passed_items: usize,
+    pub provider_error_items: usize,
+    pub budget_exhausted_items: usize,
+    pub approval_wait_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub campaign_success_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_success_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_error_rate: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingContinuousBenchmarkGateSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_release_report_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_release_evidence_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_passed_at: Option<String>,
+    pub fresh_release_evidence: bool,
+    pub fresh_campaigns: usize,
+    pub total_campaign_items: usize,
+    pub passed_campaign_items: usize,
+    pub failed_campaign_items: usize,
+    pub interrupted_campaign_items: usize,
+    pub cancelled_campaign_items: usize,
+    pub selected_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_pass_rate: Option<f64>,
+    pub open_backlog_items: usize,
+    pub pending_failure_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_campaign_budget_usd: Option<f64>,
+    pub retention_days: u32,
+    pub raw_artifact_retention_days: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingContinuousBenchmarkGateReport {
+    pub generated_at: String,
+    pub status: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub since: String,
+    pub stale_before: String,
+    pub thresholds: CodingContinuousBenchmarkGateThresholds,
+    pub summary: CodingContinuousBenchmarkGateSummary,
+    pub reliability: CodingContinuousBenchmarkReliability,
+    pub checks: Vec<CodingBenchmarkCenterCheck>,
+    pub release_gate: CodingEvalReleaseGateReport,
+    pub leaderboard: CodingBenchmarkLeaderboardReport,
+    pub corpus_health: CodingBenchmarkCorpusHealthReport,
+    pub blockers: Vec<String>,
+    pub recommended_next_steps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkBacklogListInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkBacklogMaterializeInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub campaign_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkBacklogStatusInput {
+    pub item_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkBacklogItem {
+    pub id: String,
+    pub status: String,
+    pub severity: String,
+    pub title: String,
+    pub failure_category: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub campaign_id: String,
+    pub campaign_item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_run_id: Option<String>,
+    pub task_pack_id: String,
+    pub task_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub baseline_kind: String,
+    pub execution_mode: String,
+    pub evidence: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingBenchmarkBacklogMaterializeResult {
+    pub inserted: usize,
+    pub existing: usize,
+    pub items: Vec<CodingBenchmarkBacklogItem>,
+}
+
 struct ReportScope {
     session_id: String,
     project_id: Option<String>,
@@ -1577,6 +1811,32 @@ struct BenchmarkCenterScope {
     window_days: u32,
     since: String,
     limit: usize,
+}
+
+struct ContinuousBenchmarkGateScope {
+    session_id: Option<String>,
+    project_id: Option<String>,
+    scope: String,
+    since: String,
+    stale_before: String,
+}
+
+#[derive(Default)]
+struct ContinuousBenchmarkFailureCandidate {
+    campaign_id: String,
+    campaign_item_id: String,
+    pack_run_id: Option<String>,
+    task_pack_id: String,
+    task_id: String,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    label: Option<String>,
+    baseline_kind: String,
+    execution_mode: String,
+    status: String,
+    failure_category: String,
+    title: String,
+    evidence: Value,
 }
 
 struct BenchmarkLeaderboardScope {
@@ -1934,6 +2194,38 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             ON coding_benchmark_reports(project_id, session_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_coding_benchmark_reports_release
             ON coding_benchmark_reports(release_evidence, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS coding_benchmark_backlog_items (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            failure_category TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            session_id TEXT,
+            project_id TEXT,
+            campaign_id TEXT NOT NULL,
+            campaign_item_id TEXT NOT NULL,
+            pack_run_id TEXT,
+            task_pack_id TEXT NOT NULL,
+            task_id TEXT NOT NULL DEFAULT '',
+            provider_id TEXT,
+            model_id TEXT,
+            label TEXT,
+            baseline_kind TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            proposal_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            resolved_at TEXT,
+            UNIQUE(campaign_item_id, task_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_backlog_scope
+            ON coding_benchmark_backlog_items(project_id, session_id, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_coding_benchmark_backlog_campaign
+            ON coding_benchmark_backlog_items(campaign_id, campaign_item_id);
 
         CREATE TABLE IF NOT EXISTS coding_improvement_proposals (
             id TEXT PRIMARY KEY,
@@ -4216,6 +4508,520 @@ impl SessionDB {
             .ok_or_else(|| anyhow!("benchmark report not found after mark"))
     }
 
+    pub fn evaluate_continuous_benchmark_gate(
+        &self,
+        input: CodingContinuousBenchmarkGateInput,
+    ) -> Result<CodingContinuousBenchmarkGateReport> {
+        let thresholds = continuous_benchmark_gate_thresholds(&input)?;
+        let scope = self.resolve_continuous_benchmark_gate_scope(
+            &input,
+            thresholds.window_days,
+            thresholds.max_evidence_age_days,
+        )?;
+        let release_gate = self.evaluate_coding_eval_release_gate(CodingEvalReleaseGateInput {
+            session_id: scope.session_id.clone(),
+            project_id: scope.project_id.clone(),
+            window_days: Some(thresholds.window_days),
+            require_external_model_pack: thresholds.require_external_model
+                && thresholds.external_model_policy_enabled,
+            max_regressed_strategy_effects: Some(
+                DEFAULT_RELEASE_GATE_MAX_REGRESSED_STRATEGY_EFFECTS,
+            ),
+            ..Default::default()
+        })?;
+        let leaderboard = self.get_benchmark_leaderboard(CodingBenchmarkLeaderboardInput {
+            session_id: scope.session_id.clone(),
+            project_id: scope.project_id.clone(),
+            window_days: Some(thresholds.window_days),
+            limit: Some(DEFAULT_BENCHMARK_LEADERBOARD_LIMIT),
+            min_items: Some(thresholds.min_campaign_items),
+            ..Default::default()
+        })?;
+        let corpus_health =
+            self.get_benchmark_corpus_health(CodingBenchmarkCorpusHealthInput::default())?;
+        let (summary, reliability) = self.continuous_benchmark_gate_summary(&scope, &thresholds)?;
+        let mut checks = Vec::new();
+
+        push_benchmark_check(
+            &mut checks,
+            "release_gate",
+            release_gate.status.clone(),
+            "blocking",
+            "release gate passed",
+            release_gate.status.clone(),
+            "Continuous gate keeps the existing release gate visible instead of replacing it.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "corpus_health",
+            corpus_health.status.clone(),
+            "blocking",
+            "active benchmark corpus passed health checks",
+            corpus_health.status.clone(),
+            "Continuous benchmark evidence is only meaningful when the active task corpus is healthy.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "fresh_release_evidence",
+            if !thresholds.require_release_report_evidence {
+                "passed"
+            } else if summary.fresh_release_evidence {
+                "passed"
+            } else if summary.latest_release_evidence_at.is_some() {
+                "failed"
+            } else {
+                "insufficient_data"
+            },
+            "blocking",
+            format!(
+                "release evidence report within {} day(s)",
+                thresholds.max_evidence_age_days
+            ),
+            summary
+                .latest_release_evidence_at
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
+            "Release reports are immutable snapshots, so freshness is checked explicitly.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "recent_campaign",
+            if !thresholds.require_recent_campaign {
+                "passed"
+            } else if summary.fresh_campaigns > 0 {
+                "passed"
+            } else if reliability.campaigns > 0 {
+                "failed"
+            } else {
+                "insufficient_data"
+            },
+            "blocking",
+            format!(
+                "at least 1 matching campaign within {} day(s)",
+                thresholds.max_evidence_age_days
+            ),
+            format!("{} fresh campaign(s)", summary.fresh_campaigns),
+            "Pre-release and recurring checks should not rely on stale benchmark runs.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "campaign_item_sample",
+            if summary.total_campaign_items >= thresholds.min_campaign_items {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "blocking",
+            format!(
+                "at least {} matching item(s)",
+                thresholds.min_campaign_items
+            ),
+            format!("{} item(s)", summary.total_campaign_items),
+            "A gate with no model/baseline sample would be a false sense of safety.",
+        );
+        let case_pass_status = match summary.case_pass_rate {
+            Some(rate) if rate + f64::EPSILON >= thresholds.min_case_pass_rate => "passed",
+            Some(_) => "failed",
+            None if thresholds.min_campaign_items == 0 => "passed",
+            None => "insufficient_data",
+        };
+        push_benchmark_check(
+            &mut checks,
+            "campaign_case_pass_rate",
+            case_pass_status,
+            "blocking",
+            format!("case pass rate >= {:.3}", thresholds.min_case_pass_rate),
+            summary
+                .case_pass_rate
+                .map(|rate| format!("{rate:.3}"))
+                .unwrap_or_else(|| "no passed/failed cases".to_string()),
+            "Continuous gate uses campaign item case pass rate as the recent product-quality signal.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "open_backlog",
+            if summary.open_backlog_items <= thresholds.max_open_backlog_items {
+                "passed"
+            } else {
+                "failed"
+            },
+            "blocking",
+            format!("<= {} open backlog item(s)", thresholds.max_open_backlog_items),
+            format!("{} open backlog item(s)", summary.open_backlog_items),
+            "Known benchmark failures must be triaged instead of hidden by newer aggregate numbers.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "pending_failure_candidates",
+            if summary.pending_failure_items <= thresholds.max_open_backlog_items {
+                "passed"
+            } else {
+                "failed"
+            },
+            "blocking",
+            format!(
+                "<= {} unmaterialized failed item(s)",
+                thresholds.max_open_backlog_items
+            ),
+            format!("{} pending failed item(s)", summary.pending_failure_items),
+            "Fresh campaign failures should become actionable backlog items.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "external_model_policy",
+            if thresholds.require_external_model && !thresholds.external_model_policy_enabled {
+                "failed"
+            } else {
+                "passed"
+            },
+            "strict",
+            "external model gate requires explicit opt-in",
+            if thresholds.external_model_policy_enabled {
+                "opted in"
+            } else if thresholds.require_external_model {
+                "required but not opted in"
+            } else {
+                "not required"
+            },
+            "Policies that can spend money or call networks must be explicitly enabled.",
+        );
+        if let Some(task_pack_id) = thresholds.required_task_pack_id.as_ref() {
+            push_benchmark_check(
+                &mut checks,
+                "required_task_pack",
+                if summary.total_campaign_items > 0 {
+                    "passed"
+                } else {
+                    "insufficient_data"
+                },
+                "blocking",
+                format!("matching task pack `{task_pack_id}`"),
+                format!("{} matching item(s)", summary.total_campaign_items),
+                "Task-pack scoped policies cannot be satisfied by unrelated benchmark runs.",
+            );
+        }
+        if thresholds.required_baseline_kind.is_some()
+            || thresholds.required_provider_id.is_some()
+            || thresholds.required_model_id.is_some()
+        {
+            push_benchmark_check(
+                &mut checks,
+                "required_model_baseline",
+                if summary.total_campaign_items > 0 {
+                    "passed"
+                } else {
+                    "insufficient_data"
+                },
+                "blocking",
+                "matching baseline/provider/model item",
+                format!("{} matching item(s)", summary.total_campaign_items),
+                "Model-specific policies only count matching benchmark items.",
+            );
+        }
+        push_benchmark_check(
+            &mut checks,
+            "interrupted_campaigns",
+            if reliability.interrupted_campaigns <= thresholds.max_interrupted_campaigns {
+                "passed"
+            } else {
+                "failed"
+            },
+            "blocking",
+            format!(
+                "<= {} interrupted campaign(s)",
+                thresholds.max_interrupted_campaigns
+            ),
+            format!("{} interrupted", reliability.interrupted_campaigns),
+            "Long-running benchmark stability is part of the release signal.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "provider_errors",
+            if reliability.provider_error_items <= thresholds.max_provider_error_items {
+                "passed"
+            } else {
+                "failed"
+            },
+            "blocking",
+            format!(
+                "<= {} provider error item(s)",
+                thresholds.max_provider_error_items
+            ),
+            format!(
+                "{} provider error item(s)",
+                reliability.provider_error_items
+            ),
+            "Provider failures should be visible instead of blending into ordinary task failures.",
+        );
+        push_benchmark_check(
+            &mut checks,
+            "budget_exhausted",
+            if reliability.budget_exhausted_items <= thresholds.max_budget_exhausted_items {
+                "passed"
+            } else {
+                "failed"
+            },
+            "blocking",
+            format!(
+                "<= {} budget-exhausted item(s)",
+                thresholds.max_budget_exhausted_items
+            ),
+            format!("{} budget item(s)", reliability.budget_exhausted_items),
+            "Budget exhaustion is a policy failure, not a task-quality pass.",
+        );
+        if let Some(max_budget_usd) = thresholds.max_budget_usd {
+            push_benchmark_check(
+                &mut checks,
+                "budget_contract",
+                match summary.max_campaign_budget_usd {
+                    Some(value) if value <= max_budget_usd + f64::EPSILON => "passed",
+                    Some(_) => "failed",
+                    None => "passed",
+                },
+                "blocking",
+                format!("campaign budget contract <= ${max_budget_usd:.2}"),
+                summary
+                    .max_campaign_budget_usd
+                    .map(|value| format!("${value:.2}"))
+                    .unwrap_or_else(|| "no budget contract".to_string()),
+                "The gate checks declared benchmark budget contracts before allowing release evidence.",
+            );
+        }
+
+        let blockers = checks
+            .iter()
+            .filter(|check| check.status != "passed" && check.severity != "advisory")
+            .map(|check| check.name.clone())
+            .collect::<Vec<_>>();
+        let has_failed = checks.iter().any(|check| check.status == "failed");
+        let has_insufficient = checks
+            .iter()
+            .any(|check| check.status == "insufficient_data");
+        let status = if has_failed {
+            "failed"
+        } else if has_insufficient {
+            "insufficient_data"
+        } else {
+            "passed"
+        }
+        .to_string();
+        let recommended_next_steps =
+            continuous_benchmark_recommendations(&checks, summary.pending_failure_items);
+
+        Ok(CodingContinuousBenchmarkGateReport {
+            generated_at: now_rfc3339(),
+            status,
+            scope: scope.scope,
+            session_id: scope.session_id,
+            project_id: scope.project_id,
+            since: scope.since,
+            stale_before: scope.stale_before,
+            thresholds,
+            summary,
+            reliability,
+            checks,
+            release_gate,
+            leaderboard,
+            corpus_health,
+            blockers,
+            recommended_next_steps,
+        })
+    }
+
+    pub fn materialize_benchmark_backlog(
+        &self,
+        input: CodingBenchmarkBacklogMaterializeInput,
+    ) -> Result<CodingBenchmarkBacklogMaterializeResult> {
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_BENCHMARK_BACKLOG_LIMIT)
+            .clamp(1, MAX_BENCHMARK_BACKLOG_LIMIT);
+        let gate_input = CodingContinuousBenchmarkGateInput {
+            session_id: input.session_id,
+            project_id: input.project_id,
+            window_days: input.window_days,
+            ..Default::default()
+        };
+        let thresholds = continuous_benchmark_gate_thresholds(&gate_input)?;
+        let scope = self.resolve_continuous_benchmark_gate_scope(
+            &gate_input,
+            thresholds.window_days,
+            thresholds.max_evidence_age_days,
+        )?;
+        let candidates = self.collect_continuous_benchmark_failure_candidates(
+            &scope,
+            &input.campaign_ids,
+            limit,
+        )?;
+        let now = now_rfc3339();
+        let mut inserted = 0usize;
+        let mut existing = 0usize;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        for candidate in candidates {
+            let id = format!("cbbi_{}", uuid::Uuid::new_v4().simple());
+            let changed = conn.execute(
+                "INSERT OR IGNORE INTO coding_benchmark_backlog_items (
+                    id, status, severity, title, failure_category, scope, session_id,
+                    project_id, campaign_id, campaign_item_id, pack_run_id, task_pack_id,
+                    task_id, provider_id, model_id, label, baseline_kind, execution_mode,
+                    evidence_json, created_at, updated_at
+                 ) VALUES (
+                    ?1, 'open', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                    ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19
+                 )",
+                params![
+                    id,
+                    if candidate.status == "failed" {
+                        "high"
+                    } else {
+                        "medium"
+                    },
+                    candidate.title,
+                    candidate.failure_category,
+                    scope.scope,
+                    scope.session_id,
+                    scope.project_id,
+                    candidate.campaign_id,
+                    candidate.campaign_item_id,
+                    candidate.pack_run_id,
+                    candidate.task_pack_id,
+                    candidate.task_id,
+                    candidate.provider_id,
+                    candidate.model_id,
+                    candidate.label,
+                    candidate.baseline_kind,
+                    candidate.execution_mode,
+                    stable_json(&candidate.evidence)?,
+                    now,
+                ],
+            )?;
+            if changed == 0 {
+                existing += 1;
+            } else {
+                inserted += 1;
+            }
+        }
+        drop(conn);
+        let items = self.list_benchmark_backlog(CodingBenchmarkBacklogListInput {
+            session_id: scope.session_id,
+            project_id: scope.project_id,
+            status: Some("open".to_string()),
+            limit: Some(limit),
+        })?;
+        Ok(CodingBenchmarkBacklogMaterializeResult {
+            inserted,
+            existing,
+            items,
+        })
+    }
+
+    pub fn list_benchmark_backlog(
+        &self,
+        input: CodingBenchmarkBacklogListInput,
+    ) -> Result<Vec<CodingBenchmarkBacklogItem>> {
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_BENCHMARK_BACKLOG_LIMIT)
+            .clamp(1, MAX_BENCHMARK_BACKLOG_LIMIT);
+        let (session_id, project_id) = self.resolve_durable_coding_record_scope(
+            input.session_id,
+            input.project_id,
+            "benchmark backlog",
+        )?;
+        let status = input
+            .status
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(normalize_benchmark_backlog_status)
+            .transpose()?;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(project_id) = project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        if let Some(status) = status.as_ref() {
+            clauses.push("status = ?".to_string());
+            params.push(status.clone());
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        params.push(limit.to_string());
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, status, severity, title, failure_category, scope, session_id,
+                    project_id, campaign_id, campaign_item_id, pack_run_id, task_pack_id,
+                    task_id, provider_id, model_id, label, baseline_kind, execution_mode,
+                    evidence_json, proposal_id, created_at, updated_at, resolved_at
+             FROM coding_benchmark_backlog_items
+             {where_sql}
+             ORDER BY updated_at DESC, id DESC
+             LIMIT ?"
+        ))?;
+        let rows = stmt.query_map(
+            params_from_iter(params.iter()),
+            coding_benchmark_backlog_item_from_row,
+        )?;
+        collect_rows(rows)
+    }
+
+    pub fn update_benchmark_backlog_status(
+        &self,
+        input: CodingBenchmarkBacklogStatusInput,
+    ) -> Result<CodingBenchmarkBacklogItem> {
+        let item_id = input.item_id.trim();
+        if item_id.is_empty() {
+            bail!("benchmark backlog item id must not be empty");
+        }
+        let status = normalize_benchmark_backlog_status(&input.status)?;
+        let now = now_rfc3339();
+        let resolved_at = if matches!(status.as_str(), "resolved" | "wont_fix") {
+            Some(now.clone())
+        } else {
+            None
+        };
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let changed = conn.execute(
+            "UPDATE coding_benchmark_backlog_items
+             SET status = ?2, proposal_id = COALESCE(?3, proposal_id),
+                 updated_at = ?4, resolved_at = ?5
+             WHERE id = ?1",
+            params![item_id, status, input.proposal_id, now, resolved_at],
+        )?;
+        drop(conn);
+        if changed == 0 {
+            bail!("benchmark backlog item not found: {item_id}");
+        }
+        self.get_benchmark_backlog_item(item_id)?
+            .ok_or_else(|| anyhow!("benchmark backlog item not found after update"))
+    }
+
+    fn get_benchmark_backlog_item(
+        &self,
+        item_id: &str,
+    ) -> Result<Option<CodingBenchmarkBacklogItem>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT id, status, severity, title, failure_category, scope, session_id,
+                    project_id, campaign_id, campaign_item_id, pack_run_id, task_pack_id,
+                    task_id, provider_id, model_id, label, baseline_kind, execution_mode,
+                    evidence_json, proposal_id, created_at, updated_at, resolved_at
+             FROM coding_benchmark_backlog_items
+             WHERE id = ?1",
+            params![item_id],
+            coding_benchmark_backlog_item_from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     fn get_benchmark_task_pack_by_row_id(
         &self,
         row_id: &str,
@@ -4362,6 +5168,444 @@ impl SessionDB {
             window_days,
             since,
         })
+    }
+
+    fn resolve_continuous_benchmark_gate_scope(
+        &self,
+        input: &CodingContinuousBenchmarkGateInput,
+        window_days: u32,
+        max_evidence_age_days: u32,
+    ) -> Result<ContinuousBenchmarkGateScope> {
+        let since = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(window_days as i64))
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let stale_before = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(max_evidence_age_days as i64))
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let session_id = input
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let explicit_project_id = input
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let session_project_id = if let Some(session_id) = session_id.as_deref() {
+            let meta = self
+                .get_session(session_id)?
+                .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+            if meta.incognito {
+                bail!(
+                    "Cannot evaluate continuous benchmark gate for incognito session {session_id}"
+                );
+            }
+            meta.project_id
+        } else {
+            None
+        };
+        let project_id = explicit_project_id.or(session_project_id);
+        let scope = if project_id.is_some() {
+            "project"
+        } else if session_id.is_some() {
+            "session"
+        } else {
+            "global"
+        }
+        .to_string();
+        Ok(ContinuousBenchmarkGateScope {
+            session_id,
+            project_id,
+            scope,
+            since,
+            stale_before,
+        })
+    }
+
+    fn continuous_benchmark_gate_summary(
+        &self,
+        scope: &ContinuousBenchmarkGateScope,
+        thresholds: &CodingContinuousBenchmarkGateThresholds,
+    ) -> Result<(
+        CodingContinuousBenchmarkGateSummary,
+        CodingContinuousBenchmarkReliability,
+    )> {
+        let mut summary = CodingContinuousBenchmarkGateSummary {
+            retention_days: thresholds.window_days.saturating_mul(3).clamp(30, 365),
+            raw_artifact_retention_days: thresholds.max_evidence_age_days.clamp(7, 90),
+            ..Default::default()
+        };
+        let mut reliability = CodingContinuousBenchmarkReliability::default();
+        let latest_release = self.latest_release_evidence_report(scope)?;
+        if let Some((report_id, status, created_at)) = latest_release {
+            summary.latest_release_report_id = Some(report_id);
+            summary.latest_release_evidence_at = Some(created_at.clone());
+            summary.fresh_release_evidence = status == "passed" && created_at >= scope.stale_before;
+            if status == "passed" {
+                summary.latest_passed_at = Some(created_at);
+            }
+        }
+
+        for campaign in self.matching_continuous_gate_campaigns(scope, thresholds)? {
+            reliability.campaigns += 1;
+            if campaign.updated_at >= scope.stale_before {
+                summary.fresh_campaigns += 1;
+            }
+            match campaign.status.as_str() {
+                "passed" => {
+                    reliability.passed_campaigns += 1;
+                    summary.latest_passed_at = max_rfc3339(
+                        summary.latest_passed_at.take(),
+                        Some(campaign.updated_at.clone()),
+                    );
+                }
+                "failed" => reliability.failed_campaigns += 1,
+                "partial" => reliability.partial_campaigns += 1,
+                "interrupted" => reliability.interrupted_campaigns += 1,
+                "cancelled" => reliability.cancelled_campaigns += 1,
+                _ => {}
+            }
+            if let Some(budget) = campaign.max_budget_usd {
+                summary.max_campaign_budget_usd = summary
+                    .max_campaign_budget_usd
+                    .map(|current| current.max(budget))
+                    .or(Some(budget));
+            }
+            for item in campaign
+                .items
+                .iter()
+                .filter(|item| benchmark_item_matches_thresholds(item, thresholds))
+            {
+                summary.total_campaign_items += 1;
+                summary.selected_cases += item.selected_cases;
+                summary.passed_cases += item.passed_cases;
+                summary.failed_cases += item.failed_cases;
+                match item.status.as_str() {
+                    "passed" => summary.passed_campaign_items += 1,
+                    "failed" => summary.failed_campaign_items += 1,
+                    "interrupted" => summary.interrupted_campaign_items += 1,
+                    "cancelled" => summary.cancelled_campaign_items += 1,
+                    _ => {}
+                }
+                if item.attempt > 1 {
+                    reliability.retry_attempts += item.attempt.saturating_sub(1);
+                    if item.status == "passed" {
+                        reliability.retry_passed_items += 1;
+                    }
+                }
+                let category = classify_benchmark_item_failure(&item.status, item.error.as_deref());
+                match category.as_deref() {
+                    Some("provider_error") => reliability.provider_error_items += 1,
+                    Some("budget_exhausted") => reliability.budget_exhausted_items += 1,
+                    Some("approval_wait") => reliability.approval_wait_items += 1,
+                    _ => {}
+                }
+            }
+        }
+        summary.case_pass_rate = ratio(
+            summary.passed_cases,
+            summary.passed_cases + summary.failed_cases,
+        );
+        reliability.campaign_success_rate = ratio(
+            reliability.passed_campaigns,
+            reliability.passed_campaigns
+                + reliability.failed_campaigns
+                + reliability.partial_campaigns
+                + reliability.interrupted_campaigns
+                + reliability.cancelled_campaigns,
+        );
+        reliability.retry_success_rate =
+            ratio(reliability.retry_passed_items, reliability.retry_attempts);
+        reliability.provider_error_rate = ratio(
+            reliability.provider_error_items,
+            summary.total_campaign_items,
+        );
+        summary.open_backlog_items = self.count_open_benchmark_backlog_items(scope)?;
+        let candidates = self.collect_continuous_benchmark_failure_candidates(
+            scope,
+            &[],
+            MAX_BENCHMARK_BACKLOG_LIMIT,
+        )?;
+        summary.pending_failure_items =
+            self.count_unmaterialized_backlog_candidates(&candidates)?;
+        Ok((summary, reliability))
+    }
+
+    fn latest_release_evidence_report(
+        &self,
+        scope: &ContinuousBenchmarkGateScope,
+    ) -> Result<Option<(String, String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = vec!["release_evidence = 1".to_string()];
+        let mut params = Vec::new();
+        if let Some(project_id) = scope.project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = scope.session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        let sql = format!(
+            "SELECT id, status, created_at
+             FROM coding_benchmark_reports
+             WHERE {}
+             ORDER BY created_at DESC
+             LIMIT 1",
+            clauses.join(" AND ")
+        );
+        conn.query_row(&sql, params_from_iter(params.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .optional()
+        .map_err(Into::into)
+    }
+
+    fn matching_continuous_gate_campaigns(
+        &self,
+        scope: &ContinuousBenchmarkGateScope,
+        thresholds: &CodingContinuousBenchmarkGateThresholds,
+    ) -> Result<Vec<CodingBenchmarkCampaign>> {
+        let campaigns = self.list_coding_benchmark_campaigns(CodingBenchmarkCampaignListInput {
+            session_id: scope.session_id.clone(),
+            project_id: scope.project_id.clone(),
+            limit: Some(MAX_BENCHMARK_CAMPAIGN_LIMIT),
+        })?;
+        Ok(campaigns
+            .into_iter()
+            .filter(|campaign| campaign.updated_at >= scope.since)
+            .filter(|campaign| {
+                thresholds
+                    .required_task_pack_id
+                    .as_ref()
+                    .map(|value| campaign.task_pack_id == *value)
+                    .unwrap_or(true)
+            })
+            .filter(|campaign| {
+                thresholds
+                    .required_baseline_kind
+                    .as_ref()
+                    .map(|value| campaign.baseline_kind == *value)
+                    .unwrap_or(true)
+            })
+            .filter(|campaign| {
+                thresholds.required_provider_id.is_none() && thresholds.required_model_id.is_none()
+                    || campaign
+                        .items
+                        .iter()
+                        .any(|item| benchmark_item_matches_thresholds(item, thresholds))
+            })
+            .collect())
+    }
+
+    fn count_open_benchmark_backlog_items(
+        &self,
+        scope: &ContinuousBenchmarkGateScope,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = vec!["status IN ('open','in_progress')".to_string()];
+        let mut params = Vec::new();
+        if let Some(project_id) = scope.project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = scope.session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM coding_benchmark_backlog_items WHERE {}",
+                clauses.join(" AND ")
+            ),
+            params_from_iter(params.iter()),
+            |row| Ok(nonnegative_usize(row.get::<_, i64>(0)?)),
+        )
+        .map_err(Into::into)
+    }
+
+    fn count_unmaterialized_backlog_candidates(
+        &self,
+        candidates: &[ContinuousBenchmarkFailureCandidate],
+    ) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut pending = 0usize;
+        for candidate in candidates {
+            let exists = conn
+                .query_row(
+                    "SELECT 1 FROM coding_benchmark_backlog_items
+                 WHERE campaign_item_id = ?1 AND task_id = ?2
+                 LIMIT 1",
+                    params![candidate.campaign_item_id, candidate.task_id],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !exists {
+                pending += 1;
+            }
+        }
+        Ok(pending)
+    }
+
+    fn collect_continuous_benchmark_failure_candidates(
+        &self,
+        scope: &ContinuousBenchmarkGateScope,
+        campaign_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<ContinuousBenchmarkFailureCandidate>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut clauses = vec![
+            "c.updated_at >= ?".to_string(),
+            "i.status IN ('failed','interrupted','cancelled')".to_string(),
+        ];
+        let mut params = vec![scope.since.clone()];
+        if let Some(project_id) = scope.project_id.as_ref() {
+            clauses.push("c.project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = scope.session_id.as_ref() {
+            clauses.push("c.session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        let campaign_ids = campaign_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .take(MAX_BENCHMARK_CAMPAIGN_LIMIT)
+            .collect::<Vec<_>>();
+        if !campaign_ids.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(campaign_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            clauses.push(format!("c.id IN ({placeholders})"));
+            params.extend(campaign_ids);
+        }
+        params.push(limit.to_string());
+        let sql = format!(
+            "SELECT c.id, c.name, c.task_pack_id, c.execution_mode, c.baseline_kind,
+                    i.id, i.provider_id, i.model_id, i.label, i.status, i.pack_run_id,
+                    i.report_json, i.error, i.updated_at
+             FROM coding_benchmark_campaign_items i
+             JOIN coding_benchmark_campaigns c ON c.id = i.campaign_id
+             WHERE {}
+             ORDER BY i.updated_at DESC, i.id DESC
+             LIMIT ?",
+            clauses.join(" AND ")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, String>(13)?,
+            ))
+        })?;
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (
+                campaign_id,
+                campaign_name,
+                task_pack_id,
+                execution_mode,
+                baseline_kind,
+                item_id,
+                provider_id,
+                model_id,
+                label,
+                status,
+                pack_run_id,
+                report_json,
+                error,
+                updated_at,
+            ) = row?;
+            let failures = benchmark_backlog_failures_from_report(&report_json);
+            if failures.is_empty() {
+                let category = classify_benchmark_item_failure(&status, error.as_deref())
+                    .unwrap_or_else(|| "benchmark_failed".to_string());
+                candidates.push(ContinuousBenchmarkFailureCandidate {
+                    campaign_id: campaign_id.clone(),
+                    campaign_item_id: item_id.clone(),
+                    pack_run_id: pack_run_id.clone(),
+                    task_pack_id: task_pack_id.clone(),
+                    task_id: String::new(),
+                    provider_id: provider_id.clone(),
+                    model_id: model_id.clone(),
+                    label: label.clone(),
+                    baseline_kind: baseline_kind.clone(),
+                    execution_mode: execution_mode.clone(),
+                    status: status.clone(),
+                    failure_category: category.clone(),
+                    title: format!("{} benchmark item {}", campaign_name, status),
+                    evidence: json!({
+                        "campaignId": &campaign_id,
+                        "campaignName": &campaign_name,
+                        "itemId": &item_id,
+                        "status": &status,
+                        "packRunId": &pack_run_id,
+                        "providerId": &provider_id,
+                        "modelId": &model_id,
+                        "label": &label,
+                        "error": &error,
+                        "updatedAt": &updated_at,
+                        "failureCategory": &category,
+                    }),
+                });
+            } else {
+                for failure in failures {
+                    candidates.push(ContinuousBenchmarkFailureCandidate {
+                        campaign_id: campaign_id.clone(),
+                        campaign_item_id: item_id.clone(),
+                        pack_run_id: pack_run_id.clone(),
+                        task_pack_id: task_pack_id.clone(),
+                        task_id: failure.0.clone(),
+                        provider_id: provider_id.clone(),
+                        model_id: model_id.clone(),
+                        label: label.clone(),
+                        baseline_kind: baseline_kind.clone(),
+                        execution_mode: execution_mode.clone(),
+                        status: status.clone(),
+                        failure_category: failure.2.clone(),
+                        title: failure.1.clone(),
+                        evidence: json!({
+                            "campaignId": &campaign_id,
+                            "campaignName": &campaign_name,
+                            "itemId": &item_id,
+                            "status": &status,
+                            "packRunId": &pack_run_id,
+                            "taskPackId": &task_pack_id,
+                            "taskId": &failure.0,
+                            "providerId": &provider_id,
+                            "modelId": &model_id,
+                            "label": &label,
+                            "error": &error,
+                            "updatedAt": &updated_at,
+                            "failureCategory": &failure.2,
+                            "case": &failure.3,
+                        }),
+                    });
+                }
+            }
+        }
+        Ok(candidates)
     }
 
     fn resolve_coding_learning_generalization_scope(
@@ -8198,6 +9442,223 @@ fn escape_html(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+fn serde_default_true() -> bool {
+    true
+}
+
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn continuous_benchmark_gate_thresholds(
+    input: &CodingContinuousBenchmarkGateInput,
+) -> Result<CodingContinuousBenchmarkGateThresholds> {
+    let trigger_kind = normalize_benchmark_trigger_kind(input.trigger_kind.as_deref())?;
+    let window_days = input
+        .window_days
+        .unwrap_or(DEFAULT_WINDOW_DAYS)
+        .clamp(1, MAX_WINDOW_DAYS);
+    let max_evidence_age_days = input
+        .max_evidence_age_days
+        .unwrap_or(DEFAULT_CONTINUOUS_GATE_MAX_EVIDENCE_AGE_DAYS)
+        .clamp(1, MAX_CONTINUOUS_GATE_MAX_EVIDENCE_AGE_DAYS);
+    let required_task_pack_id = normalized_optional(input.required_task_pack_id.as_deref());
+    let mut required_baseline_kind = normalized_optional(input.required_baseline_kind.as_deref());
+    if input.require_external_model && required_baseline_kind.is_none() {
+        required_baseline_kind = Some("external_model".to_string());
+    }
+    let min_case_pass_rate = input
+        .min_case_pass_rate
+        .unwrap_or(DEFAULT_CONTINUOUS_GATE_MIN_CASE_PASS_RATE)
+        .clamp(0.0, 1.0);
+    let max_budget_usd = input.max_budget_usd.map(|value| value.max(0.0));
+    Ok(CodingContinuousBenchmarkGateThresholds {
+        trigger_kind,
+        window_days,
+        max_evidence_age_days,
+        require_release_report_evidence: input.require_release_report_evidence,
+        require_recent_campaign: input.require_recent_campaign,
+        required_task_pack_id,
+        required_baseline_kind,
+        required_provider_id: normalized_optional(input.required_provider_id.as_deref()),
+        required_model_id: normalized_optional(input.required_model_id.as_deref()),
+        require_external_model: input.require_external_model,
+        external_model_policy_enabled: input.external_model_policy_enabled,
+        min_campaign_items: input
+            .min_campaign_items
+            .unwrap_or(DEFAULT_CONTINUOUS_GATE_MIN_CAMPAIGN_ITEMS)
+            .clamp(1, MAX_BENCHMARK_CAMPAIGN_MODELS),
+        min_case_pass_rate,
+        max_open_backlog_items: input.max_open_backlog_items.unwrap_or(0),
+        max_interrupted_campaigns: input.max_interrupted_campaigns.unwrap_or(0),
+        max_provider_error_items: input.max_provider_error_items.unwrap_or(0),
+        max_budget_exhausted_items: input.max_budget_exhausted_items.unwrap_or(0),
+        max_budget_usd,
+    })
+}
+
+fn normalize_benchmark_trigger_kind(value: Option<&str>) -> Result<String> {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("manual")
+        .to_ascii_lowercase();
+    match value.as_str() {
+        "manual" | "pre_release" | "strategy_changed" | "task_pack_updated" | "periodic" => {
+            Ok(value)
+        }
+        _ => bail!("unsupported benchmark trigger kind: {value}"),
+    }
+}
+
+fn normalize_benchmark_backlog_status(value: &str) -> Result<String> {
+    let value = value.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "open" | "in_progress" | "resolved" | "wont_fix" => Ok(value),
+        _ => bail!("unsupported benchmark backlog status: {value}"),
+    }
+}
+
+fn benchmark_item_matches_thresholds(
+    item: &CodingBenchmarkCampaignItem,
+    thresholds: &CodingContinuousBenchmarkGateThresholds,
+) -> bool {
+    thresholds
+        .required_provider_id
+        .as_ref()
+        .map(|value| item.provider_id.as_deref() == Some(value.as_str()))
+        .unwrap_or(true)
+        && thresholds
+            .required_model_id
+            .as_ref()
+            .map(|value| item.model_id.as_deref() == Some(value.as_str()))
+            .unwrap_or(true)
+}
+
+fn classify_benchmark_item_failure(status: &str, error: Option<&str>) -> Option<String> {
+    if !matches!(status, "failed" | "interrupted" | "cancelled") {
+        return None;
+    }
+    let text = error.unwrap_or_default().to_ascii_lowercase();
+    if text.contains("budget") || text.contains("cost") || text.contains("quota") {
+        Some("budget_exhausted".to_string())
+    } else if text.contains("provider")
+        || text.contains("api")
+        || text.contains("rate limit")
+        || text.contains("network")
+        || text.contains("timeout")
+    {
+        Some("provider_error".to_string())
+    } else if text.contains("approval") || text.contains("permission") {
+        Some("approval_wait".to_string())
+    } else if status == "interrupted" || status == "cancelled" {
+        Some("benchmark_interrupted".to_string())
+    } else {
+        Some("benchmark_failed".to_string())
+    }
+}
+
+fn benchmark_backlog_failures_from_report(
+    report_json: &str,
+) -> Vec<(String, String, String, Value)> {
+    serde_json::from_str::<GoldTaskPackReport>(report_json)
+        .map(|report| {
+            report
+                .cases
+                .into_iter()
+                .filter(|case_report| case_report.status != "passed")
+                .take(8)
+                .map(|case_report| {
+                    let task_id = case_report.case.id.clone();
+                    let title = if case_report.case.title.trim().is_empty() {
+                        task_id.clone()
+                    } else {
+                        format!("{}: {}", task_id, case_report.case.title.trim())
+                    };
+                    let failure_category = case_report
+                        .report
+                        .as_ref()
+                        .and_then(|report| report.task.as_ref())
+                        .and_then(|task| task.failure_category.clone())
+                        .or_else(|| {
+                            case_report.error.as_deref().and_then(|error| {
+                                classify_benchmark_item_failure("failed", Some(error))
+                            })
+                        })
+                        .unwrap_or_else(|| "benchmark_failed".to_string());
+                    let evidence = json!({
+                        "caseId": task_id,
+                        "caseTitle": case_report.case.title,
+                        "status": case_report.status,
+                        "fixtureName": case_report.fixture_name,
+                        "error": case_report.error,
+                        "taskType": case_report.case.task_type,
+                        "successCriteria": case_report.case.success_criteria,
+                    });
+                    (task_id, title, failure_category, evidence)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn continuous_benchmark_recommendations(
+    checks: &[CodingBenchmarkCenterCheck],
+    pending_failure_items: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for check in checks.iter().filter(|check| check.status != "passed") {
+        match check.name.as_str() {
+            "fresh_release_evidence" => {
+                out.push("Generate a fresh release benchmark report and mark it as release evidence.".to_string())
+            }
+            "recent_campaign" | "campaign_item_sample" => {
+                out.push("Run a new benchmark campaign for the required task pack/model scope.".to_string())
+            }
+            "campaign_case_pass_rate" => {
+                out.push("Review failed campaign cases before changing benchmark thresholds.".to_string())
+            }
+            "open_backlog" => out.push(
+                "Resolve or explicitly defer open benchmark backlog items before release.".to_string(),
+            ),
+            "pending_failure_candidates" if pending_failure_items > 0 => out.push(
+                "Materialize failed benchmark items into the improvement backlog.".to_string(),
+            ),
+            "external_model_policy" => out.push(
+                "Enable external model benchmark policy explicitly before requiring external baselines.".to_string(),
+            ),
+            "corpus_health" => {
+                out.push("Fix active task corpus health before using it as release evidence.".to_string())
+            }
+            "provider_errors" => out.push(
+                "Separate provider/network instability from model quality and retry after provider recovery.".to_string(),
+            ),
+            "budget_exhausted" => {
+                out.push("Adjust benchmark budget contract or reduce the explicit model/task matrix.".to_string())
+            }
+            _ => {}
+        }
+    }
+    out.sort();
+    out.dedup();
+    if out.is_empty() {
+        out.push("Gate passed; archive the report with the release evidence.".to_string());
+    }
+    out
+}
+
+fn max_rfc3339(left: Option<String>, right: Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
 fn normalize_benchmark_campaign_models(
     models: Vec<CodingBenchmarkCampaignModel>,
 ) -> Result<Vec<CodingBenchmarkCampaignModel>> {
@@ -8437,6 +9898,37 @@ fn coding_benchmark_report_from_row(
         created_at: row.get(17)?,
         updated_at: row.get(18)?,
         marked_release_at: row.get(19)?,
+    })
+}
+
+fn coding_benchmark_backlog_item_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<CodingBenchmarkBacklogItem> {
+    let evidence_json: String = row.get(18)?;
+    Ok(CodingBenchmarkBacklogItem {
+        id: row.get(0)?,
+        status: row.get(1)?,
+        severity: row.get(2)?,
+        title: row.get(3)?,
+        failure_category: row.get(4)?,
+        scope: row.get(5)?,
+        session_id: row.get(6)?,
+        project_id: row.get(7)?,
+        campaign_id: row.get(8)?,
+        campaign_item_id: row.get(9)?,
+        pack_run_id: row.get(10)?,
+        task_pack_id: row.get(11)?,
+        task_id: row.get(12)?,
+        provider_id: row.get(13)?,
+        model_id: row.get(14)?,
+        label: row.get(15)?,
+        baseline_kind: row.get(16)?,
+        execution_mode: row.get(17)?,
+        evidence: serde_json::from_str(&evidence_json).unwrap_or_else(|_| json!({})),
+        proposal_id: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
+        resolved_at: row.get(22)?,
     })
 }
 
@@ -9136,6 +10628,100 @@ mod tests {
         .unwrap();
     }
 
+    fn insert_benchmark_campaign_history(
+        db: &SessionDB,
+        session_id: &str,
+        project_id: &str,
+        campaign_id: &str,
+        item_id: &str,
+        status: &str,
+        report_json: Value,
+    ) {
+        let now = now_rfc3339();
+        let (passed_items, failed_items, passed_cases, failed_cases) = if status == "passed" {
+            (1, 0, 2, 0)
+        } else {
+            (0, 1, 1, 1)
+        };
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO coding_benchmark_campaigns (
+                id, session_id, project_id, name, status, task_pack_id, source_doc,
+                execution_mode, baseline_kind, task_filter_json, model_matrix_json,
+                max_budget_usd, timeout_secs, created_at, updated_at, started_at, finished_at
+             ) VALUES (
+                ?1, ?2, ?3, 'Unit benchmark campaign', ?4,
+                'phase5-gold-task-pack', 'docs/roadmap/coding-eval-tasks.md',
+                'fixture_patch', 'deterministic_mock', '{}',
+                '[{\"label\":\"deterministic\"}]', 1.0, 60, ?5, ?5, ?5, ?5
+             )",
+            params![campaign_id, session_id, project_id, status, now],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO coding_benchmark_campaign_items (
+                id, campaign_id, label, status, attempt, pack_run_id,
+                selected_cases, passed_cases, failed_cases, skipped_cases, total_checks,
+                report_json, error, created_at, updated_at, started_at, finished_at
+             ) VALUES (
+                ?1, ?2, 'deterministic', ?3, 1, ?4,
+                2, ?5, ?6, 0, 8, ?7, ?8, ?9, ?9, ?9, ?9
+             )",
+            params![
+                item_id,
+                campaign_id,
+                status,
+                format!("cepr_{campaign_id}"),
+                passed_cases,
+                failed_cases,
+                report_json.to_string(),
+                if failed_items > 0 {
+                    Some("validation failed".to_string())
+                } else {
+                    None
+                },
+                now,
+            ],
+        )
+        .unwrap();
+        assert_eq!(passed_items + failed_items, 1);
+    }
+
+    fn failed_pack_report_json(pack_run_id: &str) -> Value {
+        json!({
+            "packId": "phase5-gold-task-pack",
+            "sourceDoc": "docs/roadmap/coding-eval-tasks.md",
+            "packRunId": pack_run_id,
+            "selectedCases": 2,
+            "automatedCases": 2,
+            "skippedCases": 0,
+            "passedCases": 1,
+            "failedCases": 1,
+            "totalChecks": 8,
+            "passed": false,
+            "cases": [{
+                "case": {
+                    "id": "GOLD-FAIL-001",
+                    "taskType": "bugfix",
+                    "title": "Repair failing benchmark behavior",
+                    "status": "active",
+                    "source": "unit-test",
+                    "executionMode": "fixture_patch",
+                    "automationStatus": "automated",
+                    "fixtureName": "unit_failed_case",
+                    "expectedArtifacts": [],
+                    "requiresSeededState": false,
+                    "likelyFiles": [],
+                    "allowedValidation": ["cargo check -p ha-core --locked"],
+                    "successCriteria": ["The failed behavior is repaired."]
+                },
+                "status": "failed",
+                "fixtureName": "unit_failed_case",
+                "error": "validation failed"
+            }]
+        })
+    }
+
     #[test]
     fn report_records_eval_success_rate() {
         let (_dir, db) = test_db();
@@ -9792,6 +11378,154 @@ mod tests {
         let fetched = db.get_benchmark_report(&report.id).unwrap().unwrap();
         assert_eq!(fetched.id, report.id);
         assert!(!fetched.release_evidence);
+    }
+
+    #[test]
+    fn continuous_benchmark_gate_passes_with_fresh_release_evidence() {
+        let (dir, db) = test_db();
+        let project_id = "project-continuous-gate-pass";
+        let session = db
+            .create_session_with_project(
+                crate::agent_loader::DEFAULT_AGENT_ID,
+                Some(project_id),
+                None,
+            )
+            .unwrap();
+        insert_generalization_pack(&db, &session.id, project_id, "cepr_cbc_gate_pass", "passed");
+        db.import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+            manifest: sample_task_pack_manifest("active", "v-gate-pass"),
+            explicit_import_consent: true,
+            imported_from: Some("unit-test".to_string()),
+        })
+        .unwrap();
+        insert_benchmark_campaign_history(
+            &db,
+            &session.id,
+            project_id,
+            "cbc_gate_pass",
+            "cbci_gate_pass",
+            "passed",
+            json!({
+                "packId": "phase5-gold-task-pack",
+                "sourceDoc": "docs/roadmap/coding-eval-tasks.md",
+                "packRunId": "cepr_cbc_gate_pass",
+                "selectedCases": 2,
+                "automatedCases": 2,
+                "skippedCases": 0,
+                "passedCases": 2,
+                "failedCases": 0,
+                "totalChecks": 8,
+                "passed": true,
+                "cases": []
+            }),
+        );
+        let output_dir = dir.path().join("continuous-gate-report");
+        db.generate_benchmark_report(CodingBenchmarkReportGenerateInput {
+            report_type: "release".to_string(),
+            session_id: Some(session.id.clone()),
+            output_dir: Some(output_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let gate = db
+            .evaluate_continuous_benchmark_gate(CodingContinuousBenchmarkGateInput {
+                session_id: Some(session.id),
+                require_release_report_evidence: true,
+                require_recent_campaign: true,
+                min_campaign_items: Some(1),
+                min_case_pass_rate: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(gate.status, "passed");
+        assert!(gate.summary.fresh_release_evidence);
+        assert_eq!(gate.summary.fresh_campaigns, 1);
+        assert_eq!(gate.summary.open_backlog_items, 0);
+        assert!(gate.blockers.is_empty());
+    }
+
+    #[test]
+    fn continuous_benchmark_gate_materializes_failed_cases_to_backlog() {
+        let (dir, db) = test_db();
+        let project_id = "project-continuous-gate-backlog";
+        let session = db
+            .create_session_with_project(
+                crate::agent_loader::DEFAULT_AGENT_ID,
+                Some(project_id),
+                None,
+            )
+            .unwrap();
+        insert_generalization_pack(
+            &db,
+            &session.id,
+            project_id,
+            "cepr_cbc_gate_failed",
+            "failed",
+        );
+        db.import_benchmark_task_pack(CodingBenchmarkTaskPackImportInput {
+            manifest: sample_task_pack_manifest("active", "v-gate-fail"),
+            explicit_import_consent: true,
+            imported_from: Some("unit-test".to_string()),
+        })
+        .unwrap();
+        insert_benchmark_campaign_history(
+            &db,
+            &session.id,
+            project_id,
+            "cbc_gate_failed",
+            "cbci_gate_failed",
+            "failed",
+            failed_pack_report_json("cepr_cbc_gate_failed"),
+        );
+        let output_dir = dir.path().join("continuous-gate-failed-report");
+        db.generate_benchmark_report(CodingBenchmarkReportGenerateInput {
+            report_type: "release".to_string(),
+            session_id: Some(session.id.clone()),
+            output_dir: Some(output_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let before = db
+            .evaluate_continuous_benchmark_gate(CodingContinuousBenchmarkGateInput {
+                session_id: Some(session.id.clone()),
+                require_release_report_evidence: true,
+                require_recent_campaign: true,
+                min_campaign_items: Some(1),
+                min_case_pass_rate: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(before.status, "failed");
+        assert_eq!(before.summary.pending_failure_items, 1);
+
+        let materialized = db
+            .materialize_benchmark_backlog(CodingBenchmarkBacklogMaterializeInput {
+                session_id: Some(session.id.clone()),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(materialized.inserted, 1);
+        assert_eq!(materialized.items.len(), 1);
+        assert_eq!(materialized.items[0].task_id, "GOLD-FAIL-001");
+        assert_eq!(materialized.items[0].failure_category, "benchmark_failed");
+
+        let after = db
+            .evaluate_continuous_benchmark_gate(CodingContinuousBenchmarkGateInput {
+                session_id: Some(session.id),
+                require_release_report_evidence: true,
+                require_recent_campaign: true,
+                min_campaign_items: Some(1),
+                min_case_pass_rate: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(after.summary.pending_failure_items, 0);
+        assert_eq!(after.summary.open_backlog_items, 1);
+        assert!(after.blockers.iter().any(|name| name == "open_backlog"));
     }
 
     #[test]

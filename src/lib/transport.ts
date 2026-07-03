@@ -1913,6 +1913,161 @@ export interface CodingBenchmarkReport {
   markedReleaseAt?: string | null;
 }
 
+export interface CodingContinuousBenchmarkGateInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  triggerKind?: string | null;
+  windowDays?: number | null;
+  maxEvidenceAgeDays?: number | null;
+  requireReleaseReportEvidence?: boolean;
+  requireRecentCampaign?: boolean;
+  requiredTaskPackId?: string | null;
+  requiredBaselineKind?: string | null;
+  requiredProviderId?: string | null;
+  requiredModelId?: string | null;
+  requireExternalModel?: boolean;
+  externalModelPolicyEnabled?: boolean;
+  minCampaignItems?: number | null;
+  minCasePassRate?: number | null;
+  maxOpenBacklogItems?: number | null;
+  maxInterruptedCampaigns?: number | null;
+  maxProviderErrorItems?: number | null;
+  maxBudgetExhaustedItems?: number | null;
+  maxBudgetUsd?: number | null;
+}
+
+export interface CodingContinuousBenchmarkGateThresholds {
+  triggerKind: string;
+  windowDays: number;
+  maxEvidenceAgeDays: number;
+  requireReleaseReportEvidence: boolean;
+  requireRecentCampaign: boolean;
+  requiredTaskPackId?: string | null;
+  requiredBaselineKind?: string | null;
+  requiredProviderId?: string | null;
+  requiredModelId?: string | null;
+  requireExternalModel: boolean;
+  externalModelPolicyEnabled: boolean;
+  minCampaignItems: number;
+  minCasePassRate: number;
+  maxOpenBacklogItems: number;
+  maxInterruptedCampaigns: number;
+  maxProviderErrorItems: number;
+  maxBudgetExhaustedItems: number;
+  maxBudgetUsd?: number | null;
+}
+
+export interface CodingContinuousBenchmarkReliability {
+  campaigns: number;
+  passedCampaigns: number;
+  failedCampaigns: number;
+  partialCampaigns: number;
+  interruptedCampaigns: number;
+  cancelledCampaigns: number;
+  retryAttempts: number;
+  retryPassedItems: number;
+  providerErrorItems: number;
+  budgetExhaustedItems: number;
+  approvalWaitItems: number;
+  campaignSuccessRate?: number | null;
+  retrySuccessRate?: number | null;
+  providerErrorRate?: number | null;
+}
+
+export interface CodingContinuousBenchmarkGateSummary {
+  latestReleaseReportId?: string | null;
+  latestReleaseEvidenceAt?: string | null;
+  latestPassedAt?: string | null;
+  freshReleaseEvidence: boolean;
+  freshCampaigns: number;
+  totalCampaignItems: number;
+  passedCampaignItems: number;
+  failedCampaignItems: number;
+  interruptedCampaignItems: number;
+  cancelledCampaignItems: number;
+  selectedCases: number;
+  passedCases: number;
+  failedCases: number;
+  casePassRate?: number | null;
+  openBacklogItems: number;
+  pendingFailureItems: number;
+  maxCampaignBudgetUsd?: number | null;
+  retentionDays: number;
+  rawArtifactRetentionDays: number;
+}
+
+export interface CodingContinuousBenchmarkGateReport {
+  generatedAt: string;
+  status: string;
+  scope: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  since: string;
+  staleBefore: string;
+  thresholds: CodingContinuousBenchmarkGateThresholds;
+  summary: CodingContinuousBenchmarkGateSummary;
+  reliability: CodingContinuousBenchmarkReliability;
+  checks: CodingBenchmarkCenterCheck[];
+  releaseGate: CodingEvalReleaseGateReport;
+  leaderboard: CodingBenchmarkLeaderboardReport;
+  corpusHealth: CodingBenchmarkCorpusHealthReport;
+  blockers: string[];
+  recommendedNextSteps: string[];
+}
+
+export interface CodingBenchmarkBacklogListInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  status?: string | null;
+  limit?: number | null;
+}
+
+export interface CodingBenchmarkBacklogMaterializeInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  campaignIds?: string[];
+  windowDays?: number | null;
+  limit?: number | null;
+}
+
+export interface CodingBenchmarkBacklogStatusInput {
+  itemId: string;
+  status: string;
+  proposalId?: string | null;
+}
+
+export interface CodingBenchmarkBacklogItem {
+  id: string;
+  status: string;
+  severity: string;
+  title: string;
+  failureCategory: string;
+  scope: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  campaignId: string;
+  campaignItemId: string;
+  packRunId?: string | null;
+  taskPackId: string;
+  taskId: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+  baselineKind: string;
+  executionMode: string;
+  evidence: Record<string, unknown>;
+  proposalId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface CodingBenchmarkBacklogMaterializeResult {
+  inserted: number;
+  existing: number;
+  items: CodingBenchmarkBacklogItem[];
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

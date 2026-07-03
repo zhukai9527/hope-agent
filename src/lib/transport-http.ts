@@ -432,6 +432,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   list_benchmark_reports: { method: "POST", path: "/api/coding-benchmark/reports" },
   get_benchmark_report: { method: "GET", path: "/api/coding-benchmark/reports/{reportId}" },
   mark_benchmark_report_release_evidence: { method: "POST", path: "/api/coding-benchmark/reports/release-evidence" },
+  evaluate_continuous_benchmark_gate: { method: "POST", path: "/api/coding-benchmark/continuous-gate/evaluate" },
+  materialize_benchmark_backlog: { method: "POST", path: "/api/coding-benchmark/backlog/materialize" },
+  list_benchmark_backlog: { method: "POST", path: "/api/coding-benchmark/backlog" },
+  update_benchmark_backlog_status: { method: "POST", path: "/api/coding-benchmark/backlog/status" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

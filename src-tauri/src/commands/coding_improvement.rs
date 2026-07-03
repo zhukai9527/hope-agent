@@ -1,7 +1,9 @@
 use crate::commands::CmdError;
 use ha_core::coding_improvement::{
-    ApplyCodingImprovementProposalResult, CodingBenchmarkCampaign,
-    CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
+    ApplyCodingImprovementProposalResult, CodingBenchmarkBacklogItem,
+    CodingBenchmarkBacklogListInput, CodingBenchmarkBacklogMaterializeInput,
+    CodingBenchmarkBacklogMaterializeResult, CodingBenchmarkBacklogStatusInput,
+    CodingBenchmarkCampaign, CodingBenchmarkCampaignCreateInput, CodingBenchmarkCampaignListInput,
     CodingBenchmarkCampaignRunInput, CodingBenchmarkCenterInput, CodingBenchmarkCenterReport,
     CodingBenchmarkComparisonInput, CodingBenchmarkCorpusHealthInput,
     CodingBenchmarkCorpusHealthReport, CodingBenchmarkLeaderboardInput,
@@ -9,9 +11,10 @@ use ha_core::coding_improvement::{
     CodingBenchmarkReportListInput, CodingBenchmarkReportMarkInput, CodingBenchmarkTaskPack,
     CodingBenchmarkTaskPackImportInput, CodingBenchmarkTaskPackListInput,
     CodingBenchmarkTaskPackStatusInput, CodingBenchmarkTaskPackValidateInput,
-    CodingBenchmarkTaskPackValidationReport, CodingEvalReleaseGateInput,
-    CodingEvalReleaseGateReport, CodingEvalRunRecord, CodingImprovementActionPlan,
-    CodingImprovementPromotionPlan, CodingImprovementProposal, CodingLearningGeneralizationInput,
+    CodingBenchmarkTaskPackValidationReport, CodingContinuousBenchmarkGateInput,
+    CodingContinuousBenchmarkGateReport, CodingEvalReleaseGateInput, CodingEvalReleaseGateReport,
+    CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
+    CodingImprovementProposal, CodingLearningGeneralizationInput,
     CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
     GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
     RecordCodingEvalRunInput,
@@ -369,5 +372,49 @@ pub async fn mark_benchmark_report_release_evidence(
     app_state
         .session_db
         .mark_benchmark_report_release_evidence(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn evaluate_continuous_benchmark_gate(
+    input: CodingContinuousBenchmarkGateInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingContinuousBenchmarkGateReport, CmdError> {
+    app_state
+        .session_db
+        .evaluate_continuous_benchmark_gate(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn materialize_benchmark_backlog(
+    input: CodingBenchmarkBacklogMaterializeInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkBacklogMaterializeResult, CmdError> {
+    app_state
+        .session_db
+        .materialize_benchmark_backlog(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_benchmark_backlog(
+    input: CodingBenchmarkBacklogListInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<CodingBenchmarkBacklogItem>, CmdError> {
+    app_state
+        .session_db
+        .list_benchmark_backlog(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn update_benchmark_backlog_status(
+    input: CodingBenchmarkBacklogStatusInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<CodingBenchmarkBacklogItem, CmdError> {
+    app_state
+        .session_db
+        .update_benchmark_backlog_status(input)
         .map_err(Into::into)
 }

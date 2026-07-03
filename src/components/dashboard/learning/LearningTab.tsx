@@ -28,9 +28,12 @@ import type {
   CodingBenchmarkCorpusHealthReport,
   CodingBenchmarkLeaderboardReport,
   CodingBenchmarkReport,
+  CodingBenchmarkBacklogItem,
+  CodingBenchmarkBacklogMaterializeResult,
   CodingBenchmarkTaskPack,
   CodingBenchmarkTaskPackManifest,
   CodingBenchmarkTaskPackValidationReport,
+  CodingContinuousBenchmarkGateReport,
   CodingEvalReleaseGateReport,
   CodingLearningGeneralizationReport,
 } from "@/lib/transport"
@@ -115,6 +118,9 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [benchmarkCorpusHealth, setBenchmarkCorpusHealth] =
     useState<CodingBenchmarkCorpusHealthReport | null>(null)
   const [benchmarkReports, setBenchmarkReports] = useState<CodingBenchmarkReport[]>([])
+  const [continuousGate, setContinuousGate] =
+    useState<CodingContinuousBenchmarkGateReport | null>(null)
+  const [benchmarkBacklog, setBenchmarkBacklog] = useState<CodingBenchmarkBacklogItem[]>([])
   const [benchmarkProviders, setBenchmarkProviders] = useState<BenchmarkProviderOption[]>([])
   const [selectedBenchmarkModels, setSelectedBenchmarkModels] = useState<string[]>([])
   const [benchmarkMaxTasks, setBenchmarkMaxTasks] = useState(3)
@@ -127,6 +133,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [campaignActionId, setCampaignActionId] = useState<string | null>(null)
   const [corpusActionId, setCorpusActionId] = useState<string | null>(null)
   const [reportActionId, setReportActionId] = useState<string | null>(null)
+  const [gateActionId, setGateActionId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -144,6 +151,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
         taskPacks,
         corpusHealth,
         reports,
+        gate,
+        backlog,
         providers,
         rg,
         gen,
@@ -196,6 +205,24 @@ export default function LearningTab({ filter }: LearningTabProps) {
             limit: 6,
           },
         }),
+        getTransport().call<CodingContinuousBenchmarkGateReport>("evaluate_continuous_benchmark_gate", {
+          input: {
+            triggerKind: "manual",
+            windowDays: releaseGateWindowDays(filter, windowDays),
+            maxEvidenceAgeDays: 14,
+            requireReleaseReportEvidence: true,
+            requireRecentCampaign: true,
+            minCampaignItems: 1,
+            minCasePassRate: 1,
+            maxOpenBacklogItems: 0,
+          },
+        }),
+        getTransport().call<CodingBenchmarkBacklogItem[]>("list_benchmark_backlog", {
+          input: {
+            status: "open",
+            limit: 6,
+          },
+        }),
         getTransport()
           .call<BenchmarkProviderOption[]>("get_providers")
           .catch((error) => {
@@ -232,6 +259,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setBenchmarkTaskPacks(taskPacks ?? [])
       setBenchmarkCorpusHealth(corpusHealth)
       setBenchmarkReports(reports ?? [])
+      setContinuousGate(gate)
+      setBenchmarkBacklog(backlog ?? [])
       setBenchmarkProviders(providers ?? [])
       setReleaseGate(rg)
       setGeneralization(gen)
@@ -505,6 +534,44 @@ export default function LearningTab({ filter }: LearningTabProps) {
     }
   }, [])
 
+  const materializeBenchmarkBacklog = useCallback(async () => {
+    setGateActionId("materialize")
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkBacklogMaterializeResult>("materialize_benchmark_backlog", {
+        input: {
+          windowDays: releaseGateWindowDays(filter, windowDays),
+          limit: 20,
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::materializeBenchmarkBacklog", "Failed to materialize benchmark backlog", e)
+    } finally {
+      setGateActionId(null)
+    }
+  }, [filter, reload, windowDays])
+
+  const resolveBenchmarkBacklogItem = useCallback(async (item: CodingBenchmarkBacklogItem) => {
+    setGateActionId(`resolve:${item.id}`)
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<CodingBenchmarkBacklogItem>("update_benchmark_backlog_status", {
+        input: {
+          itemId: item.id,
+          status: "resolved",
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::resolveBenchmarkBacklogItem", "Failed to resolve benchmark backlog item", e)
+    } finally {
+      setGateActionId(null)
+    }
+  }, [reload])
+
   useEffect(() => {
     reload()
   }, [reload])
@@ -554,6 +621,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
         benchmarkTaskPacks={benchmarkTaskPacks}
         benchmarkCorpusHealth={benchmarkCorpusHealth}
         benchmarkReports={benchmarkReports}
+        continuousGate={continuousGate}
+        benchmarkBacklog={benchmarkBacklog}
         benchmarkModelOptions={benchmarkModelOptions}
         selectedBenchmarkModels={selectedBenchmarkModels}
         benchmarkMaxTasks={benchmarkMaxTasks}
@@ -565,6 +634,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         campaignActionId={campaignActionId}
         corpusActionId={corpusActionId}
         reportActionId={reportActionId}
+        gateActionId={gateActionId}
         onRunBenchmark={runBenchmark}
         onRunExternalBenchmark={runExternalBenchmark}
         onToggleBenchmarkModel={toggleBenchmarkModel}
@@ -578,6 +648,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onGenerateBenchmarkReport={generateBenchmarkReport}
         onMarkBenchmarkReport={markBenchmarkReport}
         onCopyBenchmarkReportPath={copyBenchmarkReportPath}
+        onMaterializeBenchmarkBacklog={materializeBenchmarkBacklog}
+        onResolveBenchmarkBacklogItem={resolveBenchmarkBacklogItem}
       />
 
       {/* Overview cards */}
@@ -743,6 +815,8 @@ function CodingImprovementSection({
   benchmarkTaskPacks,
   benchmarkCorpusHealth,
   benchmarkReports,
+  continuousGate,
+  benchmarkBacklog,
   benchmarkModelOptions,
   selectedBenchmarkModels,
   benchmarkMaxTasks,
@@ -754,6 +828,7 @@ function CodingImprovementSection({
   campaignActionId,
   corpusActionId,
   reportActionId,
+  gateActionId,
   onRunBenchmark,
   onRunExternalBenchmark,
   onToggleBenchmarkModel,
@@ -767,6 +842,8 @@ function CodingImprovementSection({
   onGenerateBenchmarkReport,
   onMarkBenchmarkReport,
   onCopyBenchmarkReportPath,
+  onMaterializeBenchmarkBacklog,
+  onResolveBenchmarkBacklogItem,
 }: {
   coding: CodingImprovementDashboard | null
   benchmark: CodingBenchmarkCenterReport | null
@@ -775,6 +852,8 @@ function CodingImprovementSection({
   benchmarkTaskPacks: CodingBenchmarkTaskPack[]
   benchmarkCorpusHealth: CodingBenchmarkCorpusHealthReport | null
   benchmarkReports: CodingBenchmarkReport[]
+  continuousGate: CodingContinuousBenchmarkGateReport | null
+  benchmarkBacklog: CodingBenchmarkBacklogItem[]
   benchmarkModelOptions: BenchmarkModelOption[]
   selectedBenchmarkModels: string[]
   benchmarkMaxTasks: number
@@ -786,6 +865,7 @@ function CodingImprovementSection({
   campaignActionId: string | null
   corpusActionId: string | null
   reportActionId: string | null
+  gateActionId: string | null
   onRunBenchmark: () => void
   onRunExternalBenchmark: () => void
   onToggleBenchmarkModel: (key: string) => void
@@ -799,6 +879,8 @@ function CodingImprovementSection({
   onGenerateBenchmarkReport: (reportType: string, campaignId?: string | null) => void
   onMarkBenchmarkReport: (report: CodingBenchmarkReport, releaseEvidence: boolean) => void
   onCopyBenchmarkReportPath: (path: string) => void
+  onMaterializeBenchmarkBacklog: () => void
+  onResolveBenchmarkBacklogItem: (item: CodingBenchmarkBacklogItem) => void
 }) {
   const { t } = useTranslation()
   const overview = coding?.overview
@@ -946,6 +1028,14 @@ function CodingImprovementSection({
         onGenerate={onGenerateBenchmarkReport}
         onMarkReleaseEvidence={onMarkBenchmarkReport}
         onCopyPath={onCopyBenchmarkReportPath}
+      />
+
+      <ContinuousBenchmarkGatePanel
+        gate={continuousGate}
+        backlog={benchmarkBacklog}
+        actionId={gateActionId}
+        onMaterializeBacklog={onMaterializeBenchmarkBacklog}
+        onResolveBacklogItem={onResolveBenchmarkBacklogItem}
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -1311,6 +1401,168 @@ function BenchmarkReportPanel({
         <EmptyLine
           label={t("dashboard.learning.noBenchmarkReports", {
             defaultValue: "No benchmark reports",
+          })}
+        />
+      )}
+    </div>
+  )
+}
+
+function ContinuousBenchmarkGatePanel({
+  gate,
+  backlog,
+  actionId,
+  onMaterializeBacklog,
+  onResolveBacklogItem,
+}: {
+  gate: CodingContinuousBenchmarkGateReport | null
+  backlog: CodingBenchmarkBacklogItem[]
+  actionId: string | null
+  onMaterializeBacklog: () => void
+  onResolveBacklogItem: (item: CodingBenchmarkBacklogItem) => void
+}) {
+  const { t } = useTranslation()
+  const blockingChecks = gate?.checks.filter((check) => check.status !== "passed").slice(0, 4) ?? []
+  const recommendations = gate?.recommendedNextSteps.slice(0, 3) ?? []
+
+  return (
+    <div className="border border-border/60 rounded-lg p-4 min-w-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("dashboard.learning.continuousBenchmarkGate", {
+              defaultValue: "Continuous gate",
+            })}
+          </h4>
+          <span className={`rounded px-2 py-1 text-[10px] font-medium ${releaseGateTone(gate?.status)}`}>
+            {gate?.status ?? "loading"}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1.5"
+          onClick={onMaterializeBacklog}
+          disabled={Boolean(actionId) || !gate || gate.summary.pendingFailureItems === 0}
+          title={t("dashboard.learning.materializeBenchmarkBacklog", {
+            defaultValue: "Create backlog items from failed benchmark cases",
+          })}
+        >
+          {actionId === "materialize" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileCheck2 className="h-3.5 w-3.5" />}
+          <span className="text-xs">
+            {t("dashboard.learning.createBacklog", {
+              defaultValue: "Create backlog",
+            })}
+          </span>
+        </Button>
+      </div>
+
+      {gate ? (
+        <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr] gap-3">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <MetricPill label="RC" value={gate.summary.freshCampaigns} tone={gate.summary.freshCampaigns > 0 ? "accent" : "warn"} />
+              <MetricPill label="CP" value={formatPct(gate.summary.casePassRate)} tone={gate.summary.casePassRate === 1 ? "accent" : "warn"} />
+              <MetricPill label="BL" value={gate.summary.openBacklogItems} tone={gate.summary.openBacklogItems > 0 ? "warn" : "muted"} />
+              <MetricPill label="PF" value={gate.summary.pendingFailureItems} tone={gate.summary.pendingFailureItems > 0 ? "warn" : "muted"} />
+              <MetricPill label="INT" value={gate.reliability.interruptedCampaigns} tone={gate.reliability.interruptedCampaigns > 0 ? "warn" : "muted"} />
+              <MetricPill label="PE" value={gate.reliability.providerErrorItems} tone={gate.reliability.providerErrorItems > 0 ? "warn" : "muted"} />
+              <MetricPill label="RT" value={formatPct(gate.reliability.retrySuccessRate)} />
+              <MetricPill label="RAW" value={`${gate.summary.rawArtifactRetentionDays}d`} />
+            </div>
+
+            {blockingChecks.length ? (
+              <div className="space-y-1.5">
+                {blockingChecks.map((check) => (
+                  <div key={check.name} className="rounded border border-border/40 p-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] ${releaseGateTone(check.status)}`}>
+                        {check.status}
+                      </span>
+                      <span className="font-medium">{check.name}</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground truncate">{check.actual}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">{check.detail}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyLine
+                label={t("dashboard.learning.noContinuousGateBlockers", {
+                  defaultValue: "No blocking gate checks",
+                })}
+              />
+            )}
+          </div>
+
+          <div className="space-y-3 min-w-0">
+            <div className="rounded border border-border/40 p-2.5 text-xs">
+              <div className="mb-2 font-medium text-muted-foreground">
+                {t("dashboard.learning.nextSteps", {
+                  defaultValue: "Next steps",
+                })}
+              </div>
+              {recommendations.length ? (
+                <div className="space-y-1">
+                  {recommendations.map((step) => (
+                    <div key={step} className="line-clamp-2 text-[10px] text-muted-foreground">
+                      {step}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyLine label="—" />
+              )}
+            </div>
+
+            <div className="rounded border border-border/40 p-2.5 text-xs">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="font-medium text-muted-foreground">
+                  {t("dashboard.learning.benchmarkBacklog", {
+                    defaultValue: "Benchmark backlog",
+                  })}
+                </span>
+                <span className="text-[10px] tabular-nums text-muted-foreground">{backlog.length}</span>
+              </div>
+              {backlog.length ? (
+                <div className="space-y-1.5">
+                  {backlog.slice(0, 4).map((item) => (
+                    <div key={item.id} className="flex items-start gap-2 rounded bg-secondary/20 p-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{item.title}</div>
+                        <div className="truncate text-[10px] text-muted-foreground">
+                          {item.failureCategory} / {item.label ?? item.modelId ?? item.baselineKind}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-1.5"
+                        onClick={() => onResolveBacklogItem(item)}
+                        disabled={Boolean(actionId)}
+                        title={t("dashboard.learning.resolveBacklogItem", {
+                          defaultValue: "Resolve backlog item",
+                        })}
+                      >
+                        {actionId === `resolve:${item.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyLine
+                  label={t("dashboard.learning.noBenchmarkBacklog", {
+                    defaultValue: "No open benchmark backlog",
+                  })}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <EmptyLine
+          label={t("dashboard.learning.noContinuousGate", {
+            defaultValue: "No continuous gate data",
           })}
         />
       )}
