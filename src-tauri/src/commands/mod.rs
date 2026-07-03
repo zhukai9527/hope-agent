@@ -16,6 +16,7 @@ pub mod crash;
 pub mod cron;
 pub mod dashboard;
 pub mod docker;
+pub mod domain_workflow;
 pub mod dreaming;
 pub mod execution_mode;
 pub mod filesystem;

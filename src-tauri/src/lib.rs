@@ -870,6 +870,12 @@ pub fn run() {
             commands::coding_improvement::materialize_benchmark_backlog,
             commands::coding_improvement::list_benchmark_backlog,
             commands::coding_improvement::update_benchmark_backlog_status,
+            // Domain workflows (Phase 7 general control plane)
+            commands::domain_workflow::list_domain_workflow_templates,
+            commands::domain_workflow::save_domain_workflow_template,
+            commands::domain_workflow::preview_domain_workflow,
+            commands::domain_workflow::record_domain_evidence,
+            commands::domain_workflow::list_domain_evidence,
             // Managed worktrees (Phase 3 durable isolation / handoff)
             commands::worktree::list_managed_worktrees,
             commands::worktree::create_managed_worktree,

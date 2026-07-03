@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-03
 >
-> 状态：规划设计。本文记录 P6 之后的通用场景层路线；不代表已实现架构。已实现技术事实仍以 `docs/architecture/` 为准。
+> 状态：Phase 7.1 Domain Workflow Registry 与 Phase 7.2 General Evidence Model 已完成第一版，并已沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)。Phase 7.3-7.6 仍为后续路线。
 
 ## 1. 背景
 
@@ -107,41 +107,47 @@ DomainWorkflow
 
 ## 7. Phase 7 路线
 
-### Phase 7.1 Domain Workflow Registry（待做）
+### Phase 7.1 Domain Workflow Registry（已完成第一版）
 
 目标：建立通用 domain workflow 的注册、选择、版本和预览机制。
 
-要做：
+已完成：
 
-- 新增 domain workflow manifest schema 和 registry。
-- 支持内置模板与用户/项目自定义模板。
-- Workflow 创建入口增加任务类型选择：Research、Writing、Data Analysis、Meeting Prep、Knowledge Curation、Inbox、Project Ops。
-- 模板生成 `workflow.js` draft，走既有 Script Gate、permission preview、审批和 durable runtime。
-- 模板版本、启用范围、默认 mode、推荐工具、required evidence 可见。
+- 新增 `ha-core::domain_workflow` manifest schema、代码内置 registry 与用户/项目自定义模板表。
+- 内置 Research、Writing、Data Analysis、Meeting Prep、Knowledge Curation、Inbox、Project Ops 七类模板。
+- 模板可生成 `workflow.js` draft，并复用既有 Script Gate 与 permission preview。
+- Tauri / HTTP / Transport 已注册 `list_domain_workflow_templates`、`save_domain_workflow_template`、`preview_domain_workflow`。
+- 模板版本、启用范围、默认 mode、推荐工具、required evidence、approval gates、verification policy、stop conditions、output contract 可见。
 
 验收：
 
-- 用户可以从 GUI 选择一个非 coding 场景并生成 workflow draft。
-- 同一目标可选择自由编排或 domain workflow，二者都落同一 WorkflowRun / Task / Goal evidence。
-- 模板不会绕过权限、审批、连接器授权或 incognito 红线。
+- Owner API 已可列出非 coding 场景模板并生成 workflow draft；GUI 创建入口仍在后续产品化阶段补。
+- 同一目标可选择自由编排或 domain workflow draft，执行时仍落既有 WorkflowRun / Task / Goal 链路。
+- 模板 preview 不创建 run、不执行脚本，不绕过权限、审批、连接器授权或 incognito 红线。
 
-### Phase 7.2 General Evidence Model（待做）
+### Phase 7.2 General Evidence Model（已完成第一版）
 
 目标：把 Goal evidence 从 coding evidence 扩展为通用证据模型，支持来源、引用、用户决策、数据口径、产物版本和验证结果。
 
-要做：
+已完成：
 
-- 定义通用 evidence 类型：`source_cited`、`claim_checked`、`user_decision`、`artifact_created`、`artifact_reviewed`、`data_quality_checked`、`citation_audited`、`message_draft_approved`、`meeting_context_collected`。
-- 让 workflow host API 能写通用 evidence，不需要伪装成 validation/diff/file。
-- Goal detail 展示按领域分组的 evidence timeline。
-- Evidence 支持 source metadata：title、uri/path、timestamp、owner、retrieved_at、confidence、access_scope。
-- Incognito / connector access / sensitive data redaction 规则进入 evidence 写入路径。
+- 定义并持久化通用 evidence 类型：`source_cited`、`claim_checked`、`user_decision`、`artifact_created`、`artifact_reviewed`、`data_quality_checked`、`citation_audited`、`message_draft_approved`、`meeting_context_collected`。
+- 新增 `domain_evidence_items` 表和 owner API：`record_domain_evidence` / `list_domain_evidence`。
+- Goal evidence relation 白名单扩展到通用 evidence，记录时可通过 `goal_links` 进入 Goal snapshot。
+- Evidence 支持 source metadata、confidence、access scope、redaction status。
+- Incognito session fail-closed；goal/session 关联路径避免跨 session 伪造 evidence。
+
+后续待补：
+
+- Workflow host API 的脚本内 evidence 写入 sugar。
+- Goal detail GUI 的领域分组 evidence timeline。
+- 更细的 connector access provenance 与导出时敏感来源提示。
 
 验收：
 
-- 非 coding workflow 能用 evidence 证明完成标准，而不是只靠最终文本。
-- 用户能看到“这个结论来自哪里、什么时候看过、是否被复核”。
-- 敏感来源不会被错误持久化到不该出现的位置。
+- 非 coding workflow 已能通过 owner API 写通用 evidence 证明完成标准，而不是只靠最终文本。
+- Evidence item 已保存来源 metadata、confidence、access scope、redaction status。
+- 无痕会话不会持久化 domain evidence。
 
 ### Phase 7.3 Domain Context Retrieval（待做）
 
@@ -258,9 +264,8 @@ Gold task pack -> Domain eval task pack
 
 P6 完成后，建议按下列顺序推进：
 
-1. Phase 7.1 + 7.2：先做 domain workflow registry 和 general evidence，因为这是通用层地基。
-2. Phase 7.3：再扩展 context retrieval，否则 workflow 没有足够上下文。
+1. Phase 7.1 + 7.2：已完成第一版 domain workflow registry 和 general evidence，通用层地基已具备。
+2. Phase 7.3：下一步扩展 context retrieval，否则 workflow 没有足够上下文。
 3. Phase 7.4：补 domain review / verification，形成质量闭环。
 4. Phase 7.5：接 learning loop，让通用场景能沉淀。
 5. Phase 7.6：最后做通用 eval / gate，避免过早为未稳定模板写大量测试。
-

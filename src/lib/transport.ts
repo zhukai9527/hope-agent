@@ -2068,6 +2068,156 @@ export interface CodingBenchmarkBacklogMaterializeResult {
   items: CodingBenchmarkBacklogItem[];
 }
 
+export interface DomainEvidenceRequirement {
+  evidenceType: string;
+  title: string;
+  required: boolean;
+  minCount?: number | null;
+  metadataKeys: string[];
+}
+
+export interface DomainApprovalGate {
+  action: string;
+  reason: string;
+  required: boolean;
+}
+
+export interface DomainVerificationRule {
+  rule: string;
+  severity: string;
+  description: string;
+}
+
+export interface DomainWorkflowTemplate {
+  id: string;
+  version: string;
+  title: string;
+  domain: string;
+  taskTypes: string[];
+  defaultMode: string;
+  requiredEvidence: DomainEvidenceRequirement[];
+  recommendedTools: string[];
+  approvalGates: DomainApprovalGate[];
+  verificationPolicy: DomainVerificationRule[];
+  stopConditions: string[];
+  outputContract: string;
+  evalCriteria: string[];
+  promptHints: string[];
+  scope: string;
+  projectId?: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ListDomainWorkflowTemplatesInput {
+  domain?: string | null;
+  taskType?: string | null;
+  projectId?: string | null;
+  includeDisabled?: boolean;
+  limit?: number | null;
+}
+
+export interface DomainWorkflowTemplateDraft {
+  id: string;
+  version?: string;
+  title: string;
+  domain: string;
+  taskTypes?: string[];
+  defaultMode?: string;
+  requiredEvidence?: DomainEvidenceRequirement[];
+  recommendedTools?: string[];
+  approvalGates?: DomainApprovalGate[];
+  verificationPolicy?: DomainVerificationRule[];
+  stopConditions?: string[];
+  outputContract?: string;
+  evalCriteria?: string[];
+  promptHints?: string[];
+  scope?: string;
+  projectId?: string | null;
+  enabled?: boolean;
+}
+
+export interface SaveDomainWorkflowTemplateInput {
+  template: DomainWorkflowTemplateDraft;
+  explicitSaveConsent: boolean;
+}
+
+export interface PreviewDomainWorkflowInput {
+  templateId: string;
+  version?: string | null;
+  sessionId: string;
+  goalId?: string | null;
+  taskType?: string | null;
+  objective?: string | null;
+  modeOverride?: string | null;
+  userContext?: string | null;
+}
+
+export interface DomainWorkflowScriptPreview {
+  gate?: {
+    issues?: Array<{ severity: string; message?: string; line?: number | null }>;
+    [key: string]: unknown;
+  };
+  permission?: Record<string, unknown>;
+  calls?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface DomainWorkflowDraft {
+  template: DomainWorkflowTemplate;
+  sessionId: string;
+  goalId?: string | null;
+  executionMode: string;
+  workflowKind: string;
+  scriptSource: string;
+  scriptPreview: DomainWorkflowScriptPreview;
+  requiredEvidence: DomainEvidenceRequirement[];
+  approvalGates: DomainApprovalGate[];
+  verificationPolicy: DomainVerificationRule[];
+  warnings: string[];
+}
+
+export interface RecordDomainEvidenceInput {
+  goalId?: string | null;
+  sessionId?: string | null;
+  projectId?: string | null;
+  domain: string;
+  evidenceType: string;
+  title: string;
+  summary?: string | null;
+  sourceMetadata?: Record<string, unknown>;
+  confidence?: number | null;
+  accessScope?: string | null;
+  redactionStatus?: string | null;
+}
+
+export interface ListDomainEvidenceInput {
+  goalId?: string | null;
+  sessionId?: string | null;
+  projectId?: string | null;
+  domain?: string | null;
+  evidenceType?: string | null;
+  limit?: number | null;
+}
+
+export interface DomainEvidenceItem {
+  id: string;
+  goalId?: string | null;
+  sessionId: string;
+  projectId?: string | null;
+  domain: string;
+  evidenceType: string;
+  title: string;
+  summary?: string | null;
+  sourceMetadata: Record<string, unknown>;
+  confidence?: number | null;
+  accessScope: string;
+  redactionStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

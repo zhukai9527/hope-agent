@@ -1560,6 +1560,26 @@ fn build_router_with_cors(
             "/coding-benchmark/backlog/status",
             post(routes::coding_improvement::update_benchmark_backlog_status),
         )
+        .route(
+            "/domain-workflows/templates",
+            post(routes::domain_workflow::list_domain_workflow_templates),
+        )
+        .route(
+            "/domain-workflows/templates/save",
+            post(routes::domain_workflow::save_domain_workflow_template),
+        )
+        .route(
+            "/domain-workflows/preview",
+            post(routes::domain_workflow::preview_domain_workflow),
+        )
+        .route(
+            "/domain-evidence/record",
+            post(routes::domain_workflow::record_domain_evidence),
+        )
+        .route(
+            "/domain-evidence",
+            post(routes::domain_workflow::list_domain_evidence),
+        )
         // Smart verification selector (Phase 3.4)
         .route(
             "/sessions/{sid}/verification-runs",

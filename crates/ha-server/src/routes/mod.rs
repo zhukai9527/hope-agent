@@ -19,6 +19,7 @@ pub mod cron;
 pub mod dashboard;
 pub mod desktop;
 pub mod dev;
+pub mod domain_workflow;
 pub mod dreaming;
 pub mod execution_mode;
 pub mod filesystem;

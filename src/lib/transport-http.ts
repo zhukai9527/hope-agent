@@ -436,6 +436,11 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   materialize_benchmark_backlog: { method: "POST", path: "/api/coding-benchmark/backlog/materialize" },
   list_benchmark_backlog: { method: "POST", path: "/api/coding-benchmark/backlog" },
   update_benchmark_backlog_status: { method: "POST", path: "/api/coding-benchmark/backlog/status" },
+  list_domain_workflow_templates: { method: "POST", path: "/api/domain-workflows/templates" },
+  save_domain_workflow_template: { method: "POST", path: "/api/domain-workflows/templates/save" },
+  preview_domain_workflow: { method: "POST", path: "/api/domain-workflows/preview" },
+  record_domain_evidence: { method: "POST", path: "/api/domain-evidence/record" },
+  list_domain_evidence: { method: "POST", path: "/api/domain-evidence" },
 
   // -- Managed worktrees --
   list_managed_worktrees:          { method: "GET",    path: "/api/sessions/{sessionId}/worktrees" },

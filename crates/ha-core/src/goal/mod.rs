@@ -1589,6 +1589,14 @@ fn is_goal_evidence_relation(relation: &str) -> bool {
             | "review_completed"
             | "review_finding"
             | "diagnostic_result"
+            | "source_cited"
+            | "claim_checked"
+            | "user_decision"
+            | "artifact_reviewed"
+            | "data_quality_checked"
+            | "citation_audited"
+            | "message_draft_approved"
+            | "meeting_context_collected"
     )
 }
 
@@ -1602,6 +1610,14 @@ fn goal_evidence_is_positive(item: &GoalEvidenceItem) -> bool {
             | "artifact_created"
             | "review_passed"
             | "diagnostic_result"
+            | "source_cited"
+            | "claim_checked"
+            | "user_decision"
+            | "artifact_reviewed"
+            | "data_quality_checked"
+            | "citation_audited"
+            | "message_draft_approved"
+            | "meeting_context_collected"
             | "task_completed"
     )
 }
@@ -1639,6 +1655,25 @@ fn goal_link_title(link: &GoalLink) -> String {
         "review_completed" => "Review completed".to_string(),
         "review_finding" => "Review finding".to_string(),
         "diagnostic_result" => "Diagnostic result".to_string(),
+        "source_cited" => {
+            metadata_string(&link.metadata, "title").unwrap_or_else(|| "Source cited".to_string())
+        }
+        "claim_checked" => {
+            metadata_string(&link.metadata, "title").unwrap_or_else(|| "Claim checked".to_string())
+        }
+        "user_decision" => {
+            metadata_string(&link.metadata, "title").unwrap_or_else(|| "User decision".to_string())
+        }
+        "artifact_reviewed" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Artifact reviewed".to_string()),
+        "data_quality_checked" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Data quality checked".to_string()),
+        "citation_audited" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Citation audited".to_string()),
+        "message_draft_approved" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Message draft approved".to_string()),
+        "meeting_context_collected" => metadata_string(&link.metadata, "title")
+            .unwrap_or_else(|| "Meeting context collected".to_string()),
         other => other.replace('_', " "),
     }
 }

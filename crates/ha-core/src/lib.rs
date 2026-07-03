@@ -45,6 +45,7 @@ pub mod cron;
 pub mod dashboard;
 pub mod dev_tools;
 pub mod docker;
+pub mod domain_workflow;
 pub mod execution_mode;
 pub mod failover;
 pub mod file_extract;
