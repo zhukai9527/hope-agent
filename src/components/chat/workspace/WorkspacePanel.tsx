@@ -5530,14 +5530,28 @@ function parseOptionalPositiveInt(input: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null
 }
 
+interface WorkflowFocusTarget {
+  runId: string
+  nonce: number
+}
+
+function workflowRunSortTime(run: WorkflowRun): number {
+  const time = Date.parse(run.updatedAt || run.createdAt || "")
+  return Number.isFinite(time) ? time : 0
+}
+
 function LoopSchedulesSection({
   sessionId,
   incognito,
   turnActive,
+  workflowRuns = [],
+  onSelectWorkflowRun,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
+  workflowRuns?: WorkflowRun[]
+  onSelectWorkflowRun?: (runId: string) => void
 }) {
   const { t } = useTranslation()
   const { schedules, activeCount, loading, error, refresh } = useLoopSchedules(sessionId, {
@@ -5560,6 +5574,25 @@ function LoopSchedulesSection({
   const activeGoal = goalState.snapshot?.goal ?? null
   const canUseWorkflowLoop =
     draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
+  const workflowRunsByLoop = useMemo(() => {
+    const byLoop = new Map<string, WorkflowRun[]>()
+    for (const run of workflowRuns) {
+      const origin = run.origin?.trim()
+      if (!origin?.startsWith("loop:")) continue
+      const loopId = origin.slice("loop:".length)
+      if (!loopId) continue
+      const list = byLoop.get(loopId)
+      if (list) {
+        list.push(run)
+      } else {
+        byLoop.set(loopId, [run])
+      }
+    }
+    for (const list of byLoop.values()) {
+      list.sort((a, b) => workflowRunSortTime(b) - workflowRunSortTime(a))
+    }
+    return byLoop
+  }, [workflowRuns])
 
   useEffect(() => {
     if (!canUseWorkflowLoop && draftExecutionStrategy === "workflow") {
@@ -5862,6 +5895,8 @@ function LoopSchedulesSection({
         <div className="space-y-2">
           {schedules.slice(0, 5).map((loop) => {
             const isBusy = actionId?.startsWith(`${loop.id}:`)
+            const derivedWorkflowRuns = workflowRunsByLoop.get(loop.id) ?? []
+            const latestWorkflowRun = derivedWorkflowRuns[0]
             return (
               <div
                 key={loop.id}
@@ -5899,6 +5934,59 @@ function LoopSchedulesSection({
                     </div>
                     {loop.blockedReason ? (
                       <p className="mt-1 text-[10px] text-destructive">{loop.blockedReason}</p>
+                    ) : null}
+                    {loop.executionStrategy === "workflow" ? (
+                      latestWorkflowRun ? (
+                        <div className="mt-2 flex min-w-0 items-center gap-2 rounded-md bg-secondary/25 px-2 py-1.5">
+                          <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate text-[11px] font-medium text-foreground/85">
+                                {latestWorkflowRun.kind}
+                              </span>
+                              {derivedWorkflowRuns.length > 1 ? (
+                                <span className="shrink-0 text-[10px] text-muted-foreground">
+                                  +{derivedWorkflowRuns.length - 1}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="truncate text-[10px] text-muted-foreground">
+                              {latestWorkflowRun.id}
+                              <span className="px-1 text-muted-foreground/50">·</span>
+                              {formatMessageTime(latestWorkflowRun.updatedAt)}
+                            </div>
+                          </div>
+                          <StatusPill
+                            label={workflowRunStateLabel(t, latestWorkflowRun.state)}
+                            tone={workflowRunTone(latestWorkflowRun.state)}
+                            loading={
+                              latestWorkflowRun.state === "running" ||
+                              latestWorkflowRun.state === "recovering"
+                            }
+                          />
+                          {onSelectWorkflowRun ? (
+                            <IconTip label={t("workspace.loop.viewWorkflow", "查看工作流")}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                aria-label={t("workspace.loop.viewWorkflow", "查看工作流")}
+                                onClick={() => onSelectWorkflowRun(latestWorkflowRun.id)}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </Button>
+                            </IconTip>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex items-center gap-2 rounded-md bg-secondary/20 px-2 py-1.5 text-[10px] text-muted-foreground">
+                          <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">
+                            {t("workspace.loop.workflowPending", "等待下一次触发创建 Workflow run")}
+                          </span>
+                        </div>
+                      )
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -5966,6 +6054,7 @@ function WorkflowRunsSection({
   onEnsureSession,
   onViewSubagentSession,
   workflowRunsState,
+  focusedRunTarget,
 }: {
   sessionId?: string | null
   incognito?: boolean
@@ -5974,6 +6063,7 @@ function WorkflowRunsSection({
   onEnsureSession?: () => Promise<string | null>
   onViewSubagentSession?: (sessionId: string) => void
   workflowRunsState?: WorkflowRunsState
+  focusedRunTarget?: WorkflowFocusTarget | null
 }) {
   const { t } = useTranslation()
   const ownedWorkflowRuns = useWorkflowRuns(sessionId, {
@@ -6198,6 +6288,15 @@ function WorkflowRunsSection({
     )
     setSelectedRunId((live ?? runs[0]).id)
   }, [runs, selectedRunId])
+
+  useEffect(() => {
+    if (!focusedRunTarget?.runId) return
+    if (!runs.some((run) => run.id === focusedRunTarget.runId)) return
+    setSelectedRunId(focusedRunTarget.runId)
+    if (!runs.slice(0, WORKFLOW_RUN_PREVIEW).some((run) => run.id === focusedRunTarget.runId)) {
+      setShowAllRuns(true)
+    }
+  }, [focusedRunTarget?.nonce, focusedRunTarget?.runId, runs])
 
   useEffect(() => {
     if (runs.length <= WORKFLOW_RUN_PREVIEW && showAllRuns) {
@@ -11239,6 +11338,23 @@ export default function WorkspacePanel({
     messages,
     { incognito, turnActive },
   )
+  const ownedWorkflowRunsState = useWorkflowRuns(sessionId, {
+    incognito,
+    turnActive,
+    disabled: Boolean(workflowRunsState),
+  })
+  const sharedWorkflowRunsState = workflowRunsState ?? ownedWorkflowRunsState
+  const workflowSectionRef = useRef<HTMLDivElement | null>(null)
+  const [workflowFocusTarget, setWorkflowFocusTarget] = useState<WorkflowFocusTarget | null>(null)
+  const focusWorkflowRun = useCallback((runId: string) => {
+    setWorkflowFocusTarget((current) => ({
+      runId,
+      nonce: (current?.nonce ?? 0) + 1,
+    }))
+    window.setTimeout(() => {
+      workflowSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })
+    }, 0)
+  }, [])
 
   const {
     visible: visibleFiles,
@@ -11352,18 +11468,27 @@ export default function WorkspacePanel({
         )}
 
         {/* Workflow — 动态脚本 run 的可观察、可暂停、可批准控制面。 */}
-        <WorkflowRunsSection
+        <div ref={workflowSectionRef}>
+          <WorkflowRunsSection
+            sessionId={sessionId}
+            incognito={incognito}
+            turnActive={turnActive}
+            workingDir={effectiveWorkingDir}
+            onEnsureSession={onEnsureSession}
+            onViewSubagentSession={onViewSubagentSession}
+            workflowRunsState={sharedWorkflowRunsState}
+            focusedRunTarget={workflowFocusTarget}
+          />
+        </div>
+
+        {/* Loop — Phase 2.9 真正的定时/重复/条件触发控制面。 */}
+        <LoopSchedulesSection
           sessionId={sessionId}
           incognito={incognito}
           turnActive={turnActive}
-          workingDir={effectiveWorkingDir}
-          onEnsureSession={onEnsureSession}
-          onViewSubagentSession={onViewSubagentSession}
-          workflowRunsState={workflowRunsState}
+          workflowRuns={sharedWorkflowRunsState.runs}
+          onSelectWorkflowRun={focusWorkflowRun}
         />
-
-        {/* Loop — Phase 2.9 真正的定时/重复/条件触发控制面。 */}
-        <LoopSchedulesSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
         <BackgroundJobsSection

@@ -148,7 +148,7 @@ Owner API：
 
 `create_loop_schedule` 额外接受 `executionStrategy?: "continue" | "workflow"`；省略时为 `continue`。
 
-GUI：Workspace 面板新增 Loop 区块，支持创建 `every` / `until` loop，填写 interval、condition、prompt、max runs、max runtime、token budget；同时展示本会话 loop 数量、状态、触发摘要、prompt、运行次数、最大运行时长、blocked reason，并提供 pause / resume / stop。创建 `every` loop 且当前 active Goal 已选择领域模板时，用户可把执行方式从“继续会话”切到“创建工作流”；列表会用 `Workflow` 标记这类 loop。
+GUI：Workspace 面板新增 Loop 区块，支持创建 `every` / `until` loop，填写 interval、condition、prompt、max runs、max runtime、token budget；同时展示本会话 loop 数量、状态、触发摘要、prompt、运行次数、最大运行时长、blocked reason，并提供 pause / resume / stop。创建 `every` loop 且当前 active Goal 已选择领域模板时，用户可把执行方式从“继续会话”切到“创建工作流”；列表会用 `Workflow` 标记这类 loop，并根据同会话 Workflow run 的 `origin=loop:<loop_id>` 显示最近派生 run 的 kind、state、更新时间和跳转按钮。点击后 Workspace 会选中对应 Workflow run detail，继续查看审批、trace、validation、agents、pause/resume/cancel 等控制面。
 
 ## 安全与可靠性
 

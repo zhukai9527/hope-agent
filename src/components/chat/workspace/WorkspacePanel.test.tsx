@@ -14,6 +14,7 @@ import type {
 import type { BackgroundJobSnapshot } from "@/types/background-jobs"
 import WorkspacePanel from "./WorkspacePanel"
 import type { GoalSnapshot } from "./useGoal"
+import type { LoopSchedule } from "./useLoopSchedules"
 import type { WorkflowRun, WorkflowRunSnapshot, WorkflowScriptPreview } from "./useWorkflowRuns"
 
 const envMock = vi.hoisted(() => ({
@@ -286,6 +287,31 @@ function workflowSnapshot(run: WorkflowRun): WorkflowRunSnapshot {
         createdAt: "2026-01-01T00:01:00Z",
       },
     ],
+  }
+}
+
+function loopSchedule(patch: Partial<LoopSchedule> = {}): LoopSchedule {
+  return {
+    id: "loop-1",
+    sessionId: "s1",
+    goalId: "goal-1",
+    cronJobId: "cron-loop-1",
+    prompt: "Update the report",
+    triggerKind: "interval",
+    triggerSpec: { intervalSecs: 600 },
+    executionStrategy: "workflow",
+    state: "active",
+    maxRuns: null,
+    runCount: 1,
+    maxRuntimeSecs: null,
+    tokenBudget: null,
+    costBudgetMicros: null,
+    approvalPolicySnapshot: {},
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:04:00Z",
+    completedAt: null,
+    blockedReason: null,
+    ...patch,
   }
 }
 
@@ -803,6 +829,49 @@ describe("WorkspacePanel environment section", () => {
 })
 
 describe("WorkspacePanel workflow section", () => {
+  it("links workflow loop rows to their derived workflow run", async () => {
+    const otherRun = workflowRun({
+      id: "wf-other",
+      kind: "coding.other",
+      state: "completed",
+      updatedAt: "2026-01-01T00:05:00Z",
+    })
+    const derivedRun = workflowRun({
+      id: "wf-loop",
+      kind: "domain:research",
+      state: "running",
+      origin: "loop:loop-1",
+      updatedAt: "2026-01-01T00:04:00Z",
+    })
+    const snapshots = new Map([
+      [otherRun.id, workflowSnapshot(otherRun)],
+      [derivedRun.id, workflowSnapshot(derivedRun)],
+    ])
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([otherRun, derivedRun])
+      if (name === "get_workflow_run") {
+        return Promise.resolve(snapshots.get(String(args?.runId)) ?? null)
+      }
+      if (name === "list_loop_schedules") return Promise.resolve([loopSchedule()])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("domain:research")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: /Loop/ }))
+    fireEvent.click(screen.getByRole("button", { name: "查看工作流" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("get_workflow_run", { runId: "wf-loop" })
+    })
+  })
+
   it("shows an actionable workflow empty state before any workflow run exists", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
