@@ -1437,6 +1437,10 @@ describe("WorkspacePanel workflow section", () => {
     expect(await screen.findByText("自主就绪")).toBeTruthy()
     expect(screen.getByText("Keep the research brief fresh")).toBeTruthy()
     expect(screen.getAllByText("自主").length).toBeGreaterThan(0)
+    await waitFor(() => {
+      const goalCalls = transportMock.call.mock.calls.filter(([name]) => name === "get_active_goal")
+      expect(goalCalls).toHaveLength(1)
+    })
   })
 
   it("offers setup actions from the autonomous readiness card", async () => {

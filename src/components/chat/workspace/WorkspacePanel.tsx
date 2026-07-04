@@ -205,6 +205,7 @@ import {
   type GoalEvidenceItem,
   type GoalSnapshot,
   type GoalState,
+  type GoalStateSnapshot,
   type GoalTimelineItem,
 } from "./useGoal"
 import {
@@ -8498,6 +8499,7 @@ function LoopSchedulesSection({
   workflowRuns = [],
   onSelectWorkflowRun,
   loopSchedulesState,
+  goalState,
   createRequest,
   inspectRequest,
 }: {
@@ -8507,6 +8509,7 @@ function LoopSchedulesSection({
   workflowRuns?: WorkflowRun[]
   onSelectWorkflowRun?: (runId: string) => void
   loopSchedulesState?: LoopSchedulesState
+  goalState: GoalStateSnapshot
   createRequest?: number
   inspectRequest?: { loopId: string; nonce: number } | null
 }) {
@@ -8518,7 +8521,6 @@ function LoopSchedulesSection({
   })
   const { schedules, activeCount, loading, error, refresh } =
     loopSchedulesState ?? ownedLoopSchedulesState
-  const goalState = useGoal(sessionId, { incognito })
   const [actionId, setActionId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
@@ -9110,6 +9112,7 @@ function WorkflowRunsSection({
   onOpenLoopProblem,
   workflowRunsState,
   loopSchedulesState,
+  goalState,
   domainWorkbenchState,
   focusedRunTarget,
 }: {
@@ -9123,6 +9126,7 @@ function WorkflowRunsSection({
   onOpenLoopProblem?: (loopId: string) => void
   workflowRunsState?: WorkflowRunsState
   loopSchedulesState: LoopSchedulesState
+  goalState: GoalStateSnapshot
   domainWorkbenchState: DomainTaskWorkbenchState
   focusedRunTarget?: WorkflowFocusTarget | null
 }) {
@@ -9134,7 +9138,6 @@ function WorkflowRunsSection({
   })
   const { runs, activeCount, loading, error, refresh } = workflowRunsState ?? ownedWorkflowRuns
   const managedWorktreesState = useManagedWorktrees(sessionId, { incognito, turnActive })
-  const goalState = useGoal(sessionId, { incognito })
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<WorkflowRunSnapshot | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
@@ -14452,6 +14455,7 @@ export default function WorkspacePanel({
   })
   const sharedWorkflowRunsState = workflowRunsState ?? ownedWorkflowRunsState
   const loopSchedulesState = useLoopSchedules(sessionId, { incognito, turnActive })
+  const goalState = useGoal(sessionId, { incognito })
   const [loopCreateRequest, setLoopCreateRequest] = useState(0)
   const [loopInspectRequest, setLoopInspectRequest] = useState<{
     loopId: string
@@ -14621,6 +14625,7 @@ export default function WorkspacePanel({
             }
             workflowRunsState={sharedWorkflowRunsState}
             loopSchedulesState={loopSchedulesState}
+            goalState={goalState}
             domainWorkbenchState={domainTaskWorkbenchState}
             focusedRunTarget={workflowFocusTarget}
           />
@@ -14634,6 +14639,7 @@ export default function WorkspacePanel({
           workflowRuns={sharedWorkflowRunsState.runs}
           onSelectWorkflowRun={focusWorkflowRun}
           loopSchedulesState={loopSchedulesState}
+          goalState={goalState}
           createRequest={loopCreateRequest}
           inspectRequest={loopInspectRequest}
         />
