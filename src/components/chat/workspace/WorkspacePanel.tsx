@@ -5124,6 +5124,7 @@ const WORKFLOW_OVERVIEW_EVENT_TYPES = new Set([
   "run_created",
   "run_state_changed",
   "run_control_action",
+  "run_runtime_launch",
   "run_recovery_claimed",
   "run_worktree_attached",
   "script_permission_preview",
@@ -5158,6 +5159,9 @@ function workflowEventTone(event: WorkflowEvent): StatusTone {
     if (action === "pause") return "warn"
     if (action === "cancel") return "muted"
     return "info"
+  }
+  if (event.eventType === "run_runtime_launch") {
+    return boolField(payload, "accepted") === false ? "warn" : "info"
   }
   if (
     event.eventType === "op_failed" ||
@@ -5210,6 +5214,8 @@ function workflowEventTitle(
       return t("workspace.workflow.eventRunStateChanged", "状态已更新")
     case "run_control_action":
       return t("workspace.workflow.eventRunControlAction", "控制动作")
+    case "run_runtime_launch":
+      return t("workspace.workflow.eventRunRuntimeLaunch", "启动请求")
     case "run_recovery_claimed":
       return t("workspace.workflow.eventRecoveryClaimed", "恢复接管")
     case "run_worktree_attached":
@@ -5265,6 +5271,18 @@ function workflowEventDetail(
       const resultState = stringField(payload, "resultState")
       const reason = stringField(payload, "reason")
       return [action, resultState, reason].filter(Boolean).join(" · ")
+    }
+    case "run_runtime_launch": {
+      const accepted = boolField(payload, "accepted")
+      const owner = stringField(payload, "owner")
+      const reason = stringField(payload, "reason")
+      const acceptedLabel =
+        accepted === null
+          ? null
+          : accepted
+            ? t("workspace.workflow.launchAccepted", "已接收")
+            : t("workspace.workflow.launchRejected", "未接收")
+      return [acceptedLabel, owner, reason].filter(Boolean).join(" · ")
     }
     case "script_permission_preview":
     case "script_permission_preview_blocked":

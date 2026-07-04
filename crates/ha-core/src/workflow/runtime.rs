@@ -151,7 +151,19 @@ pub fn spawn_workflow_run_if_primary(
     run_id: impl Into<String>,
     owner: impl Into<String>,
 ) -> bool {
+    let run_id = run_id.into();
+    let owner = owner.into();
     if !crate::runtime_lock::is_primary() {
+        let _ = db.append_workflow_event(
+            &run_id,
+            "run_runtime_launch",
+            json!({
+                "accepted": false,
+                "owner": owner.as_str(),
+                "reason": "not_primary",
+                "pid": std::process::id(),
+            }),
+        );
         crate::app_warn!(
             "workflow",
             "spawn_run",
@@ -160,8 +172,16 @@ pub fn spawn_workflow_run_if_primary(
         return false;
     }
 
-    let run_id = run_id.into();
-    let owner = owner.into();
+    let _ = db.append_workflow_event(
+        &run_id,
+        "run_runtime_launch",
+        json!({
+            "accepted": true,
+            "owner": owner.as_str(),
+            "reason": "primary_spawn_accepted",
+            "pid": std::process::id(),
+        }),
+    );
     tokio::spawn(async move {
         let state = match db.get_workflow_run(&run_id) {
             Ok(Some(run)) => run.state,

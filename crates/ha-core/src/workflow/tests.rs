@@ -18,8 +18,8 @@ use super::{
     runtime::{
         ask_user_tool_args, spawn_agent_tool_args, validation_exit_code, wait_all_tool_args,
     },
-    CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
-    WorkflowOpState, WorkflowRunState,
+    spawn_workflow_run_if_primary, CreateWorkflowRunInput, StartedOpRecoveryAction,
+    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState, WorkflowRunState,
 };
 
 fn temp_db() -> (tempfile::TempDir, SessionDB) {
@@ -1038,6 +1038,30 @@ fn launch_claim_sets_draft_owner_and_blocks_duplicate_launch() {
         event.event_type == "run_launch_claimed"
             && event.payload.get("fromState").and_then(Value::as_str) == Some("draft")
             && event.payload.get("toState").and_then(Value::as_str) == Some("draft")
+    }));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn spawn_workflow_run_records_runtime_launch_request() {
+    let (_dir, db_raw) = temp_db();
+    let db = Arc::new(db_raw);
+    let (_session_id, run_id) = create_run(&db);
+    let accepted = spawn_workflow_run_if_primary(db.clone(), run_id.clone(), "test:launch");
+
+    assert_eq!(accepted, crate::runtime_lock::is_primary());
+    let events = db
+        .list_workflow_events(&run_id, 20)
+        .expect("list workflow events");
+    assert!(events.iter().any(|event| {
+        event.event_type == "run_runtime_launch"
+            && event.payload.get("owner").and_then(Value::as_str) == Some("test:launch")
+            && event.payload.get("accepted").and_then(Value::as_bool) == Some(accepted)
+            && event.payload.get("reason").and_then(Value::as_str)
+                == Some(if accepted {
+                    "primary_spawn_accepted"
+                } else {
+                    "not_primary"
+                })
     }));
 }
 
