@@ -476,6 +476,7 @@ cargo test -p ha-core domain_eval --locked
 - Domain Readiness Gate 在 live quality + campaign evidence 齐全时 passed；失败 campaign 且未闭环学习时 failed，并指出 `campaign_failures` / `learning_closure` blockers。
 - Domain Operational Gate 在已完成 workflow 且没有失败残留时 passed；failed workflow + cancelled campaign item 时 failed，并指出 `workflow_failures` / `campaign_failures` blockers。
 - Domain Soak Report 在 workflow / loop / campaign / connector evidence 已 drain 且无事故时 passed；failed workflow + active campaign item 时 failed，并输出 critical/warning incidents 与 Markdown。
+- Loop workflow strategy 的跨控制面回归覆盖 Goal → Loop tick → 派生 WorkflowRun → workflow completed → LoopRun succeeded 后，Operational Gate 与 Soak Report 都能读取同一 session/domain 的 workflow + loop evidence。
 - Agent fixture runner 会创建真实 user message / chat turn，调用 mock Responses provider，经 `run_chat_engine` 产生 response，并默认打开 Workflow Mode Ultracode。
 - Agent fixture 不会自动 materialize trace fixture seed，避免 evidence/workflow 被确定性 fixture 托过关。
 - 缺少 provider/modelChain 的 agent fixture fail-fast，不写 eval run。
