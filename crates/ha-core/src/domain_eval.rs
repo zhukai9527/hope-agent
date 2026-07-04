@@ -33,6 +33,11 @@ const DEFAULT_WINDOW_DAYS: u32 = 30;
 const MAX_WINDOW_DAYS: u32 = 180;
 const DEFAULT_DOMAIN_EVAL_LIMIT: usize = 20;
 const MAX_DOMAIN_EVAL_LIMIT: usize = 100;
+const DEFAULT_DOMAIN_EVAL_CAMPAIGN_LIMIT: usize = 12;
+const MAX_DOMAIN_EVAL_CAMPAIGN_LIMIT: usize = 50;
+const DEFAULT_DOMAIN_EVAL_CAMPAIGN_TASKS: usize = 5;
+const MAX_DOMAIN_EVAL_CAMPAIGN_TASKS: usize = 15;
+const MAX_DOMAIN_EVAL_CAMPAIGN_MODELS: usize = 8;
 const DEFAULT_MIN_EVAL_RUNS: usize = 1;
 const DEFAULT_MIN_PASS_RATE: f64 = 1.0;
 const DEFAULT_MIN_AVERAGE_SCORE: f64 = 0.8;
@@ -43,6 +48,7 @@ const DOMAIN_EVAL_SOURCE_LIVE: &str = "live";
 const DOMAIN_EVAL_SOURCE_FIXTURE_TRACE: &str = "fixture_trace";
 const DOMAIN_EVAL_SOURCE_FIXTURE_AGENT: &str = "fixture_agent";
 const DOMAIN_EVAL_SOURCE_FIXTURE_UNSUPPORTED: &str = "fixture_unsupported";
+const DOMAIN_EVAL_SOURCE_CAMPAIGN: &str = "fixture_campaign";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -453,6 +459,153 @@ pub struct DomainEvalFixtureRunRecord {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalCampaignModel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDomainEvalCampaignInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tasks: Option<usize>,
+    #[serde(default)]
+    pub models: Vec<DomainEvalCampaignModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<String>,
+    #[serde(default)]
+    pub run_now: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDomainEvalCampaignsInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDomainEvalCampaignInput {
+    pub campaign_id: String,
+    #[serde(default)]
+    pub providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub retry_failed_only: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalCampaignSummary {
+    pub total_items: usize,
+    pub queued_items: usize,
+    pub running_items: usize,
+    pub passed_items: usize,
+    pub failed_items: usize,
+    pub cancelled_items: usize,
+    pub interrupted_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item_pass_rate: Option<f64>,
+    pub eval_runs: usize,
+    pub passed_eval_runs: usize,
+    pub failed_eval_runs: usize,
+    pub insufficient_eval_runs: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_score: Option<f64>,
+    pub total_checks: usize,
+    pub passed_checks: usize,
+    pub failed_checks: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalCampaignItem {
+    pub id: String,
+    pub campaign_id: String,
+    pub task_id: String,
+    pub task_title: String,
+    pub domain: String,
+    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub status: String,
+    pub attempt: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixture_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eval_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    pub total_checks: usize,
+    pub passed_checks: usize,
+    pub failed_checks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalCampaign {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub name: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    pub task_filter: Value,
+    pub model_matrix: Vec<DomainEvalCampaignModel>,
+    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    pub summary: DomainEvalCampaignSummary,
+    pub items: Vec<DomainEvalCampaignItem>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListDomainEvalRunsInput {
@@ -698,6 +851,62 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             ON domain_eval_fixture_runs(source_type, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_domain_eval_fixture_runs_status
             ON domain_eval_fixture_runs(status, created_at DESC);",
+    )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS domain_eval_campaigns (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            project_id TEXT,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            domain TEXT,
+            task_filter_json TEXT NOT NULL DEFAULT '{}',
+            model_matrix_json TEXT NOT NULL DEFAULT '[]',
+            execution_mode TEXT NOT NULL,
+            max_budget_usd REAL,
+            timeout_secs INTEGER,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_campaigns_scope
+            ON domain_eval_campaigns(project_id, session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_campaigns_status
+            ON domain_eval_campaigns(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS domain_eval_campaign_items (
+            id TEXT PRIMARY KEY,
+            campaign_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            task_title TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            provider_id TEXT,
+            model_id TEXT,
+            label TEXT,
+            status TEXT NOT NULL,
+            attempt INTEGER NOT NULL DEFAULT 0,
+            fixture_run_id TEXT,
+            eval_run_id TEXT,
+            score REAL,
+            total_checks INTEGER NOT NULL DEFAULT 0,
+            passed_checks INTEGER NOT NULL DEFAULT 0,
+            failed_checks INTEGER NOT NULL DEFAULT 0,
+            report_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (campaign_id) REFERENCES domain_eval_campaigns(id) ON DELETE CASCADE,
+            FOREIGN KEY (fixture_run_id) REFERENCES domain_eval_fixture_runs(id) ON DELETE SET NULL,
+            FOREIGN KEY (eval_run_id) REFERENCES domain_eval_runs(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_campaign_items_campaign
+            ON domain_eval_campaign_items(campaign_id, status, updated_at DESC);",
     )?;
     ensure_domain_eval_column(
         conn,
@@ -1477,6 +1686,455 @@ impl SessionDB {
             .map_err(Into::into)
     }
 
+    pub fn create_domain_eval_campaign(
+        &self,
+        input: CreateDomainEvalCampaignInput,
+    ) -> Result<DomainEvalCampaign> {
+        let (session_id, project_id) =
+            self.resolve_domain_eval_campaign_scope(input.session_id, input.project_id)?;
+        let domain = input
+            .domain
+            .as_deref()
+            .and_then(non_empty)
+            .map(normalize_domain);
+        let max_tasks = input
+            .max_tasks
+            .unwrap_or(DEFAULT_DOMAIN_EVAL_CAMPAIGN_TASKS)
+            .clamp(1, MAX_DOMAIN_EVAL_CAMPAIGN_TASKS);
+        let requested_task_ids = input
+            .task_ids
+            .iter()
+            .filter_map(|id| non_empty(id).map(str::to_string))
+            .collect::<BTreeSet<_>>();
+        let mut tasks = self.list_domain_eval_tasks(ListDomainEvalTasksInput {
+            domain: domain.clone(),
+            project_id: project_id.clone(),
+            limit: Some(MAX_DOMAIN_EVAL_LIMIT),
+        })?;
+        if !requested_task_ids.is_empty() {
+            tasks.retain(|task| requested_task_ids.contains(&task.id));
+        }
+        tasks.truncate(max_tasks);
+        if tasks.is_empty() {
+            bail!("domain eval campaign requires at least one matching task");
+        }
+
+        let requested_execution_mode =
+            normalize_campaign_execution_mode(input.execution_mode.as_deref())?;
+        let models = normalize_domain_eval_campaign_models(input.models)?;
+        if requested_execution_mode.as_deref() == Some("agent")
+            && models
+                .iter()
+                .all(|model| model.provider_id.is_none() && model.model_id.is_none())
+        {
+            bail!("agent domain eval campaign requires at least one provider/model entry");
+        }
+        let item_modes = models
+            .iter()
+            .map(|model| {
+                if model.provider_id.is_some() || model.model_id.is_some() {
+                    "agent".to_string()
+                } else {
+                    requested_execution_mode
+                        .clone()
+                        .unwrap_or_else(|| "trace_fixture".to_string())
+                }
+            })
+            .collect::<Vec<_>>();
+        let execution_mode = if item_modes.iter().all(|mode| mode == &item_modes[0]) {
+            item_modes[0].clone()
+        } else {
+            "mixed".to_string()
+        };
+        let task_filter = json!({
+            "domain": domain,
+            "taskIds": tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+            "maxTasks": max_tasks,
+        });
+        let task_filter_json = serde_json::to_string(&task_filter)?;
+        let model_matrix_json = serde_json::to_string(&models)?;
+        let name = input
+            .name
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if execution_mode == "agent" || execution_mode == "mixed" {
+                    "Domain eval model campaign".to_string()
+                } else {
+                    "Domain eval trace campaign".to_string()
+                }
+            });
+        let id = format!("dec_{}", uuid::Uuid::new_v4().simple());
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO domain_eval_campaigns (
+                id, session_id, project_id, name, status, domain, task_filter_json,
+                model_matrix_json, execution_mode, max_budget_usd, timeout_secs,
+                created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, 'queued', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+            params![
+                id,
+                session_id,
+                project_id,
+                name,
+                task_filter
+                    .get("domain")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                task_filter_json,
+                model_matrix_json,
+                execution_mode,
+                input.max_budget_usd,
+                input.timeout_secs.map(|value| value as i64),
+                now,
+            ],
+        )?;
+        for task in &tasks {
+            for (model, item_execution_mode) in models.iter().zip(item_modes.iter()) {
+                let item_id = format!("deci_{}", uuid::Uuid::new_v4().simple());
+                tx.execute(
+                    "INSERT INTO domain_eval_campaign_items (
+                        id, campaign_id, task_id, task_title, domain, execution_mode,
+                        provider_id, model_id, label, status, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?10)",
+                    params![
+                        item_id,
+                        id,
+                        task.id,
+                        task.title,
+                        task.domain,
+                        item_execution_mode,
+                        model.provider_id,
+                        model.model_id,
+                        model.label,
+                        now,
+                    ],
+                )?;
+            }
+        }
+        tx.commit()?;
+        drop(conn);
+        self.get_domain_eval_campaign(&id)?
+            .ok_or_else(|| anyhow!("domain eval campaign vanished after insert: {id}"))
+    }
+
+    pub fn list_domain_eval_campaigns(
+        &self,
+        input: ListDomainEvalCampaignsInput,
+    ) -> Result<Vec<DomainEvalCampaign>> {
+        let (session_id, project_id) =
+            self.resolve_domain_eval_campaign_scope(input.session_id, input.project_id)?;
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_DOMAIN_EVAL_CAMPAIGN_LIMIT)
+            .clamp(1, MAX_DOMAIN_EVAL_CAMPAIGN_LIMIT);
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(project_id) = project_id.as_ref() {
+            clauses.push("project_id = ?".to_string());
+            params.push(project_id.clone());
+        } else if let Some(session_id) = session_id.as_ref() {
+            clauses.push("session_id = ?".to_string());
+            params.push(session_id.clone());
+        }
+        let where_sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        params.push(limit.to_string());
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id FROM domain_eval_campaigns
+             {where_sql}
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?"
+        ))?;
+        let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
+            row.get::<_, String>(0)
+        })?;
+        let ids = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        drop(conn);
+        ids.into_iter()
+            .filter_map(|id| self.get_domain_eval_campaign(&id).transpose())
+            .collect()
+    }
+
+    pub fn get_domain_eval_campaign(
+        &self,
+        campaign_id: &str,
+    ) -> Result<Option<DomainEvalCampaign>> {
+        let campaign_id = campaign_id.trim();
+        if campaign_id.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let row = conn
+            .query_row(
+                "SELECT id, session_id, project_id, name, status, domain, task_filter_json,
+                        model_matrix_json, execution_mode, max_budget_usd, timeout_secs,
+                        created_at, updated_at, started_at, finished_at, error
+                 FROM domain_eval_campaigns
+                 WHERE id = ?1",
+                params![campaign_id],
+                row_to_domain_eval_campaign,
+            )
+            .optional()?;
+        let Some(mut campaign) = row else {
+            return Ok(None);
+        };
+        campaign.items = self.domain_eval_campaign_items_locked(&conn, campaign_id)?;
+        campaign.summary = domain_eval_campaign_summary(&campaign.items);
+        Ok(Some(campaign))
+    }
+
+    pub fn cancel_domain_eval_campaign(
+        &self,
+        campaign_id: &str,
+    ) -> Result<Option<DomainEvalCampaign>> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let changed = conn.execute(
+            "UPDATE domain_eval_campaigns
+             SET status = CASE WHEN status IN ('passed','failed','partial','cancelled','interrupted') THEN status ELSE 'cancel_requested' END,
+                 updated_at = ?2,
+                 error = CASE WHEN status IN ('passed','failed','partial','cancelled','interrupted') THEN error ELSE 'Cancellation requested' END
+             WHERE id = ?1",
+            params![campaign_id, now],
+        )?;
+        if changed > 0 {
+            conn.execute(
+                "UPDATE domain_eval_campaign_items
+                 SET status = 'cancelled', updated_at = ?2, finished_at = ?2, error = 'Cancelled before run'
+                 WHERE campaign_id = ?1 AND status = 'queued'",
+                params![campaign_id, now],
+            )?;
+        }
+        drop(conn);
+        self.get_domain_eval_campaign(campaign_id)
+    }
+
+    pub fn prepare_domain_eval_campaign_run(
+        &self,
+        campaign_id: &str,
+        retry_failed_only: bool,
+    ) -> Result<Vec<DomainEvalCampaignItem>> {
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction()?;
+        if retry_failed_only {
+            tx.execute(
+                "UPDATE domain_eval_campaign_items
+                 SET status = 'queued', fixture_run_id = NULL, eval_run_id = NULL,
+                     score = NULL, total_checks = 0, passed_checks = 0, failed_checks = 0,
+                     report_json = '{}', updated_at = ?2, started_at = NULL,
+                     finished_at = NULL, error = NULL
+                 WHERE campaign_id = ?1 AND status IN ('failed','interrupted','cancelled')",
+                params![campaign_id, now],
+            )?;
+        }
+        tx.execute(
+            "UPDATE domain_eval_campaigns
+             SET status = 'running', started_at = COALESCE(started_at, ?2),
+                 updated_at = ?2, finished_at = NULL, error = NULL
+             WHERE id = ?1 AND (?3 = 1 OR status != 'cancel_requested')",
+            params![campaign_id, now, if retry_failed_only { 1 } else { 0 }],
+        )?;
+        tx.commit()?;
+        drop(conn);
+        let campaign = self
+            .get_domain_eval_campaign(campaign_id)?
+            .ok_or_else(|| anyhow!("domain eval campaign not found: {campaign_id}"))?;
+        Ok(campaign
+            .items
+            .into_iter()
+            .filter(|item| item.status == "queued")
+            .collect())
+    }
+
+    pub fn is_domain_eval_campaign_cancel_requested(&self, campaign_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let status = conn
+            .query_row(
+                "SELECT status FROM domain_eval_campaigns WHERE id = ?1",
+                params![campaign_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(matches!(
+            status.as_deref(),
+            Some("cancel_requested" | "cancelled")
+        ))
+    }
+
+    pub fn mark_domain_eval_campaign_item_running(
+        &self,
+        item_id: &str,
+    ) -> Result<Option<DomainEvalCampaignItem>> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE domain_eval_campaign_items
+             SET status = 'running', attempt = attempt + 1, started_at = ?2,
+                 updated_at = ?2, error = NULL
+             WHERE id = ?1 AND status = 'queued'",
+            params![item_id, now],
+        )?;
+        conn.query_row(
+            "SELECT id, campaign_id, task_id, task_title, domain, execution_mode,
+                    provider_id, model_id, label, status, attempt, fixture_run_id,
+                    eval_run_id, score, total_checks, passed_checks, failed_checks,
+                    started_at, finished_at, error
+             FROM domain_eval_campaign_items WHERE id = ?1",
+            params![item_id],
+            row_to_domain_eval_campaign_item,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn finish_domain_eval_campaign_item(
+        &self,
+        item_id: &str,
+        report: &DomainEvalFixtureReport,
+    ) -> Result<()> {
+        let now = now_rfc3339();
+        let status = if report.passed { "passed" } else { "failed" };
+        let eval_run_id = report.eval_run.as_ref().map(|run| run.id.clone());
+        let score = report.eval_run.as_ref().map(|run| run.score);
+        let total_checks = report.checks.len();
+        let passed_checks = report
+            .checks
+            .iter()
+            .filter(|check| check.status == "passed")
+            .count();
+        let failed_checks = report
+            .checks
+            .iter()
+            .filter(|check| check.status == "failed")
+            .count();
+        let report_json = serde_json::to_string(report)?;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE domain_eval_campaign_items
+             SET status = ?2, fixture_run_id = ?3, eval_run_id = ?4, score = ?5,
+                 total_checks = ?6, passed_checks = ?7, failed_checks = ?8,
+                 report_json = ?9, error = ?10, updated_at = ?11, finished_at = ?11
+             WHERE id = ?1",
+            params![
+                item_id,
+                status,
+                &report.fixture_run_id,
+                eval_run_id,
+                score,
+                total_checks as i64,
+                passed_checks as i64,
+                failed_checks as i64,
+                report_json,
+                report
+                    .error
+                    .as_ref()
+                    .map(|error| truncate_for_storage(error, 2000)),
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn fail_domain_eval_campaign_item(&self, item_id: &str, error: &str) -> Result<()> {
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE domain_eval_campaign_items
+             SET status = 'failed', error = ?2, updated_at = ?3, finished_at = ?3
+             WHERE id = ?1",
+            params![item_id, truncate_for_storage(error, 2000), now],
+        )?;
+        Ok(())
+    }
+
+    pub fn complete_domain_eval_campaign(&self, campaign_id: &str) -> Result<()> {
+        let now = now_rfc3339();
+        let campaign = self
+            .get_domain_eval_campaign(campaign_id)?
+            .ok_or_else(|| anyhow!("domain eval campaign not found: {campaign_id}"))?;
+        let summary = domain_eval_campaign_summary(&campaign.items);
+        let status = if campaign.status == "cancel_requested" || summary.cancelled_items > 0 {
+            "cancelled"
+        } else if summary.running_items > 0 || summary.queued_items > 0 {
+            "interrupted"
+        } else if summary.failed_items > 0 || summary.interrupted_items > 0 {
+            if summary.passed_items > 0 {
+                "partial"
+            } else {
+                "failed"
+            }
+        } else if summary.passed_items > 0 {
+            "passed"
+        } else {
+            "failed"
+        };
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE domain_eval_campaigns
+             SET status = ?2, updated_at = ?3, finished_at = ?3,
+                 error = CASE WHEN ?2 = 'passed' THEN NULL ELSE error END
+             WHERE id = ?1",
+            params![campaign_id, status, now],
+        )?;
+        Ok(())
+    }
+
+    fn resolve_domain_eval_campaign_scope(
+        &self,
+        session_id: Option<String>,
+        project_id: Option<String>,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let session_id = session_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        let mut project_id = project_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        if let Some(session_id) = session_id.as_ref() {
+            let session = self
+                .get_session(session_id)?
+                .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+            if session.incognito {
+                bail!("domain eval campaign is disabled for incognito sessions");
+            }
+            if project_id.is_none() {
+                project_id = session.project_id;
+            }
+        }
+        Ok((session_id, project_id))
+    }
+
+    fn domain_eval_campaign_items_locked(
+        &self,
+        conn: &Connection,
+        campaign_id: &str,
+    ) -> Result<Vec<DomainEvalCampaignItem>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, campaign_id, task_id, task_title, domain, execution_mode,
+                    provider_id, model_id, label, status, attempt, fixture_run_id,
+                    eval_run_id, score, total_checks, passed_checks, failed_checks,
+                    started_at, finished_at, error
+             FROM domain_eval_campaign_items
+             WHERE campaign_id = ?1
+             ORDER BY created_at ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![campaign_id], row_to_domain_eval_campaign_item)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn evaluate_domain_quality_gate(
         &self,
         input: DomainQualityGateInput,
@@ -2249,6 +2907,60 @@ fn row_to_domain_eval_fixture_run(
     })
 }
 
+fn row_to_domain_eval_campaign(row: &rusqlite::Row<'_>) -> rusqlite::Result<DomainEvalCampaign> {
+    let task_filter_json: String = row.get(6)?;
+    let model_matrix_json: String = row.get(7)?;
+    Ok(DomainEvalCampaign {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        project_id: row.get(2)?,
+        name: row.get(3)?,
+        status: row.get(4)?,
+        domain: row.get(5)?,
+        task_filter: serde_json::from_str(&task_filter_json).unwrap_or_else(|_| json!({})),
+        model_matrix: serde_json::from_str(&model_matrix_json).unwrap_or_default(),
+        execution_mode: row.get(8)?,
+        max_budget_usd: row.get(9)?,
+        timeout_secs: row
+            .get::<_, Option<i64>>(10)?
+            .map(|value| value.max(0) as u64),
+        summary: DomainEvalCampaignSummary::default(),
+        items: Vec::new(),
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        started_at: row.get(13)?,
+        finished_at: row.get(14)?,
+        error: row.get(15)?,
+    })
+}
+
+fn row_to_domain_eval_campaign_item(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DomainEvalCampaignItem> {
+    Ok(DomainEvalCampaignItem {
+        id: row.get(0)?,
+        campaign_id: row.get(1)?,
+        task_id: row.get(2)?,
+        task_title: row.get(3)?,
+        domain: row.get(4)?,
+        execution_mode: row.get(5)?,
+        provider_id: row.get(6)?,
+        model_id: row.get(7)?,
+        label: row.get(8)?,
+        status: row.get(9)?,
+        attempt: row.get::<_, i64>(10)?.max(0) as usize,
+        fixture_run_id: row.get(11)?,
+        eval_run_id: row.get(12)?,
+        score: row.get(13)?,
+        total_checks: row.get::<_, i64>(14)?.max(0) as usize,
+        passed_checks: row.get::<_, i64>(15)?.max(0) as usize,
+        failed_checks: row.get::<_, i64>(16)?.max(0) as usize,
+        started_at: row.get(17)?,
+        finished_at: row.get(18)?,
+        error: row.get(19)?,
+    })
+}
+
 fn row_to_domain_eval_calibration(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<DomainEvalCalibrationRecord> {
@@ -2313,6 +3025,366 @@ fn persist_domain_eval_fixture_report(
         ],
     )?;
     Ok(())
+}
+
+pub async fn run_domain_eval_campaign(
+    db: Arc<SessionDB>,
+    input: RunDomainEvalCampaignInput,
+) -> Result<DomainEvalCampaign> {
+    let campaign_id = input.campaign_id.trim().to_string();
+    if campaign_id.is_empty() {
+        bail!("domain eval campaign id must not be empty");
+    }
+    let items = db.prepare_domain_eval_campaign_run(&campaign_id, input.retry_failed_only)?;
+    for queued_item in items {
+        if db.is_domain_eval_campaign_cancel_requested(&campaign_id)? {
+            break;
+        }
+        let Some(item) = db.mark_domain_eval_campaign_item_running(&queued_item.id)? else {
+            continue;
+        };
+        let campaign = db
+            .get_domain_eval_campaign(&campaign_id)?
+            .ok_or_else(|| anyhow!("domain eval campaign not found: {campaign_id}"))?;
+        let task = db
+            .resolve_domain_eval_task(&item.task_id)?
+            .ok_or_else(|| anyhow!("domain eval task not found: {}", item.task_id))?;
+        let label = domain_eval_campaign_item_label(&campaign, &item);
+        let mut fixture = domain_eval_campaign_fixture(&task, &item.execution_mode, &label);
+        if item.execution_mode == "agent" {
+            let Some(provider_id) = item.provider_id.clone() else {
+                db.fail_domain_eval_campaign_item(
+                    &item.id,
+                    "agent campaign item is missing providerId",
+                )?;
+                continue;
+            };
+            let Some(model_id) = item.model_id.clone() else {
+                db.fail_domain_eval_campaign_item(
+                    &item.id,
+                    "agent campaign item is missing modelId",
+                )?;
+                continue;
+            };
+            let Some(provider_config) =
+                domain_campaign_provider_config(&provider_id, &input.providers)
+            else {
+                db.fail_domain_eval_campaign_item(
+                    &item.id,
+                    &format!(
+                        "Provider config for {provider_id} was not supplied or is masked; campaign history never stores provider secrets"
+                    ),
+                )?;
+                continue;
+            };
+            fixture.execution.providers = vec![provider_config];
+            fixture.execution.model_chain = vec![ActiveModel {
+                provider_id,
+                model_id,
+            }];
+        }
+
+        match SessionDB::run_domain_eval_fixture(db.clone(), RunDomainEvalFixtureInput { fixture })
+            .await
+        {
+            Ok(report) => {
+                db.finish_domain_eval_campaign_item(&item.id, &report)?;
+            }
+            Err(err) => {
+                db.fail_domain_eval_campaign_item(&item.id, &err.to_string())?;
+            }
+        }
+    }
+    db.complete_domain_eval_campaign(&campaign_id)?;
+    db.get_domain_eval_campaign(&campaign_id)?
+        .ok_or_else(|| anyhow!("domain eval campaign not found after run: {campaign_id}"))
+}
+
+fn domain_eval_campaign_summary(items: &[DomainEvalCampaignItem]) -> DomainEvalCampaignSummary {
+    let mut summary = DomainEvalCampaignSummary {
+        total_items: items.len(),
+        ..Default::default()
+    };
+    let mut score_sum = 0.0;
+    let mut score_count = 0usize;
+    for item in items {
+        match item.status.as_str() {
+            "queued" => summary.queued_items += 1,
+            "running" => summary.running_items += 1,
+            "passed" => summary.passed_items += 1,
+            "failed" => summary.failed_items += 1,
+            "cancelled" => summary.cancelled_items += 1,
+            "interrupted" => summary.interrupted_items += 1,
+            _ => {}
+        }
+        if item.eval_run_id.is_some() {
+            summary.eval_runs += 1;
+            match item.status.as_str() {
+                "passed" => summary.passed_eval_runs += 1,
+                "failed" => summary.failed_eval_runs += 1,
+                "insufficient_data" => summary.insufficient_eval_runs += 1,
+                _ => {}
+            }
+        }
+        if let Some(score) = item.score {
+            score_sum += score;
+            score_count += 1;
+        }
+        summary.total_checks += item.total_checks;
+        summary.passed_checks += item.passed_checks;
+        summary.failed_checks += item.failed_checks;
+    }
+    summary.item_pass_rate = ratio(
+        summary.passed_items,
+        summary.passed_items + summary.failed_items,
+    );
+    summary.average_score =
+        (score_count > 0).then_some(((score_sum / score_count as f64) * 1000.0).round() / 1000.0);
+    summary
+}
+
+fn normalize_domain_eval_campaign_models(
+    models: Vec<DomainEvalCampaignModel>,
+) -> Result<Vec<DomainEvalCampaignModel>> {
+    let mut out = Vec::new();
+    for model in models {
+        let provider_id = model.provider_id.as_deref().and_then(non_empty);
+        let model_id = model.model_id.as_deref().and_then(non_empty);
+        let label = model.label.as_deref().and_then(non_empty);
+        if provider_id.is_some() != model_id.is_some() {
+            bail!(
+                "domain eval campaign external model entries require both providerId and modelId"
+            );
+        }
+        out.push(DomainEvalCampaignModel {
+            provider_id: provider_id.map(str::to_string),
+            model_id: model_id.map(str::to_string),
+            label: label.map(str::to_string),
+        });
+    }
+    if out.is_empty() {
+        out.push(DomainEvalCampaignModel {
+            provider_id: None,
+            model_id: None,
+            label: Some("trace fixture".to_string()),
+        });
+    }
+    if out.len() > MAX_DOMAIN_EVAL_CAMPAIGN_MODELS {
+        bail!(
+            "domain eval campaign model matrix too large: {} > {}",
+            out.len(),
+            MAX_DOMAIN_EVAL_CAMPAIGN_MODELS
+        );
+    }
+    Ok(out)
+}
+
+fn normalize_campaign_execution_mode(value: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = value.and_then(non_empty) else {
+        return Ok(None);
+    };
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "trace_fixture" | "agent" => Ok(Some(normalized)),
+        _ => bail!("unsupported domain eval campaign execution mode: {value}"),
+    }
+}
+
+fn domain_campaign_provider_config(
+    provider_id: &str,
+    supplied: &[ProviderConfig],
+) -> Option<ProviderConfig> {
+    supplied
+        .iter()
+        .find(|provider| {
+            provider.id == provider_id && !crate::provider::is_masked_key(&provider.api_key)
+        })
+        .cloned()
+        .or_else(|| {
+            crate::config::cached_config()
+                .providers
+                .iter()
+                .find(|provider| {
+                    provider.id == provider_id && !crate::provider::is_masked_key(&provider.api_key)
+                })
+                .cloned()
+        })
+}
+
+fn domain_eval_campaign_item_label(
+    campaign: &DomainEvalCampaign,
+    item: &DomainEvalCampaignItem,
+) -> String {
+    format!(
+        "{} · {} · {}",
+        campaign.name,
+        item.task_id,
+        item.label
+            .clone()
+            .or_else(|| {
+                item.provider_id
+                    .as_ref()
+                    .zip(item.model_id.as_ref())
+                    .map(|(provider_id, model_id)| format!("{provider_id}/{model_id}"))
+            })
+            .unwrap_or_else(|| item.execution_mode.clone())
+    )
+}
+
+fn domain_eval_campaign_fixture(
+    task: &DomainEvalTask,
+    execution_mode: &str,
+    label: &str,
+) -> DomainEvalFixture {
+    let mut evidence = Vec::new();
+    for req in &task.required_evidence {
+        let count = req.min_count.max(1);
+        for index in 0..count {
+            evidence.push(DomainEvalFixtureEvidence {
+                evidence_type: req.evidence_type.clone(),
+                title: format!("{} #{}", req.title, index + 1),
+                summary: Some(format!(
+                    "Synthetic campaign evidence for {} requirement {}.",
+                    task.id, req.evidence_type
+                )),
+                source_metadata: campaign_evidence_metadata(task, req, index),
+                confidence: Some(0.95),
+            });
+        }
+    }
+    if matches!(task.domain.as_str(), "research" | "knowledge_curation")
+        && !evidence
+            .iter()
+            .any(|item| item.evidence_type == "source_cited")
+    {
+        evidence.push(DomainEvalFixtureEvidence {
+            evidence_type: "source_cited".to_string(),
+            title: "Synthetic cited source".to_string(),
+            summary: Some("Synthetic campaign citation with date metadata.".to_string()),
+            source_metadata: json!({
+                "sourceType": DOMAIN_EVAL_SOURCE_CAMPAIGN,
+                "url": "https://example.invalid/domain-eval-campaign",
+                "retrievedAt": now_rfc3339(),
+                "publishedAt": "2026-01-01",
+            }),
+            confidence: Some(0.95),
+        });
+    }
+    if task.domain == "data_analysis"
+        && !evidence
+            .iter()
+            .any(|item| item.evidence_type == "data_quality_checked")
+    {
+        evidence.push(DomainEvalFixtureEvidence {
+            evidence_type: "data_quality_checked".to_string(),
+            title: "Synthetic data quality check".to_string(),
+            summary: Some(
+                "Synthetic campaign metric definition and sample-size check.".to_string(),
+            ),
+            source_metadata: json!({
+                "sourceType": DOMAIN_EVAL_SOURCE_CAMPAIGN,
+                "dataset": "domain_eval_campaign_fixture",
+                "metric": "quality_score",
+                "denominator": "eligible records",
+                "sampleSize": 128,
+            }),
+            confidence: Some(0.95),
+        });
+    }
+    let needs_approval = task.required_evidence.iter().any(|req| {
+        req.required
+            && matches!(
+                req.evidence_type.as_str(),
+                "user_decision" | "message_draft_approved"
+            )
+    });
+    DomainEvalFixture {
+        name: label.to_string(),
+        description: format!("Domain eval campaign fixture for {}", task.id),
+        task_id: task.id.clone(),
+        label: Some(label.to_string()),
+        execution_mode: execution_mode.to_string(),
+        domain: Some(task.domain.clone()),
+        goal: DomainEvalFixtureGoal {
+            objective: Some(task.input.prompt.clone()),
+            completion_criteria: task.success_criteria.first().cloned(),
+            workflow_template_id: None,
+            workflow_template_version: None,
+            workflow_task_type: Some(task.task_type.clone()),
+        },
+        evidence,
+        workflow: Some(DomainEvalFixtureWorkflow::default()),
+        quality: Some(DomainEvalFixtureQuality {
+            run: true,
+            source_metadata: json!({
+                "sourceType": DOMAIN_EVAL_SOURCE_CAMPAIGN,
+                "taskId": task.id,
+                "campaignLabel": label,
+            }),
+            explicit_user_approval: needs_approval,
+        }),
+        execution: DomainEvalFixtureExecution {
+            prompt: Some(task.input.prompt.clone()),
+            display_text: Some(label.to_string()),
+            ..Default::default()
+        },
+        checks: DomainEvalFixtureChecks {
+            expected_status: Some("passed".to_string()),
+            min_score: Some(DEFAULT_MIN_AVERAGE_SCORE),
+            expected_execution_status: (execution_mode == "agent").then(|| "completed".to_string()),
+            ..Default::default()
+        },
+    }
+}
+
+fn campaign_evidence_metadata(
+    task: &DomainEvalTask,
+    req: &DomainEvalEvidenceRequirement,
+    index: usize,
+) -> Value {
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("sourceType".to_string(), json!(DOMAIN_EVAL_SOURCE_CAMPAIGN));
+    metadata.insert("taskId".to_string(), json!(task.id));
+    metadata.insert("domain".to_string(), json!(task.domain));
+    metadata.insert("requirement".to_string(), json!(req.evidence_type));
+    metadata.insert("fixtureIndex".to_string(), json!(index + 1));
+    for key in &req.metadata_keys {
+        metadata.insert(key.clone(), json!(format!("campaign_fixture_{key}")));
+    }
+    match req.evidence_type.as_str() {
+        "source_cited" => {
+            metadata.insert(
+                "url".to_string(),
+                json!("https://example.invalid/domain-eval-campaign"),
+            );
+            metadata.insert("retrievedAt".to_string(), json!(now_rfc3339()));
+            metadata.insert("publishedAt".to_string(), json!("2026-01-01"));
+        }
+        "data_quality_checked" => {
+            metadata.insert("dataset".to_string(), json!("domain_eval_campaign_fixture"));
+            metadata.insert("metric".to_string(), json!("quality_score"));
+            metadata.insert("denominator".to_string(), json!("eligible records"));
+            metadata.insert("sampleSize".to_string(), json!(128));
+        }
+        "user_decision" | "message_draft_approved" => {
+            metadata.insert("approvedAt".to_string(), json!(now_rfc3339()));
+            metadata.insert("reviewer".to_string(), json!("domain_eval_campaign"));
+        }
+        _ => {}
+    }
+    Value::Object(metadata)
+}
+
+fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
+    if denominator == 0 {
+        None
+    } else {
+        Some(((numerator as f64 / denominator as f64) * 1000.0).round() / 1000.0)
+    }
+}
+
+fn truncate_for_storage(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 async fn run_domain_eval_agent_execution(
@@ -4365,6 +5437,80 @@ mod tests {
         assert_eq!(synthetic_gate.status, "passed");
         assert_eq!(synthetic_gate.summary.eval_runs, 1);
         assert_eq!(synthetic_gate.summary.quality_runs, 1);
+    }
+
+    #[tokio::test]
+    async fn domain_eval_campaign_runs_cancelled_trace_item_on_retry() {
+        let (_dir, db) = test_db();
+        let db = Arc::new(db);
+        let campaign = db
+            .create_domain_eval_campaign(CreateDomainEvalCampaignInput {
+                name: Some("domain trace campaign test".to_string()),
+                task_ids: vec!["research-source-backed-brief".to_string()],
+                max_tasks: Some(1),
+                models: Vec::new(),
+                execution_mode: Some("trace_fixture".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(campaign.status, "queued");
+        assert_eq!(campaign.items.len(), 1);
+        assert_eq!(campaign.items[0].execution_mode, "trace_fixture");
+
+        let cancelled = db
+            .cancel_domain_eval_campaign(&campaign.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cancelled.status, "cancel_requested");
+        assert_eq!(cancelled.items[0].status, "cancelled");
+
+        let completed = run_domain_eval_campaign(
+            db.clone(),
+            RunDomainEvalCampaignInput {
+                campaign_id: campaign.id.clone(),
+                providers: Vec::new(),
+                retry_failed_only: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(completed.status, "passed", "{completed:?}");
+        assert_eq!(completed.summary.total_items, 1);
+        assert_eq!(completed.summary.passed_items, 1);
+        assert_eq!(completed.summary.failed_items, 0);
+        assert_eq!(completed.summary.eval_runs, 1);
+        assert!(completed.summary.average_score.unwrap_or_default() >= DEFAULT_MIN_AVERAGE_SCORE);
+        assert!(completed.items[0].fixture_run_id.is_some());
+        assert!(completed.items[0].eval_run_id.is_some());
+        assert!(completed.items[0].score.unwrap_or_default() >= DEFAULT_MIN_AVERAGE_SCORE);
+
+        assert!(db
+            .list_domain_eval_runs(ListDomainEvalRunsInput {
+                window_days: Some(1),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.list_domain_eval_runs(ListDomainEvalRunsInput {
+                source_type: Some("fixture".to_string()),
+                window_days: Some(1),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+            1
+        );
+        let campaigns = db
+            .list_domain_eval_campaigns(ListDomainEvalCampaignsInput {
+                limit: Some(5),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(campaigns.len(), 1);
+        assert_eq!(campaigns[0].id, completed.id);
     }
 
     #[tokio::test]

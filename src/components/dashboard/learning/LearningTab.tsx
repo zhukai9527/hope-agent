@@ -38,6 +38,7 @@ import type {
   CodingLearningGeneralizationReport,
   DomainEvalRunRecord,
   DomainEvalFixtureRunRecord,
+  DomainEvalCampaign,
   DomainEvalTask,
   DomainQualityGateReport,
   DomainEvalCalibrationRecord,
@@ -137,10 +138,13 @@ export default function LearningTab({ filter }: LearningTabProps) {
     useState<DomainQualityGateReport | null>(null)
   const [domainEvalRuns, setDomainEvalRuns] = useState<DomainEvalRunRecord[]>([])
   const [domainFixtureRuns, setDomainFixtureRuns] = useState<DomainEvalFixtureRunRecord[]>([])
+  const [domainEvalCampaigns, setDomainEvalCampaigns] = useState<DomainEvalCampaign[]>([])
   const [domainEvalTasks, setDomainEvalTasks] = useState<DomainEvalTask[]>([])
   const [benchmarkRunning, setBenchmarkRunning] = useState(false)
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
+  const [domainCampaignError, setDomainCampaignError] = useState<string | null>(null)
   const [campaignActionId, setCampaignActionId] = useState<string | null>(null)
+  const [domainCampaignActionId, setDomainCampaignActionId] = useState<string | null>(null)
   const [corpusActionId, setCorpusActionId] = useState<string | null>(null)
   const [reportActionId, setReportActionId] = useState<string | null>(null)
   const [gateActionId, setGateActionId] = useState<string | null>(null)
@@ -149,6 +153,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const reload = useCallback(async () => {
     setLoading(true)
     setBenchmarkError(null)
+    setDomainCampaignError(null)
     try {
       const [
         ov,
@@ -170,6 +175,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         dqg,
         der,
         dfr,
+        dec,
         det,
       ] = await Promise.all([
         getTransport().call<LearningOverview>("dashboard_learning_overview", {
@@ -284,6 +290,11 @@ export default function LearningTab({ filter }: LearningTabProps) {
             limit: 6,
           },
         }),
+        getTransport().call<DomainEvalCampaign[]>("list_domain_eval_campaigns", {
+          input: {
+            limit: 6,
+          },
+        }),
         getTransport().call<DomainEvalTask[]>("list_domain_eval_tasks", {
           input: {
             limit: 20,
@@ -309,6 +320,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setDomainQualityGate(dqg)
       setDomainEvalRuns(der ?? [])
       setDomainFixtureRuns(dfr ?? [])
+      setDomainEvalCampaigns(dec ?? [])
       setDomainEvalTasks(det ?? [])
     } catch (e) {
       logger.error("dashboard", "LearningTab::load", "Failed to load learning data", e)
@@ -459,6 +471,63 @@ export default function LearningTab({ filter }: LearningTabProps) {
       logger.error("dashboard", "LearningTab::retryBenchmarkCampaign", "Failed to retry campaign", e)
     } finally {
       setCampaignActionId(null)
+    }
+  }, [reload])
+
+  const runDomainEvalCampaign = useCallback(async () => {
+    setDomainCampaignActionId("new")
+    setDomainCampaignError(null)
+    try {
+      await getTransport().call<DomainEvalCampaign>("create_domain_eval_campaign", {
+        input: {
+          name: "Dashboard domain trace campaign",
+          executionMode: "trace_fixture",
+          maxTasks: 5,
+          runNow: true,
+          models: [],
+        },
+      })
+      await reload()
+    } catch (e) {
+      setDomainCampaignError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::runDomainEvalCampaign", "Failed to run domain eval campaign", e)
+    } finally {
+      setDomainCampaignActionId(null)
+    }
+  }, [reload])
+
+  const cancelDomainEvalCampaign = useCallback(async (campaignId: string) => {
+    setDomainCampaignActionId(campaignId)
+    setDomainCampaignError(null)
+    try {
+      await getTransport().call<DomainEvalCampaign | null>("cancel_domain_eval_campaign", {
+        campaignId,
+      })
+      await reload()
+    } catch (e) {
+      setDomainCampaignError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::cancelDomainEvalCampaign", "Failed to cancel domain campaign", e)
+    } finally {
+      setDomainCampaignActionId(null)
+    }
+  }, [reload])
+
+  const retryDomainEvalCampaign = useCallback(async (campaignId: string) => {
+    setDomainCampaignActionId(campaignId)
+    setDomainCampaignError(null)
+    try {
+      await getTransport().call<DomainEvalCampaign | null>("run_domain_eval_campaign", {
+        input: {
+          campaignId,
+          retryFailedOnly: true,
+        },
+      })
+      await reload()
+    } catch (e) {
+      setDomainCampaignError(e instanceof Error ? e.message : String(e))
+      logger.error("dashboard", "LearningTab::retryDomainEvalCampaign", "Failed to retry domain campaign", e)
+    } finally {
+      setDomainCampaignActionId(null)
     }
   }, [reload])
 
@@ -710,10 +779,13 @@ export default function LearningTab({ filter }: LearningTabProps) {
         domainQualityGate={domainQualityGate}
         domainEvalRuns={domainEvalRuns}
         domainFixtureRuns={domainFixtureRuns}
+        domainEvalCampaigns={domainEvalCampaigns}
         domainEvalTasks={domainEvalTasks}
         benchmarkRunning={benchmarkRunning}
         benchmarkError={benchmarkError}
+        domainCampaignError={domainCampaignError}
         campaignActionId={campaignActionId}
+        domainCampaignActionId={domainCampaignActionId}
         corpusActionId={corpusActionId}
         reportActionId={reportActionId}
         gateActionId={gateActionId}
@@ -725,6 +797,9 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onBenchmarkBudgetUsdChange={setBenchmarkBudgetUsd}
         onCancelBenchmarkCampaign={cancelBenchmarkCampaign}
         onRetryBenchmarkCampaign={retryBenchmarkCampaign}
+        onRunDomainEvalCampaign={runDomainEvalCampaign}
+        onCancelDomainEvalCampaign={cancelDomainEvalCampaign}
+        onRetryDomainEvalCampaign={retryDomainEvalCampaign}
         onImportSampleTaskPack={importSampleTaskPack}
         onUpdateTaskPackStatus={updateTaskPackStatus}
         onValidateTaskPack={validateTaskPack}
@@ -910,10 +985,13 @@ function CodingImprovementSection({
   domainQualityGate,
   domainEvalRuns,
   domainFixtureRuns,
+  domainEvalCampaigns,
   domainEvalTasks,
   benchmarkRunning,
   benchmarkError,
+  domainCampaignError,
   campaignActionId,
+  domainCampaignActionId,
   corpusActionId,
   reportActionId,
   gateActionId,
@@ -925,6 +1003,9 @@ function CodingImprovementSection({
   onBenchmarkBudgetUsdChange,
   onCancelBenchmarkCampaign,
   onRetryBenchmarkCampaign,
+  onRunDomainEvalCampaign,
+  onCancelDomainEvalCampaign,
+  onRetryDomainEvalCampaign,
   onImportSampleTaskPack,
   onUpdateTaskPackStatus,
   onValidateTaskPack,
@@ -953,10 +1034,13 @@ function CodingImprovementSection({
   domainQualityGate: DomainQualityGateReport | null
   domainEvalRuns: DomainEvalRunRecord[]
   domainFixtureRuns: DomainEvalFixtureRunRecord[]
+  domainEvalCampaigns: DomainEvalCampaign[]
   domainEvalTasks: DomainEvalTask[]
   benchmarkRunning: boolean
   benchmarkError: string | null
+  domainCampaignError: string | null
   campaignActionId: string | null
+  domainCampaignActionId: string | null
   corpusActionId: string | null
   reportActionId: string | null
   gateActionId: string | null
@@ -968,6 +1052,9 @@ function CodingImprovementSection({
   onBenchmarkBudgetUsdChange: (value: string) => void
   onCancelBenchmarkCampaign: (campaignId: string) => void
   onRetryBenchmarkCampaign: (campaignId: string) => void
+  onRunDomainEvalCampaign: () => void
+  onCancelDomainEvalCampaign: (campaignId: string) => void
+  onRetryDomainEvalCampaign: (campaignId: string) => void
   onImportSampleTaskPack: () => void
   onUpdateTaskPackStatus: (pack: CodingBenchmarkTaskPack, status: string) => void
   onValidateTaskPack: (pack: CodingBenchmarkTaskPack) => void
@@ -1148,6 +1235,15 @@ function CodingImprovementSection({
         }
         calibrationActionId={domainCalibrationActionId}
         onRecordCalibration={onRecordDomainEvalCalibration}
+      />
+
+      <DomainEvalCampaignPanel
+        campaigns={domainEvalCampaigns}
+        actionId={domainCampaignActionId}
+        error={domainCampaignError}
+        onRun={onRunDomainEvalCampaign}
+        onCancel={onCancelDomainEvalCampaign}
+        onRetry={onRetryDomainEvalCampaign}
       />
 
       <DomainFixtureSmokePanel runs={domainFixtureRuns} />
@@ -2793,6 +2889,219 @@ function DomainQualityGatePanel({
   )
 }
 
+function DomainEvalCampaignPanel({
+  campaigns,
+  actionId,
+  error,
+  onRun,
+  onCancel,
+  onRetry,
+}: {
+  campaigns: DomainEvalCampaign[]
+  actionId: string | null
+  error: string | null
+  onRun: () => void
+  onCancel: (campaignId: string) => void
+  onRetry: (campaignId: string) => void
+}) {
+  const { t } = useTranslation()
+  const activeCampaigns = campaigns.filter((campaign) =>
+    ["queued", "running", "cancel_requested"].includes(campaign.status),
+  ).length
+  const latest = campaigns[0]
+
+  return (
+    <div className="border border-border/60 rounded-lg p-4 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("dashboard.learning.domainCampaigns", {
+              defaultValue: "Domain campaigns",
+            })}
+          </h4>
+          <p className="text-[10px] text-muted-foreground">
+            {t("dashboard.learning.domainCampaignsHint", {
+              defaultValue: "Batch non-coding eval packs with durable status, retry and cancellation",
+            })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {activeCampaigns > 0 && (
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {activeCampaigns} active
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5"
+            onClick={onRun}
+            disabled={actionId === "new"}
+          >
+            {actionId === "new" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="text-xs">
+              {t("dashboard.learning.runDomainCampaign", {
+                defaultValue: "Run trace pack",
+              })}
+            </span>
+          </Button>
+        </div>
+      </div>
+      {latest ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <MetricPill label="CP" value={campaigns.length} />
+            <MetricPill
+              label="IT"
+              value={`${latest.summary.passedItems}/${latest.summary.totalItems}`}
+              tone={latest.summary.failedItems > 0 ? "warn" : "accent"}
+            />
+            <MetricPill
+              label="PR"
+              value={formatPct(latest.summary.itemPassRate)}
+              tone={latest.summary.failedItems > 0 ? "warn" : "accent"}
+            />
+            <MetricPill label="SC" value={formatScore(latest.summary.averageScore)} />
+            <MetricPill
+              label="CK"
+              value={latest.summary.totalChecks}
+              tone={latest.summary.failedChecks > 0 ? "warn" : "accent"}
+            />
+          </div>
+          <div className="space-y-2">
+            {campaigns.slice(0, 6).map((campaign) => (
+              <DomainEvalCampaignRow
+                key={campaign.id}
+                campaign={campaign}
+                busy={actionId === campaign.id}
+                onCancel={onCancel}
+                onRetry={onRetry}
+              />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <EmptyLine
+          label={t("dashboard.learning.noDomainCampaigns", {
+            defaultValue: "No domain eval campaigns",
+          })}
+        />
+      )}
+      {error && (
+        <p className="mt-2 line-clamp-2 text-[10px] text-destructive" title={error}>
+          {t("dashboard.learning.domainCampaignFailed", {
+            defaultValue: "Domain campaign failed: {{message}}",
+            message: error,
+          })}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function DomainEvalCampaignRow({
+  campaign,
+  busy,
+  onCancel,
+  onRetry,
+}: {
+  campaign: DomainEvalCampaign
+  busy: boolean
+  onCancel: (campaignId: string) => void
+  onRetry: (campaignId: string) => void
+}) {
+  const { t } = useTranslation()
+  const canCancel = ["queued", "running", "cancel_requested"].includes(campaign.status)
+  const canRetry = ["failed", "partial", "cancelled", "interrupted"].includes(campaign.status)
+  const visibleItems = campaign.items.slice(0, 5)
+  const primaryItem = campaign.items[0]
+
+  return (
+    <div className="rounded border border-border/40 p-2.5 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`px-1.5 py-0.5 rounded text-[10px] ${benchmarkCampaignTone(campaign.status)}`}>
+          {campaign.status}
+        </span>
+        <span className="font-medium truncate max-w-[260px]">{campaign.name}</span>
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {new Date(campaign.updatedAt).toLocaleString()}
+        </span>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+          <MetricPill
+            label="IT"
+            value={`${campaign.summary.passedItems}/${campaign.summary.totalItems}`}
+            tone={campaign.summary.failedItems > 0 ? "warn" : campaign.summary.passedItems > 0 ? "accent" : "muted"}
+          />
+          <MetricPill
+            label="SC"
+            value={formatScore(campaign.summary.averageScore)}
+            tone={campaign.summary.failedItems > 0 ? "warn" : "accent"}
+          />
+          <MetricPill
+            label="CK"
+            value={campaign.summary.totalChecks}
+            tone={campaign.summary.failedChecks > 0 ? "warn" : "accent"}
+          />
+          {canRetry && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5"
+              onClick={() => onRetry(campaign.id)}
+              disabled={busy}
+              title={t("dashboard.learning.retryDomainCampaign", {
+                defaultValue: "Retry failed domain campaign items",
+              })}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+            </Button>
+          )}
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5 text-muted-foreground hover:text-destructive"
+              onClick={() => onCancel(campaign.id)}
+              disabled={busy}
+              title={t("dashboard.learning.cancelDomainCampaign", {
+                defaultValue: "Cancel domain campaign",
+              })}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+            </Button>
+          )}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {visibleItems.map((item) => (
+          <span
+            key={item.id}
+            className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] ${benchmarkCampaignTone(item.status)}`}
+            title={item.error ?? item.fixtureRunId ?? item.evalRunId ?? item.id}
+          >
+            {item.taskId} · {formatCampaignItemTarget(item.providerId, item.modelId, item.label)} · {item.status}
+            {typeof item.score === "number" ? ` · ${formatScore(item.score)}` : ""}
+          </span>
+        ))}
+        {campaign.items.length > visibleItems.length && (
+          <span className="rounded bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            +{campaign.items.length - visibleItems.length}
+          </span>
+        )}
+      </div>
+      {(campaign.error || primaryItem?.error) && (
+        <p className="mt-1.5 line-clamp-2 text-[10px] text-destructive" title={campaign.error ?? primaryItem?.error ?? undefined}>
+          {campaign.error ?? primaryItem?.error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function DomainFixtureSmokePanel({ runs }: { runs: DomainEvalFixtureRunRecord[] }) {
   const { t } = useTranslation()
   const total = runs.length
@@ -3127,6 +3436,10 @@ function EmptyLine({ label }: { label: string }) {
 
 function formatPct(value: number | null | undefined): string {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "—"
+}
+
+function formatScore(value: number | null | undefined): string {
+  return typeof value === "number" ? value.toFixed(3) : "—"
 }
 
 function formatSignedPct(value: number): string {

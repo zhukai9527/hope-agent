@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 7.10 已实现。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center。
+> 状态：Phase 7.11 已实现。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、Domain Eval Campaign、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center / Campaign Center。
 
 ## 目标
 
@@ -23,6 +23,8 @@ Domain Eval 把非 coding 场景的质量判断从“感觉不错”变成可审
 | --- | --- |
 | `domain_eval_runs` | 一次通用领域 eval 评分结果，字段包括 session/project、task id/version、domain、label、status、score、`source_type`、report JSON、source quality run、created_at。旧数据默认 `source_type='live'`。 |
 | `domain_eval_fixture_runs` | 一次 trace/agent fixture smoke run 的完整报告，字段包括 name、execution mode、source type、status、session/goal/workflow/quality/eval run 关联、report JSON、error、created_at/updated_at。执行失败且没有 eval run 时也会落这里。 |
+| `domain_eval_campaigns` | 一次批量通用领域 eval campaign。字段包括 session/project scope、name、status、domain、task filter、model matrix、execution mode、预算、错误、created/updated/started/finished。 |
+| `domain_eval_campaign_items` | campaign 中一个 task × model/execution item。字段包括 task、domain、execution mode、provider/model label、status、attempt、fixture/eval run 关联、score、check 统计、report JSON、error、时间戳。 |
 | `domain_eval_tasks` | 从已晋升 `domain_eval_case` 学习产物导入的自定义 eval task。字段包括 task id/version、project、source proposal、source path、task JSON、imported_at、updated_at。 |
 | `domain_eval_calibrations` | user/project scope 的人工校准与复核记录。字段包括 task id/version、domain、project、scope、reviewer、verdict、note、source eval run、created_at。 |
 
@@ -34,6 +36,9 @@ Domain Eval 把非 coding 场景的质量判断从“感觉不错”变成可审
 - `idx_domain_eval_runs_source(source_type, created_at DESC)`
 - `idx_domain_eval_fixture_runs_recent(source_type, created_at DESC)`
 - `idx_domain_eval_fixture_runs_status(status, created_at DESC)`
+- `idx_domain_eval_campaigns_scope(project_id, session_id, created_at DESC)`
+- `idx_domain_eval_campaigns_status(status, updated_at DESC)`
+- `idx_domain_eval_campaign_items_campaign(campaign_id, status, updated_at DESC)`
 - `idx_domain_eval_tasks_domain_status(status, json_extract(task_json, '$.domain'))`
 - `idx_domain_eval_tasks_source(source_type, source_id)`
 - `idx_domain_eval_calibrations_task(task_id, task_version, project_id, created_at DESC)`
@@ -158,6 +163,36 @@ Fixture checks 除 scorer 断言外，还支持 execution 断言：`expectedExec
 
 Trace/agent fixture runner 当前是 owner API / 回归测试能力，不挂到 Dashboard quality gate 的普通按钮上。Dashboard Learning 只展示独立的「Domain smoke runs」区块；真实 quality gate 默认排除 `SessionKind::EvalFixture`、`sourceType LIKE 'fixture_%'`、`access_scope='fixture'` 的合成数据。需要诊断 synthetic gate 时显式传 `includeSynthetic=true`。
 
+## Campaign Runner
+
+`create_domain_eval_campaign(input)` / `run_domain_eval_campaign(input)` 是 Phase 7.11 的批量运行面，用于把单次 fixture smoke 扩展成可取消、可 retry、可比较 provider/model 的 Domain Eval Pack。
+
+Campaign 只负责编排，不新增第二套 scorer：
+
+1. 创建时解析 task filter：`domain`、显式 `taskIds`、`maxTasks`，默认最多 5 个 task，硬上限 15。
+2. 创建 model matrix：空 matrix 自动补一个 deterministic `trace fixture` item；外部模型 item 必须同时提供 `providerId` 和 `modelId`。
+3. 每个 task × model 物化一条 `domain_eval_campaign_items`，初始 `queued`。
+4. 运行时逐 item 检查 cancel flag；item 进入 `running` 后复用 `run_domain_eval_fixture`：
+   - deterministic item 使用 `executionMode="trace_fixture"`，由 task required evidence 自动生成 synthetic evidence，source metadata 标记 `sourceType="fixture_campaign"`；
+   - external item 使用 `executionMode="agent"`，provider config 只在 `run_domain_eval_campaign(input.providers)` 或本机缓存中临时读取，不写入 campaign history。
+5. item 完成后写回 `fixtureRunId`、`evalRunId`、`score`、check 统计、report JSON 和 error。
+6. campaign summary 聚合 item 状态、通过率、eval run 数、平均分和 check 统计。
+
+状态语义：
+
+| Status | 说明 |
+| --- | --- |
+| `queued` | 已创建，尚未运行。 |
+| `running` | 后台 runner 正在逐 item 运行。 |
+| `cancel_requested` | 用户已请求取消；后续 queued item 会取消，已 running item 不强杀。 |
+| `passed` | 所有实际运行 item 通过。 |
+| `failed` | 没有通过 item，且至少一个 item failed。 |
+| `partial` | 部分通过、部分失败。 |
+| `cancelled` | 用户取消导致剩余 item 未运行。 |
+| `interrupted` | 仍有 queued/running item 但 runner 已结束，通常表示进程中断。 |
+
+`retryFailedOnly=true` 会把 `failed` / `interrupted` / `cancelled` item 重置为 `queued`，并清掉旧 fixture/eval run 关联后重新运行。历史 report 仍保留在 `domain_eval_fixture_runs` / `domain_eval_runs`，campaign item 指向最新一次 retry 结果。
+
 ## Quality Gate
 
 `evaluate_domain_quality_gate(input)` 只读历史，不调用 LLM、不运行工具、不生成 proposal。
@@ -211,6 +246,11 @@ Tauri / HTTP / transport 均已注册：
 | `run_domain_eval_task` | `POST /api/domain-eval/runs/run` | 对一个 session 运行确定性 domain eval 并持久化。 |
 | `run_domain_eval_fixture` | `POST /api/domain-eval/fixtures/run` | 运行 trace 或 agent fixture：trace 模式写入 fixture evidence/workflow/quality，agent 模式创建真实 turn 并用模型实际产出的 trace 进入同一 scorer。 |
 | `list_domain_eval_fixture_runs` | `POST /api/domain-eval/fixture-runs` | 列出 fixture/smoke run history，包含执行失败且未写 eval run 的 report。 |
+| `create_domain_eval_campaign` | `POST /api/domain-eval/campaigns/create` | 创建 durable Domain Eval Campaign；`runNow=true` 时后台启动 runner。 |
+| `list_domain_eval_campaigns` | `POST /api/domain-eval/campaigns` | 列出 campaign history，包含 item 状态、summary、fixture/eval run 关联。 |
+| `get_domain_eval_campaign` | `GET /api/domain-eval/campaigns/{campaign_id}` | 读取单个 campaign snapshot。 |
+| `run_domain_eval_campaign` | `POST /api/domain-eval/campaigns/run` | 后台运行或 retry campaign；`retryFailedOnly=true` 只重跑 failed/interrupted/cancelled item。 |
+| `cancel_domain_eval_campaign` | `POST /api/domain-eval/campaigns/{campaign_id}/cancel` | 请求取消 campaign，并把仍 queued 的 item 标记为 cancelled。 |
 | `import_domain_eval_case` | `POST /api/domain-eval/cases/import` | 把已晋升的 `domain_eval_case` proposal 导入 active task registry。 |
 | `record_domain_eval_calibration` | `POST /api/domain-eval/calibrations/record` | 记录 task 的 user/project 人工校准或一次 eval run 的复核结论。 |
 | `list_domain_eval_calibrations` | `POST /api/domain-eval/calibrations` | 查询 calibration history，可按 task/domain/project 过滤。 |
@@ -226,6 +266,7 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 展示 attention checks。
 - 展示最近 domain eval run。
 - 展示独立的「Domain smoke runs」卡片：最近 fixture run、pass rate、agent/trace 数、失败数、eval/quality/workflow/turn trace badge 与 error。
+- 展示「Domain campaigns」卡片：可运行 deterministic trace pack，可查看 durable campaign / item 状态、item pass rate、平均分、check 数、fixture/eval run 关联；failed / interrupted / cancelled campaign 可 retry，queued / running campaign 可 cancel。
 - 展示已校准 task 数；最近 eval run 支持点击「Mark reviewed」记录人工复核 calibration。
 - 与 Release Gate / Continuous Benchmark Gate 分开展示，不生成综合分。
 
@@ -238,6 +279,8 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 不隐式学习上线：`domain_eval_case` 必须先走 proposal preview / apply draft / explicit promotion，再由用户显式导入 task registry。
 - 不让模型自校准：calibration 只暴露 owner API / GUI，不提供 agent tool 面。
 - 不伪造 agent 能力：`agent` fixture 必须显式传 provider/modelChain；执行失败不写 eval run；deterministic trace 与真实 agent execution 在 report 中必须可区分。
+- 不存 provider secret：campaign history 只保存 provider/model/label；真实 provider config 只能在 run input 或本机缓存中临时解析。
+- Retry 必须真实重跑：`retryFailedOnly=true` 清掉 item 的旧 fixture/eval run 指针和 check 统计，再把 failed/interrupted/cancelled item 放回 `queued`。
 - 不写无痕：incognito session 拒绝 run / gate。
 - 不替代 Domain Quality：eval 使用 quality snapshot，quality run 本身仍由 `domain_quality.rs` 管理。
 
@@ -256,6 +299,7 @@ cargo test -p ha-core domain_eval --locked
 - Eval run 可记录幂等人工 calibration，task registry 与后续 report 能看到 user/project calibration。
 - Trace fixture runner 会创建真实 session、Goal、Evidence、WorkflowRun、Domain Quality run 和 Domain Eval run。
 - Trace fixture runner 会写 `domain_eval_fixture_runs`，其 session kind/sourceType 默认不进入 live quality gate；`includeSynthetic=true` 时才进入诊断 gate。
+- Domain Eval Campaign 可创建 deterministic trace pack、cancel queued item、retry cancelled item，并在 item 上写回最新 fixture/eval run、score 和 check 统计。
 - Agent fixture runner 会创建真实 user message / chat turn，调用 mock Responses provider，经 `run_chat_engine` 产生 response，并默认打开 Workflow Mode Ultracode。
 - Agent fixture 不会自动 materialize trace fixture seed，避免 evidence/workflow 被确定性 fixture 托过关。
 - 缺少 provider/modelChain 的 agent fixture fail-fast，不写 eval run。

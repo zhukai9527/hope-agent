@@ -1,10 +1,12 @@
 use axum::Json;
 use ha_core::domain_eval::{
-    DomainEvalCalibrationRecord, DomainEvalFixtureReport, DomainEvalRunRecord, DomainEvalTask,
+    CreateDomainEvalCampaignInput, DomainEvalCalibrationRecord, DomainEvalCampaign,
+    DomainEvalFixtureReport, DomainEvalFixtureRunRecord, DomainEvalRunRecord, DomainEvalTask,
     DomainQualityGateInput, DomainQualityGateReport, ImportDomainEvalCaseInput,
-    ImportDomainEvalCaseResult, ListDomainEvalCalibrationsInput, ListDomainEvalFixtureRunsInput,
-    ListDomainEvalRunsInput, ListDomainEvalTasksInput, RecordDomainEvalCalibrationInput,
-    RunDomainEvalFixtureInput, RunDomainEvalTaskInput,
+    ImportDomainEvalCaseResult, ListDomainEvalCalibrationsInput, ListDomainEvalCampaignsInput,
+    ListDomainEvalFixtureRunsInput, ListDomainEvalRunsInput, ListDomainEvalTasksInput,
+    RecordDomainEvalCalibrationInput, RunDomainEvalCampaignInput, RunDomainEvalFixtureInput,
+    RunDomainEvalTaskInput,
 };
 use ha_core::session::SessionDB;
 use serde::Deserialize;
@@ -58,6 +60,24 @@ pub struct ListDomainEvalRunsBody {
 #[serde(rename_all = "camelCase")]
 pub struct ListDomainEvalFixtureRunsBody {
     pub input: ListDomainEvalFixtureRunsInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDomainEvalCampaignBody {
+    pub input: CreateDomainEvalCampaignInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDomainEvalCampaignsBody {
+    pub input: ListDomainEvalCampaignsInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDomainEvalCampaignBody {
+    pub input: RunDomainEvalCampaignInput,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,10 +138,74 @@ pub async fn list_domain_eval_runs(
 
 pub async fn list_domain_eval_fixture_runs(
     Json(body): Json<ListDomainEvalFixtureRunsBody>,
-) -> Result<Json<Vec<ha_core::domain_eval::DomainEvalFixtureRunRecord>>, AppError> {
+) -> Result<Json<Vec<DomainEvalFixtureRunRecord>>, AppError> {
     Ok(Json(
         session_db()?.list_domain_eval_fixture_runs(body.input)?,
     ))
+}
+
+pub async fn create_domain_eval_campaign(
+    Json(body): Json<CreateDomainEvalCampaignBody>,
+) -> Result<Json<DomainEvalCampaign>, AppError> {
+    let db = session_db()?.clone();
+    let run_now = body.input.run_now;
+    let campaign = db
+        .create_domain_eval_campaign(body.input)
+        .map_err(|err| AppError::bad_request(err.to_string()))?;
+    if run_now {
+        let run_db = db.clone();
+        let campaign_id = campaign.id.clone();
+        tokio::spawn(async move {
+            let input = RunDomainEvalCampaignInput {
+                campaign_id,
+                providers: Vec::new(),
+                retry_failed_only: false,
+            };
+            let _ = ha_core::domain_eval::run_domain_eval_campaign(run_db, input).await;
+        });
+    }
+    Ok(Json(campaign))
+}
+
+pub async fn list_domain_eval_campaigns(
+    Json(body): Json<ListDomainEvalCampaignsBody>,
+) -> Result<Json<Vec<DomainEvalCampaign>>, AppError> {
+    session_db()?
+        .list_domain_eval_campaigns(body.input)
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
+}
+
+pub async fn get_domain_eval_campaign(
+    axum::extract::Path(campaign_id): axum::extract::Path<String>,
+) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
+    session_db()?
+        .get_domain_eval_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
+}
+
+pub async fn cancel_domain_eval_campaign(
+    axum::extract::Path(campaign_id): axum::extract::Path<String>,
+) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
+    session_db()?
+        .cancel_domain_eval_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
+}
+
+pub async fn run_domain_eval_campaign(
+    Json(body): Json<RunDomainEvalCampaignBody>,
+) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
+    let db = session_db()?.clone();
+    let campaign_id = body.input.campaign_id.clone();
+    tokio::spawn(async move {
+        let _ = ha_core::domain_eval::run_domain_eval_campaign(db, body.input).await;
+    });
+    session_db()?
+        .get_domain_eval_campaign(&campaign_id)
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
 }
 
 pub async fn evaluate_domain_quality_gate(

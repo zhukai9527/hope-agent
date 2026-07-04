@@ -1,10 +1,12 @@
 use crate::commands::CmdError;
 use ha_core::domain_eval::{
-    DomainEvalCalibrationRecord, DomainEvalFixtureReport, DomainEvalRunRecord, DomainEvalTask,
+    CreateDomainEvalCampaignInput, DomainEvalCalibrationRecord, DomainEvalCampaign,
+    DomainEvalFixtureReport, DomainEvalFixtureRunRecord, DomainEvalRunRecord, DomainEvalTask,
     DomainQualityGateInput, DomainQualityGateReport, ImportDomainEvalCaseInput,
-    ImportDomainEvalCaseResult, ListDomainEvalCalibrationsInput, ListDomainEvalFixtureRunsInput,
-    ListDomainEvalRunsInput, ListDomainEvalTasksInput, RecordDomainEvalCalibrationInput,
-    RunDomainEvalFixtureInput, RunDomainEvalTaskInput,
+    ImportDomainEvalCaseResult, ListDomainEvalCalibrationsInput, ListDomainEvalCampaignsInput,
+    ListDomainEvalFixtureRunsInput, ListDomainEvalRunsInput, ListDomainEvalTasksInput,
+    RecordDomainEvalCalibrationInput, RunDomainEvalCampaignInput, RunDomainEvalFixtureInput,
+    RunDomainEvalTaskInput,
 };
 use ha_core::session::SessionDB;
 
@@ -88,10 +90,84 @@ pub async fn list_domain_eval_runs(
 pub async fn list_domain_eval_fixture_runs(
     input: ListDomainEvalFixtureRunsInput,
     app_state: tauri::State<'_, crate::AppState>,
-) -> Result<Vec<ha_core::domain_eval::DomainEvalFixtureRunRecord>, CmdError> {
+) -> Result<Vec<DomainEvalFixtureRunRecord>, CmdError> {
     app_state
         .session_db
         .list_domain_eval_fixture_runs(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_domain_eval_campaign(
+    input: CreateDomainEvalCampaignInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<DomainEvalCampaign, CmdError> {
+    let run_now = input.run_now;
+    let campaign = app_state
+        .session_db
+        .create_domain_eval_campaign(input)
+        .map_err(CmdError::from)?;
+    if run_now {
+        let db = app_state.session_db.clone();
+        let campaign_id = campaign.id.clone();
+        tokio::spawn(async move {
+            let input = RunDomainEvalCampaignInput {
+                campaign_id,
+                providers: Vec::new(),
+                retry_failed_only: false,
+            };
+            let _ = ha_core::domain_eval::run_domain_eval_campaign(db, input).await;
+        });
+    }
+    Ok(campaign)
+}
+
+#[tauri::command]
+pub async fn list_domain_eval_campaigns(
+    input: ListDomainEvalCampaignsInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<DomainEvalCampaign>, CmdError> {
+    app_state
+        .session_db
+        .list_domain_eval_campaigns(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_domain_eval_campaign(
+    campaign_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<DomainEvalCampaign>, CmdError> {
+    app_state
+        .session_db
+        .get_domain_eval_campaign(&campaign_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn cancel_domain_eval_campaign(
+    campaign_id: String,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<DomainEvalCampaign>, CmdError> {
+    app_state
+        .session_db
+        .cancel_domain_eval_campaign(&campaign_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn run_domain_eval_campaign(
+    input: RunDomainEvalCampaignInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<DomainEvalCampaign>, CmdError> {
+    let db = app_state.session_db.clone();
+    let campaign_id = input.campaign_id.clone();
+    tokio::spawn(async move {
+        let _ = ha_core::domain_eval::run_domain_eval_campaign(db, input).await;
+    });
+    app_state
+        .session_db
+        .get_domain_eval_campaign(&campaign_id)
         .map_err(Into::into)
 }
 

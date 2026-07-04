@@ -1165,6 +1165,101 @@ export interface DomainEvalFixtureRunRecord {
   updatedAt: string;
 }
 
+export interface DomainEvalCampaignModel {
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+}
+
+export interface CreateDomainEvalCampaignInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  name?: string | null;
+  domain?: string | null;
+  taskIds?: string[];
+  maxTasks?: number | null;
+  models?: DomainEvalCampaignModel[];
+  executionMode?: string | null;
+  runNow?: boolean;
+  maxBudgetUsd?: number | null;
+  timeoutSecs?: number | null;
+}
+
+export interface ListDomainEvalCampaignsInput {
+  sessionId?: string | null;
+  projectId?: string | null;
+  limit?: number | null;
+}
+
+export interface RunDomainEvalCampaignInput {
+  campaignId: string;
+  providers?: Record<string, unknown>[];
+  retryFailedOnly?: boolean;
+}
+
+export interface DomainEvalCampaignSummary {
+  totalItems: number;
+  queuedItems: number;
+  runningItems: number;
+  passedItems: number;
+  failedItems: number;
+  cancelledItems: number;
+  interruptedItems: number;
+  itemPassRate?: number | null;
+  evalRuns: number;
+  passedEvalRuns: number;
+  failedEvalRuns: number;
+  insufficientEvalRuns: number;
+  averageScore?: number | null;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+}
+
+export interface DomainEvalCampaignItem {
+  id: string;
+  campaignId: string;
+  taskId: string;
+  taskTitle: string;
+  domain: string;
+  executionMode: string;
+  providerId?: string | null;
+  modelId?: string | null;
+  label?: string | null;
+  status: string;
+  attempt: number;
+  fixtureRunId?: string | null;
+  evalRunId?: string | null;
+  score?: number | null;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  error?: string | null;
+}
+
+export interface DomainEvalCampaign {
+  id: string;
+  sessionId?: string | null;
+  projectId?: string | null;
+  name: string;
+  status: string;
+  domain?: string | null;
+  taskFilter: Record<string, unknown>;
+  modelMatrix: DomainEvalCampaignModel[];
+  executionMode: string;
+  maxBudgetUsd?: number | null;
+  timeoutSecs?: number | null;
+  summary: DomainEvalCampaignSummary;
+  items: DomainEvalCampaignItem[];
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  error?: string | null;
+}
+
 export interface ImportDomainEvalCaseInput {
   proposalId: string;
   overwrite?: boolean;

@@ -1624,6 +1624,26 @@ fn build_router_with_cors(
             post(routes::domain_eval::list_domain_eval_fixture_runs),
         )
         .route(
+            "/domain-eval/campaigns/create",
+            post(routes::domain_eval::create_domain_eval_campaign),
+        )
+        .route(
+            "/domain-eval/campaigns",
+            post(routes::domain_eval::list_domain_eval_campaigns),
+        )
+        .route(
+            "/domain-eval/campaigns/run",
+            post(routes::domain_eval::run_domain_eval_campaign),
+        )
+        .route(
+            "/domain-eval/campaigns/{campaign_id}",
+            get(routes::domain_eval::get_domain_eval_campaign),
+        )
+        .route(
+            "/domain-eval/campaigns/{campaign_id}/cancel",
+            post(routes::domain_eval::cancel_domain_eval_campaign),
+        )
+        .route(
             "/domain-quality-gate/evaluate",
             post(routes::domain_eval::evaluate_domain_quality_gate),
         )
