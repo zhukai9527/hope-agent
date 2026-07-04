@@ -9,6 +9,8 @@ import type {
   CodingImprovementProposal,
   CodingTrendReport,
   ContextRetrievalSnapshot,
+  DomainArtifactExportGuardReport,
+  DomainConnectorActionGuardReport,
   DomainEvidenceItem,
   DomainOperationalGateReport,
   DomainQualityRunSnapshot,
@@ -860,6 +862,111 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
     recommendedNextSteps: ["Repair the failed workflow."],
     markdown: "Workflow failed",
     operationalGate,
+    ...patch,
+  }
+}
+
+function domainArtifactExportGuardReport(
+  patch: Partial<DomainArtifactExportGuardReport> = {},
+): DomainArtifactExportGuardReport {
+  return {
+    generatedAt: "2026-01-01T00:07:00Z",
+    status: "failed",
+    scope: { scope: "session", sessionId: "s1", projectId: null, goalId: null, domain: "research" },
+    artifactPath: null,
+    artifactTitle: "Research brief",
+    artifactKind: "brief",
+    thresholds: {
+      requireArtifactCreated: true,
+      requireArtifactReviewed: true,
+      maxSensitiveUnreviewed: 0,
+      maxRedactionPending: 0,
+    },
+    summary: {
+      evidenceItems: 2,
+      artifactCreated: 1,
+      artifactReviewed: 0,
+      exportReviewed: 0,
+      sensitiveEvidence: 1,
+      sensitiveUnreviewed: 1,
+      redactionPending: 1,
+      privateOrConnectorEvidence: 1,
+    },
+    checks: [
+      {
+        name: "artifact_reviewed",
+        status: "failed",
+        severity: "critical",
+        expected: "reviewed artifact",
+        actual: "0",
+        detail: "The delivery artifact has not been reviewed.",
+      },
+    ],
+    blockers: ["artifact review missing"],
+    recommendedNextSteps: ["Review the artifact before export."],
+    evidenceRequiringReview: [
+      {
+        id: "e-sensitive",
+        evidenceType: "source_cited",
+        title: "Private source",
+        accessScope: "connector",
+        redactionStatus: "pending",
+        createdAt: "2026-01-01T00:03:00Z",
+        reason: "sensitive_unreviewed",
+      },
+    ],
+    ...patch,
+  }
+}
+
+function domainConnectorActionGuardReport(
+  patch: Partial<DomainConnectorActionGuardReport> = {},
+): DomainConnectorActionGuardReport {
+  return {
+    generatedAt: "2026-01-01T00:08:00Z",
+    status: "failed",
+    scope: { scope: "session", sessionId: "s1", projectId: null, goalId: null, domain: "inbox" },
+    toolName: "gmail_send",
+    connector: "gmail",
+    action: "send",
+    risk: "external_write",
+    thresholds: {
+      requireExplicitApproval: true,
+      requireRollbackPlan: true,
+      requireExportGuardForDelivery: true,
+    },
+    summary: {
+      evidenceItems: 2,
+      actionEvidence: 1,
+      approvalEvidence: 0,
+      rollbackEvidence: 0,
+      sensitiveEvidence: 1,
+      deliveryAction: true,
+      exportGuardStatus: "failed",
+    },
+    checks: [
+      {
+        name: "explicit_user_approval",
+        status: "failed",
+        severity: "critical",
+        expected: "user approval evidence",
+        actual: "0",
+        detail: "No explicit user approval evidence exists for the external action.",
+      },
+    ],
+    blockers: ["approval missing"],
+    recommendedNextSteps: ["Get user approval and rollback evidence before sending."],
+    relatedEvidence: [
+      {
+        id: "e-draft",
+        evidenceType: "message_draft_approved",
+        title: "Reply draft",
+        accessScope: "connector",
+        redactionStatus: "none",
+        createdAt: "2026-01-01T00:04:00Z",
+        reason: "action_scope",
+      },
+    ],
     ...patch,
   }
 }
@@ -1726,6 +1833,39 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看长跑" }))
     expect(await screen.findByText("长跑审计")).toBeTruthy()
     expect(screen.getByText("Workflow failed")).toBeTruthy()
+  })
+
+  it("opens export and connector guard evidence from readiness actions", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_artifact_export_guard")
+        return Promise.resolve(domainArtifactExportGuardReport())
+      if (name === "evaluate_domain_connector_action_guard")
+        return Promise.resolve(domainConnectorActionGuardReport())
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("需处理")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "查看交付" }))
+    expect(await screen.findByText("交付守门")).toBeTruthy()
+    expect(screen.getByText("artifact_reviewed")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "查看外部动作" }))
+    expect(await screen.findByText("外部动作守门")).toBeTruthy()
+    expect(screen.getByText("explicit_user_approval")).toBeTruthy()
   })
 
   it("links workflow loop rows to their derived workflow run", async () => {

@@ -3050,7 +3050,10 @@ function DomainTaskWorkbenchSection({
   verificationRunsState: VerificationRunsState
   domainQualityRunsState: DomainQualityRunsState
   domainWorkbenchState: DomainTaskWorkbenchState
-  focusRequest?: { target: "operational" | "soak"; nonce: number } | null
+  focusRequest?: {
+    target: "export" | "connector" | "operational" | "soak"
+    nonce: number
+  } | null
 }) {
   const { t } = useTranslation()
   const {
@@ -7153,6 +7156,8 @@ function readinessStatusTone(args: {
   executionMode: ExecutionMode
   workflowProblems: number
   loopProblems: number
+  exportStatus?: string | null
+  connectorStatus?: string | null
   operationalStatus?: string | null
   soakStatus?: string | null
 }): StatusTone {
@@ -7160,6 +7165,8 @@ function readinessStatusTone(args: {
   if (
     args.workflowProblems > 0 ||
     args.loopProblems > 0 ||
+    args.exportStatus === "failed" ||
+    args.connectorStatus === "failed" ||
     args.operationalStatus === "failed" ||
     args.soakStatus === "failed"
   ) {
@@ -7168,7 +7175,12 @@ function readinessStatusTone(args: {
   if (!args.activeGoal || args.workflowMode === "off" || args.executionMode === "off") {
     return "warn"
   }
-  if (args.operationalStatus === "insufficient_data" || args.soakStatus === "insufficient_data") {
+  if (
+    args.exportStatus === "insufficient_data" ||
+    args.connectorStatus === "insufficient_data" ||
+    args.operationalStatus === "insufficient_data" ||
+    args.soakStatus === "insufficient_data"
+  ) {
     return "info"
   }
   return "good"
@@ -7202,6 +7214,8 @@ function autonomousReadinessNextSteps(
     workflowProblems: number
     loopProblems: number
     workflowLoopCount: number
+    exportGuard: DomainArtifactExportGuardReport | null
+    connectorGuard: DomainConnectorActionGuardReport | null
     operationalGate: DomainOperationalGateReport | null
     soakReport: DomainSoakReport | null
   },
@@ -7226,6 +7240,18 @@ function autonomousReadinessNextSteps(
     steps.push(t("workspace.autonomousReadiness.nextWorkflowLoop", "可创建工作流 Loop，让目标按周期持续推进。"))
   } else if (args.activeGoal && !args.activeGoal.workflowTemplateId) {
     steps.push(t("workspace.autonomousReadiness.nextTemplate", "为目标绑定领域模板后，可启用工作流 Loop。"))
+  }
+  if (args.exportGuard?.status && args.exportGuard.status !== "passed") {
+    steps.push(
+      args.exportGuard.recommendedNextSteps[0] ??
+        t("workspace.autonomousReadiness.nextExport", "补齐最终产物、复核和脱敏证据。"),
+    )
+  }
+  if (args.connectorGuard?.status && args.connectorGuard.status !== "passed") {
+    steps.push(
+      args.connectorGuard.recommendedNextSteps[0] ??
+        t("workspace.autonomousReadiness.nextConnector", "补齐外部动作批准和回滚证据。"),
+    )
   }
   if (args.operationalGate?.status && args.operationalGate.status !== "passed") {
     steps.push(
@@ -7273,6 +7299,8 @@ function AutonomousReadinessCard({
   onOpenLoopCreate,
   onOpenWorkflowProblem,
   onOpenLoopProblem,
+  onOpenExportGuard,
+  onOpenConnectorGuard,
   onOpenOperationalGate,
   onOpenSoakReport,
 }: {
@@ -7295,6 +7323,8 @@ function AutonomousReadinessCard({
   onOpenLoopCreate?: () => void
   onOpenWorkflowProblem?: (runId: string) => void
   onOpenLoopProblem?: (loopId: string) => void
+  onOpenExportGuard?: () => void
+  onOpenConnectorGuard?: () => void
   onOpenOperationalGate?: () => void
   onOpenSoakReport?: () => void
 }) {
@@ -7314,6 +7344,8 @@ function AutonomousReadinessCard({
     executionModeLoading ||
     workflowRunsState.loading ||
     loopSchedulesState.loading ||
+    domainWorkbenchState.exportGuardLoading ||
+    domainWorkbenchState.connectorGuardLoading ||
     domainWorkbenchState.operationalGateLoading ||
     domainWorkbenchState.soakReportLoading
   const tone = readinessStatusTone({
@@ -7323,6 +7355,8 @@ function AutonomousReadinessCard({
     executionMode,
     workflowProblems,
     loopProblems,
+    exportStatus: domainWorkbenchState.exportGuard?.status,
+    connectorStatus: domainWorkbenchState.connectorGuard?.status,
     operationalStatus: domainWorkbenchState.operationalGate?.status,
     soakStatus: domainWorkbenchState.soakReport?.status,
   })
@@ -7334,6 +7368,8 @@ function AutonomousReadinessCard({
     workflowProblems,
     loopProblems,
     workflowLoopCount,
+    exportGuard: domainWorkbenchState.exportGuard,
+    connectorGuard: domainWorkbenchState.connectorGuard,
     operationalGate: domainWorkbenchState.operationalGate,
     soakReport: domainWorkbenchState.soakReport,
   })
@@ -7342,6 +7378,8 @@ function AutonomousReadinessCard({
   const executionReady = executionMode !== "off"
   const runHealthReady = workflowProblems === 0 && loopProblems === 0
   const runHealthWarning =
+    domainWorkbenchState.exportGuard?.status === "failed" ||
+    domainWorkbenchState.connectorGuard?.status === "failed" ||
     domainWorkbenchState.operationalGate?.status === "failed" ||
     domainWorkbenchState.soakReport?.status === "failed"
   const quickActions: AutonomousReadinessQuickAction[] = []
@@ -7359,6 +7397,32 @@ function AutonomousReadinessCard({
       label: t("workspace.autonomousReadiness.actionViewLoop", "查看 Loop"),
       icon: Radio,
       onClick: () => onOpenLoopProblem(problemLoop.id),
+    })
+  }
+  if (
+    !incognito &&
+    domainWorkbenchState.exportGuard?.status &&
+    domainWorkbenchState.exportGuard.status !== "passed" &&
+    onOpenExportGuard
+  ) {
+    quickActions.push({
+      key: "export-guard",
+      label: t("workspace.autonomousReadiness.actionViewExport", "查看交付"),
+      icon: Shield,
+      onClick: onOpenExportGuard,
+    })
+  }
+  if (
+    !incognito &&
+    domainWorkbenchState.connectorGuard?.status &&
+    domainWorkbenchState.connectorGuard.status !== "passed" &&
+    onOpenConnectorGuard
+  ) {
+    quickActions.push({
+      key: "connector-guard",
+      label: t("workspace.autonomousReadiness.actionViewConnector", "查看外部动作"),
+      icon: ShieldAlert,
+      onClick: onOpenConnectorGuard,
     })
   }
   if (
@@ -7528,8 +7592,8 @@ function AutonomousReadinessCard({
       </div>
 
       {quickActions.length > 0 ? (
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          {quickActions.slice(0, 3).map((action) => {
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
+          {quickActions.slice(0, 4).map((action) => {
             const Icon = action.icon
             return (
               <Button
@@ -9160,7 +9224,7 @@ function WorkflowRunsSection({
   onViewSubagentSession?: (sessionId: string) => void
   onOpenLoopCreate?: () => void
   onOpenLoopProblem?: (loopId: string) => void
-  onOpenDomainWorkbench?: (target: "operational" | "soak") => void
+  onOpenDomainWorkbench?: (target: "export" | "connector" | "operational" | "soak") => void
   workflowRunsState?: WorkflowRunsState
   loopSchedulesState: LoopSchedulesState
   goalState: GoalStateSnapshot
@@ -10226,6 +10290,8 @@ ${repairPrompt}`
               onOpenLoopCreate={onOpenLoopCreate}
               onOpenWorkflowProblem={focusWorkflowRun}
               onOpenLoopProblem={onOpenLoopProblem}
+              onOpenExportGuard={() => onOpenDomainWorkbench?.("export")}
+              onOpenConnectorGuard={() => onOpenDomainWorkbench?.("connector")}
               onOpenOperationalGate={() => onOpenDomainWorkbench?.("operational")}
               onOpenSoakReport={() => onOpenDomainWorkbench?.("soak")}
             />
@@ -14506,20 +14572,23 @@ export default function WorkspacePanel({
   const domainTaskWorkbenchState = useDomainTaskWorkbench(sessionId, { incognito, turnActive })
   const domainWorkbenchRef = useRef<HTMLDivElement | null>(null)
   const [domainWorkbenchFocusRequest, setDomainWorkbenchFocusRequest] = useState<{
-    target: "operational" | "soak"
+    target: "export" | "connector" | "operational" | "soak"
     nonce: number
   } | null>(null)
   const workflowSectionRef = useRef<HTMLDivElement | null>(null)
   const [workflowFocusTarget, setWorkflowFocusTarget] = useState<WorkflowFocusTarget | null>(null)
-  const focusDomainWorkbench = useCallback((target: "operational" | "soak") => {
-    setDomainWorkbenchFocusRequest((current) => ({
-      target,
-      nonce: (current?.nonce ?? 0) + 1,
-    }))
-    window.setTimeout(() => {
-      domainWorkbenchRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })
-    }, 0)
-  }, [])
+  const focusDomainWorkbench = useCallback(
+    (target: "export" | "connector" | "operational" | "soak") => {
+      setDomainWorkbenchFocusRequest((current) => ({
+        target,
+        nonce: (current?.nonce ?? 0) + 1,
+      }))
+      window.setTimeout(() => {
+        domainWorkbenchRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })
+      }, 0)
+    },
+    [],
+  )
   const focusWorkflowRun = useCallback((runId: string) => {
     setWorkflowFocusTarget((current) => ({
       runId,
