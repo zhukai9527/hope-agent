@@ -432,6 +432,7 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 展示「Domain readiness」卡片：直接调用 `evaluate_domain_readiness_gate`，显示总体 readiness 三态、quality/eval/campaign/leaderboard/learning proposal 核心计数、阻塞 check 和 recommended next steps。
 - 展示「Domain operations」卡片：直接调用 `evaluate_domain_operational_gate`，显示 workflow / loop / campaign 的完成、活跃、失败残留和 recommended next steps。
 - 展示「Domain soak report」卡片：直接调用 `generate_domain_soak_report`，显示 workflow / loop / campaign / connector evidence 样本量、critical/warning incidents、最大 drain 时长、最近 timeline 和 recommended next steps。
+- Workspace「通用任务工作台」也复用 `evaluate_domain_operational_gate({ sessionId, windowDays: 14 })` 与 `generate_domain_soak_report({ sessionId, windowDays: 14, maxItems: 8 })`，作为当前会话的运行稳定性与长跑审计卡片；它只读并刷新状态，不自动 approve / retry / cancel / run loop。
 - 展示「Connector E2E」卡片：直接调用 `evaluate_domain_connector_e2e_gate`，显示连接器输入、草稿、批准、执行结果、执行后复核、回滚和下层 guard 状态；global scope 只做聚合，不伪装成具体 session/goal 的动作授权。
 - 展示已校准 task 数；最近 eval run 支持点击「Mark reviewed」记录人工复核 calibration。
 - 与 Release Gate / Continuous Benchmark Gate 分开展示，不生成综合分。

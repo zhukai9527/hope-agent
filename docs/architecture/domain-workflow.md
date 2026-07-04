@@ -69,7 +69,7 @@ Workspace / Workflow Control Center 的“新建工作流”表单已接入 doma
 - 创建前同屏展示 output contract 摘要、required evidence、approval gates、verification policy 与 warnings；用户继续复用既有 Script Gate / permission preview / run immediately / worktree 选择。
 - 修改目标、模板、任务类型、执行模式或脚本会清空旧预检，避免用过期 preview 创建 run。
 - Loop 创建区可在 active Goal 已绑定领域模板时选择“创建工作流”：每次 interval tick 会用该模板版本生成 `requirePlanConfirmation=false` 的 draft，创建 `origin=loop:<loop_id>` 的 WorkflowRun，并把 workflow run id 写回 Loop trace。
-- Workspace 右侧面板新增「通用任务工作台」：复用当前 session 的 domain evidence、Review、Verification、Domain Quality、Artifact Export Guard 与 Connector Action Guard，把来源、证据、草稿、复核、验证和用户决策压成一个同屏总览。
+- Workspace 右侧面板新增「通用任务工作台」：复用当前 session 的 domain evidence、Review、Verification、Domain Quality、Artifact Export Guard、Connector Action Guard、Operational Gate 与 Soak Report，把来源、证据、草稿、复核、验证、用户决策和长任务运行健康压成一个同屏总览。
 
 GUI 入口仍是 owner plane：它只生成 draft 和 preview，不自动访问连接器，也不绕过后续 workflow runtime 的审批、用户确认和权限策略。
 
@@ -87,14 +87,16 @@ Phase 8.4 在 `src/components/chat/workspace/WorkspacePanel.tsx` 新增「通用
 | `create_session_task` | 从 Context Retrieval 候选行的“转任务”按钮创建 session task，并通过 `task_updated` 刷新进度面板。 |
 | `evaluate_domain_artifact_export_guard` | 显示最终交付是否具备产物、复核、敏感来源导出复核和脱敏证据。 |
 | `evaluate_domain_connector_action_guard` | 显示真实外部动作是否具备动作 scope、用户批准、回滚和交付守门证据。 |
+| `evaluate_domain_operational_gate` | 显示当前 session 的 workflow / loop / campaign 是否有足够样本、失败残留或未排空运行。 |
+| `generate_domain_soak_report` | 汇总当前 session 最近窗口内的 workflow / loop / campaign / connector E2E 事故、最长 drain 时长和 recommended next steps。 |
 | `useReviewRuns` | 读取当前 review finding，P0/P1 open finding 会让工作台进入需处理状态。 |
 | `useVerificationRuns` | 读取验证 plan / run / step，并提供“推荐验证”“运行验证”按钮。 |
 | `useDomainQualityRuns` | 读取领域复核 run/check，并提供“运行领域复核”按钮。 |
 
 状态语义：
 
-- `danger`：存在 P0/P1 review finding、验证失败、领域复核 failed/blocked、Artifact Export Guard failed 或 Connector Action Guard failed。
-- `warn`：缺证据、缺来源、缺草稿、领域复核需要用户确认、Artifact Export Guard / Connector Action Guard 证据不足。
+- `danger`：存在 P0/P1 review finding、验证失败、领域复核 failed/blocked、Artifact Export Guard failed、Connector Action Guard failed、Operational Gate failed 或 Soak Report failed。
+- `warn`：缺证据、缺来源、缺草稿、领域复核需要用户确认、Artifact Export Guard / Connector Action Guard / Operational Gate / Soak Report 证据不足或仍有未排空长任务。
 - `good`：已有证据链且没有上述阻塞/缺口。
 - `muted`：无痕会话、无 session 或尚未开始。
 
@@ -103,7 +105,9 @@ Phase 8.4 在 `src/components/chat/workspace/WorkspacePanel.tsx` 新增「通用
 - 「运行领域复核」调用既有 `run_domain_quality`。
 - 「推荐验证」调用既有 `plan_smart_verification`。
 - 「运行验证」调用既有 `run_smart_verification`。
-- 「刷新工作台」同时刷新 domain evidence、两个 guard、review、verification 与 domain quality state。
+- 「刷新工作台」同时刷新 domain evidence、Artifact Export Guard、Connector Action Guard、Operational Gate、Soak Report、review、verification 与 domain quality state。
+- 「运行稳定性」卡片调用 `evaluate_domain_operational_gate({ sessionId, windowDays: 14 })`，显示 workflow 完成/活跃、loop 成功/失败、campaign 活跃和阻塞 check。
+- 「长跑审计」卡片调用 `generate_domain_soak_report({ sessionId, windowDays: 14, maxItems: 8 })`，显示样本数、critical/warning incidents、最长 workflow drain 和最近事故建议。
 - Context Retrieval 候选行的「摘要」按钮调用既有 `record_domain_evidence`，把候选确定性整理为 `artifact_created` context summary evidence；成功后刷新推荐上下文和通用任务工作台。
 - Context Retrieval 候选行的「确认」按钮调用 `create_owner_ask_user_question`，复用 ask_user UI 创建 durable 用户确认；用户回答后由 `respond_ask_user_question` 写入 `user_decision` evidence，回答内容并入 `sourceMetadata.answers`。
 - Context Retrieval 候选行的「证据」按钮调用既有 `record_domain_evidence`，把候选来源/文档/会议/表格/决策等落成当前 session 的 domain evidence；成功后刷新推荐上下文和通用任务工作台。
@@ -112,8 +116,9 @@ Phase 8.4 在 `src/components/chat/workspace/WorkspacePanel.tsx` 新增「通用
 
 红线：
 
-- 工作台只聚合 owner-plane 读模型和已有显式动作按钮；写路径仅限用户显式点击候选行「摘要」、「确认」、「证据」、「冲突」或「转任务」后记录当前 session evidence / task，不自动创建 WorkflowRun、不访问连接器、不发送/分享/导出内容。
+- 工作台只聚合 owner-plane 读模型和已有显式动作按钮；写路径仅限用户显式点击候选行「摘要」、「确认」、「证据」、「冲突」或「转任务」后记录当前 session evidence / task，不自动创建 WorkflowRun、不运行 loop、不 retry campaign、不访问连接器、不发送/分享/导出内容。
 - 交付守门和外部动作守门仍是只读结论；真正外部系统修改继续走 `permission::engine` strict approval、连接器授权和工具执行层。
+- Operational Gate 与 Soak Report 仍是只读结论；它们可以提示 approve / retry / cancel / 等待排空，但不能自动执行这些控制动作。
 - Incognito session 不持久化 domain evidence，工作台只显示禁用提示并清空 durable state。
 - Review / Verification / Domain Quality 的 hook 状态在 Workspace 顶层共享给通用任务工作台和各自详细区块，避免同一面板重复请求同一批 run。
 

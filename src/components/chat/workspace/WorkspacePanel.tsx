@@ -112,11 +112,13 @@ import type {
   DomainConnectorActionGuardReport,
   DomainEvidenceItem,
   DomainEvidenceRequirement,
+  DomainOperationalGateReport,
   DomainQualityCheck,
   DomainQualityCheckStatus,
   DomainQualityRunSnapshot,
   DomainQualityRunState,
   DomainQualitySeverity,
+  DomainSoakReport,
   DomainVerificationRule,
   DomainWorkflowDraft,
   DomainWorkflowTemplate,
@@ -2857,6 +2859,8 @@ function domainWorkbenchOverallTone(args: {
   domainNeedsUser: number
   exportStatus?: string | null
   connectorStatus?: string | null
+  operationalStatus?: string | null
+  soakStatus?: string | null
 }): StatusTone {
   if (args.incognito) return "muted"
   if (
@@ -2864,7 +2868,9 @@ function domainWorkbenchOverallTone(args: {
     args.failedVerification > 0 ||
     args.domainFailed > 0 ||
     args.exportStatus === "failed" ||
-    args.connectorStatus === "failed"
+    args.connectorStatus === "failed" ||
+    args.operationalStatus === "failed" ||
+    args.soakStatus === "failed"
   ) {
     return "danger"
   }
@@ -2874,7 +2880,9 @@ function domainWorkbenchOverallTone(args: {
     args.sourceCount === 0 ||
     args.draftCount === 0 ||
     args.exportStatus === "insufficient_data" ||
-    args.connectorStatus === "insufficient_data"
+    args.connectorStatus === "insufficient_data" ||
+    args.operationalStatus === "insufficient_data" ||
+    args.soakStatus === "insufficient_data"
   ) {
     return "warn"
   }
@@ -2906,6 +2914,8 @@ function domainWorkbenchNextSteps(
     domainNeedsUser: number
     exportGuard: DomainArtifactExportGuardReport | null
     connectorGuard: DomainConnectorActionGuardReport | null
+    operationalGate: DomainOperationalGateReport | null
+    soakReport: DomainSoakReport | null
   },
 ): string[] {
   if (args.incognito) {
@@ -2940,6 +2950,18 @@ function domainWorkbenchNextSteps(
     steps.push(
       args.connectorGuard.recommendedNextSteps[0] ??
         t("workspace.domainWorkbench.nextConnectorGuard", "补齐外部动作批准和回滚证据。"),
+    )
+  }
+  if (args.operationalGate?.status && args.operationalGate.status !== "passed") {
+    steps.push(
+      args.operationalGate.recommendedNextSteps[0] ??
+        t("workspace.domainWorkbench.nextOperationalGate", "等待工作流排空，或处理失败/阻塞的运行。"),
+    )
+  }
+  if (args.soakReport?.status && args.soakReport.status !== "passed") {
+    steps.push(
+      args.soakReport.recommendedNextSteps[0] ??
+        t("workspace.domainWorkbench.nextSoakReport", "查看长跑审计里的事故和未排空任务。"),
     )
   }
   return steps.length > 0
@@ -3026,6 +3048,12 @@ function DomainTaskWorkbenchSection({
     connectorGuard,
     connectorGuardLoading,
     connectorGuardError,
+    operationalGate,
+    operationalGateLoading,
+    operationalGateError,
+    soakReport,
+    soakReportLoading,
+    soakReportError,
     refreshAll,
   } = domainWorkbenchState
   const evidenceCount = evidence.length
@@ -3056,6 +3084,8 @@ function DomainTaskWorkbenchSection({
     evidenceLoading ||
     exportGuardLoading ||
     connectorGuardLoading ||
+    operationalGateLoading ||
+    soakReportLoading ||
     reviewRunsState.loading ||
     verificationRunsState.loading ||
     domainQualityRunsState.loading
@@ -3077,6 +3107,8 @@ function DomainTaskWorkbenchSection({
     domainNeedsUser,
     exportStatus: exportGuard?.status,
     connectorStatus: connectorGuard?.status,
+    operationalStatus: operationalGate?.status,
+    soakStatus: soakReport?.status,
   })
   const nextSteps = domainWorkbenchNextSteps(t, {
     incognito,
@@ -3089,14 +3121,23 @@ function DomainTaskWorkbenchSection({
     domainNeedsUser,
     exportGuard,
     connectorGuard,
+    operationalGate,
+    soakReport,
   })
   const recentEvidence = evidence.slice(0, 4)
-  const error = evidenceError ?? exportGuardError ?? connectorGuardError
+  const error =
+    evidenceError ??
+    exportGuardError ??
+    connectorGuardError ??
+    operationalGateError ??
+    soakReportError
   const count =
     evidenceCount +
     openReviewFindings.length +
     verificationSteps.length +
-    (domainQualityRunsState.snapshot?.checks.length ?? 0)
+    (domainQualityRunsState.snapshot?.checks.length ?? 0) +
+    (operationalGate?.checks?.length ?? 0) +
+    (soakReport?.incidents?.length ?? 0)
 
   const handleRefresh = () => {
     void refreshAll()
@@ -3286,6 +3327,20 @@ function DomainTaskWorkbenchSection({
         </div>
 
         <div className="grid grid-cols-1 gap-2">
+          <DomainOperationalGatePanel
+            report={operationalGate}
+            loading={operationalGateLoading}
+            error={operationalGateError}
+            disabled={disabled || operationalGateLoading}
+            onRefresh={domainWorkbenchState.refreshOperationalGate}
+          />
+          <DomainSoakReportPanel
+            report={soakReport}
+            loading={soakReportLoading}
+            error={soakReportError}
+            disabled={disabled || soakReportLoading}
+            onRefresh={domainWorkbenchState.refreshSoakReport}
+          />
           <DomainArtifactExportGuardPanel
             report={exportGuard}
             loading={exportGuardLoading}
@@ -3634,9 +3689,17 @@ interface DomainTaskWorkbenchState {
   connectorGuard: DomainConnectorActionGuardReport | null
   connectorGuardLoading: boolean
   connectorGuardError: string | null
+  operationalGate: DomainOperationalGateReport | null
+  operationalGateLoading: boolean
+  operationalGateError: string | null
+  soakReport: DomainSoakReport | null
+  soakReportLoading: boolean
+  soakReportError: string | null
   refreshEvidence: () => Promise<DomainEvidenceItem[]>
   refreshExportGuard: () => Promise<DomainArtifactExportGuardReport | null>
   refreshConnectorGuard: () => Promise<DomainConnectorActionGuardReport | null>
+  refreshOperationalGate: () => Promise<DomainOperationalGateReport | null>
+  refreshSoakReport: () => Promise<DomainSoakReport | null>
   refreshAll: () => Promise<void>
 }
 
@@ -3655,6 +3718,12 @@ function useDomainTaskWorkbench(
     useState<DomainConnectorActionGuardReport | null>(null)
   const [connectorGuardLoading, setConnectorGuardLoading] = useState(false)
   const [connectorGuardError, setConnectorGuardError] = useState<string | null>(null)
+  const [operationalGate, setOperationalGate] = useState<DomainOperationalGateReport | null>(null)
+  const [operationalGateLoading, setOperationalGateLoading] = useState(false)
+  const [operationalGateError, setOperationalGateError] = useState<string | null>(null)
+  const [soakReport, setSoakReport] = useState<DomainSoakReport | null>(null)
+  const [soakReportLoading, setSoakReportLoading] = useState(false)
+  const [soakReportError, setSoakReportError] = useState<string | null>(null)
 
   const refreshEvidence = useCallback(async () => {
     if (disabled || !sessionId || incognito) {
@@ -3767,9 +3836,98 @@ function useDomainTaskWorkbench(
     }
   }, [disabled, incognito, sessionId])
 
+  const refreshOperationalGate = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setOperationalGate(null)
+      setOperationalGateError(null)
+      setOperationalGateLoading(false)
+      return null
+    }
+    setOperationalGateLoading(true)
+    setOperationalGateError(null)
+    try {
+      const report = await getTransport().call<DomainOperationalGateReport>(
+        "evaluate_domain_operational_gate",
+        {
+          input: {
+            sessionId,
+            windowDays: 14,
+            minWorkflowRuns: 1,
+            maxFailedWorkflowRuns: 0,
+            maxBlockedWorkflowRuns: 0,
+            maxCancelledWorkflowRuns: 0,
+            maxActiveWorkflowRuns: 0,
+            minLoopRuns: 0,
+            maxFailedLoopRuns: 0,
+            maxActiveCampaigns: 0,
+            maxFailedCampaignItems: 0,
+          },
+        },
+      )
+      setOperationalGate(report)
+      return report
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error(
+        "ui",
+        "useDomainTaskWorkbench",
+        "Failed to evaluate domain operational gate",
+        e,
+      )
+      setOperationalGateError(message)
+      return null
+    } finally {
+      setOperationalGateLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
+  const refreshSoakReport = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setSoakReport(null)
+      setSoakReportError(null)
+      setSoakReportLoading(false)
+      return null
+    }
+    setSoakReportLoading(true)
+    setSoakReportError(null)
+    try {
+      const report = await getTransport().call<DomainSoakReport>(
+        "generate_domain_soak_report",
+        {
+          input: {
+            sessionId,
+            windowDays: 14,
+            maxItems: 8,
+          },
+        },
+      )
+      setSoakReport(report)
+      return report
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "useDomainTaskWorkbench", "Failed to generate domain soak report", e)
+      setSoakReportError(message)
+      return null
+    } finally {
+      setSoakReportLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshEvidence(), refreshExportGuard(), refreshConnectorGuard()])
-  }, [refreshConnectorGuard, refreshEvidence, refreshExportGuard])
+    await Promise.all([
+      refreshEvidence(),
+      refreshExportGuard(),
+      refreshConnectorGuard(),
+      refreshOperationalGate(),
+      refreshSoakReport(),
+    ])
+  }, [
+    refreshConnectorGuard,
+    refreshEvidence,
+    refreshExportGuard,
+    refreshOperationalGate,
+    refreshSoakReport,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -3798,10 +3956,19 @@ function useDomainTaskWorkbench(
 
   useEffect(() => {
     if (disabled || !sessionId || incognito) return
-    return getTransport().listen("domain_evidence:recorded", (payload) => {
+    const maybeRefresh = (payload: unknown) => {
       if (!eventBelongsToSession(payload, sessionId)) return
       void refreshAll()
-    })
+    }
+    const unsubs = [
+      getTransport().listen("domain_evidence:recorded", maybeRefresh),
+      getTransport().listen("workflow:created", maybeRefresh),
+      getTransport().listen("workflow:updated", maybeRefresh),
+      getTransport().listen("loop:changed", maybeRefresh),
+    ]
+    return () => {
+      unsubs.forEach((unsub) => unsub())
+    }
   }, [disabled, incognito, refreshAll, sessionId])
 
   return {
@@ -3814,9 +3981,17 @@ function useDomainTaskWorkbench(
     connectorGuard,
     connectorGuardLoading,
     connectorGuardError,
+    operationalGate,
+    operationalGateLoading,
+    operationalGateError,
+    soakReport,
+    soakReportLoading,
+    soakReportError,
     refreshEvidence,
     refreshExportGuard,
     refreshConnectorGuard,
+    refreshOperationalGate,
+    refreshSoakReport,
     refreshAll,
   }
 }
@@ -4838,6 +5013,301 @@ function DomainQualitySection({
       </div>
     </WorkspaceSection>
   )
+}
+
+function DomainOperationalGatePanel({
+  report,
+  loading,
+  error,
+  disabled,
+  onRefresh,
+}: {
+  report: DomainOperationalGateReport | null
+  loading: boolean
+  error: string | null
+  disabled: boolean
+  onRefresh: () => Promise<DomainOperationalGateReport | null>
+}) {
+  const { t } = useTranslation()
+  const issueChecks = (report?.checks ?? []).filter(
+    (check) => check.status !== "passed" && check.severity !== "advisory",
+  )
+  const summary = report?.summary
+  const clean = report?.status === "passed"
+
+  return (
+    <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Gauge className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium text-foreground/90">
+            {t("workspace.domainOperationalGate.title", "运行稳定性")}
+          </div>
+          <div className="truncate text-[10px] text-muted-foreground">
+            {report
+              ? t("workspace.domainOperationalGate.generated", "最近评估 {{time}}", {
+                  time: formatMessageTime(report.generatedAt),
+                })
+              : t("workspace.domainOperationalGate.emptyHint", "检查工作流、Loop 和评测活动是否已排空")}
+          </div>
+        </div>
+        <StatusPill
+          label={domainOperationalGateLabel(t, report?.status, loading)}
+          tone={domainOperationalGateTone(report?.status, loading)}
+          loading={loading}
+        />
+        <IconTip label={t("workspace.domainOperationalGate.refresh", "刷新运行稳定性")}>
+          <button
+            type="button"
+            onClick={() => void onRefresh()}
+            disabled={disabled}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </IconTip>
+      </div>
+
+      {summary ? (
+        <div className="mt-2 grid grid-cols-4 gap-1.5">
+          {[
+            [
+              t("workspace.domainOperationalGate.workflows", "工作流"),
+              `${summary.completedWorkflowRuns}/${summary.workflowRuns}`,
+              summary.workflowRuns > 0 ? "good" : "warn",
+            ],
+            [
+              t("workspace.domainOperationalGate.active", "运行中"),
+              summary.activeWorkflowRuns,
+              summary.activeWorkflowRuns > 0 ? "warn" : "muted",
+            ],
+            [
+              t("workspace.domainOperationalGate.loops", "Loop"),
+              `${summary.succeededLoopRuns}/${summary.loopRuns}`,
+              summary.failedLoopRuns > 0 ? "danger" : summary.loopRuns > 0 ? "good" : "muted",
+            ],
+            [
+              t("workspace.domainOperationalGate.campaigns", "评测"),
+              summary.activeCampaigns,
+              summary.activeCampaigns > 0 ? "warn" : "muted",
+            ],
+          ].map(([label, value, tone]) => (
+            <div
+              key={label as string}
+              className={cn("rounded-md border px-2 py-1.5", STATUS_TONE_CLASS[tone as StatusTone])}
+            >
+              <div className="truncate text-[10px]">{label as string}</div>
+              <div className="text-xs font-semibold tabular-nums">{value as string | number}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : clean ? (
+        <div className="mt-2 rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+          {t("workspace.domainOperationalGate.clean", "运行面已排空且没有失败残留。")}
+        </div>
+      ) : issueChecks.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {issueChecks.slice(0, 3).map((check) => (
+            <div
+              key={check.name}
+              className={cn(
+                "rounded-md px-2 py-1.5 text-[11px]",
+                check.status === "failed"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <CircleAlert className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
+                <span className="shrink-0 tabular-nums">{check.actual}</span>
+              </div>
+              <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
+            </div>
+          ))}
+        </div>
+      ) : !loading ? (
+        <EmptyHint>{t("workspace.domainOperationalGate.empty", "还没有运行稳定性结果")}</EmptyHint>
+      ) : null}
+    </div>
+  )
+}
+
+function DomainSoakReportPanel({
+  report,
+  loading,
+  error,
+  disabled,
+  onRefresh,
+}: {
+  report: DomainSoakReport | null
+  loading: boolean
+  error: string | null
+  disabled: boolean
+  onRefresh: () => Promise<DomainSoakReport | null>
+}) {
+  const { t } = useTranslation()
+  const summary = report?.summary
+  const clean = report?.status === "passed"
+  const maxDrain =
+    summary?.maxWorkflowDrainSecs != null
+      ? formatLoopDuration(Math.max(1, Math.round(summary.maxWorkflowDrainSecs)))
+      : "-"
+
+  return (
+    <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <Radio className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium text-foreground/90">
+            {t("workspace.domainSoakReport.title", "长跑审计")}
+          </div>
+          <div className="truncate text-[10px] text-muted-foreground">
+            {report
+              ? t("workspace.domainSoakReport.generated", "最近评估 {{time}}", {
+                  time: formatMessageTime(report.generatedAt),
+                })
+              : t("workspace.domainSoakReport.emptyHint", "汇总最近长任务、Loop 和连接器链路事故")}
+          </div>
+        </div>
+        <StatusPill
+          label={domainSoakReportLabel(t, report?.status, loading)}
+          tone={domainSoakReportTone(report?.status, loading)}
+          loading={loading}
+        />
+        <IconTip label={t("workspace.domainSoakReport.refresh", "刷新长跑审计")}>
+          <button
+            type="button"
+            onClick={() => void onRefresh()}
+            disabled={disabled}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </IconTip>
+      </div>
+
+      {summary ? (
+        <div className="mt-2 grid grid-cols-4 gap-1.5">
+          {[
+            [t("workspace.domainSoakReport.records", "样本"), summary.totalRecords, "info"],
+            [
+              t("workspace.domainSoakReport.critical", "事故"),
+              summary.criticalIncidents,
+              summary.criticalIncidents > 0 ? "danger" : "muted",
+            ],
+            [
+              t("workspace.domainSoakReport.warning", "待排空"),
+              summary.warningIncidents,
+              summary.warningIncidents > 0 ? "warn" : "muted",
+            ],
+            [t("workspace.domainSoakReport.maxDrain", "最长"), maxDrain, "muted"],
+          ].map(([label, value, tone]) => (
+            <div
+              key={label as string}
+              className={cn("rounded-md border px-2 py-1.5", STATUS_TONE_CLASS[tone as StatusTone])}
+            >
+              <div className="truncate text-[10px]">{label as string}</div>
+              <div className="text-xs font-semibold tabular-nums">{value as string | number}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : clean ? (
+        <div className="mt-2 rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+          {t("workspace.domainSoakReport.clean", "最近窗口没有长任务事故。")}
+        </div>
+      ) : report?.incidents?.length ? (
+        <div className="mt-2 space-y-1">
+          {report.incidents.slice(0, 2).map((incident) => (
+            <div
+              key={`${incident.source}:${incident.id}`}
+              className={cn(
+                "rounded-md px-2 py-1.5 text-[11px]",
+                incident.severity === "critical"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <CircleAlert className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-medium">{incident.title}</span>
+                <StatusPill
+                  label={incident.source}
+                  tone={incident.severity === "critical" ? "danger" : "warn"}
+                />
+              </div>
+              <div className="mt-0.5 line-clamp-2 opacity-85">{incident.recommendation}</div>
+            </div>
+          ))}
+        </div>
+      ) : !loading ? (
+        <EmptyHint>{t("workspace.domainSoakReport.empty", "还没有长跑审计结果")}</EmptyHint>
+      ) : null}
+    </div>
+  )
+}
+
+function domainOperationalGateTone(
+  status?: string | null,
+  loading?: boolean,
+): StatusTone {
+  if (loading) return "info"
+  if (status === "passed") return "good"
+  if (status === "failed") return "danger"
+  if (status === "insufficient_data") return "warn"
+  return "muted"
+}
+
+function domainOperationalGateLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  status?: string | null,
+  loading?: boolean,
+): string {
+  if (loading) return t("workspace.domainOperationalGate.loading", "评估中")
+  if (status === "passed") return t("workspace.domainOperationalGate.passed", "稳定")
+  if (status === "failed") return t("workspace.domainOperationalGate.failed", "阻塞")
+  if (status === "insufficient_data") return t("workspace.domainOperationalGate.insufficient", "待排空")
+  return t("workspace.domainOperationalGate.idle", "未评估")
+}
+
+function domainSoakReportTone(status?: string | null, loading?: boolean): StatusTone {
+  if (loading) return "info"
+  if (status === "passed") return "good"
+  if (status === "failed") return "danger"
+  if (status === "insufficient_data") return "warn"
+  return "muted"
+}
+
+function domainSoakReportLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  status?: string | null,
+  loading?: boolean,
+): string {
+  if (loading) return t("workspace.domainSoakReport.loading", "评估中")
+  if (status === "passed") return t("workspace.domainSoakReport.passed", "干净")
+  if (status === "failed") return t("workspace.domainSoakReport.failed", "有事故")
+  if (status === "insufficient_data") return t("workspace.domainSoakReport.insufficient", "样本不足")
+  return t("workspace.domainSoakReport.idle", "未评估")
 }
 
 function DomainArtifactExportGuardPanel({

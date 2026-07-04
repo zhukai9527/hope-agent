@@ -38,6 +38,8 @@ const transportMock = vi.hoisted(() => ({
       if (name === "get_coding_trend_report") return Promise.resolve(null)
       if (name === "get_lsp_status") return Promise.resolve(null)
       if (name === "get_lsp_diagnostics") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
       return Promise.resolve([])
     },
   ),
@@ -115,6 +117,8 @@ beforeEach(() => {
     if (name === "get_coding_trend_report") return Promise.resolve(null)
     if (name === "get_lsp_status") return Promise.resolve(null)
     if (name === "get_lsp_diagnostics") return Promise.resolve(null)
+    if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+    if (name === "generate_domain_soak_report") return Promise.resolve(null)
     return Promise.resolve([])
   })
   transportMock.listen.mockImplementation(() => () => {})
@@ -1025,6 +1029,8 @@ describe("WorkspacePanel context retrieval section", () => {
           }),
         )
       }
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
       if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       if (name === "list_workflow_runs") return Promise.resolve([])
@@ -1066,6 +1072,8 @@ describe("WorkspacePanel context retrieval section", () => {
       if (name === "get_context_retrieval") return Promise.resolve(snapshot)
       if (name === "create_owner_ask_user_question")
         return Promise.resolve({ requestId: "auq-1", sessionId: "s1", questions: [] })
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
       if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       if (name === "list_workflow_runs") return Promise.resolve([])
@@ -1136,6 +1144,8 @@ describe("WorkspacePanel context retrieval section", () => {
       if (name === "list_domain_evidence") return Promise.resolve([])
       if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
       if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
       if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
       if (name === "get_background_job") return Promise.resolve(null)
       if (name === "list_workflow_runs") return Promise.resolve([])
@@ -1157,6 +1167,12 @@ describe("WorkspacePanel context retrieval section", () => {
     const evidenceCallsBefore = transportMock.call.mock.calls.filter(
       ([name]) => name === "list_domain_evidence",
     ).length
+    const operationalCallsBefore = transportMock.call.mock.calls.filter(
+      ([name]) => name === "evaluate_domain_operational_gate",
+    ).length
+    const soakCallsBefore = transportMock.call.mock.calls.filter(
+      ([name]) => name === "generate_domain_soak_report",
+    ).length
 
     act(() => {
       for (const handler of listeners.get("domain_evidence:recorded") ?? []) {
@@ -1173,6 +1189,14 @@ describe("WorkspacePanel context retrieval section", () => {
         transportMock.call.mock.calls.filter(([name]) => name === "list_domain_evidence")
           .length,
       ).toBeGreaterThan(evidenceCallsBefore)
+      expect(
+        transportMock.call.mock.calls.filter(([name]) => name === "evaluate_domain_operational_gate")
+          .length,
+      ).toBeGreaterThan(operationalCallsBefore)
+      expect(
+        transportMock.call.mock.calls.filter(([name]) => name === "generate_domain_soak_report")
+          .length,
+      ).toBeGreaterThan(soakCallsBefore)
     })
   })
 })
