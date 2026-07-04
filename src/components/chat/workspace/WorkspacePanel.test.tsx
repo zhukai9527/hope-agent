@@ -848,6 +848,8 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("write-file").length).toBeGreaterThan(0)
     expect(screen.getAllByText("需批准").length).toBeGreaterThan(0)
     expect(screen.getAllByRole("button", { name: "批准" }).length).toBeGreaterThan(0)
+    expect(await screen.findByText("运行时间线")).toBeTruthy()
+    expect(screen.getByText("最近 2 条")).toBeTruthy()
     expect(screen.getByText("最近信号")).toBeTruthy()
   })
 
@@ -882,6 +884,7 @@ describe("WorkspacePanel workflow section", () => {
 
     expect(await screen.findByText("运行位置 · wt-run")).toBeTruthy()
     expect(await screen.findByText("/repo-worktrees/wt-run")).toBeTruthy()
+    expect(screen.getAllByText("运行位置已绑定").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Trace").length).toBeGreaterThan(0)
   })
 
@@ -1021,7 +1024,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("late-write-step").length).toBeGreaterThan(0)
     expect(screen.getByText(/前 6\/8 个步骤/)).toBeTruthy()
     expect(screen.getByText("关键信号")).toBeTruthy()
-    expect(screen.getByText("步骤失败")).toBeTruthy()
+    expect(screen.getAllByText("步骤失败").length).toBeGreaterThan(0)
   })
 
   it("lets the user start a draft workflow run from the workspace", async () => {
@@ -1081,7 +1084,7 @@ describe("WorkspacePanel workflow section", () => {
 
     expect((await screen.findAllByText("输出预算")).length).toBeGreaterThan(0)
     expect(screen.getAllByText("10.0k/10.0k").length).toBeGreaterThan(0)
-    expect(screen.getByText("预算用量")).toBeTruthy()
+    expect(screen.getAllByText("预算用量").length).toBeGreaterThan(0)
   })
 
   it("confirms before cancelling a workflow run", async () => {

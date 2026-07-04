@@ -4287,6 +4287,7 @@ function BackgroundJobsSection({
 
 const WORKFLOW_RUN_PREVIEW = 6
 const WORKFLOW_EVENT_PREVIEW = 4
+const WORKFLOW_OVERVIEW_EVENT_PREVIEW = 5
 const WORKFLOW_OP_PREVIEW = 6
 const WORKFLOW_FOCUS_OP_PREVIEW = 4
 
@@ -5023,6 +5024,76 @@ function workflowEventNeedsAttention(event: WorkflowEvent): boolean {
   )
 }
 
+const WORKFLOW_OVERVIEW_EVENT_TYPES = new Set([
+  "run_created",
+  "run_state_changed",
+  "run_recovery_claimed",
+  "run_worktree_attached",
+  "script_permission_preview",
+  "script_permission_preview_blocked",
+  "script_permission_approval_required",
+  "budget_usage",
+  "guarded_repair_validation_failed",
+  "guarded_repair_validation_passed",
+  "run_derived_from",
+  "run_derived_child_created",
+])
+
+function workflowOverviewEvents(events: WorkflowEvent[]): WorkflowEvent[] {
+  const important = events
+    .filter(
+      (event) =>
+        workflowEventNeedsAttention(event) || WORKFLOW_OVERVIEW_EVENT_TYPES.has(event.eventType),
+    )
+    .slice(-WORKFLOW_OVERVIEW_EVENT_PREVIEW)
+  if (important.length > 0) return important
+  return events
+    .filter((event) => event.eventType !== "trace")
+    .slice(-Math.min(3, WORKFLOW_OVERVIEW_EVENT_PREVIEW))
+}
+
+function workflowEventTone(event: WorkflowEvent): StatusTone {
+  const payload = asRecord(event.payload)
+  const to = stringField(payload, "to")
+  if (
+    event.eventType === "op_failed" ||
+    event.eventType === "guarded_repair_validation_failed" ||
+    event.eventType === "script_permission_preview_blocked" ||
+    to === "failed" ||
+    to === "blocked"
+  ) {
+    return "danger"
+  }
+  if (
+    event.eventType === "script_permission_approval_required" ||
+    event.eventType === "budget_usage" ||
+    to === "awaiting_approval" ||
+    to === "awaiting_user"
+  ) {
+    return "warn"
+  }
+  if (
+    event.eventType === "op_completed" ||
+    event.eventType === "guarded_repair_validation_passed" ||
+    to === "completed"
+  ) {
+    return "good"
+  }
+  if (
+    event.eventType === "run_recovery_claimed" ||
+    event.eventType === "run_worktree_attached" ||
+    event.eventType === "run_derived_from" ||
+    event.eventType === "run_derived_child_created" ||
+    event.eventType === "op_started" ||
+    event.eventType === "script_permission_preview" ||
+    to === "running" ||
+    to === "recovering"
+  ) {
+    return "info"
+  }
+  return "muted"
+}
+
 function workflowEventTitle(
   t: ReturnType<typeof useTranslation>["t"],
   event: WorkflowEvent,
@@ -5035,6 +5106,8 @@ function workflowEventTitle(
       return t("workspace.workflow.eventRunStateChanged", "状态已更新")
     case "run_recovery_claimed":
       return t("workspace.workflow.eventRecoveryClaimed", "恢复接管")
+    case "run_worktree_attached":
+      return t("workspace.workflow.eventWorktreeAttached", "运行位置已绑定")
     case "script_permission_preview":
       return t("workspace.workflow.eventPermissionPreview", "权限预览")
     case "script_permission_preview_blocked":
@@ -5085,6 +5158,12 @@ function workflowEventDetail(
     case "script_permission_preview_blocked":
     case "script_permission_approval_required":
       return workflowPermissionSummaryText(t, asRecord(payload?.summary))
+    case "run_worktree_attached": {
+      const worktreeId = stringField(payload, "worktreeId")
+      const path = stringField(payload, "path")
+      const state = stringField(payload, "state")
+      return [worktreeId, path ? basename(path) : null, state].filter(Boolean).join(" · ")
+    }
     case "budget_usage": {
       const spent = numberField(payload, "spentOutputTokens")
       const limit = numberField(payload, "maxOutputTokens")
@@ -8562,6 +8641,7 @@ function WorkflowRunOverview({
 
       <WorkflowRunFocusCard run={run} snapshot={snapshot} onSelectDetailTab={onSelectDetailTab} />
       {worktreeInfo ? <WorkflowRunWorktreeCard info={worktreeInfo} /> : null}
+      <WorkflowRunTimelineCard snapshot={snapshot} />
       <WorkflowApprovalPreview snapshot={snapshot} />
       <WorkflowRecoveryHint
         run={run}
@@ -8579,6 +8659,74 @@ function WorkflowMetric({ label, value }: { label: string; value: string }) {
       <div className="truncate font-medium text-foreground/85">{value}</div>
       <div className="truncate text-muted-foreground/70">{label}</div>
     </div>
+  )
+}
+
+const WORKFLOW_TIMELINE_DOT_CLASS: Record<StatusTone, string> = {
+  muted: "bg-muted-foreground/45",
+  good: "bg-emerald-500",
+  warn: "bg-amber-500",
+  danger: "bg-destructive",
+  info: "bg-blue-500",
+}
+
+function WorkflowRunTimelineCard({ snapshot }: { snapshot: WorkflowRunSnapshot | null }) {
+  const { t } = useTranslation()
+  const events = workflowOverviewEvents(snapshot?.events ?? [])
+  if (events.length === 0) return null
+
+  return (
+    <div className="rounded-md border border-border/55 bg-secondary/20 p-2">
+      <div className="mb-1.5 flex min-w-0 items-center gap-2">
+        <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/90">
+          {t("workspace.workflow.runTimeline", "运行时间线")}
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/70">
+          {t("workspace.workflow.recentEventCount", "最近 {{count}} 条", {
+            count: events.length,
+          })}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {events.map((event) => (
+          <WorkflowRunTimelineRow key={event.id} event={event} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function WorkflowRunTimelineRow({ event }: { event: WorkflowEvent }) {
+  const { t } = useTranslation()
+  const title = workflowEventTitle(t, event)
+  const detail = workflowEventDetail(t, event)
+  const tone = workflowEventTone(event)
+  return (
+    <IconTip label={compactJson(event.payload, event.eventType)}>
+      <div className="flex min-w-0 items-start gap-2 rounded-md px-1.5 py-1 text-[11px] hover:bg-background/45">
+        <span
+          className={cn(
+            "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+            WORKFLOW_TIMELINE_DOT_CLASS[tone],
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+              #{event.seq}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-foreground/85">{title}</span>
+            <span className="max-w-[34%] shrink-0 truncate text-[10px] text-muted-foreground/65">
+              {formatMessageTime(event.createdAt)}
+            </span>
+          </div>
+          {detail ? (
+            <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">{detail}</div>
+          ) : null}
+        </div>
+      </div>
+    </IconTip>
   )
 }
 
