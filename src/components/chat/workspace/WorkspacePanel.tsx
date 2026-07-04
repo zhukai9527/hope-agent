@@ -1846,10 +1846,38 @@ function contextCandidateEvidenceInput(
   }
 }
 
+function contextCandidateConflictEvidenceInput(
+  candidate: ContextCandidate,
+  sessionId: string,
+): RecordDomainEvidenceInput {
+  return {
+    sessionId,
+    domain: contextCandidateDomain(candidate),
+    evidenceType: "claim_checked",
+    title: `冲突待复核：${candidate.title}`,
+    summary: candidate.subtitle ?? candidate.reasons[0] ?? null,
+    sourceMetadata: {
+      ...contextCandidateSourceMetadata(candidate),
+      action: "mark_conflict",
+      verdict: "conflict",
+      conflict: true,
+      requiresUserReview: true,
+    },
+    confidence: contextCandidateNumberMetadata(candidate, "confidence"),
+    accessScope: contextCandidateAccessScope(candidate),
+    redactionStatus: contextCandidateRedactionStatus(candidate),
+  }
+}
+
 function contextCanAddEvidence(candidate: ContextCandidate): boolean {
   const actions = contextDomainActions(candidate)
   if (!actions?.canAddEvidence) return false
   return contextCandidateStringMetadata(candidate, "origin") !== "domain_evidence"
+}
+
+function contextCanMarkConflict(candidate: ContextCandidate): boolean {
+  const actions = contextDomainActions(candidate)
+  return Boolean(actions?.canMarkConflict)
 }
 
 function contextCanCreateTask(candidate: ContextCandidate): boolean {
@@ -1880,6 +1908,7 @@ function DomainContextActionChips({
   disabled,
   actionKey,
   onAddEvidence,
+  onMarkConflict,
   onCreateTask,
 }: {
   candidate: ContextCandidate
@@ -1887,6 +1916,7 @@ function DomainContextActionChips({
   disabled?: boolean
   actionKey?: string | null
   onAddEvidence?: (candidate: ContextCandidate) => void
+  onMarkConflict?: (candidate: ContextCandidate) => void
   onCreateTask?: (candidate: ContextCandidate) => void
 }) {
   const { t } = useTranslation()
@@ -1895,13 +1925,17 @@ function DomainContextActionChips({
   const chips: string[] = []
   if (actions.canSummarize) chips.push(t("workspace.context.actionSummarize", "摘要"))
   if (actions.canAskUser) chips.push(t("workspace.context.actionAsk", "确认"))
-  if (actions.canMarkConflict) chips.push(t("workspace.context.actionConflict", "冲突"))
   const canCite = Boolean(actions.canCite)
   const canAddEvidence = contextCanAddEvidence(candidate)
+  const canMarkConflict = contextCanMarkConflict(candidate)
   const canCreateTask = contextCanCreateTask(candidate)
-  if (!canCite && !canAddEvidence && !canCreateTask && chips.length === 0) return null
+  if (!canCite && !canAddEvidence && !canMarkConflict && !canCreateTask && chips.length === 0) {
+    return null
+  }
   const evidenceKey = `${candidate.id}:evidence`
   const evidenceBusy = actionKey === evidenceKey
+  const conflictKey = `${candidate.id}:conflict`
+  const conflictBusy = actionKey === conflictKey
   const taskKey = `${candidate.id}:task`
   const taskBusy = actionKey === taskKey
 
@@ -1946,6 +1980,24 @@ function DomainContextActionChips({
           <span>{t("workspace.context.actionEvidence", "证据")}</span>
         </button>
       ) : null}
+      {canMarkConflict ? (
+        <button
+          type="button"
+          disabled={disabled || !sessionId || !onMarkConflict || Boolean(actionKey)}
+          onClick={(event) => {
+            event.stopPropagation()
+            onMarkConflict?.(candidate)
+          }}
+          className="inline-flex h-5 items-center gap-1 rounded border border-border/50 bg-background/55 px-1.5 text-[10px] text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          {conflictBusy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <ShieldAlert className="h-3 w-3" />
+          )}
+          <span>{t("workspace.context.actionConflict", "冲突")}</span>
+        </button>
+      ) : null}
       {canCreateTask ? (
         <button
           type="button"
@@ -1984,6 +2036,7 @@ function ContextFileCandidateRow({
   actionsDisabled,
   onAction,
   onAddEvidence,
+  onMarkConflict,
   onCreateTask,
 }: {
   candidate: ContextCandidate
@@ -1993,6 +2046,7 @@ function ContextFileCandidateRow({
   actionsDisabled?: boolean
   onAction?: (candidate: ContextCandidate, action: ContextFocusedAction) => void
   onAddEvidence?: (candidate: ContextCandidate) => void
+  onMarkConflict?: (candidate: ContextCandidate) => void
   onCreateTask?: (candidate: ContextCandidate) => void
 }) {
   const { t } = useTranslation()
@@ -2044,6 +2098,7 @@ function ContextFileCandidateRow({
               disabled={actionsDisabled}
               actionKey={actionKey}
               onAddEvidence={onAddEvidence}
+              onMarkConflict={onMarkConflict}
               onCreateTask={onCreateTask}
             />
           </div>
@@ -2067,6 +2122,7 @@ function ContextGenericCandidateRow({
   actionKey,
   actionsDisabled,
   onAddEvidence,
+  onMarkConflict,
   onCreateTask,
 }: {
   candidate: ContextCandidate
@@ -2074,6 +2130,7 @@ function ContextGenericCandidateRow({
   actionKey?: string | null
   actionsDisabled?: boolean
   onAddEvidence?: (candidate: ContextCandidate) => void
+  onMarkConflict?: (candidate: ContextCandidate) => void
   onCreateTask?: (candidate: ContextCandidate) => void
 }) {
   const { t } = useTranslation()
@@ -2105,6 +2162,7 @@ function ContextGenericCandidateRow({
           disabled={actionsDisabled}
           actionKey={actionKey}
           onAddEvidence={onAddEvidence}
+          onMarkConflict={onMarkConflict}
           onCreateTask={onCreateTask}
         />
       </div>
@@ -2222,6 +2280,38 @@ function ContextRetrievalSection({
           "ui",
           "ContextRetrievalSection",
           "Record context candidate evidence failed",
+          e,
+        )
+        toast.error(message)
+      } finally {
+        setContextActionKey(null)
+      }
+    },
+    [disabled, onDomainEvidenceRecorded, refresh, sessionId, t],
+  )
+
+  const markContextCandidateConflict = useCallback(
+    async (candidate: ContextCandidate) => {
+      if (!sessionId || disabled || !contextCanMarkConflict(candidate)) return
+      const actionKey = `${candidate.id}:conflict`
+      setContextActionKey(actionKey)
+      try {
+        const item = await getTransport().call<DomainEvidenceItem>("record_domain_evidence", {
+          input: contextCandidateConflictEvidenceInput(candidate, sessionId),
+        })
+        toast.warning(
+          t("workspace.context.conflictRecorded", "已标记冲突：{{title}}", {
+            title: item.title,
+          }),
+        )
+        refresh()
+        onDomainEvidenceRecorded?.()
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        logger.error(
+          "ui",
+          "ContextRetrievalSection",
+          "Mark context candidate conflict failed",
           e,
         )
         toast.error(message)
@@ -2417,6 +2507,7 @@ function ContextRetrievalSection({
                   actionsDisabled={disabled || Boolean(contextActionKey)}
                   onAction={runFocusedContextAction}
                   onAddEvidence={recordContextCandidateEvidence}
+                  onMarkConflict={markContextCandidateConflict}
                   onCreateTask={createContextCandidateTask}
                 />
               ) : (
@@ -2427,6 +2518,7 @@ function ContextRetrievalSection({
                   actionKey={contextActionKey}
                   actionsDisabled={disabled || Boolean(contextActionKey)}
                   onAddEvidence={recordContextCandidateEvidence}
+                  onMarkConflict={markContextCandidateConflict}
                   onCreateTask={createContextCandidateTask}
                 />
               ),
