@@ -12,15 +12,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
+use crate::agent_loader::DEFAULT_AGENT_ID;
+use crate::chat_engine::{self, ChatEngineParams, ChatSource, NoopEventSink};
+use crate::context_compact::CompactConfig;
 use crate::domain_quality::{
     DomainQualityCheckStatus, DomainQualityRunSnapshot, DomainQualityRunState,
     RunDomainQualityInput,
 };
 use crate::domain_workflow::{ListDomainEvidenceInput, RecordDomainEvidenceInput};
-use crate::session::SessionDB;
+use crate::provider::{ActiveModel, ProviderConfig};
+use crate::session::{MessageRole, NewMessage, SessionDB};
 use crate::util::now_rfc3339;
 use crate::workflow::CreateWorkflowRunInput;
+use crate::workflow_mode::WorkflowMode;
 
 const DEFAULT_WINDOW_DAYS: u32 = 30;
 const MAX_WINDOW_DAYS: u32 = 180;
@@ -198,6 +205,8 @@ pub struct DomainEvalFixture {
     #[serde(default)]
     pub quality: Option<DomainEvalFixtureQuality>,
     #[serde(default)]
+    pub execution: DomainEvalFixtureExecution,
+    #[serde(default)]
     pub checks: DomainEvalFixtureChecks,
 }
 
@@ -271,6 +280,51 @@ impl Default for DomainEvalFixtureQuality {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalFixtureExecution {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_text: Option<String>,
+    #[serde(default)]
+    pub providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub model_chain: Vec<ActiveModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_config: Option<CompactConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_system_context: Option<String>,
+    #[serde(default)]
+    pub denied_tools: Vec<String>,
+    #[serde(default)]
+    pub auto_approve_tools: bool,
+    #[serde(default = "default_agent_fixture_workflow_mode")]
+    pub workflow_mode: String,
+}
+
+impl Default for DomainEvalFixtureExecution {
+    fn default() -> Self {
+        Self {
+            prompt: None,
+            agent_id: None,
+            display_text: None,
+            providers: Vec::new(),
+            model_chain: Vec::new(),
+            compact_config: None,
+            reasoning_effort: None,
+            extra_system_context: None,
+            denied_tools: Vec::new(),
+            auto_approve_tools: false,
+            workflow_mode: default_agent_fixture_workflow_mode(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DomainEvalFixtureChecks {
@@ -282,6 +336,18 @@ pub struct DomainEvalFixtureChecks {
     pub expected_passed_checks: Vec<String>,
     #[serde(default)]
     pub expected_failed_checks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_execution_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_turn: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_tool_calls: Option<usize>,
+    #[serde(default)]
+    pub expected_tool_calls: Vec<String>,
+    #[serde(default)]
+    pub response_contains: Vec<String>,
+    #[serde(default)]
+    pub error_contains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,10 +366,32 @@ pub struct DomainEvalFixtureReport {
     pub quality_run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_run: Option<DomainEvalRunRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<DomainEvalFixtureExecutionReport>,
     #[serde(default)]
     pub checks: Vec<DomainEvalFixtureCheck>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainEvalFixtureExecutionReport {
+    pub mode: String,
+    pub status: String,
+    pub prompt: String,
+    pub agent_id: String,
+    pub workflow_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_used: Option<ActiveModel>,
+    #[serde(default)]
+    pub tool_calls: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -679,8 +767,8 @@ impl SessionDB {
             .ok_or_else(|| anyhow!("domain eval run vanished after insert: {id}"))
     }
 
-    pub fn run_domain_eval_fixture(
-        &self,
+    pub async fn run_domain_eval_fixture(
+        db: Arc<Self>,
         input: RunDomainEvalFixtureInput,
     ) -> Result<DomainEvalFixtureReport> {
         let fixture = input.fixture;
@@ -693,10 +781,10 @@ impl SessionDB {
         let task_id = non_empty(&fixture.task_id)
             .ok_or_else(|| anyhow!("fixture.task_id is required"))?
             .to_string();
-        let task = self
+        let task = db
             .resolve_domain_eval_task(&task_id)?
             .ok_or_else(|| anyhow!("domain eval task not found: {task_id}"))?;
-        let session = self.create_session(crate::agent_loader::DEFAULT_AGENT_ID)?;
+        let session = db.create_session(DEFAULT_AGENT_ID)?;
         let mut report = DomainEvalFixtureReport {
             name: name.clone(),
             execution_mode: execution_mode.clone(),
@@ -707,20 +795,21 @@ impl SessionDB {
             workflow_run_id: None,
             quality_run_id: None,
             eval_run: None,
+            execution: None,
             checks: Vec::new(),
             error: None,
         };
 
-        if execution_mode != "trace_fixture" {
+        if !matches!(execution_mode.as_str(), "trace_fixture" | "agent") {
             report.error = Some(format!(
-                "unsupported domain eval fixture execution mode {execution_mode:?}; expected trace_fixture"
+                "unsupported domain eval fixture execution mode {execution_mode:?}; expected trace_fixture or agent"
             ));
             report.checks.push(DomainEvalFixtureCheck {
                 name: "execution_mode".to_string(),
                 status: "failed".to_string(),
-                expected: "trace_fixture".to_string(),
+                expected: "trace_fixture or agent".to_string(),
                 actual: execution_mode,
-                detail: "Agent-backed domain fixture execution is intentionally not reported as passing until provider/model execution is wired.".to_string(),
+                detail: "Domain eval fixtures only support deterministic trace replay or explicit agent-backed execution.".to_string(),
             });
             return Ok(report);
         }
@@ -731,7 +820,7 @@ impl SessionDB {
             .and_then(non_empty)
             .map(normalize_domain)
             .unwrap_or_else(|| task.domain.clone());
-        let goal = self.create_goal(crate::goal::CreateGoalInput {
+        let goal = db.create_goal(crate::goal::CreateGoalInput {
             session_id: session.id.clone(),
             objective: fixture
                 .goal
@@ -766,35 +855,56 @@ impl SessionDB {
         })?;
         report.goal_id = Some(goal.goal.id.clone());
 
-        for evidence in &fixture.evidence {
-            self.record_domain_evidence(RecordDomainEvidenceInput {
-                goal_id: Some(goal.goal.id.clone()),
-                session_id: Some(session.id.clone()),
-                project_id: session.project_id.clone(),
-                domain: domain.clone(),
-                evidence_type: evidence.evidence_type.clone(),
-                title: evidence.title.clone(),
-                summary: evidence.summary.clone(),
-                source_metadata: evidence.source_metadata.clone(),
-                confidence: evidence.confidence.or(Some(0.95)),
-                access_scope: Some("fixture".to_string()),
-                redaction_status: Some("not_required".to_string()),
-            })?;
+        if execution_mode == "agent" {
+            let execution =
+                run_domain_eval_agent_execution(db.clone(), &session.id, &task, &fixture).await?;
+            let execution_failed = execution.status != "completed";
+            report.execution = Some(execution);
+            if execution_failed {
+                report.checks =
+                    domain_eval_fixture_checks(&fixture.checks, None, &report.execution);
+                report.error = report
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.error.clone())
+                    .or_else(|| Some("agent execution failed".to_string()));
+                report.status = "failed".to_string();
+                report.passed = false;
+                return Ok(report);
+            }
         }
 
-        if let Some(workflow) = fixture.workflow.clone() {
-            let run = self.create_workflow_run(CreateWorkflowRunInput {
-                session_id: session.id.clone(),
-                kind: workflow.kind,
-                execution_mode: workflow.execution_mode,
-                script_source: workflow.script_source,
-                budget: json!({ "fixture": name }),
-                parent_run_id: None,
-                origin: Some("domain_eval_fixture".to_string()),
-                goal_id: Some(goal.goal.id.clone()),
-                worktree_id: None,
-            })?;
-            report.workflow_run_id = Some(run.id);
+        if execution_mode == "trace_fixture" {
+            for evidence in &fixture.evidence {
+                db.record_domain_evidence(RecordDomainEvidenceInput {
+                    goal_id: Some(goal.goal.id.clone()),
+                    session_id: Some(session.id.clone()),
+                    project_id: session.project_id.clone(),
+                    domain: domain.clone(),
+                    evidence_type: evidence.evidence_type.clone(),
+                    title: evidence.title.clone(),
+                    summary: evidence.summary.clone(),
+                    source_metadata: evidence.source_metadata.clone(),
+                    confidence: evidence.confidence.or(Some(0.95)),
+                    access_scope: Some("fixture".to_string()),
+                    redaction_status: Some("not_required".to_string()),
+                })?;
+            }
+
+            if let Some(workflow) = fixture.workflow.clone() {
+                let run = db.create_workflow_run(CreateWorkflowRunInput {
+                    session_id: session.id.clone(),
+                    kind: workflow.kind,
+                    execution_mode: workflow.execution_mode,
+                    script_source: workflow.script_source,
+                    budget: json!({ "fixture": name }),
+                    parent_run_id: None,
+                    origin: Some("domain_eval_fixture".to_string()),
+                    goal_id: Some(goal.goal.id.clone()),
+                    worktree_id: None,
+                })?;
+                report.workflow_run_id = Some(run.id);
+            }
         }
 
         let source_quality_run_id = if fixture
@@ -803,8 +913,8 @@ impl SessionDB {
             .map(|quality| quality.run)
             .unwrap_or(true)
         {
-            let quality = fixture.quality.unwrap_or_default();
-            let snapshot = self.run_domain_quality_for_session(RunDomainQualityInput {
+            let quality = fixture.quality.clone().unwrap_or_default();
+            let snapshot = db.run_domain_quality_for_session(RunDomainQualityInput {
                 session_id: session.id.clone(),
                 goal_id: Some(goal.goal.id.clone()),
                 domain: Some(domain),
@@ -823,13 +933,14 @@ impl SessionDB {
             None
         };
 
-        let eval_run = self.run_domain_eval_task(RunDomainEvalTaskInput {
+        let eval_run = db.run_domain_eval_task(RunDomainEvalTaskInput {
             session_id: session.id.clone(),
             task_id: task.id,
             label: fixture.label.clone().or_else(|| Some(name.clone())),
             source_quality_run_id,
         })?;
-        report.checks = domain_eval_fixture_checks(&fixture.checks, &eval_run);
+        report.checks =
+            domain_eval_fixture_checks(&fixture.checks, Some(&eval_run), &report.execution);
         let passed = report.checks.iter().all(|check| check.status == "passed");
         report.status = if passed { "passed" } else { "failed" }.to_string();
         report.passed = passed;
@@ -1914,11 +2025,335 @@ fn row_to_domain_eval_calibration(
     })
 }
 
+async fn run_domain_eval_agent_execution(
+    db: Arc<SessionDB>,
+    session_id: &str,
+    task: &DomainEvalTask,
+    fixture: &DomainEvalFixture,
+) -> Result<DomainEvalFixtureExecutionReport> {
+    let execution = &fixture.execution;
+    let prompt = execution
+        .prompt
+        .clone()
+        .or_else(|| fixture.goal.objective.clone())
+        .unwrap_or_else(|| task.input.prompt.clone());
+    let agent_id = execution
+        .agent_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_AGENT_ID.to_string());
+    let workflow_mode = match WorkflowMode::from_str(&execution.workflow_mode) {
+        Some(mode) => mode,
+        None => {
+            return Ok(domain_eval_agent_execution_failed(
+                "agent",
+                prompt,
+                agent_id,
+                execution.workflow_mode.clone(),
+                format!(
+                    "unsupported domain eval fixture workflowMode {:?}; expected off, on, or ultracode",
+                    execution.workflow_mode
+                ),
+                None,
+            ));
+        }
+    };
+    let workflow_mode_label = workflow_mode.as_str().to_string();
+
+    if prompt.trim().is_empty() {
+        return Ok(domain_eval_agent_execution_failed(
+            "agent",
+            prompt,
+            agent_id,
+            workflow_mode_label,
+            "agent execution requires a task prompt".to_string(),
+            None,
+        ));
+    }
+    if execution.providers.is_empty() || execution.model_chain.is_empty() {
+        return Ok(domain_eval_agent_execution_failed(
+            "agent",
+            prompt,
+            agent_id,
+            workflow_mode_label,
+            "agent execution requires providers and modelChain in the fixture".to_string(),
+            None,
+        ));
+    }
+
+    db.update_session_workflow_mode(session_id, workflow_mode)?;
+    let user_message_id = db
+        .append_message(
+            session_id,
+            &NewMessage::user(&prompt).with_source(ChatSource::Http),
+        )
+        .ok();
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    db.create_chat_turn_with_id(
+        &turn_id,
+        session_id,
+        ChatSource::Http.as_str(),
+        None,
+        user_message_id,
+    )?;
+
+    let params = ChatEngineParams {
+        session_id: session_id.to_string(),
+        agent_id: agent_id.clone(),
+        turn_id: Some(turn_id.clone()),
+        message: prompt.clone(),
+        display_text: execution.display_text.clone(),
+        attachments: Vec::new(),
+        session_db: db.clone(),
+        model_chain: execution.model_chain.clone(),
+        providers: execution.providers.clone(),
+        codex_token: None,
+        resolved_temperature: None,
+        compact_config: execution.compact_config.clone().unwrap_or_default(),
+        extra_system_context: Some(domain_eval_fixture_execution_context(
+            fixture,
+            task,
+            execution.extra_system_context.as_deref(),
+        )),
+        reasoning_effort: execution
+            .reasoning_effort
+            .clone()
+            .or_else(|| Some("none".to_string())),
+        cancel: Arc::new(AtomicBool::new(false)),
+        plan_context_override: Some(crate::agent::PlanResolvedContext::off()),
+        skill_allowed_tools: Vec::new(),
+        denied_tools: execution.denied_tools.clone(),
+        tool_scope: None,
+        subagent_depth: 0,
+        steer_run_id: None,
+        auto_approve_tools: execution.auto_approve_tools,
+        follow_global_reasoning_effort: false,
+        post_turn_effects: false,
+        abort_on_cancel: false,
+        persist_final_error_event: true,
+        source: ChatSource::Http,
+        origin_source: None,
+        channel_kb_context: None,
+        event_sink: Arc::new(NoopEventSink),
+    };
+
+    let result = chat_engine::run_chat_engine(params).await;
+    let tool_calls = domain_eval_execution_tool_calls(&db, session_id)?;
+    match result {
+        Ok(result) => Ok(DomainEvalFixtureExecutionReport {
+            mode: "agent".to_string(),
+            status: "completed".to_string(),
+            prompt,
+            agent_id,
+            workflow_mode: workflow_mode_label,
+            turn_id: Some(turn_id),
+            response: Some(result.response),
+            error: None,
+            model_used: result.model_used,
+            tool_calls,
+        }),
+        Err(err) => Ok(DomainEvalFixtureExecutionReport {
+            mode: "agent".to_string(),
+            status: "failed".to_string(),
+            prompt,
+            agent_id,
+            workflow_mode: workflow_mode_label,
+            turn_id: Some(turn_id),
+            response: None,
+            error: Some(err),
+            model_used: None,
+            tool_calls,
+        }),
+    }
+}
+
+fn domain_eval_agent_execution_failed(
+    mode: &str,
+    prompt: String,
+    agent_id: String,
+    workflow_mode: String,
+    error: String,
+    turn_id: Option<String>,
+) -> DomainEvalFixtureExecutionReport {
+    DomainEvalFixtureExecutionReport {
+        mode: mode.to_string(),
+        status: "failed".to_string(),
+        prompt,
+        agent_id,
+        workflow_mode,
+        turn_id,
+        response: None,
+        error: Some(error),
+        model_used: None,
+        tool_calls: Vec::new(),
+    }
+}
+
+fn domain_eval_fixture_execution_context(
+    fixture: &DomainEvalFixture,
+    task: &DomainEvalTask,
+    extra: Option<&str>,
+) -> String {
+    let required_evidence = task
+        .required_evidence
+        .iter()
+        .map(|req| {
+            format!(
+                "- {}: {} (min {}, metadata: {})",
+                req.evidence_type,
+                req.title,
+                req.min_count,
+                if req.metadata_keys.is_empty() {
+                    "none".to_string()
+                } else {
+                    req.metadata_keys.join(", ")
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let success_criteria = task
+        .success_criteria
+        .iter()
+        .map(|item| format!("- {item}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut context = format!(
+        "# Domain Eval Fixture Execution\n\nFixture: {}\nTask: {} ({})\nDomain: {}\n\nUse this turn to produce real trace evidence for the domain task. Workflow Mode may be enabled for autonomous dynamic orchestration; use durable workflow/evidence tools when they make the work more observable, controllable, or recoverable.\n\n## Required Evidence\n{}\n\n## Success Criteria\n{}\n",
+        fixture.name,
+        task.id,
+        task.task_type,
+        task.domain,
+        if required_evidence.is_empty() {
+            "- No explicit required evidence.".to_string()
+        } else {
+            required_evidence
+        },
+        if success_criteria.is_empty() {
+            "- No explicit success criteria.".to_string()
+        } else {
+            success_criteria
+        }
+    );
+    if let Some(extra) = extra.and_then(non_empty) {
+        context.push_str("\n## Additional Fixture Context\n");
+        context.push_str(extra);
+        context.push('\n');
+    }
+    context
+}
+
+fn domain_eval_execution_tool_calls(db: &SessionDB, session_id: &str) -> Result<Vec<String>> {
+    Ok(db
+        .load_session_messages(session_id)?
+        .into_iter()
+        .filter(|message| message.role == MessageRole::Tool)
+        .filter_map(|message| message.tool_name)
+        .collect())
+}
+
 fn domain_eval_fixture_checks(
     checks: &DomainEvalFixtureChecks,
-    run: &DomainEvalRunRecord,
+    run: Option<&DomainEvalRunRecord>,
+    execution: &Option<DomainEvalFixtureExecutionReport>,
 ) -> Vec<DomainEvalFixtureCheck> {
     let mut out = Vec::new();
+    if let Some(execution) = execution {
+        push_fixture_check(
+            &mut out,
+            "agent_execution_completed",
+            execution.status == "completed",
+            "completed".to_string(),
+            execution.status.clone(),
+            "Agent-backed domain fixture execution must complete before scorer history is written.",
+        );
+        if let Some(expected) = checks
+            .expected_execution_status
+            .as_deref()
+            .and_then(non_empty)
+        {
+            push_fixture_check(
+                &mut out,
+                "expected_execution_status",
+                execution.status == expected,
+                expected.to_string(),
+                execution.status.clone(),
+                "Domain eval fixture expected a specific agent execution status.",
+            );
+        }
+        if let Some(require_turn) = checks.require_turn {
+            let has_turn = execution.turn_id.is_some();
+            push_fixture_check(
+                &mut out,
+                "agent_turn_created",
+                has_turn == require_turn,
+                require_turn.to_string(),
+                has_turn.to_string(),
+                "Domain eval fixture expected agent mode to create a chat turn.",
+            );
+        }
+        if let Some(min_tool_calls) = checks.min_tool_calls {
+            push_fixture_check(
+                &mut out,
+                "min_tool_calls",
+                execution.tool_calls.len() >= min_tool_calls,
+                format!("tool calls >= {min_tool_calls}"),
+                execution.tool_calls.len().to_string(),
+                "Domain eval fixture expected the agent to call tools.",
+            );
+        }
+        for name in &checks.expected_tool_calls {
+            let called = execution.tool_calls.iter().any(|tool| tool == name);
+            push_fixture_check(
+                &mut out,
+                &format!("tool_called:{name}"),
+                called,
+                "called".to_string(),
+                if called { "called" } else { "missing" }.to_string(),
+                "Domain eval fixture expected the agent to call this tool.",
+            );
+        }
+        for needle in &checks.response_contains {
+            let found = execution
+                .response
+                .as_deref()
+                .is_some_and(|response| response.contains(needle));
+            push_fixture_check(
+                &mut out,
+                "response_contains",
+                found,
+                needle.clone(),
+                execution.response.clone().unwrap_or_default(),
+                "Domain eval fixture expected the agent response to contain this text.",
+            );
+        }
+        for needle in &checks.error_contains {
+            let found = execution
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains(needle));
+            push_fixture_check(
+                &mut out,
+                "error_contains",
+                found,
+                needle.clone(),
+                execution.error.clone().unwrap_or_default(),
+                "Domain eval fixture expected the agent error to contain this text.",
+            );
+        }
+    }
+    let Some(run) = run else {
+        if out.is_empty() {
+            push_fixture_check(
+                &mut out,
+                "eval_run_created",
+                false,
+                "domain eval run created".to_string(),
+                "missing".to_string(),
+                "Fixture did not persist a domain eval run.",
+            );
+        }
+        return out;
+    };
     if let Some(expected) = checks.expected_status.as_deref().and_then(non_empty) {
         push_fixture_check(
             &mut out,
@@ -1927,6 +2362,15 @@ fn domain_eval_fixture_checks(
             expected.to_string(),
             run.status.clone(),
             "Domain eval fixture expected a specific scorer status.",
+        );
+    } else {
+        push_fixture_check(
+            &mut out,
+            "eval_status_passed",
+            run.status == "passed",
+            "passed".to_string(),
+            run.status.clone(),
+            "Domain eval fixture defaults to requiring the scorer to pass unless expectedStatus overrides it.",
         );
     }
     if let Some(min_score) = checks.min_score {
@@ -3067,6 +3511,10 @@ fn default_domain_eval_fixture_execution_mode() -> String {
     "trace_fixture".to_string()
 }
 
+fn default_agent_fixture_workflow_mode() -> String {
+    "ultracode".to_string()
+}
+
 fn default_domain_workflow_kind() -> String {
     "domain:fixture".to_string()
 }
@@ -3124,6 +3572,51 @@ mod tests {
     use super::*;
     use crate::domain_quality::RunDomainQualityInput;
     use crate::domain_workflow::RecordDomainEvidenceInput;
+    use crate::provider::{ApiType, ModelConfig, ProviderConfig};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn model_config(id: &str) -> ModelConfig {
+        ModelConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            input_types: vec!["text".to_string()],
+            context_window: 128_000,
+            max_tokens: 8192,
+            reasoning: false,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        }
+    }
+
+    fn sse_json_string(value: &str) -> String {
+        serde_json::to_string(value).expect("serialize SSE JSON string")
+    }
+
+    fn responses_sse_text(text: &str) -> String {
+        format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":{}}}\n\n\
+             data: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":1}}}}}}\n\n",
+            sse_json_string(text)
+        )
+    }
+
+    fn mock_responses_provider(
+        base_url: String,
+        provider_id: &str,
+        model_id: &str,
+    ) -> ProviderConfig {
+        let mut provider = ProviderConfig::new(
+            "Domain Eval Mock Responses".to_string(),
+            ApiType::OpenaiResponses,
+            base_url,
+            "test-key".to_string(),
+        );
+        provider.id = provider_id.to_string();
+        provider.models.push(model_config(model_id));
+        provider
+    }
 
     fn test_db() -> (tempfile::TempDir, SessionDB) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3388,11 +3881,12 @@ mod tests {
             .any(|record| record.id == calibration.id));
     }
 
-    #[test]
-    fn domain_eval_fixture_runner_scores_trace_fixture() {
+    #[tokio::test]
+    async fn domain_eval_fixture_runner_scores_trace_fixture() {
         let (_dir, db) = test_db();
-        let report = db
-            .run_domain_eval_fixture(RunDomainEvalFixtureInput {
+        let report = SessionDB::run_domain_eval_fixture(
+            Arc::new(db),
+            RunDomainEvalFixtureInput {
                 fixture: DomainEvalFixture {
                     name: "research-trace-fixture".to_string(),
                     task_id: "research-source-backed-brief".to_string(),
@@ -3456,8 +3950,10 @@ mod tests {
                     },
                     ..Default::default()
                 },
-            })
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(report.passed, "{report:?}");
         assert_eq!(report.status, "passed");
@@ -3466,24 +3962,172 @@ mod tests {
         assert!(report.workflow_run_id.is_some());
     }
 
-    #[test]
-    fn domain_eval_fixture_runner_does_not_fake_agent_mode() {
+    #[tokio::test]
+    async fn domain_eval_fixture_agent_mode_requires_provider_config() {
         let (_dir, db) = test_db();
-        let report = db
-            .run_domain_eval_fixture(RunDomainEvalFixtureInput {
+        let report = SessionDB::run_domain_eval_fixture(
+            Arc::new(db),
+            RunDomainEvalFixtureInput {
                 fixture: DomainEvalFixture {
-                    name: "agent-not-wired".to_string(),
+                    name: "agent-requires-provider-config".to_string(),
                     task_id: "research-source-backed-brief".to_string(),
                     execution_mode: "agent".to_string(),
+                    checks: DomainEvalFixtureChecks {
+                        expected_execution_status: Some("failed".to_string()),
+                        error_contains: vec!["requires providers and modelChain".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-            })
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         assert!(!report.passed);
         assert_eq!(report.status, "failed");
         assert!(report.eval_run.is_none());
-        assert!(report.error.unwrap().contains("unsupported"));
+        assert!(report.execution.is_some());
+        assert!(report
+            .error
+            .unwrap()
+            .contains("requires providers and modelChain"));
+    }
+
+    #[tokio::test]
+    async fn domain_eval_fixture_agent_mode_calls_chat_engine_and_records_turn() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(responses_sse_text("domain agent execution completed")),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_responses_provider(
+            server.uri(),
+            "domain-eval-mock-provider",
+            "mock-domain-model",
+        );
+        let (_dir, db) = test_db();
+        let db = Arc::new(db);
+        let report = SessionDB::run_domain_eval_fixture(
+            db.clone(),
+            RunDomainEvalFixtureInput {
+                fixture: DomainEvalFixture {
+                    name: "agent-execution-domain-fixture".to_string(),
+                    task_id: "research-source-backed-brief".to_string(),
+                    execution_mode: "agent".to_string(),
+                    execution: DomainEvalFixtureExecution {
+                        prompt: Some("Say the domain eval agent runner completed.".to_string()),
+                        providers: vec![provider],
+                        model_chain: vec![ActiveModel {
+                            provider_id: "domain-eval-mock-provider".to_string(),
+                            model_id: "mock-domain-model".to_string(),
+                        }],
+                        ..Default::default()
+                    },
+                    quality: Some(DomainEvalFixtureQuality {
+                        run: false,
+                        ..Default::default()
+                    }),
+                    checks: DomainEvalFixtureChecks {
+                        expected_execution_status: Some("completed".to_string()),
+                        require_turn: Some(true),
+                        expected_status: Some("failed".to_string()),
+                        response_contains: vec!["domain agent execution completed".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.passed, "{report:?}");
+        assert_eq!(report.status, "passed");
+        assert!(report.eval_run.is_some());
+        let execution = report.execution.expect("execution report");
+        assert_eq!(execution.status, "completed");
+        assert!(execution.turn_id.is_some());
+        assert_eq!(
+            execution.response.as_deref(),
+            Some("domain agent execution completed")
+        );
+        assert_eq!(
+            db.get_session_workflow_mode(&report.session_id).unwrap(),
+            Some(WorkflowMode::Ultracode)
+        );
+    }
+
+    #[tokio::test]
+    async fn domain_eval_fixture_agent_mode_does_not_materialize_trace_seed() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(responses_sse_text("agent completed without tools")),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_responses_provider(
+            server.uri(),
+            "domain-eval-seed-provider",
+            "mock-domain-model",
+        );
+        let (_dir, db) = test_db();
+        let report = SessionDB::run_domain_eval_fixture(
+            Arc::new(db),
+            RunDomainEvalFixtureInput {
+                fixture: DomainEvalFixture {
+                    name: "agent-seed-evidence-is-not-auto-recorded".to_string(),
+                    task_id: "research-source-backed-brief".to_string(),
+                    execution_mode: "agent".to_string(),
+                    execution: DomainEvalFixtureExecution {
+                        prompt: Some("Complete without recording domain evidence.".to_string()),
+                        providers: vec![provider],
+                        model_chain: vec![ActiveModel {
+                            provider_id: "domain-eval-seed-provider".to_string(),
+                            model_id: "mock-domain-model".to_string(),
+                        }],
+                        ..Default::default()
+                    },
+                    evidence: vec![DomainEvalFixtureEvidence {
+                        evidence_type: "source_cited".to_string(),
+                        title: "Trace seed that must not count in agent mode".to_string(),
+                        source_metadata: json!({"uri": "https://example.com/seed", "retrievedAt": "2026-07-04"}),
+                        ..Default::default()
+                    }],
+                    workflow: Some(DomainEvalFixtureWorkflow::default()),
+                    quality: Some(DomainEvalFixtureQuality {
+                        run: false,
+                        ..Default::default()
+                    }),
+                    checks: DomainEvalFixtureChecks {
+                        expected_execution_status: Some("completed".to_string()),
+                        expected_status: Some("failed".to_string()),
+                        expected_failed_checks: vec!["evidence_completeness".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.passed, "{report:?}");
+        assert!(report.workflow_run_id.is_none());
+        let eval_run = report.eval_run.expect("eval run");
+        assert_eq!(eval_run.report.summary.total_evidence, 0);
+        assert_eq!(eval_run.report.summary.workflow_runs, 0);
     }
 
     #[test]

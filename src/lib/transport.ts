@@ -1041,6 +1041,7 @@ export interface DomainEvalFixture {
   evidence?: DomainEvalFixtureEvidence[];
   workflow?: DomainEvalFixtureWorkflow | null;
   quality?: DomainEvalFixtureQuality | null;
+  execution?: DomainEvalFixtureExecution;
   checks?: DomainEvalFixtureChecks;
 }
 
@@ -1072,11 +1073,31 @@ export interface DomainEvalFixtureQuality {
   explicitUserApproval?: boolean;
 }
 
+export interface DomainEvalFixtureExecution {
+  prompt?: string | null;
+  agentId?: string | null;
+  displayText?: string | null;
+  providers?: Record<string, unknown>[];
+  modelChain?: CodingEvalActiveModel[];
+  compactConfig?: Record<string, unknown> | null;
+  reasoningEffort?: string | null;
+  extraSystemContext?: string | null;
+  deniedTools?: string[];
+  autoApproveTools?: boolean;
+  workflowMode?: "off" | "on" | "ultracode" | string;
+}
+
 export interface DomainEvalFixtureChecks {
   expectedStatus?: string | null;
   minScore?: number | null;
   expectedPassedChecks?: string[];
   expectedFailedChecks?: string[];
+  expectedExecutionStatus?: string | null;
+  requireTurn?: boolean | null;
+  minToolCalls?: number | null;
+  expectedToolCalls?: string[];
+  responseContains?: string[];
+  errorContains?: string[];
 }
 
 export interface DomainEvalFixtureReport {
@@ -1089,8 +1110,22 @@ export interface DomainEvalFixtureReport {
   workflowRunId?: string | null;
   qualityRunId?: string | null;
   evalRun?: DomainEvalRunRecord | null;
+  execution?: DomainEvalFixtureExecutionReport | null;
   checks: DomainEvalFixtureCheck[];
   error?: string | null;
+}
+
+export interface DomainEvalFixtureExecutionReport {
+  mode: string;
+  status: string;
+  prompt: string;
+  agentId: string;
+  workflowMode: string;
+  turnId?: string | null;
+  response?: string | null;
+  error?: string | null;
+  modelUsed?: CodingEvalActiveModel | null;
+  toolCalls: string[];
 }
 
 export interface DomainEvalFixtureCheck {

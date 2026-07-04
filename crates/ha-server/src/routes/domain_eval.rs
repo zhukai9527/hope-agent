@@ -6,6 +6,7 @@ use ha_core::domain_eval::{
     ListDomainEvalTasksInput, RecordDomainEvalCalibrationInput, RunDomainEvalFixtureInput,
     RunDomainEvalTaskInput,
 };
+use ha_core::session::SessionDB;
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -74,7 +75,11 @@ pub async fn run_domain_eval_task(
 pub async fn run_domain_eval_fixture(
     Json(body): Json<RunDomainEvalFixtureBody>,
 ) -> Result<Json<DomainEvalFixtureReport>, AppError> {
-    Ok(Json(session_db()?.run_domain_eval_fixture(body.input)?))
+    let db = session_db()?.clone();
+    SessionDB::run_domain_eval_fixture(db, body.input)
+        .await
+        .map(Json)
+        .map_err(|err| AppError::bad_request(err.to_string()))
 }
 
 pub async fn import_domain_eval_case(

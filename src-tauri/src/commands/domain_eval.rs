@@ -6,6 +6,7 @@ use ha_core::domain_eval::{
     ListDomainEvalTasksInput, RecordDomainEvalCalibrationInput, RunDomainEvalFixtureInput,
     RunDomainEvalTaskInput,
 };
+use ha_core::session::SessionDB;
 
 #[tauri::command]
 pub async fn list_domain_eval_tasks(
@@ -34,9 +35,8 @@ pub async fn run_domain_eval_fixture(
     input: RunDomainEvalFixtureInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<DomainEvalFixtureReport, CmdError> {
-    app_state
-        .session_db
-        .run_domain_eval_fixture(input)
+    SessionDB::run_domain_eval_fixture(app_state.session_db.clone(), input)
+        .await
         .map_err(Into::into)
 }
 

@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-04
 >
-> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate、Phase 7.7 Domain Eval Calibration、Phase 7.8 Domain Eval Fixture Runner 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
+> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate、Phase 7.7 Domain Eval Calibration、Phase 7.8 Domain Eval Fixture Runner、Phase 7.9 Domain Eval Agent Fixture Execution 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
 
 ## 1. 背景
 
@@ -249,11 +249,21 @@ DomainWorkflow
 - `executionMode="trace_fixture"` 会 materialize 真实 session / Goal / Evidence / WorkflowRun / Domain Quality run，再调用 `run_domain_eval_task` 写入 `domain_eval_runs`。
 - Fixture checks 支持 expected status、最低 score、指定 scorer check 通过/失败断言。
 - 第一版仅作为 owner API / 回归测试能力，不直接挂在 Dashboard quality gate 上，避免合成 smoke 样本污染真实质量判断。
-- `agent` / 非 trace 模式当前 fail-fast，后续再接 provider/model execution，避免 deterministic trace 被误当成真实 agent 能力。
+
+### Phase 7.9 Domain Eval Agent Fixture Execution（已完成第一版）
+
+- `run_domain_eval_fixture` 已支持 `executionMode="agent"`，创建真实 user message + chat turn 并调用 `run_chat_engine`。
+- Agent fixture 必须显式传 `execution.providers` / `execution.modelChain`；owner API 不隐式读取桌面全局 provider。
+- Agent fixture 默认 `execution.workflowMode="ultracode"`，让模型能在通用任务中自主判断是否创建 durable workflow；也可显式设为 `on` / `off`。
+- `report.execution` 记录 status、turnId、response/error、modelUsed、toolCalls 和 workflowMode；checks 支持 execution status、turn、tool call、response/error 断言。
+- Agent fixture 不自动写入 `fixture.evidence` / `fixture.workflow`，避免模型未产出真实 evidence/workflow trace 时被确定性种子托过关。
+- 执行失败或缺 provider/modelChain 时不写 `domain_eval_runs`；执行完成但证据不足时仍由同一 scorer 标记 failed / insufficient_data。
+- 定向测试使用本地 mock Responses provider 覆盖真实 chat engine 路径，不访问外部网络。
 
 后续待补：
 
-- 接入真实 agent-backed fixture execution：显式传入 provider/model chain，让模型从 prompt 执行通用任务，再用同一 scorer 判分。当前非 `trace_fixture` 模式故意 fail-fast，不能被当作完成能力。
+- 建立独立 Domain Fixture / Smoke Run Center，按 `sourceType=fixture` 过滤展示，避免合成样本污染 Dashboard quality gate。
+- 批量 Domain Eval Pack / Campaign：像 Coding Gold Pack 一样可取消、可 retry、可对比 provider/model。
 
 ## 8. GUI 产品形态
 
