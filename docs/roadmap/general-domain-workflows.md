@@ -138,11 +138,8 @@ DomainWorkflow
 - Goal evidence relation 白名单扩展到通用 evidence，记录时可通过 `goal_links` 进入 Goal snapshot。
 - Evidence 支持 source metadata、confidence、access scope、redaction status。
 - Goal detail GUI 已有「领域证据」分组，展示 domain evidence 的来源、置信度、access scope、connector/account、redaction status、导出前复核提示与 workflow run/op provenance。
+- 后续 Phase 7.15 / 7.16 已把独立交付导出与真实外部连接器动作接入守门：敏感来源、待脱敏证据、用户显式批准、回滚计划和交付复核都能在 Workspace 中可见。
 - Incognito session fail-closed；goal/session 关联路径避免跨 session 伪造 evidence。
-
-后续待补：
-
-- 独立导出流程若后续产品化，需要在导出动作本身再加敏感来源确认门。
 
 验收：
 
@@ -367,7 +364,25 @@ Context retrieval candidates -> Domain context candidates
 Gold task pack -> Domain eval task pack
 ```
 
-## 11. 推荐顺序
+## 11. Phase 7 完整性审计（2026-07-04）
+
+结论：Phase 7.1-7.16 的“通用场景层第一版”已经完成，具备从 domain template、evidence、context retrieval、quality review、learning proposal、eval/gate、fixture/campaign/leaderboard、readiness、artifact export guard 到 connector action guard 的闭环。它已经不是 coding-only 能力，Research、Writing、Data Analysis、Meeting Prep、Knowledge Curation、Inbox、Project Ops 等非编程任务都能复用 Goal / Workflow / Loop / Evidence / Review / Eval / Guard 控制面。
+
+当前完成证据：
+
+- 架构文档：`domain-workflow.md` 记录 template、evidence、Artifact Export Guard、Connector Action Guard 和 owner API；`domain-quality.md` 记录领域复核；`domain-eval.md` 记录 eval / fixture / campaign / leaderboard / readiness；`context-retrieval.md` 与 `coding-improvement-loop.md` 记录上下文召回和学习闭环衔接。
+- API 接线：Tauri、HTTP、transport 均已有 domain workflow、domain evidence、artifact export guard、connector action guard、domain eval fixture、campaign、leaderboard 和 readiness gate 入口。
+- GUI 接线：Goal 创建 / 编辑、Workflow Control Center、Workspace「领域复核」、Dashboard Learning 已覆盖模板选择、证据展示、质量复核、学习提炼、Smoke Run、Campaign、Leaderboard、Readiness、交付守门和外部动作守门。
+- 权限红线：外部连接器写动作进入 strict `ExternalConnectorAction`，禁止 AllowAlways、Smart 覆盖和 auto-approve 静默旁路；真正外部动作仍必须走工具审批和连接器授权。
+- 验证证据：`cargo test -p ha-core domain_workflow --locked` 覆盖 8 个核心用例；`cargo test -p ha-core domain_eval --locked` 覆盖 15 个 eval / fixture / campaign / readiness 用例；7.16 另由 `cargo test -p ha-core connector_action --locked` 覆盖 5 个连接器守门和权限分类用例。
+
+剩余不作为 Phase 7 第一版 blocker，但仍属于“超越 Codex / Claude Code”的长期增强：
+
+- 真实外部账号的端到端演练需要在具备 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等可用测试账号后继续做，当前 worktree 主要用 deterministic / mock / fail-closed 证据覆盖。
+- GUI 仍可继续把 Sources / Evidence / Drafts / Review / Verification / Decisions 做成更完整的通用任务工作台，而不是只集中在 Workspace「领域复核」和 Dashboard Learning。
+- 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据，当前已有 durable run、cancel、retry、readiness、guard 和 history 底座，但尚未把真实长周期运行报告产品化。
+
+## 12. 推荐顺序
 
 P6 完成后，建议按下列顺序推进：
 

@@ -732,14 +732,14 @@ Goal / Workflow / Loop 稳住后，再进入 coding-specific 深水区：
 - 已建立 domain workflow manifest、代码内置 registry、用户/项目自定义模板表、版本和启用范围。
 - 已内置 Research、Writing、Data Analysis、Meeting Prep、Knowledge Curation、Inbox、Project Ops 等首批任务类型。
 - 已通过 `preview_domain_workflow` 从 domain template 生成 `workflow.js` draft，继续走 Script Gate 和 permission preview；preview 不创建 run、不执行脚本。
-- 后续 GUI 创建入口要把任务类型选择、证据要求、审批门和 draft 预览做成用户可见产品面。
+- GUI 创建入口已把任务类型选择、证据要求、审批门和 draft 预览做成用户可见产品面；Goal 创建 / 编辑和 Workflow Control Center 都可继承或选择领域模板。
 
 ### Phase 7.2 General Evidence Model（已完成第一版）
 
 - 已扩展 Goal evidence 到通用证据：source citation、claim check、user decision、artifact、data quality、citation audit、message approval、meeting context。
 - 已新增 `domain_evidence_items`，记录来源 metadata、access scope、confidence 和 redaction 状态，并可通过 `goal_links` 链回 Goal。
 - 非 coding workflow 已有独立 evidence 写入面，不再需要用 validation/diff/file 伪装所有证据。
-- 后续要补 workflow host API sugar、Goal detail 领域 evidence timeline，以及 connector provenance / 导出敏感来源提示。
+- Workflow host API sugar、Goal detail 领域 evidence timeline、connector provenance、导出敏感来源提示已落地；Phase 7.15 / 7.16 进一步把交付导出和真实外部动作接入守门。
 
 ### Phase 7.3 Domain Context Retrieval（已完成第一版）
 
