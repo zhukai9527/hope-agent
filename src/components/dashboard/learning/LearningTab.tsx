@@ -39,6 +39,7 @@ import type {
   DomainEvalRunRecord,
   DomainEvalTask,
   DomainQualityGateReport,
+  DomainEvalCalibrationRecord,
 } from "@/lib/transport"
 import type { CodingImprovementDashboard, DashboardFilter, DomainQualityDashboard } from "../types"
 
@@ -141,6 +142,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
   const [corpusActionId, setCorpusActionId] = useState<string | null>(null)
   const [reportActionId, setReportActionId] = useState<string | null>(null)
   const [gateActionId, setGateActionId] = useState<string | null>(null)
+  const [domainCalibrationActionId, setDomainCalibrationActionId] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -605,6 +607,38 @@ export default function LearningTab({ filter }: LearningTabProps) {
     }
   }, [reload])
 
+  const recordDomainEvalCalibration = useCallback(async (run: DomainEvalRunRecord) => {
+    setDomainCalibrationActionId(run.id)
+    setBenchmarkError(null)
+    try {
+      await getTransport().call<DomainEvalCalibrationRecord>("record_domain_eval_calibration", {
+        input: {
+          taskId: run.taskId,
+          taskVersion: run.taskVersion,
+          projectId: run.projectId ?? null,
+          reviewer: "dashboard",
+          verdict: run.status === "passed" ? "approved" : "needs_revision",
+          sourceRunId: run.id,
+          note:
+            run.status === "passed"
+              ? `Human review accepted ${run.label} as calibration evidence.`
+              : `Human review marked ${run.label} for calibration follow-up after ${run.status}.`,
+        },
+      })
+      await reload()
+    } catch (e) {
+      setBenchmarkError(e instanceof Error ? e.message : String(e))
+      logger.error(
+        "dashboard",
+        "LearningTab::recordDomainEvalCalibration",
+        "Failed to record domain eval calibration",
+        e,
+      )
+    } finally {
+      setDomainCalibrationActionId(null)
+    }
+  }, [reload])
+
   useEffect(() => {
     reload()
   }, [reload])
@@ -671,6 +705,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         corpusActionId={corpusActionId}
         reportActionId={reportActionId}
         gateActionId={gateActionId}
+        domainCalibrationActionId={domainCalibrationActionId}
         onRunBenchmark={runBenchmark}
         onRunExternalBenchmark={runExternalBenchmark}
         onToggleBenchmarkModel={toggleBenchmarkModel}
@@ -686,6 +721,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onCopyBenchmarkReportPath={copyBenchmarkReportPath}
         onMaterializeBenchmarkBacklog={materializeBenchmarkBacklog}
         onResolveBenchmarkBacklogItem={resolveBenchmarkBacklogItem}
+        onRecordDomainEvalCalibration={recordDomainEvalCalibration}
       />
 
       {/* Overview cards */}
@@ -868,6 +904,7 @@ function CodingImprovementSection({
   corpusActionId,
   reportActionId,
   gateActionId,
+  domainCalibrationActionId,
   onRunBenchmark,
   onRunExternalBenchmark,
   onToggleBenchmarkModel,
@@ -883,6 +920,7 @@ function CodingImprovementSection({
   onCopyBenchmarkReportPath,
   onMaterializeBenchmarkBacklog,
   onResolveBenchmarkBacklogItem,
+  onRecordDomainEvalCalibration,
 }: {
   coding: CodingImprovementDashboard | null
   benchmark: CodingBenchmarkCenterReport | null
@@ -908,6 +946,7 @@ function CodingImprovementSection({
   corpusActionId: string | null
   reportActionId: string | null
   gateActionId: string | null
+  domainCalibrationActionId: string | null
   onRunBenchmark: () => void
   onRunExternalBenchmark: () => void
   onToggleBenchmarkModel: (key: string) => void
@@ -923,6 +962,7 @@ function CodingImprovementSection({
   onCopyBenchmarkReportPath: (path: string) => void
   onMaterializeBenchmarkBacklog: () => void
   onResolveBenchmarkBacklogItem: (item: CodingBenchmarkBacklogItem) => void
+  onRecordDomainEvalCalibration: (run: DomainEvalRunRecord) => void
 }) {
   const { t } = useTranslation()
   const overview = coding?.overview
@@ -1087,6 +1127,13 @@ function CodingImprovementSection({
         report={domainQualityGate}
         runs={domainEvalRuns}
         taskCount={domainEvalTasks.length}
+        calibratedTaskCount={
+          domainEvalTasks.filter((task) =>
+            task.calibration.some((record) => record.scope === "user" || record.scope === "project"),
+          ).length
+        }
+        calibrationActionId={domainCalibrationActionId}
+        onRecordCalibration={onRecordDomainEvalCalibration}
       />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
@@ -2594,10 +2641,16 @@ function DomainQualityGatePanel({
   report,
   runs,
   taskCount,
+  calibratedTaskCount,
+  calibrationActionId,
+  onRecordCalibration,
 }: {
   report: DomainQualityGateReport | null
   runs: DomainEvalRunRecord[]
   taskCount: number
+  calibratedTaskCount: number
+  calibrationActionId: string | null
+  onRecordCalibration: (run: DomainEvalRunRecord) => void
 }) {
   const { t } = useTranslation()
   const attentionChecks =
@@ -2614,8 +2667,9 @@ function DomainQualityGatePanel({
           </h4>
           <p className="text-[10px] text-muted-foreground">
             {t("dashboard.learning.domainQualityGateHint", {
-              defaultValue: "{{tasks}} eval tasks",
+              defaultValue: "{{tasks}} eval tasks · {{calibrated}} calibrated",
               tasks: taskCount,
+              calibrated: calibratedTaskCount,
             })}
           </p>
         </div>
@@ -2685,6 +2739,22 @@ function DomainQualityGatePanel({
                     <span>{run.score.toFixed(2)}</span>
                     <span>{new Date(run.createdAt).toLocaleDateString()}</span>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-7 w-full gap-1.5 text-[11px]"
+                    onClick={() => onRecordCalibration(run)}
+                    disabled={calibrationActionId === run.id}
+                  >
+                    {calibrationActionId === run.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
+                    {t("dashboard.learning.recordDomainCalibration", {
+                      defaultValue: "Mark reviewed",
+                    })}
+                  </Button>
                 </div>
               ))}
             </div>

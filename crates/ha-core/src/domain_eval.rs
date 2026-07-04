@@ -75,6 +75,22 @@ pub struct DomainEvalEvidenceRequirement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DomainEvalCalibrationRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_run_id: Option<String>,
     pub calibrated_at: String,
     pub reviewer: String,
     pub note: String,
@@ -85,6 +101,39 @@ pub struct DomainEvalCalibrationRecord {
 pub struct ListDomainEvalTasksInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordDomainEvalCalibrationInput {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
+    pub verdict: String,
+    pub note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDomainEvalCalibrationsInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub include_user_scope: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
 }
@@ -351,6 +400,27 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_domain_eval_tasks_source
             ON domain_eval_tasks(source_type, source_id);",
     )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS domain_eval_calibrations (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            task_version TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            project_id TEXT,
+            scope TEXT NOT NULL,
+            reviewer TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            note TEXT NOT NULL,
+            source_run_id TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_calibrations_task
+            ON domain_eval_calibrations(task_id, task_version, project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_calibrations_domain
+            ON domain_eval_calibrations(domain, project_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_domain_eval_calibrations_source_run
+            ON domain_eval_calibrations(source_run_id);",
+    )?;
     Ok(())
 }
 
@@ -360,6 +430,7 @@ impl SessionDB {
         input: ListDomainEvalTasksInput,
     ) -> Result<Vec<DomainEvalTask>> {
         let domain = input.domain.as_deref().map(normalize_domain);
+        let project_id = input.project_id.as_deref().and_then(non_empty);
         let limit = input
             .limit
             .unwrap_or(usize::MAX)
@@ -381,6 +452,7 @@ impl SessionDB {
                 .then_with(|| a.version.cmp(&b.version))
         });
         tasks.truncate(limit);
+        self.attach_domain_eval_calibrations(&mut tasks, project_id)?;
         Ok(tasks)
     }
 
@@ -400,9 +472,13 @@ impl SessionDB {
         if session.incognito {
             bail!("domain eval is disabled for incognito sessions");
         }
-        let task = self
+        let mut task = self
             .resolve_domain_eval_task(&task_id)?
             .ok_or_else(|| anyhow!("domain eval task not found: {task_id}"))?;
+        self.attach_domain_eval_calibrations(
+            std::slice::from_mut(&mut task),
+            session.project_id.as_deref(),
+        )?;
         let quality = self.resolve_eval_quality_snapshot(&session_id, &task.domain, &input)?;
         let report = self.build_domain_eval_report(&session_id, &task, quality.as_ref())?;
         let now = now_rfc3339();
@@ -594,6 +670,171 @@ impl SessionDB {
             source_path,
             imported_at: now,
         })
+    }
+
+    pub fn record_domain_eval_calibration(
+        &self,
+        input: RecordDomainEvalCalibrationInput,
+    ) -> Result<DomainEvalCalibrationRecord> {
+        let task_id = non_empty(&input.task_id)
+            .ok_or_else(|| anyhow!("task_id is required"))?
+            .to_string();
+        let task = self
+            .resolve_domain_eval_task(&task_id)?
+            .ok_or_else(|| anyhow!("domain eval task not found: {task_id}"))?;
+        let mut task_version = input
+            .task_version
+            .as_deref()
+            .and_then(non_empty)
+            .unwrap_or(&task.version)
+            .to_string();
+        if task_version != task.version {
+            bail!(
+                "domain eval task {} version mismatch: {} != {}",
+                task.id,
+                task_version,
+                task.version
+            );
+        }
+        let mut project_id = input
+            .project_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(ToOwned::to_owned);
+        let source_run_id = input
+            .source_run_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(ToOwned::to_owned);
+        if let Some(source_run_id) = source_run_id.as_deref() {
+            let run = self
+                .get_domain_eval_run(source_run_id)?
+                .ok_or_else(|| anyhow!("domain eval run not found: {source_run_id}"))?;
+            if run.task_id != task.id {
+                bail!(
+                    "domain eval run {} is for task {} not {}",
+                    run.id,
+                    run.task_id,
+                    task.id
+                );
+            }
+            task_version = run.task_version;
+            if project_id.is_none() {
+                project_id = run.project_id;
+            }
+        }
+        let reviewer = input
+            .reviewer
+            .as_deref()
+            .and_then(non_empty)
+            .unwrap_or("user")
+            .to_string();
+        let verdict = normalize_calibration_verdict(&input.verdict)?;
+        let note = non_empty(&input.note)
+            .ok_or_else(|| anyhow!("calibration note is required"))?
+            .to_string();
+        let scope = if project_id.is_some() {
+            "project"
+        } else {
+            "user"
+        }
+        .to_string();
+        let id = format!("dec_{}", uuid::Uuid::new_v4().simple());
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        if let Some(source_run_id) = source_run_id.as_deref() {
+            let existing = conn
+                .query_row(
+                    "SELECT id, task_id, task_version, domain, project_id, scope, reviewer,
+                            verdict, note, source_run_id, created_at
+                     FROM domain_eval_calibrations
+                     WHERE source_run_id = ?1
+                       AND reviewer = ?2
+                       AND scope = ?3
+                       AND COALESCE(project_id, '') = COALESCE(?4, '')
+                     ORDER BY created_at DESC
+                     LIMIT 1",
+                    params![source_run_id, &reviewer, &scope, project_id.clone()],
+                    row_to_domain_eval_calibration,
+                )
+                .optional()?;
+            if let Some(existing) = existing {
+                return Ok(existing);
+            }
+        }
+        conn.execute(
+            "INSERT INTO domain_eval_calibrations (
+                id, task_id, task_version, domain, project_id, scope, reviewer,
+                verdict, note, source_run_id, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                id,
+                task.id,
+                task_version,
+                task.domain,
+                project_id,
+                scope,
+                reviewer,
+                verdict,
+                note,
+                source_run_id,
+                now,
+            ],
+        )?;
+        drop(conn);
+        self.get_domain_eval_calibration(&id)?
+            .ok_or_else(|| anyhow!("domain eval calibration vanished after insert: {id}"))
+    }
+
+    pub fn list_domain_eval_calibrations(
+        &self,
+        input: ListDomainEvalCalibrationsInput,
+    ) -> Result<Vec<DomainEvalCalibrationRecord>> {
+        let limit = input
+            .limit
+            .unwrap_or(DEFAULT_DOMAIN_EVAL_LIMIT)
+            .clamp(1, MAX_DOMAIN_EVAL_LIMIT);
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(task_id) = input.task_id.as_deref().and_then(non_empty) {
+            clauses.push("task_id = ?".to_string());
+            params.push(task_id.to_string());
+        }
+        if let Some(domain) = input.domain.as_deref().and_then(non_empty) {
+            clauses.push("domain = ?".to_string());
+            params.push(normalize_domain(domain));
+        }
+        if let Some(project_id) = input.project_id.as_deref().and_then(non_empty) {
+            if input.include_user_scope {
+                clauses.push("(project_id = ? OR project_id IS NULL)".to_string());
+            } else {
+                clauses.push("project_id = ?".to_string());
+            }
+            params.push(project_id.to_string());
+        } else {
+            clauses.push("project_id IS NULL".to_string());
+        }
+        params.push(limit.to_string());
+        let where_sql = if clauses.is_empty() {
+            "1 = 1".to_string()
+        } else {
+            clauses.join(" AND ")
+        };
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, task_id, task_version, domain, project_id, scope, reviewer,
+                    verdict, note, source_run_id, created_at
+             FROM domain_eval_calibrations
+             WHERE {where_sql}
+             ORDER BY created_at DESC
+             LIMIT ?"
+        ))?;
+        let rows = stmt.query_map(
+            params_from_iter(params.iter()),
+            row_to_domain_eval_calibration,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn list_domain_eval_runs(
@@ -795,6 +1036,23 @@ impl SessionDB {
         .map_err(Into::into)
     }
 
+    fn get_domain_eval_calibration(
+        &self,
+        calibration_id: &str,
+    ) -> Result<Option<DomainEvalCalibrationRecord>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT id, task_id, task_version, domain, project_id, scope, reviewer,
+                    verdict, note, source_run_id, created_at
+             FROM domain_eval_calibrations
+             WHERE id = ?1",
+            params![calibration_id],
+            row_to_domain_eval_calibration,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     fn resolve_domain_eval_task(&self, task_id: &str) -> Result<Option<DomainEvalTask>> {
         if let Some(task) = built_in_domain_eval_tasks()
             .into_iter()
@@ -817,6 +1075,55 @@ impl SessionDB {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    fn attach_domain_eval_calibrations(
+        &self,
+        tasks: &mut [DomainEvalTask],
+        project_id: Option<&str>,
+    ) -> Result<()> {
+        for task in tasks {
+            task.calibration
+                .extend(self.list_domain_eval_calibrations_for_task(
+                    &task.id,
+                    &task.version,
+                    project_id,
+                )?);
+        }
+        Ok(())
+    }
+
+    fn list_domain_eval_calibrations_for_task(
+        &self,
+        task_id: &str,
+        task_version: &str,
+        project_id: Option<&str>,
+    ) -> Result<Vec<DomainEvalCalibrationRecord>> {
+        let mut clauses = vec!["task_id = ?".to_string(), "task_version = ?".to_string()];
+        let mut params = vec![task_id.to_string(), task_version.to_string()];
+        if let Some(project_id) = project_id.and_then(non_empty) {
+            clauses.push("(project_id = ? OR project_id IS NULL)".to_string());
+            params.push(project_id.to_string());
+        } else {
+            clauses.push("project_id IS NULL".to_string());
+        }
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, task_id, task_version, domain, project_id, scope, reviewer,
+                    verdict, note, source_run_id, created_at
+             FROM domain_eval_calibrations
+             WHERE {}
+             ORDER BY created_at DESC
+             LIMIT ?",
+            clauses.join(" AND ")
+        ))?;
+        params.push(DEFAULT_DOMAIN_EVAL_LIMIT.to_string());
+        let rows = stmt.query_map(
+            params_from_iter(params.iter()),
+            row_to_domain_eval_calibration,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     fn list_imported_domain_eval_tasks(
@@ -1283,6 +1590,24 @@ fn row_to_domain_eval_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<DomainEva
     })
 }
 
+fn row_to_domain_eval_calibration(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DomainEvalCalibrationRecord> {
+    Ok(DomainEvalCalibrationRecord {
+        id: Some(row.get(0)?),
+        task_id: Some(row.get(1)?),
+        task_version: Some(row.get(2)?),
+        domain: Some(row.get(3)?),
+        project_id: row.get(4)?,
+        scope: Some(row.get(5)?),
+        reviewer: row.get(6)?,
+        verdict: Some(row.get(7)?),
+        note: row.get(8)?,
+        source_run_id: row.get(9)?,
+        calibrated_at: row.get(10)?,
+    })
+}
+
 fn built_in_domain_eval_tasks() -> Vec<DomainEvalTask> {
     vec![
         task(
@@ -1607,6 +1932,14 @@ fn task(
             .map(|item| item.to_string())
             .collect(),
         calibration: vec![DomainEvalCalibrationRecord {
+            id: None,
+            task_id: Some(id.to_string()),
+            task_version: Some("1.0.0".to_string()),
+            domain: Some(normalize_domain(domain)),
+            project_id: None,
+            scope: Some("built_in".to_string()),
+            verdict: Some("needs_calibration".to_string()),
+            source_run_id: None,
             calibrated_at: "2026-07-03".to_string(),
             reviewer: "built-in".to_string(),
             note: "Initial deterministic trace rubric; requires project/user calibration before being treated as broad capability evidence.".to_string(),
@@ -1705,8 +2038,8 @@ fn domain_eval_task_from_fixture(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     Ok(DomainEvalTask {
-        id,
-        version,
+        id: id.clone(),
+        version: version.clone(),
         domain: domain.clone(),
         title,
         task_type,
@@ -1726,6 +2059,18 @@ fn domain_eval_task_from_fixture(
         success_criteria,
         prohibited_actions,
         calibration: vec![DomainEvalCalibrationRecord {
+            id: None,
+            task_id: Some(id.clone()),
+            task_version: Some(version.clone()),
+            domain: Some(domain.clone()),
+            project_id: proposal.project_id.clone(),
+            scope: Some("proposal".to_string()),
+            verdict: Some(if human_reviewed {
+                "approved".to_string()
+            } else {
+                "needs_calibration".to_string()
+            }),
+            source_run_id: None,
             calibrated_at: now_rfc3339(),
             reviewer: if human_reviewed {
                 "promoted-human-reviewed"
@@ -2329,6 +2674,16 @@ fn non_empty(value: &str) -> Option<&str> {
     (!trimmed.is_empty()).then_some(trimmed)
 }
 
+fn normalize_calibration_verdict(value: &str) -> Result<String> {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "approved" | "needs_calibration" | "needs_revision" | "rejected" | "stale" => {
+            Ok(normalized)
+        }
+        _ => bail!("unsupported domain eval calibration verdict: {value}"),
+    }
+}
+
 fn placeholder_task() -> DomainEvalTask {
     task(
         "unknown",
@@ -2543,6 +2898,7 @@ mod tests {
         let tasks = db
             .list_domain_eval_tasks(ListDomainEvalTasksInput {
                 domain: Some("inbox".to_string()),
+                project_id: None,
                 limit: Some(10),
             })
             .unwrap();
@@ -2557,6 +2913,64 @@ mod tests {
             .unwrap();
         assert!(!duplicate.imported);
         assert_eq!(duplicate.task.id, imported.task.id);
+    }
+
+    #[test]
+    fn record_domain_eval_calibration_is_idempotent_and_visible_on_task() {
+        let (_dir, db) = test_db();
+        let session = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .unwrap();
+        let run = db
+            .run_domain_eval_task(RunDomainEvalTaskInput {
+                session_id: session.id,
+                task_id: "research-source-backed-brief".to_string(),
+                label: Some("manual calibration candidate".to_string()),
+                source_quality_run_id: None,
+            })
+            .unwrap();
+
+        let input = RecordDomainEvalCalibrationInput {
+            task_id: run.task_id.clone(),
+            task_version: Some(run.task_version.clone()),
+            project_id: None,
+            reviewer: Some("qa".to_string()),
+            verdict: "needs_revision".to_string(),
+            note: "Missing research evidence is a valid failure for this task.".to_string(),
+            source_run_id: Some(run.id.clone()),
+        };
+        let calibration = db.record_domain_eval_calibration(input.clone()).unwrap();
+        let duplicate = db.record_domain_eval_calibration(input).unwrap();
+
+        assert_eq!(duplicate.id, calibration.id);
+        assert_eq!(calibration.scope.as_deref(), Some("user"));
+        assert_eq!(calibration.verdict.as_deref(), Some("needs_revision"));
+        assert_eq!(calibration.source_run_id.as_deref(), Some(run.id.as_str()));
+
+        let calibrations = db
+            .list_domain_eval_calibrations(ListDomainEvalCalibrationsInput {
+                task_id: Some(run.task_id.clone()),
+                limit: Some(10),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(calibrations.len(), 1);
+
+        let tasks = db
+            .list_domain_eval_tasks(ListDomainEvalTasksInput {
+                domain: Some("research".to_string()),
+                project_id: None,
+                limit: Some(20),
+            })
+            .unwrap();
+        let task = tasks
+            .iter()
+            .find(|task| task.id == run.task_id)
+            .expect("task with calibration");
+        assert!(task
+            .calibration
+            .iter()
+            .any(|record| record.id == calibration.id));
     }
 
     #[test]

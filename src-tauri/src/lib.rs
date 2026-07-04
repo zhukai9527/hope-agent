@@ -882,6 +882,8 @@ pub fn run() {
             commands::domain_eval::list_domain_eval_tasks,
             commands::domain_eval::run_domain_eval_task,
             commands::domain_eval::import_domain_eval_case,
+            commands::domain_eval::record_domain_eval_calibration,
+            commands::domain_eval::list_domain_eval_calibrations,
             commands::domain_eval::list_domain_eval_runs,
             commands::domain_eval::evaluate_domain_quality_gate,
             commands::domain_quality::list_domain_quality_runs,

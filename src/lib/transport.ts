@@ -968,6 +968,14 @@ export interface DomainEvalEvidenceRequirement {
 }
 
 export interface DomainEvalCalibrationRecord {
+  id?: string | null;
+  taskId?: string | null;
+  taskVersion?: string | null;
+  domain?: string | null;
+  projectId?: string | null;
+  scope?: string | null;
+  verdict?: string | null;
+  sourceRunId?: string | null;
   calibratedAt: string;
   reviewer: string;
   note: string;
@@ -989,6 +997,25 @@ export interface DomainEvalTask {
 
 export interface ListDomainEvalTasksInput {
   domain?: string | null;
+  projectId?: string | null;
+  limit?: number | null;
+}
+
+export interface RecordDomainEvalCalibrationInput {
+  taskId: string;
+  taskVersion?: string | null;
+  projectId?: string | null;
+  reviewer?: string | null;
+  verdict: string;
+  note: string;
+  sourceRunId?: string | null;
+}
+
+export interface ListDomainEvalCalibrationsInput {
+  taskId?: string | null;
+  domain?: string | null;
+  projectId?: string | null;
+  includeUserScope?: boolean;
   limit?: number | null;
 }
 

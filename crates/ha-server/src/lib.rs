@@ -1604,6 +1604,14 @@ fn build_router_with_cors(
             post(routes::domain_eval::import_domain_eval_case),
         )
         .route(
+            "/domain-eval/calibrations/record",
+            post(routes::domain_eval::record_domain_eval_calibration),
+        )
+        .route(
+            "/domain-eval/calibrations",
+            post(routes::domain_eval::list_domain_eval_calibrations),
+        )
+        .route(
             "/domain-eval/runs",
             post(routes::domain_eval::list_domain_eval_runs),
         )

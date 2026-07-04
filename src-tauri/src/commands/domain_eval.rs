@@ -1,8 +1,9 @@
 use crate::commands::CmdError;
 use ha_core::domain_eval::{
-    DomainEvalRunRecord, DomainEvalTask, DomainQualityGateInput, DomainQualityGateReport,
-    ImportDomainEvalCaseInput, ImportDomainEvalCaseResult, ListDomainEvalRunsInput,
-    ListDomainEvalTasksInput, RunDomainEvalTaskInput,
+    DomainEvalCalibrationRecord, DomainEvalRunRecord, DomainEvalTask, DomainQualityGateInput,
+    DomainQualityGateReport, ImportDomainEvalCaseInput, ImportDomainEvalCaseResult,
+    ListDomainEvalCalibrationsInput, ListDomainEvalRunsInput, ListDomainEvalTasksInput,
+    RecordDomainEvalCalibrationInput, RunDomainEvalTaskInput,
 };
 
 #[tauri::command]
@@ -35,6 +36,28 @@ pub async fn import_domain_eval_case(
     app_state
         .session_db
         .import_domain_eval_case(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn record_domain_eval_calibration(
+    input: RecordDomainEvalCalibrationInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<DomainEvalCalibrationRecord, CmdError> {
+    app_state
+        .session_db
+        .record_domain_eval_calibration(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_domain_eval_calibrations(
+    input: ListDomainEvalCalibrationsInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<DomainEvalCalibrationRecord>, CmdError> {
+    app_state
+        .session_db
+        .list_domain_eval_calibrations(input)
         .map_err(Into::into)
 }
 

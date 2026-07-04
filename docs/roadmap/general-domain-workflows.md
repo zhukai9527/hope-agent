@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-04
 >
-> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
+> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate、Phase 7.7 Domain Eval Calibration 已完成第一版，并已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
 
 ## 1. 背景
 
@@ -230,10 +230,10 @@ DomainWorkflow
 - 建立通用 quality gate：evidence completeness、citation quality、data quality、approval safety、completion criteria match、workflow trace、domain coverage。
 - Dashboard Learning 增加「General domain trends」历史趋势区块和「General domain quality」Gate 区块：前者显示完成率、blocked 原因、用户确认卡点、eval pass rate、average score、学习候选和最近 quality runs；后者显示 gate 三态、quality blockers、domain coverage 与最近 eval run，不与 coding benchmark 混排。
 - 已晋升的 `domain_eval_case` proposal 可通过 owner API / Workspace 质量趋势卡片显式导入 `domain_eval_tasks`，后续被 `list_domain_eval_tasks` / `run_domain_eval_task` 使用；重复导入默认幂等。
+- `domain_eval_calibrations` 已接入 user/project scope 人工校准与复核记录；Dashboard 最近 eval run 可点击「Mark reviewed」写入 calibration，task registry 与后续 eval report 会附加这些记录。
 
 后续待补：
 
-- 接项目/用户级 calibration 与人工复核记录。
 - 支持半确定性 fixture runner 驱动真实 agent 执行，再用同一 scorer 判分。
 
 验收：
@@ -291,3 +291,4 @@ P6 完成后，建议按下列顺序推进：
 3. Phase 7.4：已补 domain review / verification 与 Workspace 领域复核，形成第一版质量闭环。
 4. Phase 7.5：已接入 learning loop，让通用场景能沉淀 draft-only proposal。
 5. Phase 7.6：已补通用 eval / gate，避免只靠单次质量复核判断泛化能力。
+6. Phase 7.7：已补 user/project calibration 与人工复核记录，避免 built-in rubric 被误当成已校准能力证据。
