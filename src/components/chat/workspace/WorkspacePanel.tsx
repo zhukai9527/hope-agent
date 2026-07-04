@@ -109,6 +109,7 @@ import type {
   DomainApprovalGate,
   DomainArtifactExportGuardReport,
   DomainConnectorActionGuardReport,
+  DomainEvidenceItem,
   DomainEvidenceRequirement,
   DomainQualityCheck,
   DomainQualityCheckStatus,
@@ -173,10 +174,10 @@ import { useScrollPagedRender } from "./useScrollPagedRender"
 import { useSessionKnowledge } from "./useSessionKnowledge"
 import { useManagedWorktrees } from "./useManagedWorktrees"
 import { useContextRetrieval } from "./useContextRetrieval"
-import { useDomainQualityRuns } from "./useDomainQualityRuns"
+import { useDomainQualityRuns, type DomainQualityRunsState } from "./useDomainQualityRuns"
 import { useLspDiagnostics } from "./useLspDiagnostics"
-import { useReviewRuns } from "./useReviewRuns"
-import { useVerificationRuns } from "./useVerificationRuns"
+import { useReviewRuns, type ReviewRunsState } from "./useReviewRuns"
+import { useVerificationRuns, type VerificationRunsState } from "./useVerificationRuns"
 import { useCodingTrendReport } from "./useCodingTrendReport"
 import {
   useWorkflowRuns,
@@ -2170,6 +2171,581 @@ function ContextRetrievalSection({
   )
 }
 
+const DOMAIN_SOURCE_EVIDENCE_TYPES = new Set([
+  "source_cited",
+  "connector_context_collected",
+  "data_quality_checked",
+])
+const DOMAIN_DRAFT_EVIDENCE_TYPES = new Set([
+  "artifact_created",
+  "connector_draft_created",
+])
+const DOMAIN_REVIEW_EVIDENCE_TYPES = new Set([
+  "artifact_reviewed",
+  "connector_action_verified",
+])
+const DOMAIN_DECISION_EVIDENCE_TYPES = new Set([
+  "user_decision",
+  "message_draft_approved",
+])
+
+function domainEvidenceTypeLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  type: string,
+): string {
+  switch (type) {
+    case "source_cited":
+      return t("workspace.domainWorkbench.evidenceSourceCited", "引用来源")
+    case "connector_context_collected":
+      return t("workspace.domainWorkbench.evidenceConnectorContext", "连接器上下文")
+    case "data_quality_checked":
+      return t("workspace.domainWorkbench.evidenceDataQuality", "数据质量")
+    case "artifact_created":
+      return t("workspace.domainWorkbench.evidenceArtifactCreated", "产物草稿")
+    case "artifact_reviewed":
+      return t("workspace.domainWorkbench.evidenceArtifactReviewed", "产物复核")
+    case "connector_draft_created":
+      return t("workspace.domainWorkbench.evidenceConnectorDraft", "外部动作草稿")
+    case "connector_action_verified":
+      return t("workspace.domainWorkbench.evidenceConnectorVerified", "外部动作验证")
+    case "message_draft_approved":
+      return t("workspace.domainWorkbench.evidenceMessageApproved", "消息已批准")
+    case "user_decision":
+      return t("workspace.domainWorkbench.evidenceUserDecision", "用户决策")
+    default:
+      return type.replace(/_/g, " ")
+  }
+}
+
+function domainWorkbenchEvidenceLocation(item: DomainEvidenceItem): string {
+  const metadata = asRecord(item.sourceMetadata)
+  return (
+    stringField(metadata, "url") ??
+    stringField(metadata, "file") ??
+    stringField(metadata, "path") ??
+    stringField(metadata, "connector") ??
+    stringField(metadata, "tool") ??
+    item.domain
+  )
+}
+
+function domainWorkbenchEvidenceTone(item: DomainEvidenceItem): StatusTone {
+  if (item.redactionStatus && item.redactionStatus !== "none" && item.redactionStatus !== "clean") {
+    return "warn"
+  }
+  if (item.accessScope && item.accessScope !== "public") return "info"
+  return "muted"
+}
+
+function domainWorkbenchMetricTone(value: number, blocked = false): StatusTone {
+  if (blocked) return "danger"
+  return value > 0 ? "good" : "muted"
+}
+
+function domainWorkbenchOverallTone(args: {
+  incognito?: boolean
+  evidenceCount: number
+  sourceCount: number
+  draftCount: number
+  blockingReviewFindings: number
+  failedVerification: number
+  domainFailed: number
+  domainNeedsUser: number
+  exportStatus?: string | null
+  connectorStatus?: string | null
+}): StatusTone {
+  if (args.incognito) return "muted"
+  if (
+    args.blockingReviewFindings > 0 ||
+    args.failedVerification > 0 ||
+    args.domainFailed > 0 ||
+    args.exportStatus === "failed" ||
+    args.connectorStatus === "failed"
+  ) {
+    return "danger"
+  }
+  if (
+    args.domainNeedsUser > 0 ||
+    args.evidenceCount === 0 ||
+    args.sourceCount === 0 ||
+    args.draftCount === 0 ||
+    args.exportStatus === "insufficient_data" ||
+    args.connectorStatus === "insufficient_data"
+  ) {
+    return "warn"
+  }
+  return "good"
+}
+
+function domainWorkbenchOverallLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  tone: StatusTone,
+  loading: boolean,
+): string {
+  if (loading) return t("workspace.domainWorkbench.loading", "同步中")
+  if (tone === "danger") return t("workspace.domainWorkbench.blocked", "需处理")
+  if (tone === "warn") return t("workspace.domainWorkbench.needsEvidence", "待补证据")
+  if (tone === "good") return t("workspace.domainWorkbench.ready", "闭环健康")
+  return t("workspace.domainWorkbench.idle", "待开始")
+}
+
+function domainWorkbenchNextSteps(
+  t: ReturnType<typeof useTranslation>["t"],
+  args: {
+    incognito?: boolean
+    evidenceCount: number
+    sourceCount: number
+    draftCount: number
+    reviewCount: number
+    failedVerification: number
+    domainFailed: number
+    domainNeedsUser: number
+    exportGuard: DomainArtifactExportGuardReport | null
+    connectorGuard: DomainConnectorActionGuardReport | null
+  },
+): string[] {
+  if (args.incognito) {
+    return [t("workspace.domainWorkbench.nextIncognito", "无痕会话不会持久化通用任务证据。")]
+  }
+  const steps: string[] = []
+  if (args.evidenceCount === 0) {
+    steps.push(t("workspace.domainWorkbench.nextEvidence", "先让模型记录来源、草稿或决策证据。"))
+  }
+  if (args.sourceCount === 0) {
+    steps.push(t("workspace.domainWorkbench.nextSources", "补齐来源或连接器上下文，避免无依据产物。"))
+  }
+  if (args.draftCount === 0) {
+    steps.push(t("workspace.domainWorkbench.nextDraft", "生成可审查的草稿、文件或外部动作草案。"))
+  }
+  if (args.reviewCount === 0 && args.draftCount > 0) {
+    steps.push(t("workspace.domainWorkbench.nextReview", "对草稿做复核，再进入交付或外部执行。"))
+  }
+  if (args.domainFailed > 0 || args.domainNeedsUser > 0) {
+    steps.push(t("workspace.domainWorkbench.nextDomainQuality", "处理领域复核里的阻塞项或用户确认项。"))
+  }
+  if (args.failedVerification > 0) {
+    steps.push(t("workspace.domainWorkbench.nextVerification", "查看验证失败步骤并重新验证。"))
+  }
+  if (args.exportGuard?.status && args.exportGuard.status !== "passed") {
+    steps.push(
+      args.exportGuard.recommendedNextSteps[0] ??
+        t("workspace.domainWorkbench.nextExportGuard", "补齐最终产物、复核和脱敏证据。"),
+    )
+  }
+  if (args.connectorGuard?.status && args.connectorGuard.status !== "passed") {
+    steps.push(
+      args.connectorGuard.recommendedNextSteps[0] ??
+        t("workspace.domainWorkbench.nextConnectorGuard", "补齐外部动作批准和回滚证据。"),
+    )
+  }
+  return steps.length > 0
+    ? steps.slice(0, 4)
+    : [t("workspace.domainWorkbench.nextReady", "证据链健康；交付或外部动作前仍会要求用户最终确认。")]
+}
+
+function DomainWorkbenchMetric({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: LucideIcon
+  label: string
+  value: number | string
+  tone: StatusTone
+}) {
+  return (
+    <div className={cn("rounded-md border px-2 py-1.5", STATUS_TONE_CLASS[tone])}>
+      <div className="flex min-w-0 items-center gap-1.5 text-[10px]">
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="mt-0.5 text-xs font-semibold tabular-nums">{value}</div>
+    </div>
+  )
+}
+
+function DomainWorkbenchEvidenceRow({ item }: { item: DomainEvidenceItem }) {
+  const { t } = useTranslation()
+  return (
+    <IconTip label={domainWorkbenchEvidenceLocation(item)}>
+      <div className="rounded-md border border-border/50 bg-secondary/25 px-2.5 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {item.title}
+          </span>
+          <StatusPill
+            label={domainEvidenceTypeLabel(t, item.evidenceType)}
+            tone={domainWorkbenchEvidenceTone(item)}
+          />
+        </div>
+        <div className="mt-1 line-clamp-2 pl-5 text-[11px] leading-snug text-muted-foreground">
+          {item.summary || domainWorkbenchEvidenceLocation(item)}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted-foreground/65">
+          <span className="truncate">{domainLabel(item.domain)}</span>
+          <span className="truncate">{item.accessScope}</span>
+          <span className="truncate">{item.redactionStatus}</span>
+          <span className="shrink-0">{formatMessageTime(item.createdAt)}</span>
+        </div>
+      </div>
+    </IconTip>
+  )
+}
+
+function DomainTaskWorkbenchSection({
+  sessionId,
+  incognito,
+  workingDir,
+  reviewRunsState,
+  verificationRunsState,
+  domainQualityRunsState,
+  domainWorkbenchState,
+}: {
+  sessionId?: string | null
+  incognito?: boolean
+  workingDir?: string | null
+  reviewRunsState: ReviewRunsState
+  verificationRunsState: VerificationRunsState
+  domainQualityRunsState: DomainQualityRunsState
+  domainWorkbenchState: DomainTaskWorkbenchState
+}) {
+  const { t } = useTranslation()
+  const {
+    evidence,
+    evidenceLoading,
+    evidenceError,
+    exportGuard,
+    exportGuardLoading,
+    exportGuardError,
+    connectorGuard,
+    connectorGuardLoading,
+    connectorGuardError,
+    refreshAll,
+  } = domainWorkbenchState
+  const evidenceCount = evidence.length
+  const sourceCount = evidence.filter((item) =>
+    DOMAIN_SOURCE_EVIDENCE_TYPES.has(item.evidenceType),
+  ).length
+  const draftCount = evidence.filter((item) =>
+    DOMAIN_DRAFT_EVIDENCE_TYPES.has(item.evidenceType),
+  ).length
+  const reviewEvidenceCount = evidence.filter((item) =>
+    DOMAIN_REVIEW_EVIDENCE_TYPES.has(item.evidenceType),
+  ).length
+  const decisionEvidenceCount =
+    evidence.filter((item) => DOMAIN_DECISION_EVIDENCE_TYPES.has(item.evidenceType)).length +
+    (connectorGuard?.summary.approvalEvidence ?? 0)
+  const openReviewFindings =
+    reviewRunsState.snapshot?.findings.filter((finding) => finding.status === "open") ?? []
+  const blockingReviewFindings = openReviewFindings.filter(
+    (finding) => finding.severity === "p0" || finding.severity === "p1",
+  ).length
+  const verificationSteps = verificationRunsState.snapshot?.steps ?? []
+  const failedVerification = verificationStatsNumber(verificationRunsState.snapshot, "failed")
+  const passedVerification = verificationStatsNumber(verificationRunsState.snapshot, "passed")
+  const domainFailed = domainQualityStatsNumber(domainQualityRunsState.snapshot, "failed")
+  const domainNeedsUser = domainQualityStatsNumber(domainQualityRunsState.snapshot, "needsUser")
+  const domainPassed = domainQualityStatsNumber(domainQualityRunsState.snapshot, "passed")
+  const loading =
+    evidenceLoading ||
+    exportGuardLoading ||
+    connectorGuardLoading ||
+    reviewRunsState.loading ||
+    verificationRunsState.loading ||
+    domainQualityRunsState.loading
+  const busy =
+    loading ||
+    reviewRunsState.running ||
+    verificationRunsState.planning ||
+    verificationRunsState.running ||
+    domainQualityRunsState.running
+  const disabled = !sessionId || incognito
+  const tone = domainWorkbenchOverallTone({
+    incognito,
+    evidenceCount,
+    sourceCount,
+    draftCount,
+    blockingReviewFindings,
+    failedVerification,
+    domainFailed,
+    domainNeedsUser,
+    exportStatus: exportGuard?.status,
+    connectorStatus: connectorGuard?.status,
+  })
+  const nextSteps = domainWorkbenchNextSteps(t, {
+    incognito,
+    evidenceCount,
+    sourceCount,
+    draftCount,
+    reviewCount: reviewEvidenceCount,
+    failedVerification,
+    domainFailed,
+    domainNeedsUser,
+    exportGuard,
+    connectorGuard,
+  })
+  const recentEvidence = evidence.slice(0, 4)
+  const error = evidenceError ?? exportGuardError ?? connectorGuardError
+  const count =
+    evidenceCount +
+    openReviewFindings.length +
+    verificationSteps.length +
+    (domainQualityRunsState.snapshot?.checks.length ?? 0)
+
+  const handleRefresh = () => {
+    void refreshAll()
+    reviewRunsState.refresh()
+    verificationRunsState.refresh()
+    domainQualityRunsState.refresh()
+  }
+
+  const handleDomainQuality = async () => {
+    const next = await domainQualityRunsState.runDomainQuality()
+    if (!next) return
+    if (next.run.state === "completed") {
+      toast.success(t("workspace.domainWorkbench.domainQualityClean", "领域复核通过"))
+    } else if (next.run.state === "needs_user") {
+      toast.warning(t("workspace.domainWorkbench.domainQualityNeedsUser", "领域复核需要确认"))
+    } else {
+      toast.error(t("workspace.domainWorkbench.domainQualityBlocked", "领域复核发现阻塞项"))
+    }
+    void refreshAll()
+  }
+
+  const handlePlanVerification = async () => {
+    const next = await verificationRunsState.planVerification()
+    if (next) {
+      toast.success(
+        t("workspace.domainWorkbench.planVerificationDone", "已推荐 {{count}} 条验证", {
+          count: next.steps.length,
+        }),
+      )
+    }
+  }
+
+  const handleRunVerification = async () => {
+    const next = await verificationRunsState.runVerification()
+    if (next) {
+      toast.success(t("workspace.domainWorkbench.runVerificationDone", "验证已开始"))
+    }
+  }
+
+  return (
+    <WorkspaceSection
+      title={t("workspace.domainWorkbench.title", "通用任务工作台")}
+      count={count}
+      icon={Layers}
+      meta={
+        <StatusPill
+          label={domainWorkbenchOverallLabel(t, tone, loading)}
+          tone={tone}
+          loading={loading}
+        />
+      }
+      defaultExpanded={tone !== "muted" || Boolean(error)}
+    >
+      <div className="space-y-2">
+        <div className="grid grid-cols-3 gap-1.5">
+          <DomainWorkbenchMetric
+            icon={Globe}
+            label={t("workspace.domainWorkbench.sources", "来源")}
+            value={sourceCount}
+            tone={domainWorkbenchMetricTone(sourceCount)}
+          />
+          <DomainWorkbenchMetric
+            icon={Database}
+            label={t("workspace.domainWorkbench.evidence", "证据")}
+            value={evidenceCount}
+            tone={domainWorkbenchMetricTone(evidenceCount)}
+          />
+          <DomainWorkbenchMetric
+            icon={FileText}
+            label={t("workspace.domainWorkbench.drafts", "草稿")}
+            value={draftCount}
+            tone={domainWorkbenchMetricTone(draftCount)}
+          />
+          <DomainWorkbenchMetric
+            icon={ClipboardCheck}
+            label={t("workspace.domainWorkbench.review", "复核")}
+            value={reviewEvidenceCount + Math.max(openReviewFindings.length, 0)}
+            tone={domainWorkbenchMetricTone(
+              reviewEvidenceCount,
+              blockingReviewFindings > 0 || openReviewFindings.length > 0,
+            )}
+          />
+          <DomainWorkbenchMetric
+            icon={CheckCircle2}
+            label={t("workspace.domainWorkbench.verification", "验证")}
+            value={`${passedVerification}/${verificationSteps.length}`}
+            tone={domainWorkbenchMetricTone(passedVerification, failedVerification > 0)}
+          />
+          <DomainWorkbenchMetric
+            icon={MessageSquare}
+            label={t("workspace.domainWorkbench.decisions", "决策")}
+            value={decisionEvidenceCount}
+            tone={domainWorkbenchMetricTone(decisionEvidenceCount)}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={handleDomainQuality}
+            disabled={disabled || domainQualityRunsState.running || domainQualityRunsState.loading}
+            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {domainQualityRunsState.running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ClipboardCheck className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.domainWorkbench.runQuality", "运行领域复核")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handlePlanVerification}
+            disabled={
+              disabled ||
+              !workingDir ||
+              verificationRunsState.planning ||
+              verificationRunsState.running ||
+              verificationRunsState.loading
+            }
+            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {verificationRunsState.planning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Gauge className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.domainWorkbench.planVerify", "推荐验证")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleRunVerification}
+            disabled={
+              disabled ||
+              !workingDir ||
+              verificationRunsState.planning ||
+              verificationRunsState.running ||
+              verificationRunsState.loading
+            }
+            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {verificationRunsState.running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.domainWorkbench.runVerify", "运行验证")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={busy}
+            className="inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/25 px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">{t("workspace.domainWorkbench.refresh", "刷新工作台")}</span>
+          </button>
+        </div>
+
+        {error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : incognito ? (
+          <EmptyHint>{t("workspace.domainWorkbench.incognito", "无痕会话不持久化通用任务证据")}</EmptyHint>
+        ) : null}
+
+        <div className="rounded-md border border-border/50 bg-secondary/20 px-2.5 py-2">
+          <div className="mb-1.5 flex min-w-0 items-center gap-1.5 text-xs font-medium text-foreground/90">
+            <Lightbulb className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{t("workspace.domainWorkbench.nextSteps", "下一步")}</span>
+          </div>
+          <div className="space-y-1">
+            {nextSteps.map((step, index) => (
+              <div
+                key={`${index}:${step}`}
+                className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
+              >
+                {step}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-2">
+          <DomainArtifactExportGuardPanel
+            report={exportGuard}
+            loading={exportGuardLoading}
+            error={exportGuardError}
+            disabled={disabled || exportGuardLoading}
+            onRefresh={domainWorkbenchState.refreshExportGuard}
+          />
+          <DomainConnectorActionGuardPanel
+            report={connectorGuard}
+            loading={connectorGuardLoading}
+            error={connectorGuardError}
+            disabled={disabled || connectorGuardLoading}
+            onRefresh={domainWorkbenchState.refreshConnectorGuard}
+          />
+        </div>
+
+        {domainQualityRunsState.snapshot ? (
+          <div className="flex min-w-0 flex-wrap gap-1">
+            <StatusPill
+              label={t("workspace.domainWorkbench.domainPassed", "{{count}} 通过", {
+                count: domainPassed,
+              })}
+              tone="good"
+            />
+            {domainFailed > 0 ? (
+              <StatusPill
+                label={t("workspace.domainWorkbench.domainFailed", "{{count}} 阻塞", {
+                  count: domainFailed,
+                })}
+                tone="danger"
+              />
+            ) : null}
+            {domainNeedsUser > 0 ? (
+              <StatusPill
+                label={t("workspace.domainWorkbench.domainNeedsUser", "{{count}} 确认", {
+                  count: domainNeedsUser,
+                })}
+                tone="warn"
+              />
+            ) : null}
+          </div>
+        ) : null}
+
+        {recentEvidence.length > 0 ? (
+          <div className="space-y-1">
+            {recentEvidence.map((item) => (
+              <DomainWorkbenchEvidenceRow key={item.id} item={item} />
+            ))}
+            {evidence.length > recentEvidence.length ? (
+              <div className="px-2 pt-0.5 text-center text-[11px] text-muted-foreground/60">
+                {t("workspace.domainWorkbench.moreEvidence", "还有 {{count}} 条证据", {
+                  count: evidence.length - recentEvidence.length,
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : !incognito && !loading && !error ? (
+          <EmptyHint>{t("workspace.domainWorkbench.empty", "还没有通用任务证据")}</EmptyHint>
+        ) : null}
+      </div>
+    </WorkspaceSection>
+  )
+}
+
 function lspSeverityTone(severity: LspDiagnostic["severity"]): StatusTone {
   switch (severity) {
     case "error":
@@ -2436,6 +3012,196 @@ const REVIEW_PROFILE_OPTIONS = [
 ] as const
 
 const DEFAULT_REVIEW_PROFILES = ["correctness", "security", "maintainability", "tests"]
+const DOMAIN_WORKBENCH_EVIDENCE_LIMIT = 60
+
+interface DomainTaskWorkbenchState {
+  evidence: DomainEvidenceItem[]
+  evidenceLoading: boolean
+  evidenceError: string | null
+  exportGuard: DomainArtifactExportGuardReport | null
+  exportGuardLoading: boolean
+  exportGuardError: string | null
+  connectorGuard: DomainConnectorActionGuardReport | null
+  connectorGuardLoading: boolean
+  connectorGuardError: string | null
+  refreshEvidence: () => Promise<DomainEvidenceItem[]>
+  refreshExportGuard: () => Promise<DomainArtifactExportGuardReport | null>
+  refreshConnectorGuard: () => Promise<DomainConnectorActionGuardReport | null>
+  refreshAll: () => Promise<void>
+}
+
+function useDomainTaskWorkbench(
+  sessionId: string | null | undefined,
+  opts: { incognito?: boolean; turnActive?: boolean; disabled?: boolean } = {},
+): DomainTaskWorkbenchState {
+  const { incognito = false, turnActive = false, disabled = false } = opts
+  const [evidence, setEvidence] = useState<DomainEvidenceItem[]>([])
+  const [evidenceLoading, setEvidenceLoading] = useState(false)
+  const [evidenceError, setEvidenceError] = useState<string | null>(null)
+  const [exportGuard, setExportGuard] = useState<DomainArtifactExportGuardReport | null>(null)
+  const [exportGuardLoading, setExportGuardLoading] = useState(false)
+  const [exportGuardError, setExportGuardError] = useState<string | null>(null)
+  const [connectorGuard, setConnectorGuard] =
+    useState<DomainConnectorActionGuardReport | null>(null)
+  const [connectorGuardLoading, setConnectorGuardLoading] = useState(false)
+  const [connectorGuardError, setConnectorGuardError] = useState<string | null>(null)
+
+  const refreshEvidence = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setEvidence([])
+      setEvidenceError(null)
+      setEvidenceLoading(false)
+      return []
+    }
+    setEvidenceLoading(true)
+    setEvidenceError(null)
+    try {
+      const items = await getTransport().call<DomainEvidenceItem[]>("list_domain_evidence", {
+        input: {
+          sessionId,
+          limit: DOMAIN_WORKBENCH_EVIDENCE_LIMIT,
+        },
+      })
+      const safeItems = Array.isArray(items) ? items : []
+      setEvidence(safeItems)
+      return safeItems
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error(
+        "ui",
+        "useDomainTaskWorkbench",
+        "Failed to load domain task evidence",
+        e,
+      )
+      setEvidenceError(message)
+      return []
+    } finally {
+      setEvidenceLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
+  const refreshExportGuard = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setExportGuard(null)
+      setExportGuardError(null)
+      setExportGuardLoading(false)
+      return null
+    }
+    setExportGuardLoading(true)
+    setExportGuardError(null)
+    try {
+      const report = await getTransport().call<DomainArtifactExportGuardReport>(
+        "evaluate_domain_artifact_export_guard",
+        {
+          input: {
+            sessionId,
+            requireArtifactCreated: true,
+            requireArtifactReviewed: true,
+            maxSensitiveUnreviewed: 0,
+            maxRedactionPending: 0,
+          },
+        },
+      )
+      setExportGuard(report)
+      return report
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error(
+        "ui",
+        "useDomainTaskWorkbench",
+        "Failed to evaluate artifact export guard",
+        e,
+      )
+      setExportGuardError(message)
+      return null
+    } finally {
+      setExportGuardLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
+  const refreshConnectorGuard = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setConnectorGuard(null)
+      setConnectorGuardError(null)
+      setConnectorGuardLoading(false)
+      return null
+    }
+    setConnectorGuardLoading(true)
+    setConnectorGuardError(null)
+    try {
+      const report = await getTransport().call<DomainConnectorActionGuardReport>(
+        "evaluate_domain_connector_action_guard",
+        {
+          input: {
+            sessionId,
+            requireExplicitApproval: true,
+            requireRollbackPlan: true,
+            requireExportGuardForDelivery: true,
+          },
+        },
+      )
+      setConnectorGuard(report)
+      return report
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error(
+        "ui",
+        "useDomainTaskWorkbench",
+        "Failed to evaluate connector action guard",
+        e,
+      )
+      setConnectorGuardError(message)
+      return null
+    } finally {
+      setConnectorGuardLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshEvidence(), refreshExportGuard(), refreshConnectorGuard()])
+  }, [refreshConnectorGuard, refreshEvidence, refreshExportGuard])
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void refreshAll()
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshAll])
+
+  const prevTurnActive = useRef(turnActive)
+  useEffect(() => {
+    let cancelled = false
+    const was = prevTurnActive.current
+    prevTurnActive.current = turnActive
+    if (was && !turnActive) {
+      queueMicrotask(() => {
+        if (!cancelled) void refreshAll()
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [refreshAll, turnActive])
+
+  return {
+    evidence,
+    evidenceLoading,
+    evidenceError,
+    exportGuard,
+    exportGuardLoading,
+    exportGuardError,
+    connectorGuard,
+    connectorGuardLoading,
+    connectorGuardError,
+    refreshEvidence,
+    refreshExportGuard,
+    refreshConnectorGuard,
+    refreshAll,
+  }
+}
 
 function reviewStatsStringArray(snapshot: ReviewRunSnapshot | null, key: string): string[] {
   const value = snapshot?.run.stats?.[key]
@@ -2455,15 +3221,22 @@ function ReviewSection({
   incognito,
   turnActive,
   workingDir,
+  reviewRunsState,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
   workingDir?: string | null
+  reviewRunsState?: ReviewRunsState
 }) {
   const { t } = useTranslation()
+  const ownedReviewRunsState = useReviewRuns(sessionId, {
+    incognito,
+    turnActive,
+    disabled: Boolean(reviewRunsState),
+  })
   const { runs, snapshot, loading, running, error, refresh, runReview, updateFindingStatus } =
-    useReviewRuns(sessionId, { incognito, turnActive })
+    reviewRunsState ?? ownedReviewRunsState
   const findings = snapshot?.findings ?? []
   const openFindings = findings.filter((finding) => finding.status === "open")
   const visibleFindings = openFindings.slice(0, 6)
@@ -2872,13 +3645,20 @@ function VerificationSection({
   incognito,
   turnActive,
   workingDir,
+  verificationRunsState,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
   workingDir?: string | null
+  verificationRunsState?: VerificationRunsState
 }) {
   const { t } = useTranslation()
+  const ownedVerificationRunsState = useVerificationRuns(sessionId, {
+    incognito,
+    turnActive,
+    disabled: Boolean(verificationRunsState),
+  })
   const {
     runs,
     snapshot,
@@ -2889,7 +3669,7 @@ function VerificationSection({
     refresh,
     planVerification,
     runVerification,
-  } = useVerificationRuns(sessionId, { incognito, turnActive })
+  } = verificationRunsState ?? ownedVerificationRunsState
   const latest = snapshot?.run ?? runs[0]
   const steps = snapshot?.steps ?? []
   const visibleSteps = steps.slice(0, 6)
@@ -3186,22 +3966,39 @@ function DomainQualitySection({
   sessionId,
   incognito,
   turnActive,
+  domainQualityRunsState,
+  domainWorkbenchState,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
+  domainQualityRunsState?: DomainQualityRunsState
+  domainWorkbenchState?: DomainTaskWorkbenchState
 }) {
   const { t } = useTranslation()
   const [learningRunId, setLearningRunId] = useState<string | null>(null)
-  const [exportGuard, setExportGuard] = useState<DomainArtifactExportGuardReport | null>(null)
-  const [exportGuardLoading, setExportGuardLoading] = useState(false)
-  const [exportGuardError, setExportGuardError] = useState<string | null>(null)
-  const [connectorGuard, setConnectorGuard] =
-    useState<DomainConnectorActionGuardReport | null>(null)
-  const [connectorGuardLoading, setConnectorGuardLoading] = useState(false)
-  const [connectorGuardError, setConnectorGuardError] = useState<string | null>(null)
+  const ownedDomainQualityRunsState = useDomainQualityRuns(sessionId, {
+    incognito,
+    turnActive,
+    disabled: Boolean(domainQualityRunsState),
+  })
+  const ownedDomainWorkbenchState = useDomainTaskWorkbench(sessionId, {
+    incognito,
+    turnActive,
+    disabled: Boolean(domainWorkbenchState),
+  })
   const { runs, snapshot, loading, running, error, refresh, runDomainQuality } =
-    useDomainQualityRuns(sessionId, { incognito, turnActive })
+    domainQualityRunsState ?? ownedDomainQualityRunsState
+  const {
+    exportGuard,
+    exportGuardLoading,
+    exportGuardError,
+    connectorGuard,
+    connectorGuardLoading,
+    connectorGuardError,
+    refreshExportGuard,
+    refreshConnectorGuard,
+  } = domainWorkbenchState ?? ownedDomainWorkbenchState
   const latest = snapshot?.run ?? runs[0]
   const checks = snapshot?.checks ?? []
   const focusChecks = checks.filter((check) => check.status !== "passed")
@@ -3232,114 +4029,6 @@ function DomainQualitySection({
   ) : (
     <StatusPill label={t("workspace.domainQuality.idle", "待复核")} tone="muted" />
   )
-
-  const refreshExportGuard = useCallback(async () => {
-    if (!sessionId || incognito) {
-      setExportGuard(null)
-      setExportGuardError(null)
-      setExportGuardLoading(false)
-      return null
-    }
-    setExportGuardLoading(true)
-    setExportGuardError(null)
-    try {
-      const report = await getTransport().call<DomainArtifactExportGuardReport>(
-        "evaluate_domain_artifact_export_guard",
-        {
-          input: {
-            sessionId,
-            requireArtifactCreated: true,
-            requireArtifactReviewed: true,
-            maxSensitiveUnreviewed: 0,
-            maxRedactionPending: 0,
-          },
-        },
-      )
-      setExportGuard(report)
-      return report
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      logger.error(
-        "ui",
-        "DomainQualitySection::refreshExportGuard",
-        "Failed to evaluate artifact export guard",
-        e,
-      )
-      setExportGuardError(message)
-      return null
-    } finally {
-      setExportGuardLoading(false)
-    }
-  }, [incognito, sessionId])
-
-  const refreshConnectorGuard = useCallback(async () => {
-    if (!sessionId || incognito) {
-      setConnectorGuard(null)
-      setConnectorGuardError(null)
-      setConnectorGuardLoading(false)
-      return null
-    }
-    setConnectorGuardLoading(true)
-    setConnectorGuardError(null)
-    try {
-      const report = await getTransport().call<DomainConnectorActionGuardReport>(
-        "evaluate_domain_connector_action_guard",
-        {
-          input: {
-            sessionId,
-            requireExplicitApproval: true,
-            requireRollbackPlan: true,
-            requireExportGuardForDelivery: true,
-          },
-        },
-      )
-      setConnectorGuard(report)
-      return report
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      logger.error(
-        "ui",
-        "DomainQualitySection::refreshConnectorGuard",
-        "Failed to evaluate connector action guard",
-        e,
-      )
-      setConnectorGuardError(message)
-      return null
-    } finally {
-      setConnectorGuardLoading(false)
-    }
-  }, [incognito, sessionId])
-
-  useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        void refreshExportGuard()
-        void refreshConnectorGuard()
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [refreshConnectorGuard, refreshExportGuard])
-
-  const prevExportGuardTurnActive = useRef(turnActive)
-  useEffect(() => {
-    let cancelled = false
-    const was = prevExportGuardTurnActive.current
-    prevExportGuardTurnActive.current = turnActive
-    if (was && !turnActive) {
-      queueMicrotask(() => {
-        if (!cancelled) {
-          void refreshExportGuard()
-          void refreshConnectorGuard()
-        }
-      })
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [refreshConnectorGuard, refreshExportGuard, turnActive])
 
   const handleRun = async () => {
     const next = await runDomainQuality()
@@ -12180,6 +12869,10 @@ export default function WorkspacePanel({
     disabled: Boolean(workflowRunsState),
   })
   const sharedWorkflowRunsState = workflowRunsState ?? ownedWorkflowRunsState
+  const reviewRunsState = useReviewRuns(sessionId, { incognito, turnActive })
+  const verificationRunsState = useVerificationRuns(sessionId, { incognito, turnActive })
+  const domainQualityRunsState = useDomainQualityRuns(sessionId, { incognito, turnActive })
+  const domainTaskWorkbenchState = useDomainTaskWorkbench(sessionId, { incognito, turnActive })
   const workflowSectionRef = useRef<HTMLDivElement | null>(null)
   const [workflowFocusTarget, setWorkflowFocusTarget] = useState<WorkflowFocusTarget | null>(null)
   const focusWorkflowRun = useCallback((runId: string) => {
@@ -12262,6 +12955,16 @@ export default function WorkspacePanel({
           onPreviewFile={onPreviewFile}
         />
 
+        <DomainTaskWorkbenchSection
+          sessionId={sessionId}
+          incognito={incognito}
+          workingDir={effectiveWorkingDir}
+          reviewRunsState={reviewRunsState}
+          verificationRunsState={verificationRunsState}
+          domainQualityRunsState={domainQualityRunsState}
+          domainWorkbenchState={domainTaskWorkbenchState}
+        />
+
         <LspDiagnosticsSection
           sessionId={sessionId}
           incognito={incognito}
@@ -12273,6 +12976,7 @@ export default function WorkspacePanel({
           incognito={incognito}
           turnActive={turnActive}
           workingDir={effectiveWorkingDir}
+          reviewRunsState={reviewRunsState}
         />
 
         <VerificationSection
@@ -12280,9 +12984,16 @@ export default function WorkspacePanel({
           incognito={incognito}
           turnActive={turnActive}
           workingDir={effectiveWorkingDir}
+          verificationRunsState={verificationRunsState}
         />
 
-        <DomainQualitySection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
+        <DomainQualitySection
+          sessionId={sessionId}
+          incognito={incognito}
+          turnActive={turnActive}
+          domainQualityRunsState={domainQualityRunsState}
+          domainWorkbenchState={domainTaskWorkbenchState}
+        />
 
         <CodingTrendSection sessionId={sessionId} incognito={incognito} turnActive={turnActive} />
 

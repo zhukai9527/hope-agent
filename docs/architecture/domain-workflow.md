@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 7.1 Domain Workflow Registry 与 Phase 7.2 General Evidence Model 已实现；Phase 7.3 已在 [Context Retrieval v2](context-retrieval.md) 接入 domain profile、domain evidence 候选与 access issue；Phase 7.4 已由 [Domain Quality 控制平面](domain-quality.md) 消费 template / evidence / approval gates 生成通用领域 review / verification；Phase 7.5-7.6 已把 Domain Quality / Evidence 作为 [Coding Improvement Loop](coding-improvement-loop.md) 的通用学习输入与 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md) 的评分输入；Phase 7.15 已在本模块补充 Artifact Export Guard，Phase 7.16 已补 Connector Action Guard；Phase 8.2 已补 Connector E2E Gate，把真实外部系统修改从“动作前守门”推进到“读取 -> 草稿 -> 批准 -> 执行 -> 复核 -> 回滚说明”的完整链路验收。本文记录 `ha-core::domain_workflow`、owner API、通用 workflow template、通用 evidence、Goal evidence 链接、交付守门、外部动作守门与连接器 E2E 验收的当前技术事实。
+> 状态：Phase 7.1 Domain Workflow Registry 与 Phase 7.2 General Evidence Model 已实现；Phase 7.3 已在 [Context Retrieval v2](context-retrieval.md) 接入 domain profile、domain evidence 候选与 access issue；Phase 7.4 已由 [Domain Quality 控制平面](domain-quality.md) 消费 template / evidence / approval gates 生成通用领域 review / verification；Phase 7.5-7.6 已把 Domain Quality / Evidence 作为 [Coding Improvement Loop](coding-improvement-loop.md) 的通用学习输入与 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md) 的评分输入；Phase 7.15 已在本模块补充 Artifact Export Guard，Phase 7.16 已补 Connector Action Guard；Phase 8.2 已补 Connector E2E Gate，把真实外部系统修改从“动作前守门”推进到“读取 -> 草稿 -> 批准 -> 执行 -> 复核 -> 回滚说明”的完整链路验收；Phase 8.4 已在 Workspace 补充「通用任务工作台」，把 Sources / Evidence / Drafts / Review / Verification / Decisions 合成用户可操作闭环。本文记录 `ha-core::domain_workflow`、owner API、通用 workflow template、通用 evidence、Goal evidence 链接、交付守门、外部动作守门、连接器 E2E 验收与 Workspace 通用任务工作台的当前技术事实。
 
 ## 目标
 
@@ -69,8 +69,45 @@ Workspace / Workflow Control Center 的“新建工作流”表单已接入 doma
 - 创建前同屏展示 output contract 摘要、required evidence、approval gates、verification policy 与 warnings；用户继续复用既有 Script Gate / permission preview / run immediately / worktree 选择。
 - 修改目标、模板、任务类型、执行模式或脚本会清空旧预检，避免用过期 preview 创建 run。
 - Loop 创建区可在 active Goal 已绑定领域模板时选择“创建工作流”：每次 interval tick 会用该模板版本生成 `requirePlanConfirmation=false` 的 draft，创建 `origin=loop:<loop_id>` 的 WorkflowRun，并把 workflow run id 写回 Loop trace。
+- Workspace 右侧面板新增「通用任务工作台」：复用当前 session 的 domain evidence、Review、Verification、Domain Quality、Artifact Export Guard 与 Connector Action Guard，把来源、证据、草稿、复核、验证和用户决策压成一个同屏总览。
 
 GUI 入口仍是 owner plane：它只生成 draft 和 preview，不自动访问连接器，也不绕过后续 workflow runtime 的审批、用户确认和权限策略。
+
+## 通用任务工作台
+
+Phase 8.4 在 `src/components/chat/workspace/WorkspacePanel.tsx` 新增「通用任务工作台」区块，放在「推荐上下文」之后、「LSP / Review / Verification / 领域复核」之前。它是 GUI 聚合层，不新增后端表，也不改变任何执行/授权语义。
+
+第一版聚合来源：
+
+| 来源 | 用途 |
+| --- | --- |
+| `list_domain_evidence` | 读取当前 session 最近 domain evidence，统计 Sources、Evidence、Drafts、Review、Decisions，并展示最近证据。 |
+| `evaluate_domain_artifact_export_guard` | 显示最终交付是否具备产物、复核、敏感来源导出复核和脱敏证据。 |
+| `evaluate_domain_connector_action_guard` | 显示真实外部动作是否具备动作 scope、用户批准、回滚和交付守门证据。 |
+| `useReviewRuns` | 读取当前 review finding，P0/P1 open finding 会让工作台进入需处理状态。 |
+| `useVerificationRuns` | 读取验证 plan / run / step，并提供“推荐验证”“运行验证”按钮。 |
+| `useDomainQualityRuns` | 读取领域复核 run/check，并提供“运行领域复核”按钮。 |
+
+状态语义：
+
+- `danger`：存在 P0/P1 review finding、验证失败、领域复核 failed/blocked、Artifact Export Guard failed 或 Connector Action Guard failed。
+- `warn`：缺证据、缺来源、缺草稿、领域复核需要用户确认、Artifact Export Guard / Connector Action Guard 证据不足。
+- `good`：已有证据链且没有上述阻塞/缺口。
+- `muted`：无痕会话、无 session 或尚未开始。
+
+用户可见动作：
+
+- 「运行领域复核」调用既有 `run_domain_quality`。
+- 「推荐验证」调用既有 `plan_smart_verification`。
+- 「运行验证」调用既有 `run_smart_verification`。
+- 「刷新工作台」同时刷新 domain evidence、两个 guard、review、verification 与 domain quality state。
+
+红线：
+
+- 工作台只聚合 owner-plane 读模型和已有显式动作按钮，不直接写 evidence、不创建 WorkflowRun、不访问连接器、不发送/分享/导出内容。
+- 交付守门和外部动作守门仍是只读结论；真正外部系统修改继续走 `permission::engine` strict approval、连接器授权和工具执行层。
+- Incognito session 不持久化 domain evidence，工作台只显示禁用提示并清空 durable state。
+- Review / Verification / Domain Quality 的 hook 状态在 Workspace 顶层共享给通用任务工作台和各自详细区块，避免同一面板重复请求同一批 run。
 
 ## General Evidence
 
