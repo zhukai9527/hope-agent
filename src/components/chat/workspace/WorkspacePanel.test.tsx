@@ -1482,6 +1482,70 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByRole("button", { name: "创建工作流" })).toBeTruthy()
   })
 
+  it("opens failed workflow and blocked loop details from readiness actions", async () => {
+    const healthyRun = workflowRun({
+      id: "wf-ok",
+      state: "completed",
+      completedAt: "2026-01-01T00:04:00Z",
+      updatedAt: "2026-01-01T00:04:00Z",
+    })
+    const failedRun = workflowRun({
+      id: "wf-failed",
+      state: "failed",
+      blockedReason: "validation failed",
+      updatedAt: "2026-01-01T00:05:00Z",
+    })
+    const blockedLoop = loopSchedule({
+      id: "loop-blocked",
+      state: "blocked",
+      blockedReason: "approval required",
+    })
+    const blockedLoopSnapshot = loopSnapshot({
+      schedule: blockedLoop,
+      runs: loopSnapshot().runs.map((run) => ({ ...run, loopId: blockedLoop.id })),
+    })
+    const snapshots = new Map([
+      [healthyRun.id, workflowSnapshot(healthyRun)],
+      [failedRun.id, workflowSnapshot(failedRun)],
+    ])
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([healthyRun, failedRun])
+      if (name === "get_workflow_run") {
+        return Promise.resolve(snapshots.get(String(args?.runId)) ?? null)
+      }
+      if (name === "list_loop_schedules") return Promise.resolve([blockedLoop])
+      if (name === "get_loop_schedule") return Promise.resolve(blockedLoopSnapshot)
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("需处理")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "查看工作流" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("get_workflow_run", {
+        runId: "wf-failed",
+      })
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 Loop" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("get_loop_schedule", {
+        loopId: "loop-blocked",
+      })
+    })
+  })
+
   it("links workflow loop rows to their derived workflow run", async () => {
     const otherRun = workflowRun({
       id: "wf-other",

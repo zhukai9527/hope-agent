@@ -7265,6 +7265,8 @@ function AutonomousReadinessCard({
   onOpenGoalCreate,
   onOpenGoalEdit,
   onOpenLoopCreate,
+  onOpenWorkflowProblem,
+  onOpenLoopProblem,
 }: {
   activeGoal: Goal | null
   workflowMode: WorkflowAutonomyMode
@@ -7283,15 +7285,20 @@ function AutonomousReadinessCard({
   onOpenGoalCreate?: () => void
   onOpenGoalEdit?: () => void
   onOpenLoopCreate?: () => void
+  onOpenWorkflowProblem?: (runId: string) => void
+  onOpenLoopProblem?: (loopId: string) => void
 }) {
   const { t } = useTranslation()
+  const problemWorkflow = workflowRunsState.runs.find(workflowRunHasHardProblem) ?? null
+  const problemLoops = loopSchedulesState.schedules.filter(loopScheduleNeedsAttention)
+  const problemLoop = problemLoops[0] ?? null
   const workflowProblems = workflowRunsState.runs.filter(workflowRunHasHardProblem).length
   const activeWorkflows = workflowRunsState.activeCount
   const liveLoops = activeLoopSchedules(loopSchedulesState.schedules)
   const workflowLoopCount = loopSchedulesState.schedules.filter(
     (schedule) => schedule.executionStrategy === "workflow",
   ).length
-  const loopProblems = loopSchedulesState.schedules.filter(loopScheduleNeedsAttention).length
+  const loopProblems = problemLoops.length
   const loading =
     workflowModeLoading ||
     executionModeLoading ||
@@ -7328,6 +7335,22 @@ function AutonomousReadinessCard({
     domainWorkbenchState.operationalGate?.status === "failed" ||
     domainWorkbenchState.soakReport?.status === "failed"
   const quickActions: AutonomousReadinessQuickAction[] = []
+  if (!incognito && problemWorkflow && onOpenWorkflowProblem) {
+    quickActions.push({
+      key: "workflow-problem",
+      label: t("workspace.autonomousReadiness.actionViewWorkflow", "查看工作流"),
+      icon: Eye,
+      onClick: () => onOpenWorkflowProblem(problemWorkflow.id),
+    })
+  }
+  if (!incognito && problemLoop && onOpenLoopProblem) {
+    quickActions.push({
+      key: "loop-problem",
+      label: t("workspace.autonomousReadiness.actionViewLoop", "查看 Loop"),
+      icon: Radio,
+      onClick: () => onOpenLoopProblem(problemLoop.id),
+    })
+  }
   if (!incognito && !activeGoal && onOpenGoalCreate) {
     quickActions.push({
       key: "goal",
@@ -8476,6 +8499,7 @@ function LoopSchedulesSection({
   onSelectWorkflowRun,
   loopSchedulesState,
   createRequest,
+  inspectRequest,
 }: {
   sessionId?: string | null
   incognito?: boolean
@@ -8484,6 +8508,7 @@ function LoopSchedulesSection({
   onSelectWorkflowRun?: (runId: string) => void
   loopSchedulesState?: LoopSchedulesState
   createRequest?: number
+  inspectRequest?: { loopId: string; nonce: number } | null
 }) {
   const { t } = useTranslation()
   const ownedLoopSchedulesState = useLoopSchedules(sessionId, {
@@ -8512,6 +8537,7 @@ function LoopSchedulesSection({
   const [detailError, setDetailError] = useState<string | null>(null)
   const detailReqRef = useRef(0)
   const lastCreateRequestRef = useRef(createRequest ?? 0)
+  const lastInspectRequestRef = useRef(inspectRequest?.nonce ?? 0)
   const activeGoal = goalState.snapshot?.goal ?? null
   const canUseWorkflowLoop =
     draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
@@ -8574,6 +8600,15 @@ function LoopSchedulesSection({
         setDetailLoading(false)
       })
   }, [])
+
+  useEffect(() => {
+    const nextRequest = inspectRequest?.nonce ?? 0
+    if (nextRequest === lastInspectRequestRef.current) return
+    lastInspectRequestRef.current = nextRequest
+    if (!inspectRequest?.loopId || !sessionId || incognito) return
+    setCreateOpen(false)
+    loadLoopDetail(inspectRequest.loopId)
+  }, [incognito, inspectRequest, loadLoopDetail, sessionId])
 
   const toggleLoopDetail = useCallback(
     (loopId: string) => {
@@ -8706,7 +8741,7 @@ function LoopSchedulesSection({
       title={t("workspace.loop.title", "Loop")}
       count={schedules.length}
       icon={Radio}
-      expandSignal={createRequest}
+      expandSignal={(createRequest ?? 0) + (inspectRequest?.nonce ?? 0)}
       meta={
         activeCount > 0 ? (
           <StatusPill
@@ -9072,6 +9107,7 @@ function WorkflowRunsSection({
   onEnsureSession,
   onViewSubagentSession,
   onOpenLoopCreate,
+  onOpenLoopProblem,
   workflowRunsState,
   loopSchedulesState,
   domainWorkbenchState,
@@ -9084,6 +9120,7 @@ function WorkflowRunsSection({
   onEnsureSession?: () => Promise<string | null>
   onViewSubagentSession?: (sessionId: string) => void
   onOpenLoopCreate?: () => void
+  onOpenLoopProblem?: (loopId: string) => void
   workflowRunsState?: WorkflowRunsState
   loopSchedulesState: LoopSchedulesState
   domainWorkbenchState: DomainTaskWorkbenchState
@@ -9361,6 +9398,17 @@ function WorkflowRunsSection({
         setSnapshotLoading(false)
       })
   }, [])
+
+  const focusWorkflowRun = useCallback(
+    (runId: string) => {
+      setSelectedRunId(runId)
+      if (!runs.slice(0, WORKFLOW_RUN_PREVIEW).some((run) => run.id === runId)) {
+        setShowAllRuns(true)
+      }
+      loadSnapshot(runId)
+    },
+    [loadSnapshot, runs],
+  )
 
   const loadWorkflowMode = useCallback(() => {
     if (!sessionId || incognito) {
@@ -10136,6 +10184,8 @@ ${repairPrompt}`
               onOpenGoalCreate={() => setGoalCreateOpen(true)}
               onOpenGoalEdit={() => setGoalEditRequest((value) => value + 1)}
               onOpenLoopCreate={onOpenLoopCreate}
+              onOpenWorkflowProblem={focusWorkflowRun}
+              onOpenLoopProblem={onOpenLoopProblem}
             />
             <WorkflowAutonomyModeControl
               mode={workflowMode}
@@ -14403,6 +14453,10 @@ export default function WorkspacePanel({
   const sharedWorkflowRunsState = workflowRunsState ?? ownedWorkflowRunsState
   const loopSchedulesState = useLoopSchedules(sessionId, { incognito, turnActive })
   const [loopCreateRequest, setLoopCreateRequest] = useState(0)
+  const [loopInspectRequest, setLoopInspectRequest] = useState<{
+    loopId: string
+    nonce: number
+  } | null>(null)
   const reviewRunsState = useReviewRuns(sessionId, { incognito, turnActive })
   const verificationRunsState = useVerificationRuns(sessionId, { incognito, turnActive })
   const domainQualityRunsState = useDomainQualityRuns(sessionId, { incognito, turnActive })
@@ -14559,6 +14613,12 @@ export default function WorkspacePanel({
             onEnsureSession={onEnsureSession}
             onViewSubagentSession={onViewSubagentSession}
             onOpenLoopCreate={() => setLoopCreateRequest((value) => value + 1)}
+            onOpenLoopProblem={(loopId) =>
+              setLoopInspectRequest((current) => ({
+                loopId,
+                nonce: (current?.nonce ?? 0) + 1,
+              }))
+            }
             workflowRunsState={sharedWorkflowRunsState}
             loopSchedulesState={loopSchedulesState}
             domainWorkbenchState={domainTaskWorkbenchState}
@@ -14575,6 +14635,7 @@ export default function WorkspacePanel({
           onSelectWorkflowRun={focusWorkflowRun}
           loopSchedulesState={loopSchedulesState}
           createRequest={loopCreateRequest}
+          inspectRequest={loopInspectRequest}
         />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
