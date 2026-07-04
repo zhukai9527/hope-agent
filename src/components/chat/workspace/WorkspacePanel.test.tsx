@@ -1858,6 +1858,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     expect(await screen.findByText("需处理")).toBeTruthy()
+    expect(screen.getByText("2 个守门")).toBeTruthy()
 
     fireEvent.click(screen.getByRole("button", { name: "查看交付" }))
     expect(await screen.findByText("交付守门")).toBeTruthy()

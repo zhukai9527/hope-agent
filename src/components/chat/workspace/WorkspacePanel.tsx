@@ -7204,6 +7204,14 @@ function readinessMetricTone(ready: boolean, warning = false): StatusTone {
   return ready ? "good" : "muted"
 }
 
+function readinessGuardStatusNeedsAttention(status?: string | null): boolean {
+  return Boolean(status && status !== "passed")
+}
+
+function readinessGuardStatusFailed(status?: string | null): boolean {
+  return status === "failed"
+}
+
 function autonomousReadinessNextSteps(
   t: ReturnType<typeof useTranslation>["t"],
   args: {
@@ -7376,12 +7384,33 @@ function AutonomousReadinessCard({
   const goalReady = Boolean(activeGoal)
   const workflowReady = workflowMode !== "off"
   const executionReady = executionMode !== "off"
-  const runHealthReady = workflowProblems === 0 && loopProblems === 0
-  const runHealthWarning =
-    domainWorkbenchState.exportGuard?.status === "failed" ||
-    domainWorkbenchState.connectorGuard?.status === "failed" ||
-    domainWorkbenchState.operationalGate?.status === "failed" ||
-    domainWorkbenchState.soakReport?.status === "failed"
+  const guardStatuses = [
+    domainWorkbenchState.exportGuard?.status,
+    domainWorkbenchState.connectorGuard?.status,
+    domainWorkbenchState.operationalGate?.status,
+    domainWorkbenchState.soakReport?.status,
+  ]
+  const guardAttentionCount = guardStatuses.filter(readinessGuardStatusNeedsAttention).length
+  const failedGuardCount = guardStatuses.filter(readinessGuardStatusFailed).length
+  const runProblemCount = workflowProblems + loopProblems
+  const runHealthReady = runProblemCount === 0 && guardAttentionCount === 0
+  const runHealthWarning = failedGuardCount > 0
+  const healthValue =
+    runProblemCount > 0
+      ? t("workspace.autonomousReadiness.healthProblems", "{{count}} 个问题", {
+          count: runProblemCount,
+        })
+      : failedGuardCount > 0
+        ? t("workspace.autonomousReadiness.healthGuardProblems", "{{count}} 个守门", {
+            count: failedGuardCount,
+          })
+        : guardAttentionCount > 0
+          ? t("workspace.autonomousReadiness.healthNeedsEvidence", "待证据")
+          : activeWorkflows > 0 || liveLoops.length > 0
+            ? t("workspace.autonomousReadiness.healthActive", "{{count}} 活跃", {
+                count: activeWorkflows + liveLoops.length,
+              })
+            : t("workspace.autonomousReadiness.healthClean", "干净")
   const quickActions: AutonomousReadinessQuickAction[] = []
   if (!incognito && problemWorkflow && onOpenWorkflowProblem) {
     quickActions.push({
@@ -7569,17 +7598,7 @@ function AutonomousReadinessCard({
           <div className="truncate text-[10px]">
             {t("workspace.autonomousReadiness.health", "运行")}
           </div>
-          <div className="truncate text-xs font-semibold">
-            {workflowProblems > 0 || loopProblems > 0
-              ? t("workspace.autonomousReadiness.healthProblems", "{{count}} 个问题", {
-                  count: workflowProblems + loopProblems,
-                })
-              : activeWorkflows > 0 || liveLoops.length > 0
-                ? t("workspace.autonomousReadiness.healthActive", "{{count}} 活跃", {
-                    count: activeWorkflows + liveLoops.length,
-                  })
-                : t("workspace.autonomousReadiness.healthClean", "干净")}
-          </div>
+          <div className="truncate text-xs font-semibold">{healthValue}</div>
         </div>
       </div>
 
