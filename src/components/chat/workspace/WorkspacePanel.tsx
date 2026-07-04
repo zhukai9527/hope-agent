@@ -3618,6 +3618,12 @@ const REVIEW_PROFILE_OPTIONS = [
 const DEFAULT_REVIEW_PROFILES = ["correctness", "security", "maintainability", "tests"]
 const DOMAIN_WORKBENCH_EVIDENCE_LIMIT = 60
 
+function eventBelongsToSession(payload: unknown, sessionId: string): boolean {
+  if (typeof payload !== "object" || payload === null) return true
+  const value = (payload as { sessionId?: unknown }).sessionId
+  return typeof value !== "string" || value === sessionId
+}
+
 interface DomainTaskWorkbenchState {
   evidence: DomainEvidenceItem[]
   evidenceLoading: boolean
@@ -3789,6 +3795,14 @@ function useDomainTaskWorkbench(
       cancelled = true
     }
   }, [refreshAll, turnActive])
+
+  useEffect(() => {
+    if (disabled || !sessionId || incognito) return
+    return getTransport().listen("domain_evidence:recorded", (payload) => {
+      if (!eventBelongsToSession(payload, sessionId)) return
+      void refreshAll()
+    })
+  }, [disabled, incognito, refreshAll, sessionId])
 
   return {
     evidence,

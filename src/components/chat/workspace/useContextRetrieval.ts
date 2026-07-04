@@ -135,6 +135,7 @@ export function useContextRetrieval(
       transport.listen("verification:updated", scheduleRefresh),
       transport.listen("verification:step_updated", scheduleRefresh),
       transport.listen("workflow:updated", scheduleRefresh),
+      transport.listen("domain_evidence:recorded", scheduleRefresh),
       transport.listen("_lagged", () => scheduleRefresh()),
     ]
     return () => {

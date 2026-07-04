@@ -146,6 +146,7 @@ Phase 7.2 支持下列 evidence type：
 - `accessScope` 归一为 `public | session | project | connector | private`。
 - `redactionStatus` 归一为 `none | redacted | pending | sensitive`。
 - 若关联 goal，会调用 `link_goal_target(goal_id, "domain_evidence", evidence_id, evidence_type, metadata)`。
+- 成功写入后发 `domain_evidence:recorded` EventBus 事件，payload 只包含 `id/sessionId/goalId/projectId/domain/evidenceType/title/createdAt` 摘要，不广播完整 `summary` 或 `sourceMetadata`；Workspace Context 与通用任务工作台监听该事件刷新。
 
 Goal evidence relation 白名单已加法扩展这些通用 evidence type；coding evidence relation 保持原样。
 
@@ -279,6 +280,12 @@ Tauri / HTTP / transport 均已注册：
 | `evaluate_domain_artifact_export_guard` | `POST /api/domain-artifact-export-guard/evaluate` | 只读评估最终交付是否具备产物、复核和脱敏证据。 |
 | `evaluate_domain_connector_action_guard` | `POST /api/domain-connector-action-guard/evaluate` | 只读评估真实外部连接器动作是否具备动作、批准、回滚和交付守门证据。 |
 | `evaluate_domain_connector_e2e_gate` | `POST /api/domain-connector-e2e-gate/evaluate` | 只读评估真实连接器 E2E 是否具备输入、草稿、批准、执行结果、执行后复核、回滚和交付守门证据。 |
+
+EventBus 事件：
+
+| 事件名 | 触发点 | Payload 关键字段 |
+| --- | --- | --- |
+| `domain_evidence:recorded` | `record_domain_evidence` 成功写入后 | `{ id, sessionId, goalId?, projectId?, domain, evidenceType, title, createdAt }` |
 
 ## 红线
 

@@ -20,6 +20,7 @@ const DOMAIN_EVIDENCE_LIMIT_MAX: usize = 200;
 const DOMAIN_EXPORT_GUARD_REVIEW_ITEMS_MAX: usize = 12;
 const DOMAIN_CONNECTOR_ACTION_GUARD_EVIDENCE_MAX: usize = 12;
 const DOMAIN_CONNECTOR_E2E_GATE_EVIDENCE_MAX: usize = 16;
+pub const EVENT_DOMAIN_EVIDENCE_RECORDED: &str = "domain_evidence:recorded";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1142,6 +1143,7 @@ impl SessionDB {
                 }),
             )?;
         }
+        emit_domain_evidence_recorded(&item);
         Ok(item)
     }
 
@@ -3260,6 +3262,25 @@ fn collect_rows<T>(
 ) -> Result<Vec<T>> {
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+fn emit_domain_evidence_recorded(item: &DomainEvidenceItem) {
+    let Some(bus) = crate::globals::get_event_bus() else {
+        return;
+    };
+    bus.emit(
+        EVENT_DOMAIN_EVIDENCE_RECORDED,
+        json!({
+            "id": item.id,
+            "sessionId": item.session_id,
+            "goalId": item.goal_id,
+            "projectId": item.project_id,
+            "domain": item.domain,
+            "evidenceType": item.evidence_type,
+            "title": item.title,
+            "createdAt": item.created_at,
+        }),
+    );
 }
 
 fn stable_json<T: Serialize>(value: &T) -> Result<String> {

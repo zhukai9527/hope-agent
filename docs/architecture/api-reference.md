@@ -97,6 +97,12 @@ Tauri ↔ COMMAND_MAP 差集为 13 条合法非 REST 命令（5 条 Desktop-only
 | `workflow:op_updated` | `workflow_ops` started/completed/failed | `WorkflowOp` 快照 |
 | `workflow:event` | `append_workflow_event` | `WorkflowEvent`；大 payload 已在落库前截断到 preview |
 
+### Domain Workflow
+
+| 事件名 | 触发点 | Payload 关键字段 |
+|---|---|---|
+| `domain_evidence:recorded` | `domain_workflow::record_domain_evidence` 成功写入后 | `{ id, sessionId, goalId?, projectId?, domain, evidenceType, title, createdAt }`，只广播摘要，不携带完整 `summary` / `sourceMetadata` |
+
 ### Managed Worktree
 
 | 事件名 | 触发点 | Payload 关键字段 |
@@ -602,7 +608,7 @@ Goal owner API 管理 session-scoped 顶层目标。`create_goal` 会拒绝 inco
 | `record_domain_evidence` | `POST /api/domain-evidence/record` | ✅ |
 | `list_domain_evidence` | `POST /api/domain-evidence` | ✅ |
 
-Domain Workflow owner API 是 Phase 7.1-7.2 的通用场景入口。`list_domain_workflow_templates` 合并内置 Research / Writing / Data Analysis / Meeting Prep / Knowledge Curation / Inbox / Project Ops 模板与用户/项目自定义模板；`save_domain_workflow_template` 要求 `explicitSaveConsent=true`，并禁止覆盖 built-in 同 id/version；`preview_domain_workflow` 从模板生成 `workflow.js` draft，走既有 Script Gate / permission preview，但不创建 run、不执行脚本；`record_domain_evidence` 写入通用 evidence，可把 `source_cited`、`claim_checked`、`user_decision`、`artifact_reviewed`、`data_quality_checked` 等 relation 链回 Goal；`list_domain_evidence` 供 owner 面按 goal/session/project/domain/type 查询。无痕会话 fail-closed。完整契约见 [Domain Workflow 控制平面](domain-workflow.md)。
+Domain Workflow owner API 是 Phase 7.1-7.2 的通用场景入口。`list_domain_workflow_templates` 合并内置 Research / Writing / Data Analysis / Meeting Prep / Knowledge Curation / Inbox / Project Ops 模板与用户/项目自定义模板；`save_domain_workflow_template` 要求 `explicitSaveConsent=true`，并禁止覆盖 built-in 同 id/version；`preview_domain_workflow` 从模板生成 `workflow.js` draft，走既有 Script Gate / permission preview，但不创建 run、不执行脚本；`record_domain_evidence` 写入通用 evidence，可把 `source_cited`、`claim_checked`、`user_decision`、`artifact_reviewed`、`data_quality_checked` 等 relation 链回 Goal，成功后通过 `domain_evidence:recorded` 事件通知 Workspace Context 与通用任务工作台刷新；`list_domain_evidence` 供 owner 面按 goal/session/project/domain/type 查询。无痕会话 fail-closed。完整契约见 [Domain Workflow 控制平面](domain-workflow.md)。
 
 ### Loop Schedules
 

@@ -1112,6 +1112,69 @@ describe("WorkspacePanel context retrieval section", () => {
       })
     })
   })
+
+  it("refreshes context and task workbench when domain evidence is recorded", async () => {
+    const snapshot = contextRetrievalSnapshot()
+    const listeners = new Map<string, Array<(payload: unknown) => void>>()
+    transportMock.listen.mockImplementation(
+      (eventName: string, handler: (payload: unknown) => void) => {
+        const handlers = listeners.get(eventName) ?? []
+        handlers.push(handler)
+        listeners.set(eventName, handlers)
+        return () => {
+          const next = (listeners.get(eventName) ?? []).filter((current) => current !== handler)
+          if (next.length > 0) {
+            listeners.set(eventName, next)
+          } else {
+            listeners.delete(eventName)
+          }
+        }
+      },
+    )
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_context_retrieval") return Promise.resolve(snapshot)
+      if (name === "list_domain_evidence") return Promise.resolve([])
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("Browser automation notes")).toBeTruthy()
+    await waitFor(() => {
+      expect(listeners.get("domain_evidence:recorded")?.length ?? 0).toBeGreaterThanOrEqual(2)
+    })
+    const contextCallsBefore = transportMock.call.mock.calls.filter(
+      ([name]) => name === "get_context_retrieval",
+    ).length
+    const evidenceCallsBefore = transportMock.call.mock.calls.filter(
+      ([name]) => name === "list_domain_evidence",
+    ).length
+
+    act(() => {
+      for (const handler of listeners.get("domain_evidence:recorded") ?? []) {
+        handler({ sessionId: "s1", id: "evidence-2" })
+      }
+    })
+
+    await waitFor(() => {
+      expect(
+        transportMock.call.mock.calls.filter(([name]) => name === "get_context_retrieval")
+          .length,
+      ).toBeGreaterThan(contextCallsBefore)
+      expect(
+        transportMock.call.mock.calls.filter(([name]) => name === "list_domain_evidence")
+          .length,
+      ).toBeGreaterThan(evidenceCallsBefore)
+    })
+  })
 })
 
 describe("WorkspacePanel environment section", () => {
