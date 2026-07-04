@@ -35,6 +35,7 @@ import type {
   CodingBenchmarkTaskPackValidationReport,
   CodingContinuousBenchmarkGateReport,
   CodingEvalReleaseGateReport,
+  GenerateCodingImprovementProposalsResult,
   CodingLearningGeneralizationReport,
   DomainEvalRunRecord,
   DomainEvalFixtureRunRecord,
@@ -608,6 +609,40 @@ export default function LearningTab({ filter }: LearningTabProps) {
     }
   }, [reload])
 
+  const generateDomainCampaignLearning = useCallback(async (campaign: DomainEvalCampaign) => {
+    if (!campaign.sessionId) {
+      setDomainCampaignError("This domain campaign has no session scope for learning proposals.")
+      return
+    }
+    const campaignId = campaign.id
+    const actionKey = `learn:${campaignId}`
+    setDomainCampaignActionId(actionKey)
+    setDomainCampaignError(null)
+    try {
+      await getTransport().call<GenerateCodingImprovementProposalsResult>(
+        "generate_coding_improvement_proposals",
+        {
+          sessionId: campaign.sessionId,
+          windowDays: releaseGateWindowDays(filter, windowDays),
+          sourceType: "domain_eval_campaign",
+          sourceId: campaignId,
+          proposalKinds: ["domain_eval_case", "domain_guidance"],
+        },
+      )
+      await reload()
+    } catch (e) {
+      setDomainCampaignError(e instanceof Error ? e.message : String(e))
+      logger.error(
+        "dashboard",
+        "LearningTab::generateDomainCampaignLearning",
+        "Failed to generate domain campaign learning proposals",
+        e,
+      )
+    } finally {
+      setDomainCampaignActionId(null)
+    }
+  }, [filter, reload, windowDays])
+
   const importSampleTaskPack = useCallback(async () => {
     setCorpusActionId("import")
     setBenchmarkError(null)
@@ -881,6 +916,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         onRetryBenchmarkCampaign={retryBenchmarkCampaign}
         onRunDomainEvalCampaign={runDomainEvalCampaign}
         onRunExternalDomainEvalCampaign={runExternalDomainEvalCampaign}
+        onGenerateDomainCampaignLearning={generateDomainCampaignLearning}
         onToggleDomainModel={toggleDomainModel}
         onDomainCampaignMaxTasksChange={setDomainCampaignMaxTasks}
         onDomainCampaignBudgetUsdChange={setDomainCampaignBudgetUsd}
@@ -1096,6 +1132,7 @@ function CodingImprovementSection({
   onRetryBenchmarkCampaign,
   onRunDomainEvalCampaign,
   onRunExternalDomainEvalCampaign,
+  onGenerateDomainCampaignLearning,
   onToggleDomainModel,
   onDomainCampaignMaxTasksChange,
   onDomainCampaignBudgetUsdChange,
@@ -1154,6 +1191,7 @@ function CodingImprovementSection({
   onRetryBenchmarkCampaign: (campaignId: string) => void
   onRunDomainEvalCampaign: () => void
   onRunExternalDomainEvalCampaign: () => void
+  onGenerateDomainCampaignLearning: (campaign: DomainEvalCampaign) => void
   onToggleDomainModel: (key: string) => void
   onDomainCampaignMaxTasksChange: (value: number) => void
   onDomainCampaignBudgetUsdChange: (value: string) => void
@@ -1352,6 +1390,7 @@ function CodingImprovementSection({
         error={domainCampaignError}
         onRun={onRunDomainEvalCampaign}
         onRunExternal={onRunExternalDomainEvalCampaign}
+        onGenerateLearning={onGenerateDomainCampaignLearning}
         onToggleModel={onToggleDomainModel}
         onMaxTasksChange={onDomainCampaignMaxTasksChange}
         onBudgetUsdChange={onDomainCampaignBudgetUsdChange}
@@ -3013,6 +3052,7 @@ function DomainEvalCampaignPanel({
   error,
   onRun,
   onRunExternal,
+  onGenerateLearning,
   onToggleModel,
   onMaxTasksChange,
   onBudgetUsdChange,
@@ -3029,6 +3069,7 @@ function DomainEvalCampaignPanel({
   error: string | null
   onRun: () => void
   onRunExternal: () => void
+  onGenerateLearning: (campaign: DomainEvalCampaign) => void
   onToggleModel: (key: string) => void
   onMaxTasksChange: (value: number) => void
   onBudgetUsdChange: (value: string) => void
@@ -3109,9 +3150,11 @@ function DomainEvalCampaignPanel({
               <DomainEvalCampaignRow
                 key={campaign.id}
                 campaign={campaign}
-                busy={actionId === campaign.id}
+                busy={actionId === campaign.id || actionId === `learn:${campaign.id}`}
+                learningBusy={actionId === `learn:${campaign.id}`}
                 onCancel={onCancel}
                 onRetry={onRetry}
+                onGenerateLearning={onGenerateLearning}
               />
             ))}
           </div>
@@ -3291,17 +3334,24 @@ function DomainCampaignLeaderboard({
 function DomainEvalCampaignRow({
   campaign,
   busy,
+  learningBusy,
   onCancel,
   onRetry,
+  onGenerateLearning,
 }: {
   campaign: DomainEvalCampaign
   busy: boolean
+  learningBusy: boolean
   onCancel: (campaignId: string) => void
   onRetry: (campaignId: string) => void
+  onGenerateLearning: (campaign: DomainEvalCampaign) => void
 }) {
   const { t } = useTranslation()
   const canCancel = ["queued", "running", "cancel_requested"].includes(campaign.status)
   const canRetry = ["failed", "partial", "cancelled", "interrupted"].includes(campaign.status)
+  const canGenerateLearning =
+    Boolean(campaign.sessionId) &&
+    campaign.items.some((item) => ["failed", "cancelled", "interrupted"].includes(item.status))
   const visibleItems = campaign.items.slice(0, 5)
   const primaryItem = campaign.items[0]
 
@@ -3331,6 +3381,20 @@ function DomainEvalCampaignRow({
             value={campaign.summary.totalChecks}
             tone={campaign.summary.failedChecks > 0 ? "warn" : "accent"}
           />
+          {canGenerateLearning && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-1.5"
+              onClick={() => onGenerateLearning(campaign)}
+              disabled={busy}
+              title={t("dashboard.learning.generateDomainCampaignLearning", {
+                defaultValue: "Create learning drafts from this domain campaign",
+              })}
+            >
+              {learningBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            </Button>
+          )}
           {canRetry && (
             <Button
               size="sm"

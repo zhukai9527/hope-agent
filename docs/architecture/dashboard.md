@@ -321,7 +321,7 @@ Learning Tracker 把 skill / memory / MCP 三类关键事件写入 `session.db` 
 
 ## General Domain Quality（Domain Eval owner API）
 
-> 新增于 Phase 7.6，Phase 7.7 增加人工校准动作，Phase 7.10 增加隔离的 Smoke Run Center，Phase 7.11 增加 Domain Campaign Center，Phase 7.12 增加 External Campaign 与 Domain Leaderboard。Dashboard Learning Tab 的通用领域质量区块；前端直接调用 `evaluate_domain_quality_gate`、`list_domain_eval_runs`、`list_domain_eval_tasks`、`list_domain_eval_fixture_runs`、`list_domain_eval_campaigns`、`get_domain_eval_campaign_leaderboard` 与 `record_domain_eval_calibration`，后端事实源见 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md)。
+> 新增于 Phase 7.6，Phase 7.7 增加人工校准动作，Phase 7.10 增加隔离的 Smoke Run Center，Phase 7.11 增加 Domain Campaign Center，Phase 7.12 增加 External Campaign 与 Domain Leaderboard，Phase 7.13 增加 Campaign Learning Closure。Dashboard Learning Tab 的通用领域质量区块；前端直接调用 `evaluate_domain_quality_gate`、`list_domain_eval_runs`、`list_domain_eval_tasks`、`list_domain_eval_fixture_runs`、`list_domain_eval_campaigns`、`get_domain_eval_campaign_leaderboard`、`generate_coding_improvement_proposals(sourceType="domain_eval_campaign")` 与 `record_domain_eval_calibration`，后端事实源见 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md)。
 
 该区块不属于 `dashboard::coding_improvement` 聚合，也不与 Release Gate / Continuous Benchmark Gate 合成总分。它只读 Domain Eval / Domain Quality / Domain Evidence 历史，用于回答“非编程长任务的通用质量是否有足够证据”。
 
@@ -335,13 +335,13 @@ Learning Tracker 把 skill / memory / MCP 三类关键事件写入 `session.db` 
 | Recent domain eval runs | `list_domain_eval_runs` | 展示最近通用 eval run，辅助回溯质量判断。 |
 | Calibration status | `list_domain_eval_tasks` / `record_domain_eval_calibration` | 展示已校准 task 数；用户可对最近 eval run 显式标记人工复核，写入 user/project calibration。 |
 | Domain smoke runs | `list_domain_eval_fixture_runs` | 展示最近 trace/agent fixture smoke run，含 source type、执行模式、pass rate、失败数、eval/quality/workflow/turn trace badge 与错误信息；不计入 live gate。 |
-| Domain campaigns | `list_domain_eval_campaigns` / `create_domain_eval_campaign` / `run_domain_eval_campaign` / `cancel_domain_eval_campaign` / `get_domain_eval_campaign_leaderboard` | 展示批量 domain eval campaign；用户可运行 deterministic trace pack 或选择 provider/model 运行 external agent campaign，取消 queued/running campaign、retry failed/interrupted/cancelled item，并查看 item pass rate、平均分、check 数、fixture/eval run 关联和模型 leaderboard。 |
+| Domain campaigns | `list_domain_eval_campaigns` / `create_domain_eval_campaign` / `run_domain_eval_campaign` / `cancel_domain_eval_campaign` / `get_domain_eval_campaign_leaderboard` / `generate_coding_improvement_proposals` | 展示批量 domain eval campaign；用户可运行 deterministic trace pack 或选择 provider/model 运行 external agent campaign，取消 queued/running campaign、retry failed/interrupted/cancelled item，查看 item pass rate、平均分、check 数、fixture/eval run 关联和模型 leaderboard，并从失败 item 生成 `domain_eval_case` / `domain_guidance` 学习草稿。 |
 
 红线：
 
 - 通用领域质量门与 coding benchmark 分表、分路径、分 UI 区块展示。
 - 无 domain eval 或 domain quality 历史时必须显示 `insufficient_data`，不能用 coding release gate 替代。
-- Dashboard 默认只读历史，不生成 proposal、不触发连接器动作；写动作仅限用户显式点击「Mark reviewed」记录 `domain_eval_calibrations` 人工复核，或在「Domain campaigns」中创建 / 运行 / 取消 / retry synthetic trace campaign。`trace_fixture` / `agent` fixture runner 不直接挂在质量门按钮上；合成样本通过 `SessionKind::EvalFixture`、`sourceType=fixture_*`、`domain_eval_fixture_runs` 与 `domain_eval_campaigns/items` 隔离展示，避免污染真实质量判断。
+- Dashboard 默认只读历史，不触发连接器动作；写动作仅限用户显式点击「Mark reviewed」记录 `domain_eval_calibrations` 人工复核，在「Domain campaigns」中创建 / 运行 / 取消 / retry synthetic trace campaign，或把 failed / cancelled / interrupted campaign item 生成 draft-only learning proposal。`trace_fixture` / `agent` fixture runner 不直接挂在质量门按钮上；合成样本通过 `SessionKind::EvalFixture`、`sourceType=fixture_*`、`domain_eval_fixture_runs` 与 `domain_eval_campaigns/items` 隔离展示，避免污染真实质量判断。
 
 ## Plan 统计（plan_stats.rs）
 

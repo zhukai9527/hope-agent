@@ -13,7 +13,8 @@
 //! proposals. Phase 6.1 adds a read-only Benchmark Run Center on top of the
 //! durable pack history. Phase 7.5 routes general-domain quality signals into
 //! the same draft-first improvement queue. Generation, distillation, apply,
-//! promotion, and benchmark execution all remain explicit owner-plane actions.
+//! promotion, benchmark execution, and domain campaign learning all remain
+//! explicit owner-plane actions.
 
 use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -2370,6 +2371,7 @@ impl SessionDB {
         let report = self.build_coding_trend_report(&scope)?;
         let mut candidates = build_proposal_candidates(&report);
         candidates.extend(self.build_domain_learning_proposal_candidates(&scope)?);
+        candidates.extend(self.build_domain_eval_campaign_proposal_candidates(&scope)?);
         if !filter.is_empty() {
             candidates.retain(|candidate| filter.matches_candidate(candidate));
         }
@@ -2399,6 +2401,7 @@ impl SessionDB {
         let mut distillation = self.build_coding_improvement_distillation(&scope, &report)?;
         let mut candidates = build_distillation_proposal_candidates(&report, &distillation);
         candidates.extend(self.build_domain_learning_proposal_candidates(&scope)?);
+        candidates.extend(self.build_domain_eval_campaign_proposal_candidates(&scope)?);
         distillation.candidates = candidates
             .iter()
             .map(distilled_candidate_from_new_proposal)
@@ -2537,6 +2540,104 @@ impl SessionDB {
                 if out.len() >= 30 {
                     return Ok(out);
                 }
+            }
+        }
+        Ok(out)
+    }
+
+    fn build_domain_eval_campaign_proposal_candidates(
+        &self,
+        scope: &ReportScope,
+    ) -> Result<Vec<NewProposal>> {
+        let mut out = Vec::new();
+        for item in self.list_domain_eval_campaign_learning_items(scope, 30)? {
+            if !matches!(
+                item.item_status.as_str(),
+                "failed" | "cancelled" | "interrupted"
+            ) {
+                continue;
+            }
+            let failure_category = domain_campaign_failure_category(&item);
+            let label = item
+                .label
+                .as_deref()
+                .or(item.model_id.as_deref())
+                .or(item.provider_id.as_deref())
+                .unwrap_or(item.execution_mode.as_str());
+            let payload = json!({
+                "proposalType": "domain_campaign_learning",
+                "domain": &item.domain,
+                "failureCategory": &failure_category,
+                "campaign": {
+                    "id": &item.campaign_id,
+                    "name": &item.campaign_name,
+                    "status": &item.campaign_status,
+                    "domain": &item.campaign_domain,
+                    "executionMode": &item.campaign_execution_mode,
+                },
+                "item": {
+                    "id": &item.item_id,
+                    "taskId": &item.task_id,
+                    "taskTitle": &item.task_title,
+                    "domain": &item.domain,
+                    "executionMode": &item.execution_mode,
+                    "providerId": &item.provider_id,
+                    "modelId": &item.model_id,
+                    "label": &item.label,
+                    "status": &item.item_status,
+                    "attempt": item.attempt,
+                    "fixtureRunId": &item.fixture_run_id,
+                    "evalRunId": &item.eval_run_id,
+                    "score": item.score,
+                    "totalChecks": item.total_checks,
+                    "passedChecks": item.passed_checks,
+                    "failedChecks": item.failed_checks,
+                    "error": &item.error,
+                    "updatedAt": &item.updated_at,
+                },
+                "report": &item.report_json,
+                "scope": scope.scope_key(),
+                "projectId": &scope.project_id,
+                "windowDays": scope.window_days,
+            });
+            out.push(NewProposal {
+                kind: "domain_eval_case".to_string(),
+                source_type: "domain_eval_campaign".to_string(),
+                source_id: item.campaign_id.clone(),
+                title: format!(
+                    "Add {} domain eval case for {}",
+                    item.domain.replace('_', " "),
+                    item.task_title
+                ),
+                body: format!(
+                    "Domain campaign item `{}` ended as {} for {}. Capture it as an eval case before tuning workflow policy.",
+                    item.item_id, item.item_status, label
+                ),
+                payload: payload.clone(),
+                fingerprint: format!(
+                    "domain-campaign:{}:{}:eval-case",
+                    scope.scope_key(),
+                    item.item_id
+                ),
+            });
+            out.push(NewProposal {
+                kind: "domain_guidance".to_string(),
+                source_type: "domain_eval_campaign".to_string(),
+                source_id: item.campaign_id.clone(),
+                title: format!(
+                    "Codify {} campaign failure guidance",
+                    item.domain.replace('_', " ")
+                ),
+                body: domain_campaign_guidance_body(&item, &failure_category),
+                payload,
+                fingerprint: format!(
+                    "domain-campaign:{}:{}:guidance",
+                    scope.scope_key(),
+                    item.item_id
+                ),
+            });
+            if out.len() >= 30 {
+                break;
             }
         }
         Ok(out)
@@ -6991,6 +7092,54 @@ impl SessionDB {
         }
     }
 
+    fn list_domain_eval_campaign_learning_items(
+        &self,
+        scope: &ReportScope,
+        limit: usize,
+    ) -> Result<Vec<DomainCampaignLearningItem>> {
+        let limit = limit.clamp(1, 100) as i64;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        if let Some(project_id) = scope.project_id.as_deref() {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.name, c.status, c.domain, c.execution_mode,
+                        i.id, i.task_id, i.task_title, i.domain, i.execution_mode,
+                        i.provider_id, i.model_id, i.label, i.status, i.attempt,
+                        i.fixture_run_id, i.eval_run_id, i.score, i.total_checks,
+                        i.passed_checks, i.failed_checks, i.report_json, i.error, i.updated_at
+                 FROM domain_eval_campaign_items i
+                 JOIN domain_eval_campaigns c ON c.id = i.campaign_id
+                 WHERE c.project_id = ?1
+                   AND i.updated_at >= ?2
+                   AND i.status IN ('failed', 'cancelled', 'interrupted')
+                 ORDER BY i.updated_at DESC, i.id DESC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![project_id, scope.since, limit], |row| {
+                row_to_domain_campaign_learning_item(row)
+            })?;
+            collect_rows(rows)
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.name, c.status, c.domain, c.execution_mode,
+                        i.id, i.task_id, i.task_title, i.domain, i.execution_mode,
+                        i.provider_id, i.model_id, i.label, i.status, i.attempt,
+                        i.fixture_run_id, i.eval_run_id, i.score, i.total_checks,
+                        i.passed_checks, i.failed_checks, i.report_json, i.error, i.updated_at
+                 FROM domain_eval_campaign_items i
+                 JOIN domain_eval_campaigns c ON c.id = i.campaign_id
+                 WHERE c.session_id = ?1
+                   AND i.updated_at >= ?2
+                   AND i.status IN ('failed', 'cancelled', 'interrupted')
+                 ORDER BY i.updated_at DESC, i.id DESC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![scope.session_id, scope.since, limit], |row| {
+                row_to_domain_campaign_learning_item(row)
+            })?;
+            collect_rows(rows)
+        }
+    }
+
     fn get_coding_workflow_retro_for_run(
         &self,
         workflow_run_id: &str,
@@ -7367,6 +7516,34 @@ struct GoalRow {
     updated_at: String,
 }
 
+#[derive(Debug)]
+struct DomainCampaignLearningItem {
+    campaign_id: String,
+    campaign_name: String,
+    campaign_status: String,
+    campaign_domain: Option<String>,
+    campaign_execution_mode: String,
+    item_id: String,
+    task_id: String,
+    task_title: String,
+    domain: String,
+    execution_mode: String,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    label: Option<String>,
+    item_status: String,
+    attempt: usize,
+    fixture_run_id: Option<String>,
+    eval_run_id: Option<String>,
+    score: Option<f64>,
+    total_checks: usize,
+    passed_checks: usize,
+    failed_checks: usize,
+    report_json: Value,
+    error: Option<String>,
+    updated_at: String,
+}
+
 struct NewProposal {
     kind: String,
     source_type: String,
@@ -7553,6 +7730,63 @@ fn build_proposal_candidates(report: &CodingTrendReport) -> Vec<NewProposal> {
         });
     }
     out
+}
+
+fn domain_campaign_failure_category(item: &DomainCampaignLearningItem) -> String {
+    let error = item
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match item.item_status.as_str() {
+        "cancelled" => "cancelled".to_string(),
+        "interrupted" => "interrupted".to_string(),
+        _ if error.contains("provider config") || error.contains("api key") => {
+            "provider_config_missing".to_string()
+        }
+        _ if item.eval_run_id.is_none() => "no_eval_evidence".to_string(),
+        _ if item.failed_checks > 0 => "quality_checks_failed".to_string(),
+        _ => "domain_campaign_failed".to_string(),
+    }
+}
+
+fn domain_campaign_guidance_body(
+    item: &DomainCampaignLearningItem,
+    failure_category: &str,
+) -> String {
+    match failure_category {
+        "provider_config_missing" => format!(
+            "The {} campaign could not run `{}` because provider credentials were unavailable. Draft fail-closed guidance for external model setup, model selection, and retry expectations.",
+            item.domain.replace('_', " "),
+            item.task_title
+        ),
+        "cancelled" => format!(
+            "The {} campaign item `{}` was cancelled. Draft guidance that clarifies stop criteria, partial evidence handling, and when a retry is safe.",
+            item.domain.replace('_', " "),
+            item.task_title
+        ),
+        "interrupted" => format!(
+            "The {} campaign item `{}` was interrupted. Draft long-task recovery guidance for preserving evidence, retrying safely, and surfacing incomplete work.",
+            item.domain.replace('_', " "),
+            item.task_title
+        ),
+        "quality_checks_failed" => format!(
+            "The {} campaign item `{}` failed {} quality check(s). Draft domain guidance so future workflow runs capture the missing evidence before completion.",
+            item.domain.replace('_', " "),
+            item.task_title,
+            item.failed_checks
+        ),
+        "no_eval_evidence" => format!(
+            "The {} campaign item `{}` failed before writing eval evidence. Draft guidance that makes the failure visible and keeps completion fail-closed.",
+            item.domain.replace('_', " "),
+            item.task_title
+        ),
+        _ => format!(
+            "The {} campaign item `{}` failed. Draft domain guidance that turns this campaign evidence into an observable workflow checkpoint.",
+            item.domain.replace('_', " "),
+            item.task_title
+        ),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -10632,6 +10866,38 @@ fn row_to_eval_pack_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodingEvalP
     })
 }
 
+fn row_to_domain_campaign_learning_item(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<DomainCampaignLearningItem> {
+    let report_json: String = row.get(21)?;
+    Ok(DomainCampaignLearningItem {
+        campaign_id: row.get(0)?,
+        campaign_name: row.get(1)?,
+        campaign_status: row.get(2)?,
+        campaign_domain: row.get(3)?,
+        campaign_execution_mode: row.get(4)?,
+        item_id: row.get(5)?,
+        task_id: row.get(6)?,
+        task_title: row.get(7)?,
+        domain: row.get(8)?,
+        execution_mode: row.get(9)?,
+        provider_id: row.get(10)?,
+        model_id: row.get(11)?,
+        label: row.get(12)?,
+        item_status: row.get(13)?,
+        attempt: row.get::<_, i64>(14)?.max(0) as usize,
+        fixture_run_id: row.get(15)?,
+        eval_run_id: row.get(16)?,
+        score: row.get(17)?,
+        total_checks: row.get::<_, i64>(18)?.max(0) as usize,
+        passed_checks: row.get::<_, i64>(19)?.max(0) as usize,
+        failed_checks: row.get::<_, i64>(20)?.max(0) as usize,
+        report_json: serde_json::from_str(&report_json).unwrap_or_else(|_| json!({})),
+        error: row.get(22)?,
+        updated_at: row.get(23)?,
+    })
+}
+
 fn row_to_strategy_effect_run(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<CodingStrategyEffectRunRecord> {
@@ -12299,6 +12565,105 @@ mod tests {
         assert!(promotion.steps[0]
             .target_path
             .contains(".hope-agent/coding-improvement/promoted/domain-eval-cases"));
+    }
+
+    #[test]
+    fn domain_eval_campaign_failures_generate_learning_proposals() {
+        let (dir, db) = test_db();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let project_id = "proj-domain-campaign-learning";
+        let session = db
+            .create_session_with_project(
+                crate::agent_loader::DEFAULT_AGENT_ID,
+                Some(project_id),
+                None,
+            )
+            .unwrap();
+        db.update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+            .unwrap();
+        let campaign = db
+            .create_domain_eval_campaign(crate::domain_eval::CreateDomainEvalCampaignInput {
+                session_id: Some(session.id.clone()),
+                name: Some("domain campaign learning".to_string()),
+                task_ids: vec!["research-source-backed-brief".to_string()],
+                max_tasks: Some(1),
+                execution_mode: Some("trace_fixture".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let item_id = campaign.items[0].id.clone();
+        db.fail_domain_eval_campaign_item(
+            &item_id,
+            "Provider config for external-model is not available",
+        )
+        .unwrap();
+        db.complete_domain_eval_campaign(&campaign.id).unwrap();
+
+        let generated = db
+            .generate_coding_improvement_proposals_with_input(
+                &session.id,
+                GenerateCodingImprovementProposalsInput {
+                    window_days: Some(30),
+                    source_type: Some("domain_eval_campaign".to_string()),
+                    source_id: Some(campaign.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(generated.inserted, 2);
+        assert_eq!(generated.proposals.len(), 2);
+        let kinds = generated
+            .proposals
+            .iter()
+            .map(|proposal| proposal.kind.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(kinds.contains("domain_eval_case"));
+        assert!(kinds.contains("domain_guidance"));
+        assert!(generated.proposals.iter().all(|proposal| {
+            proposal.source_type == "domain_eval_campaign" && proposal.source_id == campaign.id
+        }));
+        let eval_case = generated
+            .proposals
+            .iter()
+            .find(|proposal| proposal.kind == "domain_eval_case")
+            .expect("domain eval case proposal");
+        assert_eq!(
+            eval_case
+                .payload
+                .get("failureCategory")
+                .and_then(Value::as_str),
+            Some("provider_config_missing")
+        );
+        assert_eq!(
+            eval_case
+                .payload
+                .pointer("/item/id")
+                .and_then(Value::as_str),
+            Some(item_id.as_str())
+        );
+
+        let duplicate = db
+            .generate_coding_improvement_proposals_with_input(
+                &session.id,
+                GenerateCodingImprovementProposalsInput {
+                    window_days: Some(30),
+                    source_type: Some("domain_eval_campaign".to_string()),
+                    source_id: Some(campaign.id.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(duplicate.inserted, 0);
+        assert_eq!(duplicate.proposals.len(), 2);
+
+        let plan = db
+            .preview_coding_improvement_proposal_action(&eval_case.id)
+            .unwrap();
+        assert_eq!(plan.target_kind, "domain_eval_case");
+        assert!(plan.steps[0]
+            .target_path
+            .contains(".hope-agent/coding-improvement/domain-eval-cases"));
     }
 
     #[test]

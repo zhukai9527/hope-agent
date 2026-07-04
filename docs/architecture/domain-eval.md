@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 7.12 已实现。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、Domain Eval Campaign、Domain Campaign Leaderboard、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center / Campaign Center。
+> 状态：Phase 7.13 已实现。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、Domain Eval Campaign、Domain Campaign Leaderboard、Domain Campaign Learning Closure、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center / Campaign Center。
 
 ## 目标
 
@@ -165,7 +165,7 @@ Trace/agent fixture runner 当前是 owner API / 回归测试能力，不挂到 
 
 ## Campaign Runner
 
-`create_domain_eval_campaign(input)` / `run_domain_eval_campaign(input)` 是 Phase 7.11-7.12 的批量运行面，用于把单次 fixture smoke 扩展成可取消、可 retry、可比较 provider/model 的 Domain Eval Pack。
+`create_domain_eval_campaign(input)` / `run_domain_eval_campaign(input)` 是 Phase 7.11-7.13 的批量运行面，用于把单次 fixture smoke 扩展成可取消、可 retry、可比较 provider/model、可沉淀学习草稿的 Domain Eval Pack。
 
 Campaign 只负责编排，不新增第二套 scorer：
 
@@ -200,6 +200,14 @@ Campaign 只负责编排，不新增第二套 scorer：
 - 输出 rank、item pass rate、average score、attempts、eval run 数、check 统计、domains、warnings 和最多 8 条 evidence。
 - 排序优先级：item pass rate 降序 -> average score 降序 -> item 数降序 -> failed / cancelled / interrupted item 数升序 -> label。
 - 没有可比行或只有 queued/running item 时返回 `insufficient_data`；存在 failed / cancelled / interrupted item 时 report status 为 `failed`。
+
+Phase 7.13 把 campaign failure 接回既有 Coding Improvement proposal queue：
+
+- `generate_coding_improvement_proposals(sourceType="domain_eval_campaign", sourceId=<campaign_id>)` 会读取当前 scope 内 failed / cancelled / interrupted campaign item。
+- 每个失败 item 生成两类 draft-only proposal：`domain_eval_case`（把失败沉淀为回归评测草稿）和 `domain_guidance`（把失败原因沉淀为可审查领域操作指南草稿）。
+- `sourceId` 使用 campaign id；fingerprint 使用 `scope + campaign item id + kind`，所以同一 campaign 可重复点击而不会重复插入。
+- `payload_json` 保留 campaign、item、failure category、report JSON、scope/project/window；后续 action preview / apply / promotion 仍由 [Coding Improvement Loop](coding-improvement-loop.md) 统一管理。
+- 该路径不调用 LLM、不运行工具、不自动 apply、不自动 promotion。
 
 ## Quality Gate
 
@@ -275,7 +283,7 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 展示 attention checks。
 - 展示最近 domain eval run。
 - 展示独立的「Domain smoke runs」卡片：最近 fixture run、pass rate、agent/trace 数、失败数、eval/quality/workflow/turn trace badge 与 error。
-- 展示「Domain campaigns」卡片：可运行 deterministic trace pack，也可选择 provider/model 运行 external agent campaign；可查看 durable campaign / item 状态、item pass rate、平均分、check 数、fixture/eval run 关联；failed / interrupted / cancelled campaign 可 retry，queued / running campaign 可 cancel。
+- 展示「Domain campaigns」卡片：可运行 deterministic trace pack，也可选择 provider/model 运行 external agent campaign；可查看 durable campaign / item 状态、item pass rate、平均分、check 数、fixture/eval run 关联；failed / interrupted / cancelled campaign 可 retry，queued / running campaign 可 cancel，含失败 item 且有 session scope 的 campaign 可显式生成 learning drafts。
 - 展示「Domain model leaderboard」：按模型 / execution 聚合最近 campaign item，显示 rank、平均分、item 通过数、trace evidence 数和 warning。
 - 展示已校准 task 数；最近 eval run 支持点击「Mark reviewed」记录人工复核 calibration。
 - 与 Release Gate / Continuous Benchmark Gate 分开展示，不生成综合分。
@@ -291,6 +299,7 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 不伪造 agent 能力：`agent` fixture 必须显式传 provider/modelChain；执行失败不写 eval run；deterministic trace 与真实 agent execution 在 report 中必须可区分。
 - 不存 provider secret：campaign history 只保存 provider/model/label；真实 provider config 只能在 run input 或本机缓存中临时解析。
 - Leaderboard 必须可追溯：每一行要保留 campaign/item/task/status/score evidence，不能只给不可审计的平均值。
+- Learning closure 不自动改规则：campaign failure 只能生成 draft proposal，后续 apply / promotion 必须由用户显式触发。
 - Retry 必须真实重跑：`retryFailedOnly=true` 清掉 item 的旧 fixture/eval run 指针和 check 统计，再把 failed/interrupted/cancelled item 放回 `queued`。
 - 不写无痕：incognito session 拒绝 run / gate。
 - 不替代 Domain Quality：eval 使用 quality snapshot，quality run 本身仍由 `domain_quality.rs` 管理。
