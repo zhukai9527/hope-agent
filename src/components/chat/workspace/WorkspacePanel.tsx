@@ -213,6 +213,7 @@ import {
   type LoopRun,
   type LoopSnapshot,
   type LoopSchedule,
+  type LoopSchedulesState,
   type LoopRunState,
   type LoopState,
   type LoopTriggerKind,
@@ -7113,6 +7114,276 @@ function workflowAutonomyModeHint(
   }
 }
 
+function workflowRunHasHardProblem(run: WorkflowRun): boolean {
+  return run.state === "failed" || run.state === "blocked"
+}
+
+function loopScheduleNeedsAttention(schedule: LoopSchedule): boolean {
+  return schedule.state === "blocked"
+}
+
+function activeLoopSchedules(schedules: LoopSchedule[]): LoopSchedule[] {
+  return schedules.filter(
+    (schedule) =>
+      schedule.state === "active" || schedule.state === "paused" || schedule.state === "blocked",
+  )
+}
+
+function readinessStatusTone(args: {
+  incognito?: boolean
+  activeGoal: Goal | null
+  workflowMode: WorkflowAutonomyMode
+  executionMode: ExecutionMode
+  workflowProblems: number
+  loopProblems: number
+  operationalStatus?: string | null
+  soakStatus?: string | null
+}): StatusTone {
+  if (args.incognito) return "muted"
+  if (
+    args.workflowProblems > 0 ||
+    args.loopProblems > 0 ||
+    args.operationalStatus === "failed" ||
+    args.soakStatus === "failed"
+  ) {
+    return "danger"
+  }
+  if (!args.activeGoal || args.workflowMode === "off" || args.executionMode === "off") {
+    return "warn"
+  }
+  if (args.operationalStatus === "insufficient_data" || args.soakStatus === "insufficient_data") {
+    return "info"
+  }
+  return "good"
+}
+
+function readinessStatusLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  tone: StatusTone,
+  loading: boolean,
+): string {
+  if (loading) return t("workspace.autonomousReadiness.loading", "同步中")
+  if (tone === "danger") return t("workspace.autonomousReadiness.blocked", "需处理")
+  if (tone === "warn") return t("workspace.autonomousReadiness.needsSetup", "待配置")
+  if (tone === "info") return t("workspace.autonomousReadiness.observing", "观察中")
+  if (tone === "good") return t("workspace.autonomousReadiness.ready", "自主就绪")
+  return t("workspace.autonomousReadiness.idle", "未开始")
+}
+
+function readinessMetricTone(ready: boolean, warning = false): StatusTone {
+  if (warning) return "warn"
+  return ready ? "good" : "muted"
+}
+
+function autonomousReadinessNextSteps(
+  t: ReturnType<typeof useTranslation>["t"],
+  args: {
+    incognito?: boolean
+    activeGoal: Goal | null
+    workflowMode: WorkflowAutonomyMode
+    executionMode: ExecutionMode
+    workflowProblems: number
+    loopProblems: number
+    workflowLoopCount: number
+    operationalGate: DomainOperationalGateReport | null
+    soakReport: DomainSoakReport | null
+  },
+): string[] {
+  if (args.incognito) {
+    return [t("workspace.autonomousReadiness.nextIncognito", "无痕会话不持久化 Goal、Loop 或 Workflow。")]
+  }
+  const steps: string[] = []
+  if (!args.activeGoal) {
+    steps.push(t("workspace.autonomousReadiness.nextGoal", "先创建目标，明确最终结果和完成标准。"))
+  }
+  if (args.workflowMode === "off") {
+    steps.push(t("workspace.autonomousReadiness.nextWorkflowMode", "开启工作流模式，让模型可按需动态编排。"))
+  }
+  if (args.executionMode === "off") {
+    steps.push(t("workspace.autonomousReadiness.nextExecutionMode", "选择守护、深入或自主执行模式。"))
+  }
+  if (args.workflowProblems > 0 || args.loopProblems > 0) {
+    steps.push(t("workspace.autonomousReadiness.nextProblems", "处理失败或阻塞的 Workflow / Loop。"))
+  }
+  if (args.activeGoal?.workflowTemplateId && args.workflowLoopCount === 0) {
+    steps.push(t("workspace.autonomousReadiness.nextWorkflowLoop", "可创建工作流 Loop，让目标按周期持续推进。"))
+  } else if (args.activeGoal && !args.activeGoal.workflowTemplateId) {
+    steps.push(t("workspace.autonomousReadiness.nextTemplate", "为目标绑定领域模板后，可启用工作流 Loop。"))
+  }
+  if (args.operationalGate?.status && args.operationalGate.status !== "passed") {
+    steps.push(
+      args.operationalGate.recommendedNextSteps[0] ??
+        t("workspace.autonomousReadiness.nextOperational", "等待运行排空或补齐运行样本。"),
+    )
+  }
+  if (args.soakReport?.status && args.soakReport.status !== "passed") {
+    steps.push(
+      args.soakReport.recommendedNextSteps[0] ??
+        t("workspace.autonomousReadiness.nextSoak", "查看长跑审计里的事故与待排空项。"),
+    )
+  }
+  return steps.length > 0
+    ? steps.slice(0, 4)
+    : [t("workspace.autonomousReadiness.nextReady", "自主推进基础已就绪；运行中仍可随时暂停、恢复或取消。")]
+}
+
+function AutonomousReadinessCard({
+  activeGoal,
+  workflowMode,
+  workflowModeLoading,
+  executionMode,
+  executionModeLoading,
+  workflowRunsState,
+  loopSchedulesState,
+  domainWorkbenchState,
+  incognito,
+}: {
+  activeGoal: Goal | null
+  workflowMode: WorkflowAutonomyMode
+  workflowModeLoading?: boolean
+  executionMode: ExecutionMode
+  executionModeLoading?: boolean
+  workflowRunsState: WorkflowRunsState
+  loopSchedulesState: LoopSchedulesState
+  domainWorkbenchState: DomainTaskWorkbenchState
+  incognito?: boolean
+}) {
+  const { t } = useTranslation()
+  const workflowProblems = workflowRunsState.runs.filter(workflowRunHasHardProblem).length
+  const activeWorkflows = workflowRunsState.activeCount
+  const liveLoops = activeLoopSchedules(loopSchedulesState.schedules)
+  const workflowLoopCount = loopSchedulesState.schedules.filter(
+    (schedule) => schedule.executionStrategy === "workflow",
+  ).length
+  const loopProblems = loopSchedulesState.schedules.filter(loopScheduleNeedsAttention).length
+  const loading =
+    workflowModeLoading ||
+    executionModeLoading ||
+    workflowRunsState.loading ||
+    loopSchedulesState.loading ||
+    domainWorkbenchState.operationalGateLoading ||
+    domainWorkbenchState.soakReportLoading
+  const tone = readinessStatusTone({
+    incognito,
+    activeGoal,
+    workflowMode,
+    executionMode,
+    workflowProblems,
+    loopProblems,
+    operationalStatus: domainWorkbenchState.operationalGate?.status,
+    soakStatus: domainWorkbenchState.soakReport?.status,
+  })
+  const nextSteps = autonomousReadinessNextSteps(t, {
+    incognito,
+    activeGoal,
+    workflowMode,
+    executionMode,
+    workflowProblems,
+    loopProblems,
+    workflowLoopCount,
+    operationalGate: domainWorkbenchState.operationalGate,
+    soakReport: domainWorkbenchState.soakReport,
+  })
+  const goalReady = Boolean(activeGoal)
+  const workflowReady = workflowMode !== "off"
+  const executionReady = executionMode !== "off"
+  const runHealthReady = workflowProblems === 0 && loopProblems === 0
+  const runHealthWarning =
+    domainWorkbenchState.operationalGate?.status === "failed" ||
+    domainWorkbenchState.soakReport?.status === "failed"
+
+  return (
+    <div className={cn("rounded-md border p-2", STATUS_TONE_CLASS[tone])}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Bot className="h-3.5 w-3.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium">
+            {t("workspace.autonomousReadiness.title", "自主推进就绪")}
+          </div>
+          <div className="truncate text-[10px] opacity-75">
+            {activeGoal?.objective ??
+              t("workspace.autonomousReadiness.emptyGoal", "还没有目标")}
+          </div>
+        </div>
+        <StatusPill label={readinessStatusLabel(t, tone, Boolean(loading))} tone={tone} loading={loading} />
+      </div>
+
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        <div
+          className={cn(
+            "rounded-md border px-2 py-1.5",
+            STATUS_TONE_CLASS[readinessMetricTone(goalReady)],
+          )}
+        >
+          <div className="truncate text-[10px]">{t("workspace.autonomousReadiness.goal", "目标")}</div>
+          <div className="truncate text-xs font-semibold">
+            {goalReady
+              ? activeGoal?.workflowTemplateId
+                ? t("workspace.autonomousReadiness.goalTemplate", "模板")
+                : t("workspace.autonomousReadiness.goalSet", "已设置")
+              : t("workspace.autonomousReadiness.goalMissing", "缺失")}
+          </div>
+        </div>
+        <div
+          className={cn(
+            "rounded-md border px-2 py-1.5",
+            STATUS_TONE_CLASS[readinessMetricTone(workflowReady)],
+          )}
+        >
+          <div className="truncate text-[10px]">
+            {t("workspace.autonomousReadiness.workflow", "编排")}
+          </div>
+          <div className="truncate text-xs font-semibold">
+            {workflowAutonomyModeLabel(t, workflowMode)}
+          </div>
+        </div>
+        <div
+          className={cn(
+            "rounded-md border px-2 py-1.5",
+            STATUS_TONE_CLASS[readinessMetricTone(executionReady)],
+          )}
+        >
+          <div className="truncate text-[10px]">
+            {t("workspace.autonomousReadiness.execution", "强度")}
+          </div>
+          <div className="truncate text-xs font-semibold">
+            {executionModeLabel(t, executionMode)}
+          </div>
+        </div>
+        <div
+          className={cn(
+            "rounded-md border px-2 py-1.5",
+            STATUS_TONE_CLASS[readinessMetricTone(runHealthReady, runHealthWarning)],
+          )}
+        >
+          <div className="truncate text-[10px]">
+            {t("workspace.autonomousReadiness.health", "运行")}
+          </div>
+          <div className="truncate text-xs font-semibold">
+            {workflowProblems > 0 || loopProblems > 0
+              ? t("workspace.autonomousReadiness.healthProblems", "{{count}} 个问题", {
+                  count: workflowProblems + loopProblems,
+                })
+              : activeWorkflows > 0 || liveLoops.length > 0
+                ? t("workspace.autonomousReadiness.healthActive", "{{count}} 活跃", {
+                    count: activeWorkflows + liveLoops.length,
+                  })
+                : t("workspace.autonomousReadiness.healthClean", "干净")}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 space-y-1">
+        {nextSteps.map((step, index) => (
+          <div key={`${index}:${step}`} className="line-clamp-2 text-[11px] leading-snug opacity-85">
+            {step}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function workflowRunActionSpecs(
   t: ReturnType<typeof useTranslation>["t"],
   state: WorkflowRunState,
@@ -8090,18 +8361,23 @@ function LoopSchedulesSection({
   turnActive,
   workflowRuns = [],
   onSelectWorkflowRun,
+  loopSchedulesState,
 }: {
   sessionId?: string | null
   incognito?: boolean
   turnActive?: boolean
   workflowRuns?: WorkflowRun[]
   onSelectWorkflowRun?: (runId: string) => void
+  loopSchedulesState?: LoopSchedulesState
 }) {
   const { t } = useTranslation()
-  const { schedules, activeCount, loading, error, refresh } = useLoopSchedules(sessionId, {
+  const ownedLoopSchedulesState = useLoopSchedules(sessionId, {
     incognito,
     turnActive,
+    disabled: Boolean(loopSchedulesState),
   })
+  const { schedules, activeCount, loading, error, refresh } =
+    loopSchedulesState ?? ownedLoopSchedulesState
   const goalState = useGoal(sessionId, { incognito })
   const [actionId, setActionId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -8667,6 +8943,8 @@ function WorkflowRunsSection({
   onEnsureSession,
   onViewSubagentSession,
   workflowRunsState,
+  loopSchedulesState,
+  domainWorkbenchState,
   focusedRunTarget,
 }: {
   sessionId?: string | null
@@ -8676,6 +8954,8 @@ function WorkflowRunsSection({
   onEnsureSession?: () => Promise<string | null>
   onViewSubagentSession?: (sessionId: string) => void
   workflowRunsState?: WorkflowRunsState
+  loopSchedulesState: LoopSchedulesState
+  domainWorkbenchState: DomainTaskWorkbenchState
   focusedRunTarget?: WorkflowFocusTarget | null
 }) {
   const { t } = useTranslation()
@@ -9706,6 +9986,17 @@ ${repairPrompt}`
           <EmptyHint>{t("workspace.workflow.incognito", "无痕会话不持久化工作流")}</EmptyHint>
         ) : (
           <div className="space-y-2">
+            <AutonomousReadinessCard
+              activeGoal={activeGoal}
+              workflowMode={workflowMode}
+              workflowModeLoading={workflowModeLoading}
+              executionMode={executionMode}
+              executionModeLoading={executionModeLoading}
+              workflowRunsState={workflowRunsState ?? ownedWorkflowRuns}
+              loopSchedulesState={loopSchedulesState}
+              domainWorkbenchState={domainWorkbenchState}
+              incognito={incognito}
+            />
             <WorkflowAutonomyModeControl
               mode={workflowMode}
               loading={workflowModeLoading}
@@ -13957,6 +14248,7 @@ export default function WorkspacePanel({
     disabled: Boolean(workflowRunsState),
   })
   const sharedWorkflowRunsState = workflowRunsState ?? ownedWorkflowRunsState
+  const loopSchedulesState = useLoopSchedules(sessionId, { incognito, turnActive })
   const reviewRunsState = useReviewRuns(sessionId, { incognito, turnActive })
   const verificationRunsState = useVerificationRuns(sessionId, { incognito, turnActive })
   const domainQualityRunsState = useDomainQualityRuns(sessionId, { incognito, turnActive })
@@ -14113,6 +14405,8 @@ export default function WorkspacePanel({
             onEnsureSession={onEnsureSession}
             onViewSubagentSession={onViewSubagentSession}
             workflowRunsState={sharedWorkflowRunsState}
+            loopSchedulesState={loopSchedulesState}
+            domainWorkbenchState={domainTaskWorkbenchState}
             focusedRunTarget={workflowFocusTarget}
           />
         </div>
@@ -14124,6 +14418,7 @@ export default function WorkspacePanel({
           turnActive={turnActive}
           workflowRuns={sharedWorkflowRunsState.runs}
           onSelectWorkflowRun={focusWorkflowRun}
+          loopSchedulesState={loopSchedulesState}
         />
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}

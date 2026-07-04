@@ -867,6 +867,24 @@ function goalSnapshotWithDomainEvidence(): GoalSnapshot {
   }
 }
 
+function goalSnapshotWithWorkflowTemplate(): GoalSnapshot {
+  const snapshot = goalSnapshotWithDomainEvidence()
+  return {
+    ...snapshot,
+    goal: {
+      ...snapshot.goal,
+      id: "goal-auto",
+      objective: "Keep the research brief fresh",
+      completionCriteria: "A workflow loop keeps the brief reviewed",
+      domain: "research",
+      workflowTemplateId: "research-brief",
+      workflowTemplateVersion: "1.0.0",
+      workflowTaskType: "technical_research",
+    },
+    workflowRuns: [],
+  }
+}
+
 describe("WorkspacePanel goal section", () => {
   it("creates a goal with a selected domain workflow template", async () => {
     const template = domainWorkflowTemplate()
@@ -1387,6 +1405,40 @@ describe("WorkspacePanel domain quality section", () => {
 })
 
 describe("WorkspacePanel workflow section", () => {
+  it("summarizes autonomous readiness from goal workflow and loop state", async () => {
+    const run = workflowRun({
+      id: "wf-loop",
+      kind: "domain:research",
+      state: "completed",
+      origin: "loop:loop-1",
+      goalId: "goal-auto",
+      completedAt: "2026-01-01T00:05:00Z",
+      updatedAt: "2026-01-01T00:05:00Z",
+    })
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "list_loop_schedules")
+        return Promise.resolve([loopSchedule({ goalId: "goal-auto" })])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "autonomous" })
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("自主推进就绪")).toBeTruthy()
+    expect(await screen.findByText("自主就绪")).toBeTruthy()
+    expect(screen.getByText("Keep the research brief fresh")).toBeTruthy()
+    expect(screen.getAllByText("自主").length).toBeGreaterThan(0)
+  })
+
   it("links workflow loop rows to their derived workflow run", async () => {
     const otherRun = workflowRun({
       id: "wf-other",
