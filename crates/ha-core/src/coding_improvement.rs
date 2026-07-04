@@ -393,6 +393,19 @@ pub struct GenerateCodingImprovementProposalsResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GenerateCodingImprovementProposalsInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_days: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub proposal_kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DistillCodingImprovementResult {
     pub inserted: usize,
     pub distillation: CodingImprovementDistillation,
@@ -2338,17 +2351,38 @@ impl SessionDB {
         session_id: &str,
         window_days: Option<u32>,
     ) -> Result<GenerateCodingImprovementProposalsResult> {
-        let scope = self.resolve_coding_report_scope(session_id, window_days)?;
+        self.generate_coding_improvement_proposals_with_input(
+            session_id,
+            GenerateCodingImprovementProposalsInput {
+                window_days,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn generate_coding_improvement_proposals_with_input(
+        &self,
+        session_id: &str,
+        input: GenerateCodingImprovementProposalsInput,
+    ) -> Result<GenerateCodingImprovementProposalsResult> {
+        let filter = ProposalGenerationFilter::from_input(&input);
+        let scope = self.resolve_coding_report_scope(session_id, input.window_days)?;
         let report = self.build_coding_trend_report(&scope)?;
         let mut candidates = build_proposal_candidates(&report);
         candidates.extend(self.build_domain_learning_proposal_candidates(&scope)?);
+        if !filter.is_empty() {
+            candidates.retain(|candidate| filter.matches_candidate(candidate));
+        }
         let mut inserted = 0usize;
         for candidate in candidates {
             if self.insert_coding_improvement_proposal(&scope, candidate)? {
                 inserted += 1;
             }
         }
-        let proposals = self.list_coding_improvement_proposals_for_scope(&scope)?;
+        let mut proposals = self.list_coding_improvement_proposals_for_scope(&scope)?;
+        if !filter.is_empty() {
+            proposals.retain(|proposal| filter.matches_proposal(proposal));
+        }
         Ok(GenerateCodingImprovementProposalsResult {
             inserted,
             proposals,
@@ -7343,6 +7377,67 @@ struct NewProposal {
     fingerprint: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ProposalGenerationFilter {
+    source_type: Option<String>,
+    source_id: Option<String>,
+    proposal_kinds: BTreeSet<String>,
+}
+
+impl ProposalGenerationFilter {
+    fn from_input(input: &GenerateCodingImprovementProposalsInput) -> Self {
+        Self {
+            source_type: normalize_optional_filter(input.source_type.as_deref()),
+            source_id: normalize_optional_filter(input.source_id.as_deref()),
+            proposal_kinds: input
+                .proposal_kinds
+                .iter()
+                .filter_map(|kind| normalize_optional_filter(Some(kind)))
+                .collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.source_type.is_none() && self.source_id.is_none() && self.proposal_kinds.is_empty()
+    }
+
+    fn matches_candidate(&self, candidate: &NewProposal) -> bool {
+        self.matches_parts(
+            &candidate.source_type,
+            &candidate.source_id,
+            &candidate.kind,
+        )
+    }
+
+    fn matches_proposal(&self, proposal: &CodingImprovementProposal) -> bool {
+        self.matches_parts(&proposal.source_type, &proposal.source_id, &proposal.kind)
+    }
+
+    fn matches_parts(&self, source_type: &str, source_id: &str, kind: &str) -> bool {
+        if let Some(expected) = self.source_type.as_deref() {
+            if source_type != expected {
+                return false;
+            }
+        }
+        if let Some(expected) = self.source_id.as_deref() {
+            if source_id != expected {
+                return false;
+            }
+        }
+        if !self.proposal_kinds.is_empty() && !self.proposal_kinds.contains(kind) {
+            return false;
+        }
+        true
+    }
+}
+
+fn normalize_optional_filter(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn build_proposal_candidates(report: &CodingTrendReport) -> Vec<NewProposal> {
     let mut out = Vec::new();
     for retro in report.retros.iter().take(5) {
@@ -12096,6 +12191,7 @@ mod tests {
             json!({"metric": "retention", "denominator": "active accounts"}),
         );
 
+        let mut completed_quality_run_ids = BTreeMap::new();
         for domain in ["research", "writing", "data_analysis"] {
             let snapshot = db
                 .run_domain_quality_for_session(crate::domain_quality::RunDomainQualityInput {
@@ -12109,6 +12205,7 @@ mod tests {
                 "completed",
                 "{domain} quality should complete"
             );
+            completed_quality_run_ids.insert(domain.to_string(), snapshot.run.id.clone());
         }
         let inbox = db
             .run_domain_quality_for_session(crate::domain_quality::RunDomainQualityInput {
@@ -12149,6 +12246,31 @@ mod tests {
         for domain in ["research", "writing", "data_analysis", "inbox"] {
             assert!(domains.contains(domain), "missing domain payload {domain}");
         }
+
+        let research_run_id = completed_quality_run_ids
+            .get("research")
+            .expect("research quality run")
+            .clone();
+        let targeted = db
+            .generate_coding_improvement_proposals_with_input(
+                &session.id,
+                GenerateCodingImprovementProposalsInput {
+                    window_days: Some(30),
+                    source_type: Some("domain_quality".to_string()),
+                    source_id: Some(research_run_id.clone()),
+                    proposal_kinds: vec!["domain_guidance".to_string()],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            targeted.proposals.len(),
+            1,
+            "targeted generation should return only the requested source/kind"
+        );
+        let targeted_proposal = &targeted.proposals[0];
+        assert_eq!(targeted_proposal.source_type, "domain_quality");
+        assert_eq!(targeted_proposal.source_id, research_run_id);
+        assert_eq!(targeted_proposal.kind, "domain_guidance");
 
         let proposal = generated
             .proposals

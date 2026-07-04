@@ -205,12 +205,12 @@ DomainWorkflow
 - 成功的 Domain Quality run 会生成 workflow / guidance 草稿；blocked / failed / needs_user run 会生成 review profile / eval case；高风险 approval 卡点会生成 connector usage pattern。
 - Draft apply / promotion 复用现有 Coding Improvement 安全链路：先预览、再生成 `.hope-agent/coding-improvement/` 草稿，只有显式 promotion 才进入 promoted domain workflow / guidance / review profile / eval case / connector pattern。
 - Workspace proposal 列表已显示领域类 proposal 的中文标签。
+- Workspace「领域复核」区块已支持从当前 Domain Quality run 直接点击「提炼经验」，通过 `sourceType="domain_quality"` + `sourceId=<run_id>` 定向生成学习 proposal，不再只能走泛化 proposal 入口。
 - 新增回归测试覆盖 Research / Writing / Data Analysis / Inbox quality run 生成学习 proposal、apply 草稿和 promotion preview。
 
 后续待补：
 
 - Dashboard Learning 增加通用场景趋势：完成率、blocked 原因、review catch、verification failure、source quality、用户确认卡点。
-- 支持用户从 GUI 直接选择成功 run 提炼“下次类似任务怎么做”，而不是只通过 proposal 生成入口。
 
 验收：
 
@@ -253,6 +253,7 @@ DomainWorkflow
 - 已落地：Workflow Control Center 的新建工作流表单可继承 active Goal 的领域模板，也可手动选择领域模板和 task type，生成 draft、证据要求、审批门、验证策略和 Script Gate / permission preview。
 - 已落地：Context Retrieval 与 Domain Quality 均优先读取 Goal 绑定的 template version；用户显式指定 template/domain 时仍可覆盖。
 - 已落地：Loop 创建支持 `continue` / `workflow` 执行策略。当前 `workflow` 策略用于 interval loop：要求 active/bound Goal 已选择领域模板，每次 tick 直接创建并启动 `origin=loop:<loop_id>` 的 durable WorkflowRun，Loop trace 保存 workflow run id 和 template version；Workspace Loop 列表会关联最近派生 run，并可一键跳到 Workflow run detail。
+- 已落地：Workspace「领域复核」区块支持对当前复核 run 点击「提炼经验」，把成功/失败/需要用户确认的领域质量事实定向进入 Coding Improvement proposal 队列。
 - Workspace 增加通用面板：Sources、Evidence、Drafts、Review、Verification、Decisions。
 - Dashboard 增加 Domain Learning：按领域看完成率、卡点、证据质量、复核失败、用户确认等待。
 

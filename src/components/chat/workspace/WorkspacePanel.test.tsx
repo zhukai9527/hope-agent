@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { WorkspaceEnvironmentState } from "./useWorkspaceEnvironment"
 import type {
+  DomainQualityRunSnapshot,
   DomainWorkflowDraft,
   DomainWorkflowTemplate,
   ManagedWorktree,
@@ -340,6 +341,48 @@ function loopSnapshot(patch: Partial<LoopSnapshot> = {}): LoopSnapshot {
         finishedAt: "2026-01-01T00:04:05Z",
       },
     ],
+    ...patch,
+  }
+}
+
+function domainQualitySnapshot(
+  patch: Partial<DomainQualityRunSnapshot> = {},
+): DomainQualityRunSnapshot {
+  return {
+    run: {
+      id: "dq-1",
+      sessionId: "s1",
+      goalId: "goal-1",
+      domain: "research",
+      templateId: "research-brief",
+      templateVersion: "1.0.0",
+      state: "completed",
+      summary: "Research quality passed",
+      stats: { passed: 4, failed: 0, needsUser: 0, advisory: 1 },
+      error: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:04:00Z",
+      completedAt: "2026-01-01T00:04:00Z",
+    },
+    checks: [
+      {
+        id: "dqc-1",
+        runId: "dq-1",
+        sessionId: "s1",
+        seq: 1,
+        checkType: "required_evidence",
+        profile: "research",
+        title: "Sources cited",
+        body: "Enough dated sources were cited.",
+        severity: "p1",
+        status: "passed",
+        evidenceType: "source_cited",
+        sourceMetadata: {},
+        createdAt: "2026-01-01T00:04:00Z",
+        updatedAt: "2026-01-01T00:04:00Z",
+      },
+    ],
+    events: [],
     ...patch,
   }
 }
@@ -854,6 +897,43 @@ describe("WorkspacePanel environment section", () => {
     fireEvent.click(screen.getByRole("button", { name: "收起任务" }))
 
     expect(onBackgroundJobExpandedChange).toHaveBeenCalledWith("job-1", false)
+  })
+})
+
+describe("WorkspacePanel domain quality section", () => {
+  it("generates learning proposals from the selected domain quality run", async () => {
+    const snapshot = domainQualitySnapshot()
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_domain_quality_runs") return Promise.resolve([snapshot.run])
+      if (name === "get_domain_quality_run") return Promise.resolve(snapshot)
+      if (name === "generate_coding_improvement_proposals") {
+        return Promise.resolve({ inserted: 2, proposals: [] })
+      }
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      if (name === "get_coding_trend_report") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel({
+      workingDir: { path: null, source: "none", exists: false, name: null },
+      git: null,
+    })
+
+    fireEvent.click(await screen.findByRole("button", { name: /领域复核/ }))
+    expect(await screen.findByText("Research quality passed")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "提炼经验" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("generate_coding_improvement_proposals", {
+        sessionId: "s1",
+        windowDays: 30,
+        sourceType: "domain_quality",
+        sourceId: "dq-1",
+      })
+    })
   })
 })
 

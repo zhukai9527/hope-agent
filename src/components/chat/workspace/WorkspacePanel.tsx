@@ -116,6 +116,7 @@ import type {
   DomainVerificationRule,
   DomainWorkflowDraft,
   DomainWorkflowTemplate,
+  GenerateCodingImprovementProposalsResult,
   LspDiagnostic,
   ManagedWorktree,
   ReviewFinding,
@@ -3189,6 +3190,7 @@ function DomainQualitySection({
   turnActive?: boolean
 }) {
   const { t } = useTranslation()
+  const [learningRunId, setLearningRunId] = useState<string | null>(null)
   const { runs, snapshot, loading, running, error, refresh, runDomainQuality } =
     useDomainQualityRuns(sessionId, { incognito, turnActive })
   const latest = snapshot?.run ?? runs[0]
@@ -3201,6 +3203,16 @@ function DomainQualitySection({
   const advisory = domainQualityStatsNumber(snapshot, "advisory")
   const active = running || latest?.state === "running"
   const disabled = !sessionId || incognito || active || loading
+  const learning =
+    learningRunId !== null && latest !== undefined && learningRunId === latest.id
+  const canGenerateLearning =
+    !!sessionId &&
+    !incognito &&
+    !!latest &&
+    !active &&
+    latest.state !== "cancelled" &&
+    !loading &&
+    !learning
   const meta = active ? (
     <StatusPill label={t("workspace.domainQuality.running", "复核中")} tone="info" loading />
   ) : latest ? (
@@ -3222,6 +3234,44 @@ function DomainQualitySection({
       } else {
         toast.error(t("workspace.domainQuality.runBlocked", "领域复核发现阻塞项"))
       }
+    }
+  }
+
+  const handleGenerateLearning = async () => {
+    if (!sessionId || !latest || !canGenerateLearning) return
+    setLearningRunId(latest.id)
+    try {
+      const result = await getTransport().call<GenerateCodingImprovementProposalsResult>(
+        "generate_coding_improvement_proposals",
+        {
+          sessionId,
+          windowDays: DOMAIN_LEARNING_WINDOW_DAYS,
+          sourceType: "domain_quality",
+          sourceId: latest.id,
+        },
+      )
+      window.dispatchEvent(
+        new CustomEvent(CODING_IMPROVEMENT_CHANGED_EVENT, {
+          detail: { sessionId, sourceType: "domain_quality", sourceId: latest.id },
+        }),
+      )
+      toast.success(
+        result.inserted > 0
+          ? t("workspace.domainQuality.learningGenerated", "已生成 {{count}} 个学习候选", {
+              count: result.inserted,
+            })
+          : t("workspace.domainQuality.learningNoop", "学习候选已是最新"),
+      )
+    } catch (e) {
+      logger.error(
+        "ui",
+        "DomainQualitySection::generateLearning",
+        "Failed to generate domain learning proposals",
+        e,
+      )
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLearningRunId(null)
     }
   }
 
@@ -3264,6 +3314,21 @@ function DomainQualitySection({
               <ClipboardCheck className="h-3.5 w-3.5" />
             )}
             <span className="truncate">{t("workspace.domainQuality.run", "运行领域复核")}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleGenerateLearning}
+            disabled={!canGenerateLearning}
+            className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-border/60 bg-secondary/35 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {learning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Brain className="h-3.5 w-3.5" />
+            )}
+            <span className="truncate">
+              {t("workspace.domainQuality.generateLearning", "提炼经验")}
+            </span>
           </button>
           <IconTip label={t("workspace.domainQuality.refresh", "刷新领域复核")}>
             <button
@@ -4348,6 +4413,8 @@ const WORKFLOW_EVENT_PREVIEW = 4
 const WORKFLOW_OVERVIEW_EVENT_PREVIEW = 5
 const WORKFLOW_OP_PREVIEW = 6
 const WORKFLOW_FOCUS_OP_PREVIEW = 4
+const DOMAIN_LEARNING_WINDOW_DAYS = 30
+const CODING_IMPROVEMENT_CHANGED_EVENT = "hope-agent:coding-improvement-changed"
 const GOAL_DOMAIN_FREE_VALUE = "__free_goal_domain__"
 
 function domainTemplateOptionValue(template: Pick<DomainWorkflowTemplate, "id" | "version">) {

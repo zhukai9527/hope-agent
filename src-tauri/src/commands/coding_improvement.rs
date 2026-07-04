@@ -16,8 +16,8 @@ use ha_core::coding_improvement::{
     CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
     CodingImprovementProposal, CodingLearningGeneralizationInput,
     CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
-    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
-    RecordCodingEvalRunInput,
+    GenerateCodingImprovementProposalsInput, GenerateCodingImprovementProposalsResult,
+    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
 };
 
 #[tauri::command]
@@ -47,11 +47,22 @@ pub async fn list_coding_improvement_proposals(
 pub async fn generate_coding_improvement_proposals(
     session_id: String,
     window_days: Option<u32>,
+    source_type: Option<String>,
+    source_id: Option<String>,
+    proposal_kinds: Option<Vec<String>>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GenerateCodingImprovementProposalsResult, CmdError> {
     app_state
         .session_db
-        .generate_coding_improvement_proposals(&session_id, window_days)
+        .generate_coding_improvement_proposals_with_input(
+            &session_id,
+            GenerateCodingImprovementProposalsInput {
+                window_days,
+                source_type,
+                source_id,
+                proposal_kinds: proposal_kinds.unwrap_or_default(),
+            },
+        )
         .map_err(Into::into)
 }
 

@@ -17,8 +17,8 @@ use ha_core::coding_improvement::{
     CodingEvalRunRecord, CodingImprovementActionPlan, CodingImprovementPromotionPlan,
     CodingImprovementProposal, CodingLearningGeneralizationInput,
     CodingLearningGeneralizationReport, CodingTrendReport, DistillCodingImprovementResult,
-    GenerateCodingImprovementProposalsResult, PromoteCodingImprovementProposalResult,
-    RecordCodingEvalRunInput,
+    GenerateCodingImprovementProposalsInput, GenerateCodingImprovementProposalsResult,
+    PromoteCodingImprovementProposalResult, RecordCodingEvalRunInput,
 };
 use serde::Deserialize;
 
@@ -35,6 +35,10 @@ pub struct TrendQuery {
 #[serde(rename_all = "camelCase")]
 pub struct GenerateProposalsBody {
     pub window_days: Option<u32>,
+    pub source_type: Option<String>,
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub proposal_kinds: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,10 +194,17 @@ pub async fn generate_coding_improvement_proposals(
     Path(session_id): Path<String>,
     Json(body): Json<GenerateProposalsBody>,
 ) -> Result<Json<GenerateCodingImprovementProposalsResult>, AppError> {
-    Ok(Json(session_db()?.generate_coding_improvement_proposals(
-        &session_id,
-        body.window_days,
-    )?))
+    Ok(Json(
+        session_db()?.generate_coding_improvement_proposals_with_input(
+            &session_id,
+            GenerateCodingImprovementProposalsInput {
+                window_days: body.window_days,
+                source_type: body.source_type,
+                source_id: body.source_id,
+                proposal_kinds: body.proposal_kinds,
+            },
+        )?,
+    ))
 }
 
 pub async fn distill_coding_improvement_proposals(

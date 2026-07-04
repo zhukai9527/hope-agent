@@ -40,6 +40,7 @@ export interface CodingTrendReportState {
 
 const CODING_TREND_WINDOW_DAYS = 30
 const CODING_TREND_EVENT_REFRESH_DEBOUNCE_MS = 600
+const CODING_IMPROVEMENT_CHANGED_EVENT = "hope-agent:coding-improvement-changed"
 
 function payloadBelongsToSession(payload: unknown, sessionId: string): boolean {
   if (typeof payload !== "object" || payload === null) return true
@@ -150,12 +151,20 @@ export function useCodingTrendReport(
       transport.listen("verification:step_updated", scheduleRefresh),
       transport.listen("_lagged", () => scheduleRefresh()),
     ]
+    const onImprovementChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: unknown }>).detail
+      if (!detail || typeof detail.sessionId !== "string" || detail.sessionId === sessionId) {
+        scheduleRefresh()
+      }
+    }
+    window.addEventListener(CODING_IMPROVEMENT_CHANGED_EVENT, onImprovementChanged)
     return () => {
       if (eventRefreshTimerRef.current !== null) {
         window.clearTimeout(eventRefreshTimerRef.current)
         eventRefreshTimerRef.current = null
       }
       unsubs.forEach((unsub) => unsub())
+      window.removeEventListener(CODING_IMPROVEMENT_CHANGED_EVENT, onImprovementChanged)
     }
   }, [disabled, fetchReport, incognito, sessionId])
 

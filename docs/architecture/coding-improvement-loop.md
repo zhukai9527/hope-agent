@@ -121,7 +121,7 @@ Phase 4.4 新增显式 owner-plane action：`distill_coding_improvement_proposal
 
 ## Proposal Queue
 
-`generate_coding_improvement_proposals()` 从 report 派生候选：
+`generate_coding_improvement_proposals()` 从 report 派生候选。默认行为是读取当前 session/project scope 内可用事实并生成所有匹配候选；Phase 7.5 后也支持 `sourceType` / `sourceId` / `proposalKinds` 过滤，用于 GUI 从一次具体事实源定向提炼经验，例如 Workspace「领域复核」的「提炼经验」会传入 `sourceType="domain_quality"` + 当前 `run_id`，只返回这次 Domain Quality run 对应的 draft proposal。
 
 | Kind | 触发 |
 | --- | --- |
@@ -232,7 +232,7 @@ Tauri commands：
 | --- | --- |
 | `get_coding_trend_report` | 读取当前 session/project scope 的 trend report。 |
 | `list_coding_improvement_proposals` | 读取 proposal 队列。 |
-| `generate_coding_improvement_proposals` | 基于当前 report 生成 draft-only proposals。 |
+| `generate_coding_improvement_proposals` | 基于当前 report 生成 draft-only proposals；可选 `sourceType` / `sourceId` / `proposalKinds` 做定向提炼。 |
 | `distill_coding_improvement_proposals` | 显式蒸馏 transcript / workflow ops / failure feedback，并生成 draft-only proposals。 |
 | `update_coding_improvement_proposal_status` | 更新 proposal 状态。 |
 | `preview_coding_improvement_proposal_action` | 预览 proposal 将生成的 action plan。 |
