@@ -1307,6 +1307,9 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("pnpm test")).toBeTruthy()
     expect(screen.getByText(/expected value to be true/)).toBeTruthy()
 
+    fireEvent.click(screen.getAllByRole("button", { name: "展开验证输出" })[1])
+    expect(await screen.findByText("验证输出")).toBeTruthy()
+
     fireEvent.click(screen.getByRole("button", { name: "生成修复草稿" }))
 
     await waitFor(() => {

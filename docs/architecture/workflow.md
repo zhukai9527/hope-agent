@@ -475,7 +475,7 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 - 目标驱动草稿：生成可预检 `workflow.js`，脚本编辑放高级区。coding 只是可选领域模板之一。
 - 创建前展示 Script Gate 与 permission preview。
 - run list、历史展开、总览、当前焦点、下一步跳转。
-- Trace / Validation / Agents 三视图。
+- Trace / Validation / Agents 三视图；Validation 命令行可展开完整输出并复制详情，失败恢复不依赖截断预览。
 - blocked / failed 恢复建议、复制修复提示、生成 repair draft。
 - draft / approve / pause / resume / cancel 操作；cancel 前确认。
 - 窄屏内部面板走 overlay，不被桌面 split-pane 挤出视口。

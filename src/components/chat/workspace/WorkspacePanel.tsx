@@ -9609,6 +9609,7 @@ function WorkflowValidationTab({ snapshot }: { snapshot: WorkflowRunSnapshot }) 
 
 function WorkflowValidationResultRow({ result }: { result: Record<string, unknown> }) {
   const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
   const command =
     stringField(result, "command") ?? t("workspace.workflow.validationCommand", "验证命令")
   const cwd = stringField(result, "cwd")
@@ -9616,12 +9617,28 @@ function WorkflowValidationResultRow({ result }: { result: Record<string, unknow
   const ok = boolField(result, "ok")
   const exitCode = numberField(result, "exitCode")
   const output = stringField(result, "output")
+  const detailsText = output ?? prettyJson(result, command)
   const tone: "good" | "danger" | "info" =
     ok === true
       ? "good"
       : ok === false || (typeof exitCode === "number" && exitCode !== 0)
         ? "danger"
         : "info"
+
+  const copyDetails = async () => {
+    try {
+      await navigator.clipboard.writeText(detailsText)
+      toast.success(t("workspace.workflow.detailsCopied", "已复制详情"))
+    } catch (e) {
+      logger.error(
+        "ui",
+        "WorkflowValidationResultRow::copyDetails",
+        "Copy workflow validation output failed",
+        e,
+      )
+      toast.error(t("workspace.workflow.detailsCopyFailed", "复制详情失败"))
+    }
+  }
 
   return (
     <IconTip label={compactJson(result, command)}>
@@ -9642,6 +9659,21 @@ function WorkflowValidationResultRow({ result }: { result: Record<string, unknow
               exit {exitCode}
             </span>
           ) : null}
+          <button
+            type="button"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+            aria-label={
+              expanded
+                ? t("workspace.workflow.collapseValidationOutput", "收起验证输出")
+                : t("workspace.workflow.expandValidationOutput", "展开验证输出")
+            }
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <ChevronDown
+              className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")}
+            />
+          </button>
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-5 text-[10px] text-muted-foreground/75">
           {jobStatus ? <span className="shrink-0">{jobStatus}</span> : null}
@@ -9653,6 +9685,28 @@ function WorkflowValidationResultRow({ result }: { result: Record<string, unknow
             {truncateMiddle(output, 130)}
           </div>
         ) : null}
+        <AnimatedCollapse open={expanded}>
+          <div className="mt-1 rounded-md border border-border/55 bg-background/65 p-2">
+            <div className="mb-1.5 flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-[10px] font-medium text-muted-foreground">
+                {t("workspace.workflow.validationOutput", "验证输出")}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-6 shrink-0 gap-1 px-1.5 text-[10px]"
+                onClick={() => void copyDetails()}
+              >
+                <Copy className="h-3 w-3" />
+                <span>{t("common.copy", "复制")}</span>
+              </Button>
+            </div>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-secondary/30 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+              {detailsText}
+            </pre>
+          </div>
+        </AnimatedCollapse>
       </div>
     </IconTip>
   )
