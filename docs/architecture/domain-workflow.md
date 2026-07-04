@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 7.1 Domain Workflow Registry 与 Phase 7.2 General Evidence Model 已实现；Phase 7.3 已在 [Context Retrieval v2](context-retrieval.md) 接入 domain profile、domain evidence 候选与 access issue；Phase 7.4 已由 [Domain Quality 控制平面](domain-quality.md) 消费 template / evidence / approval gates 生成通用领域 review / verification；Phase 7.5-7.6 已把 Domain Quality / Evidence 作为 [Coding Improvement Loop](coding-improvement-loop.md) 的通用学习输入与 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md) 的评分输入；Phase 7.15 已在本模块补充 Artifact Export Guard，Phase 7.16 已补 Connector Action Guard，把真实外部系统修改接入同一套证据、审批和回滚提示语义。本文记录 `ha-core::domain_workflow`、owner API、通用 workflow template、通用 evidence、Goal evidence 链接、交付守门与外部动作守门的当前技术事实。
+> 状态：Phase 7.1 Domain Workflow Registry 与 Phase 7.2 General Evidence Model 已实现；Phase 7.3 已在 [Context Retrieval v2](context-retrieval.md) 接入 domain profile、domain evidence 候选与 access issue；Phase 7.4 已由 [Domain Quality 控制平面](domain-quality.md) 消费 template / evidence / approval gates 生成通用领域 review / verification；Phase 7.5-7.6 已把 Domain Quality / Evidence 作为 [Coding Improvement Loop](coding-improvement-loop.md) 的通用学习输入与 [Domain Eval 与 Quality Gate 控制平面](domain-eval.md) 的评分输入；Phase 7.15 已在本模块补充 Artifact Export Guard，Phase 7.16 已补 Connector Action Guard；Phase 8.2 已补 Connector E2E Gate，把真实外部系统修改从“动作前守门”推进到“读取 -> 草稿 -> 批准 -> 执行 -> 复核 -> 回滚说明”的完整链路验收。本文记录 `ha-core::domain_workflow`、owner API、通用 workflow template、通用 evidence、Goal evidence 链接、交付守门、外部动作守门与连接器 E2E 验收的当前技术事实。
 
 ## 目标
 
@@ -87,6 +87,10 @@ Phase 7.2 支持下列 evidence type：
 | `citation_audited` | 引用覆盖率、时效和来源可信度审计完成。 |
 | `message_draft_approved` | 邮件/消息草稿发送前得到用户明确批准。 |
 | `meeting_context_collected` | 日历、材料、参会人、历史决策等会议上下文被收集。 |
+| `connector_context_collected` | Gmail / Calendar / Drive / Sheets / Feishu / Lark 等连接器读取或 deterministic fixture 上下文已收集。 |
+| `connector_draft_created` | 外部系统修改前的草稿、预览或 proposed change 已生成并可展示。 |
+| `connector_action_executed` | 外部连接器动作已执行，metadata 必须保留 connector / action / result id 或 status。 |
+| `connector_action_verified` | 执行后已读回或复核外部系统状态。 |
 
 `record_domain_evidence(input)` 要求 `goalId` 或 `sessionId`，并执行：
 
@@ -153,6 +157,34 @@ Phase 7.16 新增 `evaluate_domain_connector_action_guard(input)`，用于 Gmail
 
 GUI 上，Workspace「领域复核」区块内新增「外部动作守门」卡片，自动随会话加载、回合结束和手动刷新更新。用户能看到动作证据、批准证据、回滚提示、敏感来源计数、阻塞 check 和相关 evidence；真正执行外部修改前仍会逐次弹出审批。
 
+## Connector E2E Gate
+
+Phase 8.2 新增 `evaluate_domain_connector_e2e_gate(input)`，用于真实连接器场景的端到端验收。它仍是 owner-plane 只读 gate：不调用 LLM、不访问连接器、不发送邮件、不改日历、不分享文档、不更新外部记录；真实账号动作可以把结果写成 evidence，deterministic/mock fixture 也可以写成同样结构的 evidence，但没有证据时绝不伪装成通过。
+
+输入支持 `goalId` / `sessionId` / `projectId` / global scope，并可选 `domain`、`toolName`、`connector`、`action`。session / goal scope 会校验 session 存在且非 incognito；global / project scope 只做 evidence 聚合，不嵌套运行 Connector Action Guard，因此通常会保持 `insufficient_data`，用于 Dashboard 总览“最近是否已有足够证据”而不是动作授权。具体 session / goal scope 下会复用 `evaluate_domain_connector_action_guard`，交付类动作也会继续要求 Artifact Export Guard 通过。
+
+默认阈值：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `requireConnectorInput` | `true` | 必须存在连接器输入证据，例如 `accessScope=connector`、`connector` / `accountId` / `externalSource` metadata。 |
+| `requireDraft` | `true` | 必须存在草稿或预览证据，例如 `connector_draft_created`、`message_draft_approved`，或带 `draftCreated` / `previewReady` 的 `artifact_created`。 |
+| `requireExplicitApproval` | `true` | 必须存在用户明确批准；缺失直接 `failed`。 |
+| `requireExecutionResult` | `true` | 必须存在 `connector_action_executed` 或带 `execution/result/resultId/messageId/eventId/fileId/status` 的执行结果 metadata。 |
+| `requirePostActionVerification` | `true` | 必须存在 `connector_action_verified` 或带 `verification.passed` / `externalStateVerified` / `postActionReview` 的复核 evidence。 |
+| `requireRollbackPlan` | `true` | 必须存在 rollback / undo / recovery plan。 |
+| `requireExportGuardForDelivery` | `true` | send / reply / forward / share / publish / export / upload / submit 等交付类动作必须通过 Artifact Export Guard。 |
+
+判定规则：
+
+- `connector_input` / `draft_or_preview` / `action_execution` / `post_action_verification` / `rollback_plan` 缺失时为 `insufficient_data`，表示不能声称完成真实 E2E。
+- `explicit_user_approval` 缺失为 `failed`，因为外部系统修改不能由模型自行授权。
+- `connector_action_guard` 在 session / goal scope 下必须 passed；global / project scope 下会显示 `not_evaluated_without_session_or_goal` 并保持 `insufficient_data`。
+- 交付类动作的 `artifact_export_guard` failed 会同步 failed；未评估或证据不足为 `insufficient_data`。
+- 输出 `summary`、`checks[]`、`blockers[]`、`recommendedNextSteps[]` 和最多 16 条相关 evidence，覆盖输入、草稿、批准、执行、复核、回滚和敏感来源。
+
+Dashboard Learning 新增「Connector E2E」卡片，展示 IN / DR / OK / EX / VF / RB / GU 等计数与 guard 状态。它回答“最近有没有足够证据证明真实连接器链路跑完”，不替代 Workspace 内的逐次工具审批，也不替用户执行外部动作。
+
 ## Context Retrieval 衔接
 
 Phase 7.3 起，`ha-core::context_retrieval` 会只读消费本模块的数据：
@@ -201,6 +233,7 @@ Tauri / HTTP / transport 均已注册：
 | `list_domain_evidence` | `POST /api/domain-evidence` | 按 goal/session/project/domain/type 列出 evidence。 |
 | `evaluate_domain_artifact_export_guard` | `POST /api/domain-artifact-export-guard/evaluate` | 只读评估最终交付是否具备产物、复核和脱敏证据。 |
 | `evaluate_domain_connector_action_guard` | `POST /api/domain-connector-action-guard/evaluate` | 只读评估真实外部连接器动作是否具备动作、批准、回滚和交付守门证据。 |
+| `evaluate_domain_connector_e2e_gate` | `POST /api/domain-connector-e2e-gate/evaluate` | 只读评估真实连接器 E2E 是否具备输入、草稿、批准、执行结果、执行后复核、回滚和交付守门证据。 |
 
 ## 红线
 
@@ -208,7 +241,8 @@ Tauri / HTTP / transport 均已注册：
 - 不自动执行：preview 不创建 run、不运行脚本、不访问网络、不发邮件、不改日历、不写外部系统。
 - 不污染全局 prompt：domain hints 只进入 workflow draft 的动态 payload。
 - 不写无痕：incognito session 不可 preview durable domain workflow，也不可记录 domain evidence。
-- 不自动交付/修改外部系统：Artifact Export Guard 与 Connector Action Guard 只给出门禁结论；真正发送邮件、改日历、分享文档、更新表格或外部业务记录仍必须走工具审批和连接器授权。
+- 不自动交付/修改外部系统：Artifact Export Guard、Connector Action Guard 与 Connector E2E Gate 只给出门禁结论；真正发送邮件、改日历、分享文档、更新表格或外部业务记录仍必须走工具审批和连接器授权。
+- 不伪造真实连接器 E2E：没有外部输入、执行结果或执行后复核 evidence 时，Connector E2E Gate 只能 `insufficient_data`，不能因为 deterministic/mock 路径存在就当真实账号通过。
 - 不覆盖内置：自定义 template 不能覆盖 built-in 同 id/version。
 - 不破坏 coding：Goal evidence 只加通用 relation；coding review、verification、eval、benchmark 的表和行为不变。
 
@@ -226,4 +260,5 @@ cargo test -p ha-core domain_workflow --locked
 - Domain evidence 可写入 `domain_evidence_items`，并通过 `goal_links` 出现在 Goal snapshot evidence 中。
 - Artifact Export Guard 在产物、复核、敏感来源导出复核齐全时通过；缺少复核且存在 pending connector evidence 时阻断。
 - Connector Action Guard 在动作、用户批准、回滚和交付复核齐全时通过；缺少显式批准时阻断。
+- Connector E2E Gate 在连接器输入、草稿、用户批准、执行结果、执行后复核、回滚和交付复核齐全时通过；缺执行结果时保持 `insufficient_data`，不伪装成通过。
 - Workflow runtime 可通过 `workflow.evidence.record` 写入通用 evidence，并保留 run/op provenance。

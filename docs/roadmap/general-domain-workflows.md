@@ -4,7 +4,7 @@
 >
 > 更新时间：2026-07-04
 >
-> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate、Phase 7.7 Domain Eval Calibration、Phase 7.8 Domain Eval Fixture Runner、Phase 7.9 Domain Eval Agent Fixture Execution、Phase 7.10 Domain Fixture / Smoke Run Center、Phase 7.11 Domain Eval Campaign Runner、Phase 7.12 Domain External Campaign & Leaderboard、Phase 7.13 Domain Campaign Learning Closure、Phase 7.14 Domain Readiness Gate、Phase 7.15 Domain Artifact Export Guard、Phase 7.16 Domain Connector Action Guard 已完成第一版；Phase 8.1 Domain Operational Gate 已完成第一版。相关事实已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
+> 状态：Phase 7.1 Domain Workflow Registry、Phase 7.2 General Evidence Model、Phase 7.3 Domain Context Retrieval、Phase 7.4 Domain Verification & Review、Phase 7.5 Domain Learning Loop、Phase 7.6 General Eval & Quality Gate、Phase 7.7 Domain Eval Calibration、Phase 7.8 Domain Eval Fixture Runner、Phase 7.9 Domain Eval Agent Fixture Execution、Phase 7.10 Domain Fixture / Smoke Run Center、Phase 7.11 Domain Eval Campaign Runner、Phase 7.12 Domain External Campaign & Leaderboard、Phase 7.13 Domain Campaign Learning Closure、Phase 7.14 Domain Readiness Gate、Phase 7.15 Domain Artifact Export Guard、Phase 7.16 Domain Connector Action Guard 已完成第一版；Phase 8.1 Domain Operational Gate、Phase 8.2 Connector E2E Gate 已完成第一版。相关事实已分别沉淀到 [Domain Workflow 控制平面](../architecture/domain-workflow.md)、[Context Retrieval v2](../architecture/context-retrieval.md)、[Domain Quality 控制平面](../architecture/domain-quality.md)、[Coding Improvement Loop](../architecture/coding-improvement-loop.md) 与 [Domain Eval 与 Quality Gate 控制平面](../architecture/domain-eval.md)。
 
 ## 1. 背景
 
@@ -381,7 +381,7 @@ Gold task pack -> Domain eval task pack
 
 - 真实外部账号的端到端演练需要在具备 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等可用测试账号后继续做，当前 worktree 主要用 deterministic / mock / fail-closed 证据覆盖。
 - GUI 仍可继续把 Sources / Evidence / Drafts / Review / Verification / Decisions 做成更完整的通用任务工作台，而不是只集中在 Workspace「领域复核」和 Dashboard Learning。
-- 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据；Phase 8.1 已先把 workflow / loop / campaign 运行残留产品化为 Operational Gate，但真实跨天 soak report 仍需继续积累样本。
+- 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据；Phase 8.1 已先把 workflow / loop / campaign 运行残留产品化为 Operational Gate，Phase 8.2 已把连接器 E2E 链路证据产品化为 Gate，但真实跨天 soak report 仍需继续积累样本。
 
 ## 12. Phase 8：真实场景产品级验收
 
@@ -410,10 +410,24 @@ Phase 8 不再新增一套执行系统，而是把 Phase 7 的通用控制面放
 - 运行中 workflow / campaign 只表达“尚未 drain”，不会被当成失败；真正 failed / blocked / cancelled / interrupted 会阻断。
 - Gate 只读，不替用户自动 approve / cancel / retry，保持可观察可控制。
 
-### Phase 8.2 真实连接器 E2E（待做）
+### Phase 8.2 Connector E2E Gate（已完成第一版）
 
-- 用测试账号覆盖 Gmail / Calendar / Drive / Sheets / Feishu / Lark 的真实 approve -> execute -> evidence -> export/action guard -> rollback note 流程。
-- 不把外部账号缺失伪装成通过；没有真实账号时只保留 deterministic / mock / fail-closed 证据。
+目标：把真实连接器动作从“动作前守门”推进到端到端验收，确认读取、草稿、批准、执行、复核、回滚说明和交付守门是否都留下可审计 evidence。
+
+已完成：
+
+- 新增 `evaluate_domain_connector_e2e_gate` owner API，Tauri / HTTP / transport 已接通。
+- Gate 支持 goal / session / project / global scope；session / goal scope 会拒绝 incognito 并嵌套 Connector Action Guard，global / project scope 只做 evidence 聚合，不伪装成具体动作授权。
+- 新增标准 evidence type：`connector_context_collected`、`connector_draft_created`、`connector_action_executed`、`connector_action_verified`。
+- Checks 覆盖 connector input、draft/preview、explicit approval、execution result、post-action verification、rollback plan、Connector Action Guard、Artifact Export Guard。
+- 缺用户批准为 `failed`；缺真实输入、执行结果或执行后复核为 `insufficient_data`，不把 mock/deterministic 或外部账号缺失伪装成通过。
+- Dashboard Learning 新增「Connector E2E」卡片，展示 IN / DR / OK / EX / VF / RB / GU 和 recommended next steps。
+- 新增核心单测覆盖：完整 Gmail send lifecycle passed；缺 execution result 时保持 `insufficient_data`。
+
+仍需后续真实样本：
+
+- 用测试账号跑 Gmail / Calendar / Drive / Sheets / Feishu / Lark 的真实 approve -> execute -> evidence -> export/action/e2e gate -> rollback note 流程。
+- 把真实账号样本纳入 Phase 8.3 soak report，而不是仅靠 deterministic fixture。
 
 ### Phase 8.3 跨天 Soak Report（待做）
 
@@ -442,3 +456,4 @@ P6 完成后，建议按下列顺序推进：
 11. Phase 7.15：已补 Domain Artifact Export Guard，把报告、文档、表格、邮件草稿等非 coding 产物的最终交付审查做成 Workspace 可操作 GUI。
 12. Phase 7.16：已补 Domain Connector Action Guard，把 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等真实外部动作接入同一套证据、审批和回滚提示语义。
 13. Phase 8.1：已补 Domain Operational Gate，把 workflow / loop / campaign 的运行稳定性合成 Dashboard 可见门禁。
+14. Phase 8.2：已补 Connector E2E Gate，把真实连接器链路的输入、草稿、批准、执行、复核、回滚和交付守门合成 Dashboard 可见门禁。

@@ -3147,6 +3147,90 @@ export interface DomainConnectorActionGuardReport {
   relatedEvidence: DomainConnectorActionGuardEvidence[];
 }
 
+export interface DomainConnectorE2EGateInput {
+  goalId?: string | null;
+  sessionId?: string | null;
+  projectId?: string | null;
+  domain?: string | null;
+  toolName?: string | null;
+  connector?: string | null;
+  action?: string | null;
+  requireConnectorInput?: boolean;
+  requireDraft?: boolean;
+  requireExplicitApproval?: boolean;
+  requireExecutionResult?: boolean;
+  requirePostActionVerification?: boolean;
+  requireRollbackPlan?: boolean;
+  requireExportGuardForDelivery?: boolean;
+}
+
+export interface DomainConnectorE2EGateThresholds {
+  requireConnectorInput: boolean;
+  requireDraft: boolean;
+  requireExplicitApproval: boolean;
+  requireExecutionResult: boolean;
+  requirePostActionVerification: boolean;
+  requireRollbackPlan: boolean;
+  requireExportGuardForDelivery: boolean;
+}
+
+export interface DomainConnectorE2EGateScope {
+  scope: string;
+  goalId?: string | null;
+  sessionId?: string | null;
+  projectId?: string | null;
+  domain?: string | null;
+}
+
+export interface DomainConnectorE2EGateSummary {
+  evidenceItems: number;
+  connectorInputEvidence: number;
+  draftEvidence: number;
+  approvalEvidence: number;
+  executionEvidence: number;
+  verificationEvidence: number;
+  rollbackEvidence: number;
+  sensitiveEvidence: number;
+  deliveryAction: boolean;
+  connectorActionGuardStatus?: string | null;
+  exportGuardStatus?: string | null;
+}
+
+export interface DomainConnectorE2EGateCheck {
+  name: string;
+  status: "passed" | "failed" | "insufficient_data" | string;
+  severity: string;
+  expected: string;
+  actual: string;
+  detail: string;
+}
+
+export interface DomainConnectorE2EGateEvidence {
+  id: string;
+  evidenceType: string;
+  title: string;
+  accessScope: string;
+  redactionStatus: string;
+  createdAt: string;
+  reason: string;
+}
+
+export interface DomainConnectorE2EGateReport {
+  generatedAt: string;
+  status: "passed" | "failed" | "insufficient_data" | string;
+  scope: DomainConnectorE2EGateScope;
+  toolName?: string | null;
+  connector?: string | null;
+  action?: string | null;
+  risk?: string | null;
+  thresholds: DomainConnectorE2EGateThresholds;
+  summary: DomainConnectorE2EGateSummary;
+  checks: DomainConnectorE2EGateCheck[];
+  blockers: string[];
+  recommendedNextSteps: string[];
+  relatedEvidence: DomainConnectorE2EGateEvidence[];
+}
+
 export interface CodingEvalFixture {
   name: string;
   description?: string;

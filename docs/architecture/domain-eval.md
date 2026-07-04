@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 7.14 已实现；Phase 8.1 已补 Domain Operational Gate。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、Domain Eval Campaign、Domain Campaign Leaderboard、Domain Campaign Learning Closure、Domain Readiness Gate、Domain Operational Gate、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center / Campaign Center / Operational Gate。
+> 状态：Phase 7.14 已实现；Phase 8.1 已补 Domain Operational Gate；Phase 8.2 的 Connector E2E Gate 落在 [Domain Workflow 控制平面](domain-workflow.md)，Dashboard Learning 已接入展示。本文记录 `ha-core::domain_eval` 的最终技术事实：通用领域 eval task registry、promoted domain eval case 导入、user/project calibration 与人工复核记录、deterministic trace scoring、trace / agent fixture runner、fixture run history、Domain Eval Campaign、Domain Campaign Leaderboard、Domain Campaign Learning Closure、Domain Readiness Gate、Domain Operational Gate、`domain_eval_runs` history、Domain Quality Gate、owner API 与 Dashboard 通用质量区块 / Smoke Run Center / Campaign Center / Operational Gate。
 
 ## 目标
 
@@ -386,6 +386,7 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 展示「Domain model leaderboard」：按模型 / execution 聚合最近 campaign item，显示 rank、平均分、item 通过数、trace evidence 数和 warning。
 - 展示「Domain readiness」卡片：直接调用 `evaluate_domain_readiness_gate`，显示总体 readiness 三态、quality/eval/campaign/leaderboard/learning proposal 核心计数、阻塞 check 和 recommended next steps。
 - 展示「Domain operations」卡片：直接调用 `evaluate_domain_operational_gate`，显示 workflow / loop / campaign 的完成、活跃、失败残留和 recommended next steps。
+- 展示「Connector E2E」卡片：直接调用 `evaluate_domain_connector_e2e_gate`，显示连接器输入、草稿、批准、执行结果、执行后复核、回滚和下层 guard 状态；global scope 只做聚合，不伪装成具体 session/goal 的动作授权。
 - 展示已校准 task 数；最近 eval run 支持点击「Mark reviewed」记录人工复核 calibration。
 - 与 Release Gate / Continuous Benchmark Gate 分开展示，不生成综合分。
 

@@ -1,10 +1,10 @@
 use axum::Json;
 use ha_core::domain_workflow::{
     DomainArtifactExportGuardInput, DomainArtifactExportGuardReport,
-    DomainConnectorActionGuardInput, DomainConnectorActionGuardReport, DomainEvidenceItem,
-    DomainWorkflowDraft, DomainWorkflowTemplate, ListDomainEvidenceInput,
-    ListDomainWorkflowTemplatesInput, PreviewDomainWorkflowInput, RecordDomainEvidenceInput,
-    SaveDomainWorkflowTemplateInput,
+    DomainConnectorActionGuardInput, DomainConnectorActionGuardReport, DomainConnectorE2EGateInput,
+    DomainConnectorE2EGateReport, DomainEvidenceItem, DomainWorkflowDraft, DomainWorkflowTemplate,
+    ListDomainEvidenceInput, ListDomainWorkflowTemplatesInput, PreviewDomainWorkflowInput,
+    RecordDomainEvidenceInput, SaveDomainWorkflowTemplateInput,
 };
 use serde::Deserialize;
 
@@ -51,6 +51,12 @@ pub struct EvaluateExportGuardBody {
 #[serde(rename_all = "camelCase")]
 pub struct EvaluateConnectorActionGuardBody {
     pub input: DomainConnectorActionGuardInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluateConnectorE2EGateBody {
+    pub input: DomainConnectorE2EGateInput,
 }
 
 pub async fn list_domain_workflow_templates(
@@ -112,6 +118,15 @@ pub async fn evaluate_domain_connector_action_guard(
 ) -> Result<Json<DomainConnectorActionGuardReport>, AppError> {
     session_db()?
         .evaluate_domain_connector_action_guard(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn evaluate_domain_connector_e2e_gate(
+    Json(body): Json<EvaluateConnectorE2EGateBody>,
+) -> Result<Json<DomainConnectorE2EGateReport>, AppError> {
+    session_db()?
+        .evaluate_domain_connector_e2e_gate(body.input)
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

@@ -37,6 +37,7 @@ import type {
   CodingEvalReleaseGateReport,
   GenerateCodingImprovementProposalsResult,
   CodingLearningGeneralizationReport,
+  DomainConnectorE2EGateReport,
   DomainEvalRunRecord,
   DomainEvalFixtureRunRecord,
   DomainEvalCampaign,
@@ -144,6 +145,8 @@ export default function LearningTab({ filter }: LearningTabProps) {
     useState<DomainReadinessGateReport | null>(null)
   const [domainOperationalGate, setDomainOperationalGate] =
     useState<DomainOperationalGateReport | null>(null)
+  const [domainConnectorE2EGate, setDomainConnectorE2EGate] =
+    useState<DomainConnectorE2EGateReport | null>(null)
   const [domainEvalRuns, setDomainEvalRuns] = useState<DomainEvalRunRecord[]>([])
   const [domainFixtureRuns, setDomainFixtureRuns] = useState<DomainEvalFixtureRunRecord[]>([])
   const [domainEvalCampaigns, setDomainEvalCampaigns] = useState<DomainEvalCampaign[]>([])
@@ -187,6 +190,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         gen,
         drg,
         dog,
+        dceg,
         dqg,
         der,
         dfr,
@@ -311,6 +315,17 @@ export default function LearningTab({ filter }: LearningTabProps) {
             maxFailedCampaignItems: 0,
           },
         }),
+        getTransport().call<DomainConnectorE2EGateReport>("evaluate_domain_connector_e2e_gate", {
+          input: {
+            requireConnectorInput: true,
+            requireDraft: true,
+            requireExplicitApproval: true,
+            requireExecutionResult: true,
+            requirePostActionVerification: true,
+            requireRollbackPlan: true,
+            requireExportGuardForDelivery: true,
+          },
+        }),
         getTransport().call<DomainQualityGateReport>("evaluate_domain_quality_gate", {
           input: {
             windowDays: releaseGateWindowDays(filter, windowDays),
@@ -368,6 +383,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
       setGeneralization(gen)
       setDomainReadinessGate(drg)
       setDomainOperationalGate(dog)
+      setDomainConnectorE2EGate(dceg)
       setDomainQualityGate(dqg)
       setDomainEvalRuns(der ?? [])
       setDomainFixtureRuns(dfr ?? [])
@@ -927,6 +943,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
         generalization={generalization}
         domainReadinessGate={domainReadinessGate}
         domainOperationalGate={domainOperationalGate}
+        domainConnectorE2EGate={domainConnectorE2EGate}
         domainQualityGate={domainQualityGate}
         domainEvalRuns={domainEvalRuns}
         domainFixtureRuns={domainFixtureRuns}
@@ -1145,6 +1162,7 @@ function CodingImprovementSection({
   generalization,
   domainReadinessGate,
   domainOperationalGate,
+  domainConnectorE2EGate,
   domainQualityGate,
   domainEvalRuns,
   domainFixtureRuns,
@@ -1206,6 +1224,7 @@ function CodingImprovementSection({
   generalization: CodingLearningGeneralizationReport | null
   domainReadinessGate: DomainReadinessGateReport | null
   domainOperationalGate: DomainOperationalGateReport | null
+  domainConnectorE2EGate: DomainConnectorE2EGateReport | null
   domainQualityGate: DomainQualityGateReport | null
   domainEvalRuns: DomainEvalRunRecord[]
   domainFixtureRuns: DomainEvalFixtureRunRecord[]
@@ -1412,6 +1431,8 @@ function CodingImprovementSection({
       <DomainReadinessGatePanel report={domainReadinessGate} />
 
       <DomainOperationalGatePanel report={domainOperationalGate} />
+
+      <DomainConnectorE2EGatePanel report={domainConnectorE2EGate} />
 
       <DomainQualityGatePanel
         report={domainQualityGate}
@@ -3057,6 +3078,124 @@ function DomainOperationalGatePanel({ report }: { report: DomainOperationalGateR
         <EmptyLine
           label={t("dashboard.learning.domainOperationalLoading", {
             defaultValue: "Loading operational readiness",
+          })}
+        />
+      )}
+    </div>
+  )
+}
+
+function DomainConnectorE2EGatePanel({ report }: { report: DomainConnectorE2EGateReport | null }) {
+  const { t } = useTranslation()
+  const attentionChecks =
+    report?.checks.filter((check) => check.status !== "passed").slice(0, 5) ?? []
+  const recommendations = report?.recommendedNextSteps.slice(0, 3) ?? []
+
+  return (
+    <div className="border border-border/60 rounded-lg p-4 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t("dashboard.learning.domainConnectorE2EGate", {
+              defaultValue: "Connector E2E",
+            })}
+          </h4>
+          <p className="text-[10px] text-muted-foreground">
+            {report
+              ? t("dashboard.learning.domainConnectorE2EGateHint", {
+                  defaultValue: "{{scope}} · {{connector}} · {{action}}",
+                  scope: report.scope.scope,
+                  connector: report.connector ?? "connector",
+                  action: report.action ?? "action",
+                })
+              : t("dashboard.learning.domainConnectorE2EGateLoadingHint", {
+                  defaultValue: "Loading connector evidence",
+                })}
+          </p>
+        </div>
+        <span className={`px-2 py-1 rounded text-[10px] font-medium ${releaseGateTone(report?.status)}`}>
+          {report?.status ?? "loading"}
+        </span>
+      </div>
+      {report ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-7 gap-2">
+            <MetricPill
+              label="IN"
+              value={report.summary.connectorInputEvidence}
+              tone={report.summary.connectorInputEvidence > 0 ? "accent" : "muted"}
+            />
+            <MetricPill
+              label="DR"
+              value={report.summary.draftEvidence}
+              tone={report.summary.draftEvidence > 0 ? "accent" : "muted"}
+            />
+            <MetricPill
+              label="OK"
+              value={report.summary.approvalEvidence}
+              tone={report.summary.approvalEvidence > 0 ? "accent" : "warn"}
+            />
+            <MetricPill
+              label="EX"
+              value={report.summary.executionEvidence}
+              tone={report.summary.executionEvidence > 0 ? "accent" : "muted"}
+            />
+            <MetricPill
+              label="VF"
+              value={report.summary.verificationEvidence}
+              tone={report.summary.verificationEvidence > 0 ? "accent" : "muted"}
+            />
+            <MetricPill
+              label="RB"
+              value={report.summary.rollbackEvidence}
+              tone={report.summary.rollbackEvidence > 0 ? "accent" : "muted"}
+            />
+            <MetricPill
+              label="GU"
+              value={report.summary.connectorActionGuardStatus ?? "n/a"}
+              tone={
+                report.summary.connectorActionGuardStatus === "passed"
+                  ? "accent"
+                  : report.summary.connectorActionGuardStatus === "failed"
+                    ? "warn"
+                    : "muted"
+              }
+            />
+          </div>
+          {attentionChecks.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {attentionChecks.map((check) => (
+                <span
+                  key={check.name}
+                  className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] ${releaseGateCheckTone(check.status)}`}
+                  title={`${check.expected} · ${check.actual}`}
+                >
+                  {check.name}: {check.actual}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="text-[10px] text-muted-foreground">
+              {t("dashboard.learning.domainConnectorE2EClean", {
+                defaultValue: "Connector E2E checks passed",
+              })}
+            </span>
+          )}
+          {recommendations.length > 0 && (
+            <div className="space-y-1">
+              {recommendations.map((step) => (
+                <div key={step} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+                  <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span className="min-w-0">{step}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <EmptyLine
+          label={t("dashboard.learning.domainConnectorE2ELoading", {
+            defaultValue: "Loading connector E2E evidence",
           })}
         />
       )}

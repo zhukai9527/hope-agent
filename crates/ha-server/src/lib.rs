@@ -1600,6 +1600,10 @@ fn build_router_with_cors(
             post(routes::domain_workflow::evaluate_domain_connector_action_guard),
         )
         .route(
+            "/domain-connector-e2e-gate/evaluate",
+            post(routes::domain_workflow::evaluate_domain_connector_e2e_gate),
+        )
+        .route(
             "/domain-eval/tasks",
             post(routes::domain_eval::list_domain_eval_tasks),
         )

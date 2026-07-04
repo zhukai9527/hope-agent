@@ -19,6 +19,7 @@ const DOMAIN_EVIDENCE_LIMIT_DEFAULT: usize = 50;
 const DOMAIN_EVIDENCE_LIMIT_MAX: usize = 200;
 const DOMAIN_EXPORT_GUARD_REVIEW_ITEMS_MAX: usize = 12;
 const DOMAIN_CONNECTOR_ACTION_GUARD_EVIDENCE_MAX: usize = 12;
+const DOMAIN_CONNECTOR_E2E_GATE_EVIDENCE_MAX: usize = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -506,6 +507,149 @@ pub struct DomainConnectorActionGuardReport {
     pub blockers: Vec<String>,
     pub recommended_next_steps: Vec<String>,
     pub related_evidence: Vec<DomainConnectorActionGuardEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default = "serde_default_true")]
+    pub require_connector_input: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_draft: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_explicit_approval: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_execution_result: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_post_action_verification: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_rollback_plan: bool,
+    #[serde(default = "serde_default_true")]
+    pub require_export_guard_for_delivery: bool,
+}
+
+impl Default for DomainConnectorE2EGateInput {
+    fn default() -> Self {
+        Self {
+            goal_id: None,
+            session_id: None,
+            project_id: None,
+            domain: None,
+            tool_name: None,
+            connector: None,
+            action: None,
+            require_connector_input: true,
+            require_draft: true,
+            require_explicit_approval: true,
+            require_execution_result: true,
+            require_post_action_verification: true,
+            require_rollback_plan: true,
+            require_export_guard_for_delivery: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateThresholds {
+    pub require_connector_input: bool,
+    pub require_draft: bool,
+    pub require_explicit_approval: bool,
+    pub require_execution_result: bool,
+    pub require_post_action_verification: bool,
+    pub require_rollback_plan: bool,
+    pub require_export_guard_for_delivery: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateScope {
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateSummary {
+    pub evidence_items: usize,
+    pub connector_input_evidence: usize,
+    pub draft_evidence: usize,
+    pub approval_evidence: usize,
+    pub execution_evidence: usize,
+    pub verification_evidence: usize,
+    pub rollback_evidence: usize,
+    pub sensitive_evidence: usize,
+    pub delivery_action: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connector_action_guard_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_guard_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateCheck {
+    pub name: String,
+    pub status: String,
+    pub severity: String,
+    pub expected: String,
+    pub actual: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateEvidence {
+    pub id: String,
+    pub evidence_type: String,
+    pub title: String,
+    pub access_scope: String,
+    pub redaction_status: String,
+    pub created_at: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DomainConnectorE2EGateReport {
+    pub generated_at: String,
+    pub status: String,
+    pub scope: DomainConnectorE2EGateScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connector: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
+    pub thresholds: DomainConnectorE2EGateThresholds,
+    pub summary: DomainConnectorE2EGateSummary,
+    pub checks: Vec<DomainConnectorE2EGateCheck>,
+    pub blockers: Vec<String>,
+    pub recommended_next_steps: Vec<String>,
+    pub related_evidence: Vec<DomainConnectorE2EGateEvidence>,
 }
 
 pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
@@ -1587,6 +1731,376 @@ impl SessionDB {
             related_evidence,
         })
     }
+
+    pub fn evaluate_domain_connector_e2e_gate(
+        &self,
+        input: DomainConnectorE2EGateInput,
+    ) -> Result<DomainConnectorE2EGateReport> {
+        let goal_id = input
+            .goal_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        let requested_session_id = input
+            .session_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        let mut session_id = requested_session_id.clone();
+        if let Some(goal_id) = goal_id.as_deref() {
+            let goal = self
+                .get_goal(goal_id)?
+                .ok_or_else(|| anyhow!("goal not found: {goal_id}"))?;
+            if let Some(requested_session_id) = requested_session_id.as_deref() {
+                if requested_session_id != goal.session_id {
+                    bail!(
+                        "goal {} does not belong to session {}",
+                        goal.id,
+                        requested_session_id
+                    );
+                }
+            }
+            session_id = Some(goal.session_id.clone());
+        }
+
+        let mut project_id = input
+            .project_id
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        if let Some(session_id) = session_id.as_deref() {
+            let session = self
+                .get_session(session_id)?
+                .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+            if session.incognito {
+                bail!("connector e2e gate is disabled for incognito sessions");
+            }
+            if let Some(session_project_id) = session.project_id.as_deref() {
+                if let Some(requested_project_id) = project_id.as_deref() {
+                    if requested_project_id != session_project_id {
+                        bail!(
+                            "session {} belongs to project {}, not {}",
+                            session_id,
+                            session_project_id,
+                            requested_project_id
+                        );
+                    }
+                }
+                project_id = Some(session_project_id.to_string());
+            } else if let Some(requested_project_id) = project_id.as_deref() {
+                bail!(
+                    "session {} is not bound to project {}",
+                    session_id,
+                    requested_project_id
+                );
+            }
+        }
+
+        let domain = input
+            .domain
+            .as_deref()
+            .and_then(non_empty)
+            .map(normalize_domain);
+        let tool_name = input
+            .tool_name
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string);
+        let mut connector = input
+            .connector
+            .as_deref()
+            .and_then(non_empty)
+            .map(normalize_task_type);
+        let mut action = input
+            .action
+            .as_deref()
+            .and_then(non_empty)
+            .map(normalize_connector_action);
+        if let Some(tool_name) = tool_name.as_deref() {
+            if let Some((classified_connector, classified_action)) =
+                crate::permission::engine::classify_external_connector_action(tool_name, &json!({}))
+            {
+                connector.get_or_insert(classified_connector);
+                action.get_or_insert(classified_action);
+            }
+        }
+
+        let thresholds = DomainConnectorE2EGateThresholds {
+            require_connector_input: input.require_connector_input,
+            require_draft: input.require_draft,
+            require_explicit_approval: input.require_explicit_approval,
+            require_execution_result: input.require_execution_result,
+            require_post_action_verification: input.require_post_action_verification,
+            require_rollback_plan: input.require_rollback_plan,
+            require_export_guard_for_delivery: input.require_export_guard_for_delivery,
+        };
+        let evidence = self.list_domain_evidence(ListDomainEvidenceInput {
+            goal_id: goal_id.clone(),
+            session_id: session_id.clone(),
+            project_id: if session_id.is_none() {
+                project_id.clone()
+            } else {
+                None
+            },
+            domain: domain.clone(),
+            evidence_type: None,
+            limit: Some(DOMAIN_EVIDENCE_LIMIT_MAX),
+        })?;
+
+        if connector.is_none() {
+            connector = evidence
+                .iter()
+                .find_map(|item| domain_connector_metadata_string(item, "connector"));
+        }
+        if action.is_none() {
+            action = evidence
+                .iter()
+                .find_map(|item| domain_connector_action_from_evidence(item));
+        }
+
+        let connector_input_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_connector_input(item))
+            .count();
+        let draft_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_connector_draft_marker(item))
+            .count();
+        let approval_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_connector_approval_marker(item))
+            .count();
+        let execution_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_connector_execution_marker(item))
+            .count();
+        let verification_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_connector_verification_marker(item))
+            .count();
+        let rollback_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_has_rollback_marker(item))
+            .count();
+        let sensitive_evidence = evidence
+            .iter()
+            .filter(|item| domain_evidence_requires_export_review(item))
+            .count();
+        let delivery_action =
+            domain_connector_action_requires_export_guard(action.as_deref(), tool_name.as_deref());
+        let connector_action_guard = if let Some(session_id) = session_id.as_deref() {
+            Some(
+                self.evaluate_domain_connector_action_guard(DomainConnectorActionGuardInput {
+                    goal_id: goal_id.clone(),
+                    session_id: Some(session_id.to_string()),
+                    project_id: project_id.clone(),
+                    domain: domain.clone(),
+                    tool_name: tool_name.clone(),
+                    connector: connector.clone(),
+                    action: action.clone(),
+                    require_explicit_approval: thresholds.require_explicit_approval,
+                    require_rollback_plan: thresholds.require_rollback_plan,
+                    require_export_guard_for_delivery: thresholds.require_export_guard_for_delivery,
+                })?,
+            )
+        } else {
+            None
+        };
+        let connector_action_guard_status = connector_action_guard
+            .as_ref()
+            .map(|guard| guard.status.clone());
+        let export_guard_status = connector_action_guard
+            .as_ref()
+            .and_then(|guard| guard.summary.export_guard_status.clone());
+
+        let summary = DomainConnectorE2EGateSummary {
+            evidence_items: evidence.len(),
+            connector_input_evidence,
+            draft_evidence,
+            approval_evidence,
+            execution_evidence,
+            verification_evidence,
+            rollback_evidence,
+            sensitive_evidence,
+            delivery_action,
+            connector_action_guard_status: connector_action_guard_status.clone(),
+            export_guard_status: export_guard_status.clone(),
+        };
+
+        let mut checks = Vec::new();
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "connector_input",
+            if !thresholds.require_connector_input
+                || (connector_input_evidence > 0 && connector.is_some())
+            {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "p1",
+            "Connector/account source evidence is present",
+            &format!(
+                "connector={}, connectorInputEvidence={}",
+                connector.as_deref().unwrap_or("unknown"),
+                connector_input_evidence
+            ),
+            "A real connector E2E cannot pass without evidence from the external account or connector fixture.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "draft_or_preview",
+            if !thresholds.require_draft || draft_evidence > 0 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "p1",
+            "Draft/preview evidence exists before the external mutation",
+            &draft_evidence.to_string(),
+            "Show the user the exact content or change preview before requesting approval.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "explicit_user_approval",
+            if !thresholds.require_explicit_approval || approval_evidence > 0 {
+                "passed"
+            } else {
+                "failed"
+            },
+            "p0",
+            "Explicit approval evidence is present",
+            &approval_evidence.to_string(),
+            "External connector mutations must not execute without user approval evidence.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "action_execution",
+            if !thresholds.require_execution_result || execution_evidence > 0 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "p1",
+            "Execution result evidence exists with external result metadata",
+            &execution_evidence.to_string(),
+            "Record the connector result id/status after the external mutation succeeds or fails.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "post_action_verification",
+            if !thresholds.require_post_action_verification || verification_evidence > 0 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "p1",
+            "Post-action verification evidence is present",
+            &verification_evidence.to_string(),
+            "Verify the external system state after the connector mutation.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "rollback_plan",
+            if !thresholds.require_rollback_plan || rollback_evidence > 0 {
+                "passed"
+            } else {
+                "insufficient_data"
+            },
+            "p1",
+            "Rollback or recovery plan evidence is present",
+            &rollback_evidence.to_string(),
+            "Record how the user can undo or recover from the external mutation.",
+        );
+        push_connector_e2e_gate_check(
+            &mut checks,
+            "connector_action_guard",
+            match connector_action_guard
+                .as_ref()
+                .map(|guard| guard.status.as_str())
+            {
+                Some("passed") => "passed",
+                Some("failed") => "failed",
+                _ => "insufficient_data",
+            },
+            "p0",
+            "Connector Action Guard passes",
+            connector_action_guard_status
+                .as_deref()
+                .unwrap_or("not_evaluated_without_session_or_goal"),
+            "The lower-level connector action guard must pass before the E2E is accepted.",
+        );
+        if thresholds.require_export_guard_for_delivery && delivery_action {
+            let actual = export_guard_status
+                .as_deref()
+                .unwrap_or("not_evaluated_or_not_applicable");
+            push_connector_e2e_gate_check(
+                &mut checks,
+                "artifact_export_guard",
+                match actual {
+                    "passed" => "passed",
+                    "failed" => "failed",
+                    _ => "insufficient_data",
+                },
+                "p0",
+                "Delivery connector action passes Artifact Export Guard",
+                actual,
+                "Send/share/publish/upload/export actions must pass final artifact/export review.",
+            );
+        }
+
+        let status = connector_e2e_gate_status(&checks);
+        let blockers = checks
+            .iter()
+            .filter(|check| check.status != "passed")
+            .map(|check| format!("{}: {}", check.name, check.detail))
+            .collect::<Vec<_>>();
+        let recommended_next_steps = connector_e2e_gate_recommendations(&checks);
+        let related_evidence = evidence
+            .iter()
+            .filter(|item| {
+                domain_evidence_has_connector_input(item)
+                    || domain_evidence_has_connector_draft_marker(item)
+                    || domain_evidence_has_connector_approval_marker(item)
+                    || domain_evidence_has_connector_execution_marker(item)
+                    || domain_evidence_has_connector_verification_marker(item)
+                    || domain_evidence_has_rollback_marker(item)
+                    || domain_evidence_requires_export_review(item)
+            })
+            .take(DOMAIN_CONNECTOR_E2E_GATE_EVIDENCE_MAX)
+            .map(domain_connector_e2e_gate_evidence)
+            .collect();
+
+        Ok(DomainConnectorE2EGateReport {
+            generated_at: now_rfc3339(),
+            status,
+            scope: DomainConnectorE2EGateScope {
+                scope: if goal_id.is_some() {
+                    "goal".to_string()
+                } else if session_id.is_some() {
+                    "session".to_string()
+                } else if project_id.is_some() {
+                    "project".to_string()
+                } else {
+                    "global".to_string()
+                },
+                goal_id,
+                session_id,
+                project_id,
+                domain,
+            },
+            tool_name,
+            connector,
+            action,
+            risk: Some("external_connector_e2e".to_string()),
+            thresholds,
+            summary,
+            checks,
+            blockers,
+            recommended_next_steps,
+            related_evidence,
+        })
+    }
 }
 
 fn built_in_domain_templates() -> Vec<DomainWorkflowTemplate> {
@@ -2421,6 +2935,185 @@ fn domain_connector_action_guard_evidence_reason(item: &DomainEvidenceItem) -> S
     }
 }
 
+fn push_connector_e2e_gate_check(
+    checks: &mut Vec<DomainConnectorE2EGateCheck>,
+    name: &str,
+    status: &str,
+    severity: &str,
+    expected: &str,
+    actual: &str,
+    detail: &str,
+) {
+    checks.push(DomainConnectorE2EGateCheck {
+        name: name.to_string(),
+        status: status.to_string(),
+        severity: severity.to_string(),
+        expected: expected.to_string(),
+        actual: actual.to_string(),
+        detail: detail.to_string(),
+    });
+}
+
+fn connector_e2e_gate_status(checks: &[DomainConnectorE2EGateCheck]) -> String {
+    if checks.iter().any(|check| check.status == "failed") {
+        "failed".to_string()
+    } else if checks
+        .iter()
+        .any(|check| check.status == "insufficient_data")
+    {
+        "insufficient_data".to_string()
+    } else {
+        "passed".to_string()
+    }
+}
+
+fn connector_e2e_gate_recommendations(checks: &[DomainConnectorE2EGateCheck]) -> Vec<String> {
+    let mut steps = Vec::new();
+    for check in checks.iter().filter(|check| check.status != "passed") {
+        let step = match check.name.as_str() {
+            "connector_input" => {
+                "Run the connector read step or attach a deterministic connector fixture before claiming E2E coverage."
+            }
+            "draft_or_preview" => {
+                "Record connector_draft_created, artifact_created, or message_draft_approved evidence with the exact preview shown to the user."
+            }
+            "explicit_user_approval" => {
+                "Ask the user to approve the exact external mutation and record explicit approval evidence before execution."
+            }
+            "action_execution" => {
+                "Record connector_action_executed evidence with connector, action, result id, and status after the mutation."
+            }
+            "post_action_verification" => {
+                "Read the external system back and record connector_action_verified or reviewed evidence."
+            }
+            "rollback_plan" => {
+                "Add rollbackPlan, undoPlan, recoveryPlan, or canRollback metadata for the external action."
+            }
+            "connector_action_guard" => {
+                "Resolve the Connector Action Guard blockers before accepting the full connector E2E."
+            }
+            "artifact_export_guard" => {
+                "Resolve Artifact Export Guard blockers for send/share/publish/upload/export actions."
+            }
+            _ => "Review the blocked connector E2E check and add the missing evidence.",
+        };
+        if !steps.iter().any(|existing| existing == step) {
+            steps.push(step.to_string());
+        }
+    }
+    steps
+}
+
+fn domain_evidence_has_connector_input(item: &DomainEvidenceItem) -> bool {
+    item.access_scope == "connector"
+        || domain_connector_metadata_string(item, "connector").is_some()
+        || json_string_value(&item.source_metadata, "accountId").is_some()
+        || json_string_value(&item.source_metadata, "externalSource").is_some()
+        || item
+            .source_metadata
+            .get("connector")
+            .is_some_and(|value| !value.is_null())
+}
+
+fn domain_evidence_has_connector_draft_marker(item: &DomainEvidenceItem) -> bool {
+    matches!(
+        item.evidence_type.as_str(),
+        "connector_draft_created" | "message_draft_approved"
+    ) || (item.evidence_type == "artifact_created"
+        && (json_bool(&item.source_metadata, "draftCreated")
+            || json_bool(&item.source_metadata, "previewReady")
+            || item.source_metadata.get("draft").is_some()
+            || item.source_metadata.get("preview").is_some()
+            || domain_evidence_mentions_connector_action(item)))
+}
+
+fn domain_evidence_has_connector_execution_marker(item: &DomainEvidenceItem) -> bool {
+    if item.evidence_type == "connector_action_executed" {
+        return true;
+    }
+    let metadata = &item.source_metadata;
+    json_bool(metadata, "actionExecuted")
+        || json_bool(metadata, "executed")
+        || metadata.get("execution").is_some_and(|value| {
+            json_bool(value, "success")
+                || matches!(
+                    json_string_value(value, "status")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "success" | "succeeded" | "sent" | "created" | "updated" | "done"
+                )
+        })
+        || metadata.get("result").is_some_and(|value| {
+            json_bool(value, "success")
+                || json_string_value(value, "id").is_some()
+                || matches!(
+                    json_string_value(value, "status")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "success" | "succeeded" | "sent" | "created" | "updated" | "done"
+                )
+        })
+}
+
+fn domain_evidence_has_connector_verification_marker(item: &DomainEvidenceItem) -> bool {
+    if item.evidence_type == "connector_action_verified" {
+        return true;
+    }
+    let metadata = &item.source_metadata;
+    json_bool(metadata, "postActionVerification")
+        || json_bool(metadata, "deliveryVerified")
+        || json_bool(metadata, "externalStateVerified")
+        || metadata.get("verification").is_some_and(|value| {
+            json_bool(value, "passed")
+                || json_bool(value, "verified")
+                || matches!(
+                    json_string_value(value, "status")
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "passed" | "verified" | "success" | "succeeded"
+                )
+        })
+        || (item.evidence_type == "artifact_reviewed"
+            && (json_bool(metadata, "postActionReview")
+                || json_bool(metadata, "verifiedAfterSend")
+                || json_bool(metadata, "externalStateVerified")))
+}
+
+fn domain_connector_e2e_gate_evidence(item: &DomainEvidenceItem) -> DomainConnectorE2EGateEvidence {
+    DomainConnectorE2EGateEvidence {
+        id: item.id.clone(),
+        evidence_type: item.evidence_type.clone(),
+        title: item.title.clone(),
+        access_scope: item.access_scope.clone(),
+        redaction_status: item.redaction_status.clone(),
+        created_at: item.created_at.clone(),
+        reason: domain_connector_e2e_gate_evidence_reason(item),
+    }
+}
+
+fn domain_connector_e2e_gate_evidence_reason(item: &DomainEvidenceItem) -> String {
+    if domain_evidence_has_connector_execution_marker(item) {
+        "connector execution result".to_string()
+    } else if domain_evidence_has_connector_verification_marker(item) {
+        "post-action verification".to_string()
+    } else if domain_evidence_has_connector_approval_marker(item) {
+        "user approval".to_string()
+    } else if domain_evidence_has_connector_draft_marker(item) {
+        "draft or preview".to_string()
+    } else if domain_evidence_has_rollback_marker(item) {
+        "rollback plan".to_string()
+    } else if domain_evidence_has_connector_input(item) {
+        "connector input".to_string()
+    } else if domain_evidence_requires_export_review(item) {
+        "export-sensitive evidence".to_string()
+    } else {
+        "related evidence".to_string()
+    }
+}
+
 fn json_bool(value: &Value, key: &str) -> bool {
     match value.get(key) {
         Some(Value::Bool(value)) => *value,
@@ -2498,7 +3191,11 @@ fn normalize_evidence_type(value: &str) -> Result<String> {
         | "data_quality_checked"
         | "citation_audited"
         | "message_draft_approved"
-        | "meeting_context_collected" => Ok(value),
+        | "meeting_context_collected"
+        | "connector_context_collected"
+        | "connector_draft_created"
+        | "connector_action_executed"
+        | "connector_action_verified" => Ok(value),
         _ => bail!("unsupported domain evidence type: {value}"),
     }
 }
@@ -2948,5 +3645,200 @@ mod tests {
             .iter()
             .any(|check| check.name == "explicit_user_approval" && check.status == "failed"));
         assert_eq!(guard.summary.rollback_evidence, 1);
+    }
+
+    #[test]
+    fn domain_connector_e2e_gate_passes_with_full_connector_lifecycle() {
+        let test = test_db();
+        let db = &test.db;
+        let session_id = create_session(&db);
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "connector_context_collected".to_string(),
+            title: "Gmail thread loaded".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "accountId": "acct_test",
+                "threadId": "thr_1",
+                "requestedAction": "send email"
+            }),
+            access_scope: Some("connector".to_string()),
+            ..Default::default()
+        })
+        .expect("record connector input");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "connector_draft_created".to_string(),
+            title: "Reply draft previewed".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "requestedAction": "send email",
+                "previewReady": true
+            }),
+            ..Default::default()
+        })
+        .expect("record draft");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "message_draft_approved".to_string(),
+            title: "User approved reply send".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "requestedAction": "send email",
+                "explicitUserApproval": true,
+                "rollbackPlan": "Send a correction reply if the content is wrong."
+            }),
+            ..Default::default()
+        })
+        .expect("record approval");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "artifact_created".to_string(),
+            title: "Reply artifact".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "requestedAction": "send email",
+                "path": "reply.md",
+                "draftCreated": true
+            }),
+            ..Default::default()
+        })
+        .expect("record artifact");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "artifact_reviewed".to_string(),
+            title: "Reply export reviewed".to_string(),
+            source_metadata: json!({
+                "exportReview": true,
+                "redactionChecked": true
+            }),
+            ..Default::default()
+        })
+        .expect("record export review");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "connector_action_executed".to_string(),
+            title: "Gmail reply sent".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "action": "send email",
+                "messageId": "msg_1",
+                "execution": { "status": "sent" }
+            }),
+            access_scope: Some("connector".to_string()),
+            ..Default::default()
+        })
+        .expect("record execution");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "inbox".to_string(),
+            evidence_type: "connector_action_verified".to_string(),
+            title: "Gmail sent state verified".to_string(),
+            source_metadata: json!({
+                "connector": "gmail",
+                "messageId": "msg_1",
+                "verification": { "status": "verified" }
+            }),
+            access_scope: Some("connector".to_string()),
+            ..Default::default()
+        })
+        .expect("record verification");
+
+        let gate = db
+            .evaluate_domain_connector_e2e_gate(DomainConnectorE2EGateInput {
+                session_id: Some(session_id),
+                domain: Some("inbox".to_string()),
+                tool_name: Some("mcp__gmail__send_email".to_string()),
+                ..Default::default()
+            })
+            .expect("evaluate connector e2e gate");
+
+        assert_eq!(gate.status, "passed");
+        assert_eq!(gate.scope.scope, "session");
+        assert_eq!(gate.summary.connector_input_evidence, 6);
+        assert_eq!(gate.summary.draft_evidence, 3);
+        assert_eq!(gate.summary.approval_evidence, 1);
+        assert_eq!(gate.summary.execution_evidence, 1);
+        assert_eq!(gate.summary.verification_evidence, 1);
+        assert_eq!(gate.summary.rollback_evidence, 1);
+        assert_eq!(
+            gate.summary.connector_action_guard_status.as_deref(),
+            Some("passed")
+        );
+        assert_eq!(gate.summary.export_guard_status.as_deref(), Some("passed"));
+    }
+
+    #[test]
+    fn domain_connector_e2e_gate_keeps_missing_execution_as_insufficient_data() {
+        let test = test_db();
+        let db = &test.db;
+        let session_id = create_session(&db);
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "meeting_prep".to_string(),
+            evidence_type: "connector_context_collected".to_string(),
+            title: "Calendar context loaded".to_string(),
+            source_metadata: json!({
+                "connector": "calendar",
+                "requestedAction": "create calendar event"
+            }),
+            access_scope: Some("connector".to_string()),
+            ..Default::default()
+        })
+        .expect("record connector input");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "meeting_prep".to_string(),
+            evidence_type: "connector_draft_created".to_string(),
+            title: "Calendar event previewed".to_string(),
+            source_metadata: json!({
+                "connector": "calendar",
+                "requestedAction": "create calendar event",
+                "previewReady": true
+            }),
+            ..Default::default()
+        })
+        .expect("record draft");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session_id.clone()),
+            domain: "meeting_prep".to_string(),
+            evidence_type: "user_decision".to_string(),
+            title: "User approved creating event".to_string(),
+            source_metadata: json!({
+                "connector": "calendar",
+                "requestedAction": "create calendar event",
+                "explicitUserApproval": true,
+                "rollbackPlan": "Delete the event if the attendees or time are wrong."
+            }),
+            ..Default::default()
+        })
+        .expect("record approval");
+
+        let gate = db
+            .evaluate_domain_connector_e2e_gate(DomainConnectorE2EGateInput {
+                session_id: Some(session_id),
+                domain: Some("meeting_prep".to_string()),
+                connector: Some("calendar".to_string()),
+                action: Some("create calendar event".to_string()),
+                require_export_guard_for_delivery: false,
+                ..Default::default()
+            })
+            .expect("evaluate connector e2e gate");
+
+        assert_eq!(gate.status, "insufficient_data");
+        assert!(gate
+            .checks
+            .iter()
+            .any(|check| check.name == "action_execution" && check.status == "insufficient_data"));
+        assert!(gate
+            .checks
+            .iter()
+            .any(|check| check.name == "explicit_user_approval" && check.status == "passed"));
     }
 }
