@@ -10,7 +10,7 @@
 
 ## 1. 当前结论
 
-Exit 2 已有第一版 deterministic 样本包，并已补本轮 targeted test output，但 **还不能据此关闭整个长期目标**。
+Exit 2 已有第一版 deterministic 样本包，并已补本轮 targeted test output；用户已接受其作为产品路线 v1 的关闭证据。
 
 原因很具体：
 
@@ -290,10 +290,12 @@ real or sandbox connector execution + post-action verification
 
 ## 9. 不能关闭长期目标的原因
 
-即使 Exit 2 deterministic packet 已经形成、补过 targeted tests，并被 Claude Code 接受为 v1 substitute，整个长期目标仍不能自动关闭，因为还缺用户最终取舍：
+Exit 2 deterministic packet 已经形成、补过 targeted tests，并被 Claude Code 接受为 v1 substitute。用户已接受产品路线 v1，因此它不再阻塞当前长期目标关闭。
 
-- GUI manual smoke / screenshot / browser profile，除非用户接受 source-level audit。
-- 真实跨窗口 / 跨天 Soak 仍未证明，除非用户明确接受 deterministic substitute。
-- 真实外部 connector E2E 仍未证明，除非用户明确接受 deterministic substitute。
+仍需保留的证据边界：
+
+- GUI manual smoke / screenshot / browser profile 尚未完成，已进入后续池。
+- 真实跨窗口 / 跨天 Soak 仍未证明，已进入后续池。
+- 真实外部 connector E2E 仍未证明，已进入后续池。
 
 当前不能再用“继续做功能”代替这些退出证据。
