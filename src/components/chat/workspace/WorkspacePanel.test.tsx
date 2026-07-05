@@ -1788,7 +1788,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("需处理")).toBeTruthy()
+    expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole("button", { name: "查看工作流" }))
     await waitFor(() => {
@@ -1824,7 +1824,11 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("需处理")).toBeTruthy()
+    expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
+    expect(screen.getByText("真实样本验收")).toBeTruthy()
+    expect(screen.getByText("样本有事故")).toBeTruthy()
+    expect(screen.getByText("3 条")).toBeTruthy()
+    expect(screen.getByText("长跑审计仍有事故需要收口。")).toBeTruthy()
 
     fireEvent.click(screen.getByRole("button", { name: "查看稳定性" }))
     expect(await screen.findByText("运行稳定性")).toBeTruthy()
@@ -1857,7 +1861,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("需处理")).toBeTruthy()
+    expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
     expect(screen.getByText("2 个守门")).toBeTruthy()
 
     fireEvent.click(screen.getByRole("button", { name: "查看交付" }))

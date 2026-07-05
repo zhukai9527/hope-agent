@@ -69,7 +69,7 @@ Workspace / Workflow Control Center 的“新建工作流”表单已接入 doma
 - 创建前同屏展示 output contract 摘要、required evidence、approval gates、verification policy 与 warnings；用户继续复用既有 Script Gate / permission preview / run immediately / worktree 选择。
 - 修改目标、模板、任务类型、执行模式或脚本会清空旧预检，避免用过期 preview 创建 run。
 - Loop 创建区可在 active Goal 已绑定领域模板时选择“创建工作流”：每次 interval tick 会用该模板版本生成 `requirePlanConfirmation=false` 的 draft，创建 `origin=loop:<loop_id>` 的 WorkflowRun，并把 workflow run id 写回 Loop trace。
-- Workspace 右侧面板新增「通用任务工作台」：复用当前 session 的 domain evidence、Review、Verification、Domain Quality、Artifact Export Guard、Connector Action Guard、Operational Gate 与 Soak Report，把来源、证据、草稿、复核、验证、用户决策和长任务运行健康压成一个同屏总览。
+- Workspace 右侧面板新增「通用任务工作台」：复用当前 session 的 domain evidence、Review、Verification、Domain Quality、Artifact Export Guard、Connector Action Guard、Operational Gate 与 Soak Report，把来源、证据、草稿、复核、验证、用户决策、真实样本验收和长任务运行健康压成一个同屏总览。
 
 GUI 入口仍是 owner plane：它只生成 draft 和 preview，不自动访问连接器，也不绕过后续 workflow runtime 的审批、用户确认和权限策略。
 
@@ -99,6 +99,8 @@ Phase 8.4 在 `src/components/chat/workspace/WorkspacePanel.tsx` 新增「通用
 - `warn`：缺证据、缺来源、缺草稿、领域复核需要用户确认、Artifact Export Guard / Connector Action Guard / Operational Gate / Soak Report 证据不足或仍有未排空长任务。
 - `good`：已有证据链且没有上述阻塞/缺口。
 - `muted`：无痕会话、无 session 或尚未开始。
+
+「真实样本验收」卡片是 Workspace 内的只读派生视图，不新增后端表：它从当前 session 的 domain evidence、Artifact Export Guard、Connector Action Guard、Operational Gate 与 Soak Report 计算覆盖领域数、控制面记录数、已排空 Workflow / Loop / Campaign 样本、Connector E2E evidence 数，以及事故、缺证据、缺排空、缺连接器 E2E、单领域覆盖等缺口。它回答“当前会话是否已经有真实场景样本可供验收”，不启动采样、不调用连接器、不修改 gate 结果。
 
 用户可见动作：
 

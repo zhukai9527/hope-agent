@@ -333,7 +333,7 @@ DomainWorkflow
 - 已落地：Dashboard Learning 展示 Domain operations，把 workflow / loop / campaign 的完成、活跃、失败残留和下一步收口建议合成运行稳定性三态。
 - 已落地：Workspace「领域复核」内展示「交付守门」，把报告、文档、表格、邮件草稿等最终交付前的产物/复核/脱敏证据合成可操作三态。
 - 已落地：Workspace「领域复核」内展示「外部动作守门」，把 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等真实外部动作的动作证据、用户批准、回滚提示和交付守门结果合成可操作三态。
-- 已落地：Workspace 新增「通用任务工作台」，把 Sources、Evidence、Drafts、Review、Verification、Decisions 合成一个闭环总览，并提供运行领域复核、推荐验证、运行验证、刷新守门状态的直接入口。
+- 已落地：Workspace 新增「通用任务工作台」，把 Sources、Evidence、Drafts、Review、Verification、Decisions、真实样本验收合成一个闭环总览，并提供运行领域复核、推荐验证、运行验证、刷新守门状态的直接入口。
 
 ## 9. 权限与隐私红线
 
@@ -373,7 +373,7 @@ Gold task pack -> Domain eval task pack
 
 - 架构文档：`domain-workflow.md` 记录 template、evidence、Artifact Export Guard、Connector Action Guard 和 Connector E2E Gate 衔接；`domain-quality.md` 记录领域复核；`domain-eval.md` 记录 eval / fixture / campaign / leaderboard / readiness / operational gate / soak report；`context-retrieval.md` 与 `coding-improvement-loop.md` 记录上下文召回和学习闭环衔接。
 - API 接线：Tauri、HTTP、transport 均已有 domain workflow、domain evidence、artifact export guard、connector action guard、connector e2e gate、domain eval fixture、campaign、leaderboard、readiness gate、operational gate 和 soak report 入口。
-- GUI 接线：Goal 创建 / 编辑、Workflow Control Center、Workspace「通用任务工作台」/「领域复核」、Dashboard Learning 已覆盖模板选择、证据展示、闭环总览、质量复核、学习提炼、Smoke Run、Campaign、Leaderboard、Readiness、Operational、Soak Report、Connector E2E、交付守门和外部动作守门。
+- GUI 接线：Goal 创建 / 编辑、Workflow Control Center、Workspace「通用任务工作台」/「领域复核」、Dashboard Learning 已覆盖模板选择、证据展示、闭环总览、真实样本验收、质量复核、学习提炼、Smoke Run、Campaign、Leaderboard、Readiness、Operational、Soak Report、Connector E2E、交付守门和外部动作守门。
 - 权限红线：外部连接器写动作进入 strict `ExternalConnectorAction`，禁止 AllowAlways、Smart 覆盖和 auto-approve 静默旁路；真正外部动作仍必须走工具审批和连接器授权。
 - 验证证据：`cargo test -p ha-core domain_workflow --locked` 覆盖核心 domain workflow / guard 用例；`cargo test -p ha-core domain_eval --locked` 覆盖 eval / fixture / campaign / readiness / operational / soak report 用例；7.16/8.2 另由 `cargo test -p ha-core connector_action --locked` 覆盖连接器守门和权限分类用例。
 
@@ -381,7 +381,7 @@ Gold task pack -> Domain eval task pack
 
 - 真实外部账号的端到端演练需要在具备 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等可用测试账号后继续做，当前 worktree 主要用 deterministic / mock / fail-closed 证据覆盖。
 - 通用任务工作台后续仍可继续接入更多 owner action，例如把来源一键加入 evidence、从证据缺口创建 task、对具体 artifact 发起领域复核，但第一版已经不再只依赖 Workspace「领域复核」和 Dashboard Learning。
-- 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据；Phase 8.1 已把 workflow / loop / campaign 运行残留产品化为 Operational Gate，Phase 8.2 已把连接器 E2E 链路证据产品化为 Gate，Phase 8.3 已把这些历史导出为 Soak Report，但真实跨天样本仍需继续积累。
+- 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据；Phase 8.1 已把 workflow / loop / campaign 运行残留产品化为 Operational Gate，Phase 8.2 已把连接器 E2E 链路证据产品化为 Gate，Phase 8.3 已把这些历史导出为 Soak Report，Phase 8.4 已在 Workspace「通用任务工作台」内补上真实样本验收卡片，让当前会话的领域覆盖、控制面记录、已排空样本、Connector E2E evidence 和事故缺口可见；真实跨天样本仍需继续积累。
 
 ## 12. Phase 8：真实场景产品级验收
 
@@ -458,6 +458,7 @@ Phase 8 不再新增一套执行系统，而是把 Phase 7 的通用控制面放
 ### Phase 8.4 通用任务工作台（已完成第一版）
 
 - Workspace 新增「通用任务工作台」区块，位于 Context Retrieval 之后，把 Sources、Evidence、Drafts、Review、Verification、Decisions 做成同屏闭环总览。
+- 工作台新增「真实样本验收」卡片：从当前 session 的 domain evidence、Operational Gate、Soak Report、Artifact Export Guard 与 Connector Action Guard 派生覆盖领域数、控制面记录数、已排空样本、Connector E2E evidence 与事故/缺口，避免“真实样本还没跑够”只停留在文档提醒。
 - 工作台复用已落地的 `list_domain_evidence`、Artifact Export Guard、Connector Action Guard、Review runs、Verification runs 与 Domain Quality runs，不新增后端表，也不绕过既有权限/审批。
 - 用户可在同一面板直接运行领域复核、推荐验证、运行验证和刷新全部守门状态，不需要记 slash 命令或切到 Dashboard。
 - Context Retrieval 候选行的「摘要」按钮会写入 `artifact_created` 摘要 evidence；「确认」按钮会创建 owner-side ask_user，并在用户回答后写入 `user_decision` evidence；「证据」按钮可把当前推荐来源/文档/会议/表格/决策落成 domain evidence，并刷新通用任务工作台；「冲突」按钮会写入 `claim_checked` 冲突证据；「转任务」按钮可把候选落成 session task，形成“看到缺口 -> 生成摘要 / 用户确认 / 补证据 / 标冲突 / 建任务 -> 守门和进度重新评估”的真实 owner action。

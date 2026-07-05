@@ -2982,6 +2982,188 @@ function domainWorkbenchNextSteps(
     : [t("workspace.domainWorkbench.nextReady", "证据链健康；交付或外部动作前仍会要求用户最终确认。")]
 }
 
+type DomainAcceptanceCoverageSummary = {
+  domains: string[]
+  controlRecords: number
+  drainedRuns: number
+  connectorE2eEvidence: number
+  criticalIncidents: number
+  warningIncidents: number
+  tone: StatusTone
+  gaps: string[]
+}
+
+function domainAcceptanceCoverageSummary(
+  t: ReturnType<typeof useTranslation>["t"],
+  args: {
+    evidence: DomainEvidenceItem[]
+    exportGuard: DomainArtifactExportGuardReport | null
+    connectorGuard: DomainConnectorActionGuardReport | null
+    operationalGate: DomainOperationalGateReport | null
+    soakReport: DomainSoakReport | null
+  },
+): DomainAcceptanceCoverageSummary {
+  const domains = new Set<string>()
+  for (const item of args.evidence) {
+    if (item.domain) domains.add(item.domain)
+  }
+  if (args.exportGuard?.scope?.domain) domains.add(args.exportGuard.scope.domain)
+  if (args.connectorGuard?.scope?.domain) domains.add(args.connectorGuard.scope.domain)
+  if (args.operationalGate?.domain) domains.add(args.operationalGate.domain)
+  if (args.soakReport?.domain) domains.add(args.soakReport.domain)
+
+  const operationalSummary = args.operationalGate?.summary
+  const soakSummary = args.soakReport?.summary
+  const workflowRuns = soakSummary?.workflowRuns ?? operationalSummary?.workflowRuns ?? 0
+  const loopRuns = soakSummary?.loopRuns ?? operationalSummary?.loopRuns ?? 0
+  const campaignItems = soakSummary?.campaignItems ?? operationalSummary?.campaignItems ?? 0
+  const controlRecords =
+    soakSummary?.totalRecords ??
+    workflowRuns + loopRuns + campaignItems + args.evidence.length
+  const drainedRuns =
+    (soakSummary?.completedWorkflowRuns ?? operationalSummary?.completedWorkflowRuns ?? 0) +
+    (soakSummary?.succeededLoopRuns ?? operationalSummary?.succeededLoopRuns ?? 0) +
+    (soakSummary?.passedCampaignItems ?? operationalSummary?.passedCampaignItems ?? 0)
+  const connectorE2eEvidence =
+    soakSummary?.connectorE2eEvidence ??
+    ((soakSummary?.connectorExecutionEvidence ?? 0) +
+      (soakSummary?.connectorVerificationEvidence ?? 0))
+  const criticalIncidents = soakSummary?.criticalIncidents ?? 0
+  const warningIncidents = soakSummary?.warningIncidents ?? 0
+  const hasFailedGate =
+    args.operationalGate?.status === "failed" ||
+    args.soakReport?.status === "failed" ||
+    args.exportGuard?.status === "failed" ||
+    args.connectorGuard?.status === "failed"
+  const gaps: string[] = []
+
+  if (domains.size === 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapDomain", "还没有真实领域样本。"))
+  }
+  if (args.evidence.length === 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapEvidence", "缺少来源、草稿、复核或用户决策证据。"))
+  }
+  if (drainedRuns === 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapDrain", "还没有已排空的 Workflow / Loop / Campaign 样本。"))
+  }
+  if (args.connectorGuard?.summary?.actionEvidence && connectorE2eEvidence === 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapConnector", "外部动作还缺端到端执行与复核样本。"))
+  }
+  if (criticalIncidents > 0 || warningIncidents > 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapIncidents", "长跑审计仍有事故需要收口。"))
+  }
+  if (domains.size === 1 && controlRecords > 0) {
+    gaps.push(t("workspace.domainWorkbench.acceptanceGapMoreDomains", "继续补其它通用领域样本，避免只证明单一场景。"))
+  }
+
+  const tone: StatusTone = hasFailedGate || criticalIncidents > 0
+    ? "danger"
+    : gaps.length > 0
+      ? "warn"
+      : controlRecords > 0
+        ? "good"
+        : "muted"
+
+  return {
+    domains: [...domains].sort(),
+    controlRecords,
+    drainedRuns,
+    connectorE2eEvidence,
+    criticalIncidents,
+    warningIncidents,
+    tone,
+    gaps: gaps.slice(0, 3),
+  }
+}
+
+function domainAcceptanceStatusLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  summary: DomainAcceptanceCoverageSummary,
+): string {
+  if (summary.tone === "danger") return t("workspace.domainWorkbench.acceptanceFailed", "样本有事故")
+  if (summary.tone === "warn") return t("workspace.domainWorkbench.acceptanceNeedsSamples", "待补样本")
+  if (summary.tone === "good") return t("workspace.domainWorkbench.acceptanceReady", "样本可审")
+  return t("workspace.domainWorkbench.acceptanceIdle", "待采样")
+}
+
+function DomainAcceptanceCoverageCard({
+  summary,
+}: {
+  summary: DomainAcceptanceCoverageSummary
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className={cn("rounded-md border px-2.5 py-2", STATUS_TONE_CLASS[summary.tone])}>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {t("workspace.domainWorkbench.acceptanceTitle", "真实样本验收")}
+        </span>
+        <StatusPill label={domainAcceptanceStatusLabel(t, summary)} tone={summary.tone} />
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        <DomainWorkbenchMetric
+          icon={Globe}
+          label={t("workspace.domainWorkbench.acceptanceDomains", "领域")}
+          value={t("workspace.domainWorkbench.acceptanceDomainCount", "{{count}} 个", {
+            count: summary.domains.length,
+          })}
+          tone={domainWorkbenchMetricTone(summary.domains.length)}
+        />
+        <DomainWorkbenchMetric
+          icon={Database}
+          label={t("workspace.domainWorkbench.acceptanceRecords", "记录")}
+          value={t("workspace.domainWorkbench.acceptanceRecordCount", "{{count}} 条", {
+            count: summary.controlRecords,
+          })}
+          tone={domainWorkbenchMetricTone(summary.controlRecords)}
+        />
+        <DomainWorkbenchMetric
+          icon={CheckCircle2}
+          label={t("workspace.domainWorkbench.acceptanceDrained", "排空")}
+          value={t("workspace.domainWorkbench.acceptanceDrainedCount", "{{count}} 个", {
+            count: summary.drainedRuns,
+          })}
+          tone={domainWorkbenchMetricTone(summary.drainedRuns)}
+        />
+        <DomainWorkbenchMetric
+          icon={Shield}
+          label={t("workspace.domainWorkbench.acceptanceConnector", "E2E")}
+          value={summary.connectorE2eEvidence}
+          tone={domainWorkbenchMetricTone(summary.connectorE2eEvidence)}
+        />
+      </div>
+      {summary.domains.length > 0 ? (
+        <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+          {summary.domains.slice(0, 4).map((domain) => (
+            <StatusPill key={domain} label={domainLabel(domain)} tone="info" />
+          ))}
+          {summary.domains.length > 4 ? (
+            <StatusPill
+              label={t("workspace.domainWorkbench.acceptanceMoreDomains", "+{{count}}", {
+                count: summary.domains.length - 4,
+              })}
+              tone="muted"
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {summary.gaps.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {summary.gaps.map((gap, index) => (
+            <div
+              key={`${index}:${gap}`}
+              className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
+            >
+              {gap}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function DomainWorkbenchMetric({
   icon: Icon,
   label,
@@ -3086,7 +3268,7 @@ function DomainTaskWorkbenchSection({
   ).length
   const decisionEvidenceCount =
     evidence.filter((item) => DOMAIN_DECISION_EVIDENCE_TYPES.has(item.evidenceType)).length +
-    (connectorGuard?.summary.approvalEvidence ?? 0)
+    (connectorGuard?.summary?.approvalEvidence ?? 0)
   const openReviewFindings =
     reviewRunsState.snapshot?.findings.filter((finding) => finding.status === "open") ?? []
   const blockingReviewFindings = openReviewFindings.filter(
@@ -3137,6 +3319,13 @@ function DomainTaskWorkbenchSection({
     failedVerification,
     domainFailed,
     domainNeedsUser,
+    exportGuard,
+    connectorGuard,
+    operationalGate,
+    soakReport,
+  })
+  const acceptanceSummary = domainAcceptanceCoverageSummary(t, {
+    evidence,
     exportGuard,
     connectorGuard,
     operationalGate,
@@ -3346,6 +3535,8 @@ function DomainTaskWorkbenchSection({
             ))}
           </div>
         </div>
+
+        <DomainAcceptanceCoverageCard summary={acceptanceSummary} />
 
         <div className="grid grid-cols-1 gap-2">
           <DomainOperationalGatePanel
@@ -3700,6 +3891,15 @@ function eventBelongsToSession(payload: unknown, sessionId: string): boolean {
   return typeof value !== "string" || value === sessionId
 }
 
+function isReportObject<T>(value: T | null | undefined): value is T {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { status?: unknown }).status === "string"
+  )
+}
+
 interface DomainTaskWorkbenchState {
   evidence: DomainEvidenceItem[]
   evidenceLoading: boolean
@@ -3790,7 +3990,7 @@ function useDomainTaskWorkbench(
     setExportGuardLoading(true)
     setExportGuardError(null)
     try {
-      const report = await getTransport().call<DomainArtifactExportGuardReport>(
+      const report = await getTransport().call<DomainArtifactExportGuardReport | null>(
         "evaluate_domain_artifact_export_guard",
         {
           input: {
@@ -3802,8 +4002,9 @@ function useDomainTaskWorkbench(
           },
         },
       )
-      setExportGuard(report)
-      return report
+      const safeReport = isReportObject(report) ? report : null
+      setExportGuard(safeReport)
+      return safeReport
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       logger.error(
@@ -3829,7 +4030,7 @@ function useDomainTaskWorkbench(
     setConnectorGuardLoading(true)
     setConnectorGuardError(null)
     try {
-      const report = await getTransport().call<DomainConnectorActionGuardReport>(
+      const report = await getTransport().call<DomainConnectorActionGuardReport | null>(
         "evaluate_domain_connector_action_guard",
         {
           input: {
@@ -3840,8 +4041,9 @@ function useDomainTaskWorkbench(
           },
         },
       )
-      setConnectorGuard(report)
-      return report
+      const safeReport = isReportObject(report) ? report : null
+      setConnectorGuard(safeReport)
+      return safeReport
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       logger.error(
@@ -3867,7 +4069,7 @@ function useDomainTaskWorkbench(
     setOperationalGateLoading(true)
     setOperationalGateError(null)
     try {
-      const report = await getTransport().call<DomainOperationalGateReport>(
+      const report = await getTransport().call<DomainOperationalGateReport | null>(
         "evaluate_domain_operational_gate",
         {
           input: {
@@ -3885,8 +4087,9 @@ function useDomainTaskWorkbench(
           },
         },
       )
-      setOperationalGate(report)
-      return report
+      const safeReport = isReportObject(report) ? report : null
+      setOperationalGate(safeReport)
+      return safeReport
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       logger.error(
@@ -3912,7 +4115,7 @@ function useDomainTaskWorkbench(
     setSoakReportLoading(true)
     setSoakReportError(null)
     try {
-      const report = await getTransport().call<DomainSoakReport>(
+      const report = await getTransport().call<DomainSoakReport | null>(
         "generate_domain_soak_report",
         {
           input: {
@@ -3922,8 +4125,9 @@ function useDomainTaskWorkbench(
           },
         },
       )
-      setSoakReport(report)
-      return report
+      const safeReport = isReportObject(report) ? report : null
+      setSoakReport(safeReport)
+      return safeReport
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       logger.error("ui", "useDomainTaskWorkbench", "Failed to generate domain soak report", e)
@@ -5347,6 +5551,7 @@ function DomainArtifactExportGuardPanel({
   const { t } = useTranslation()
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
+  const evidenceRequiringReview = report?.evidenceRequiringReview ?? []
   const clean = report?.status === "passed"
 
   return (
@@ -5438,9 +5643,9 @@ function DomainArtifactExportGuardPanel({
         <EmptyHint>{t("workspace.domainExportGuard.empty", "还没有交付守门结果")}</EmptyHint>
       ) : null}
 
-      {report?.evidenceRequiringReview.length ? (
+      {evidenceRequiringReview.length ? (
         <div className="mt-2 space-y-1">
-          {report.evidenceRequiringReview.slice(0, 2).map((item) => (
+          {evidenceRequiringReview.slice(0, 2).map((item) => (
             <div
               key={item.id}
               className="min-w-0 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
@@ -5477,6 +5682,7 @@ function DomainConnectorActionGuardPanel({
   const { t } = useTranslation()
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
+  const relatedEvidence = report?.relatedEvidence ?? []
   const clean = report?.status === "passed"
 
   return (
@@ -5576,9 +5782,9 @@ function DomainConnectorActionGuardPanel({
         <EmptyHint>{t("workspace.domainConnectorGuard.empty", "还没有外部动作守门结果")}</EmptyHint>
       ) : null}
 
-      {report?.relatedEvidence.length ? (
+      {relatedEvidence.length ? (
         <div className="mt-2 space-y-1">
-          {report.relatedEvidence.slice(0, 2).map((item) => (
+          {relatedEvidence.slice(0, 2).map((item) => (
             <div
               key={item.id}
               className="min-w-0 rounded-md border border-border/40 bg-secondary/25 px-2 py-1.5 text-[11px] text-muted-foreground"
