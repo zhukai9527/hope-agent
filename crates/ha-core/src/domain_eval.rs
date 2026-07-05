@@ -1147,6 +1147,12 @@ pub struct DomainSoakReportSummary {
     pub resume_events: usize,
     pub cancel_events: usize,
     pub recovery_events: usize,
+    pub workflow_budget_usage_events: usize,
+    pub workflow_budget_exhausted_events: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_workflow_output_tokens_spent: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_workflow_output_token_budget: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average_approval_wait_secs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3402,6 +3408,31 @@ impl SessionDB {
                     .is_some_and(|state| state == "recovering")
             {
                 summary.recovery_events += 1;
+            }
+            if event.event_type == "budget_usage" {
+                summary.workflow_budget_usage_events += 1;
+                let spent = event
+                    .payload
+                    .get("spentOutputTokens")
+                    .and_then(Value::as_u64);
+                let limit = event.payload.get("maxOutputTokens").and_then(Value::as_u64);
+                if event
+                    .payload
+                    .get("exhausted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    summary.workflow_budget_exhausted_events += 1;
+                }
+                if let Some(spent) = spent {
+                    let replace = summary
+                        .max_workflow_output_tokens_spent
+                        .map_or(true, |current| spent > current);
+                    if replace {
+                        summary.max_workflow_output_tokens_spent = Some(spent);
+                        summary.max_workflow_output_token_budget = limit;
+                    }
+                }
             }
             if event.event_type == "run_state_changed"
                 && event
@@ -7442,6 +7473,9 @@ fn domain_soak_recommendations(
     if summary.connector_e2e_evidence > 0 && summary.connector_verification_evidence == 0 {
         push_unique_soak_recommendation(&mut recommendations, "Finish connector verification evidence for real external actions instead of stopping at draft or execution records.");
     }
+    if summary.workflow_budget_exhausted_events > 0 {
+        push_unique_soak_recommendation(&mut recommendations, "Review workflow output-token budget exhaustion: shrink fan-out, summarize intermediate outputs, or explicitly raise the budget before widening unattended usage.");
+    }
     for recommendation in &operational_gate.recommended_next_steps {
         push_unique_soak_recommendation(&mut recommendations, recommendation);
     }
@@ -7457,6 +7491,17 @@ fn domain_soak_recommendations(
 fn push_unique_soak_recommendation(recommendations: &mut Vec<String>, item: &str) {
     if !recommendations.iter().any(|existing| existing == item) {
         recommendations.push(item.to_string());
+    }
+}
+
+fn format_output_token_budget(summary: &DomainSoakReportSummary) -> String {
+    match (
+        summary.max_workflow_output_tokens_spent,
+        summary.max_workflow_output_token_budget,
+    ) {
+        (Some(spent), Some(limit)) if limit > 0 => format!("{spent}/{limit}"),
+        (Some(spent), _) => spent.to_string(),
+        _ => "n/a".to_string(),
     }
 }
 
@@ -7519,6 +7564,12 @@ fn render_domain_soak_markdown(
             .max_approval_wait_secs
             .map(|secs| format!("{secs}s"))
             .unwrap_or_else(|| "n/a".to_string())
+    ));
+    out.push_str(&format!(
+        "- Budget events: {} output-token sample(s), {} exhausted; max output tokens: {}\n",
+        summary.workflow_budget_usage_events,
+        summary.workflow_budget_exhausted_events,
+        format_output_token_budget(summary)
     ));
     out.push_str(&format!(
         "- Incidents: {} total, {} critical, {} warning\n\n",
@@ -8567,6 +8618,28 @@ mod tests {
         db.approve_workflow_run(&run.id).unwrap();
         db.claim_workflow_run_for_recovery(&run.id, "test-owner")
             .unwrap();
+        db.append_workflow_event(
+            &run.id,
+            "budget_usage",
+            json!({
+                "api": "waitAll",
+                "spentOutputTokens": 6,
+                "maxOutputTokens": 10,
+                "exhausted": false,
+            }),
+        )
+        .unwrap();
+        db.append_workflow_event(
+            &run.id,
+            "budget_usage",
+            json!({
+                "api": "spawnAgent",
+                "spentOutputTokens": 10,
+                "maxOutputTokens": 10,
+                "exhausted": true,
+            }),
+        )
+        .unwrap();
         {
             let conn = db.conn.lock().unwrap();
             conn.execute(
@@ -8603,7 +8676,18 @@ mod tests {
         assert_eq!(report.summary.max_approval_wait_secs, Some(90));
         assert_eq!(report.summary.average_approval_wait_secs, Some(90.0));
         assert_eq!(report.summary.recovery_events, 1);
+        assert_eq!(report.summary.workflow_budget_usage_events, 2);
+        assert_eq!(report.summary.workflow_budget_exhausted_events, 1);
+        assert_eq!(report.summary.max_workflow_output_tokens_spent, Some(10));
+        assert_eq!(report.summary.max_workflow_output_token_budget, Some(10));
         assert!(report.markdown.contains("max approval wait: 90s"));
+        assert!(report
+            .markdown
+            .contains("Budget events: 2 output-token sample(s), 1 exhausted"));
+        assert!(report
+            .recommended_next_steps
+            .iter()
+            .any(|step| step.contains("output-token budget exhaustion")));
     }
 
     #[test]

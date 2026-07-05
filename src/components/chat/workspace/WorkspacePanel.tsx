@@ -6383,6 +6383,20 @@ function DomainSoakReportPanel({
     summary?.maxApprovalWaitSecs != null
       ? formatLoopDuration(Math.max(1, Math.round(summary.maxApprovalWaitSecs)))
       : "-"
+  const maxOutputTokensSpent = summary?.maxWorkflowOutputTokensSpent
+  const maxOutputTokenBudget = summary?.maxWorkflowOutputTokenBudget
+  const outputTokenBudget =
+    maxOutputTokensSpent != null
+      ? maxOutputTokenBudget != null && maxOutputTokenBudget > 0
+        ? `${compactCount(maxOutputTokensSpent)}/${compactCount(maxOutputTokenBudget)}`
+        : compactCount(maxOutputTokensSpent)
+      : "-"
+  const outputTokenTone: StatusTone =
+    (summary?.workflowBudgetExhaustedEvents ?? 0) > 0
+      ? "danger"
+      : (summary?.workflowBudgetUsageEvents ?? 0) > 0
+        ? "info"
+        : "muted"
   const canCreateIncidentTasks = Boolean(sessionId) && !disabled
   const recommendedSteps = (report?.recommendedNextSteps ?? []).filter(Boolean).slice(0, 2)
   const canCreateRecommendationTasks = Boolean(sessionId) && !disabled
@@ -6536,6 +6550,7 @@ function DomainSoakReportPanel({
               summary.recoveryEvents,
               summary.recoveryEvents > 0 ? "info" : "muted",
             ],
+            [t("workspace.domainSoakReport.outputTokens", "Token"), outputTokenBudget, outputTokenTone],
           ].map(([label, value, tone]) => (
             <div
               key={label as string}

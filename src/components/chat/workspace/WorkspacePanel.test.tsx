@@ -836,6 +836,10 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
       resumeEvents: 0,
       cancelEvents: 0,
       recoveryEvents: 0,
+      workflowBudgetUsageEvents: 2,
+      workflowBudgetExhaustedEvents: 1,
+      maxWorkflowOutputTokensSpent: 10,
+      maxWorkflowOutputTokenBudget: 10,
       averageApprovalWaitSecs: null,
       maxApprovalWaitSecs: null,
       averageWorkflowDrainSecs: 120,
@@ -2149,6 +2153,8 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("最近时间线")).toBeTruthy()
     expect(screen.getAllByText("Workflow failed").length).toBeGreaterThan(1)
     expect(screen.getAllByText("4m").length).toBeGreaterThan(1)
+    expect(screen.getByText("Token")).toBeTruthy()
+    expect(screen.getByText("10/10")).toBeTruthy()
 
     fireEvent.click(screen.getByRole("button", { name: "复制报告" }))
     await waitFor(() => {

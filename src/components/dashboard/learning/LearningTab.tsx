@@ -47,6 +47,7 @@ import type {
   DomainQualityGateReport,
   DomainReadinessGateReport,
   DomainSoakReport,
+  DomainSoakReportSummary,
   DomainEvalCalibrationRecord,
 } from "@/lib/transport"
 import type { CodingImprovementDashboard, DashboardFilter, DomainQualityDashboard } from "../types"
@@ -3199,6 +3200,17 @@ function DomainSoakReportPanel({ report }: { report: DomainSoakReport | null }) 
               tone={report.summary.recoveryEvents > 0 ? "warn" : "muted"}
             />
             <MetricPill
+              label="TK"
+              value={formatOutputTokenBudget(report.summary)}
+              tone={
+                report.summary.workflowBudgetExhaustedEvents > 0
+                  ? "warn"
+                  : report.summary.workflowBudgetUsageEvents > 0
+                    ? "accent"
+                    : "muted"
+              }
+            />
+            <MetricPill
               label="REC"
               value={report.summary.totalRecords}
               tone={report.summary.totalRecords > 0 ? "accent" : "muted"}
@@ -4393,6 +4405,23 @@ function formatSecs(value: number | null | undefined): string {
   if (value < 60) return `${Math.round(value)}s`
   if (value < 3600) return `${Math.round(value / 60)}m`
   return `${(value / 3600).toFixed(1)}h`
+}
+
+function formatOutputTokenBudget(summary: DomainSoakReportSummary): string {
+  const spent = summary.maxWorkflowOutputTokensSpent
+  const limit = summary.maxWorkflowOutputTokenBudget
+  if (typeof spent !== "number") return `${summary.workflowBudgetUsageEvents}`
+  if (typeof limit === "number" && limit > 0) {
+    return `${formatCompactCount(spent)}/${formatCompactCount(limit)}`
+  }
+  return formatCompactCount(spent)
+}
+
+function formatCompactCount(value: number): string {
+  if (!Number.isFinite(value)) return "0"
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`
+  return String(Math.round(value))
 }
 
 function formatSignedPct(value: number): string {

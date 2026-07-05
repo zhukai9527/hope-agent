@@ -1647,6 +1647,10 @@ export interface DomainSoakReportSummary {
   resumeEvents: number;
   cancelEvents: number;
   recoveryEvents: number;
+  workflowBudgetUsageEvents: number;
+  workflowBudgetExhaustedEvents: number;
+  maxWorkflowOutputTokensSpent?: number | null;
+  maxWorkflowOutputTokenBudget?: number | null;
   averageApprovalWaitSecs?: number | null;
   maxApprovalWaitSecs?: number | null;
   averageWorkflowDrainSecs?: number | null;
