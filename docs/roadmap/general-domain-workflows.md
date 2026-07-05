@@ -314,7 +314,7 @@ DomainWorkflow
 - Checks 覆盖 action scope、explicit user approval、rollback plan，以及 send/share/upload/export/publish/submit 类动作的 artifact export guard。
 - `permission::engine` 新增 strict `ExternalConnectorAction` reason：内置 Feishu / Lark 写工具精确识别，MCP / plugin 工具按连接器名 + mutating verb 保守识别。
 - 外部连接器写动作禁止 AllowAlways，Smart judge 不覆盖；IM/skill `auto_approve_tools` 和 trusted MCP `autoApprove` 不能静默绕过，只有外层已审批的 `external_pre_approved` 重入可跳过重复弹窗。
-- Workspace「领域复核」区块新增「外部动作守门」卡片，展示动作、批准、回滚、敏感来源计数、阻塞 check 和相关 evidence。
+- Workspace「领域复核」区块新增「外部动作守门」卡片，展示动作、批准、回滚、敏感来源计数、阻塞 check 和相关 evidence，并支持用户显式记录批准与回滚方案证据。
 - 新增核心单测覆盖：批准 + 回滚 + 交付复核齐全时 passed；缺少显式用户批准时 failed；权限引擎 strict 分类与 auto-approve 旁路收口。
 
 ## 8. GUI 产品形态
@@ -464,10 +464,11 @@ Phase 8 不再新增一套执行系统，而是把 Phase 7 的通用控制面放
 - 用户可在同一面板直接运行领域复核、对交付守门里的具体 artifact 发起领域复核、推荐验证、运行验证、刷新全部守门状态，并把“下一步”证据缺口、交付/外部动作守门 check、需复核 evidence 或长跑审计事故一键转成 session task，不需要记 slash 命令或切到 Dashboard。
 - artifact-scoped 领域复核通过后，用户可在「领域复核」摘要卡片点击「记录复核证据」，写回窄域 `artifact_reviewed` evidence；该动作只确认本次复核事实，不替代导出前 review、脱敏检查或外部动作批准。
 - 交付守门卡片提供「导出复核 / 可交付确认 / 脱敏复核」三个显式确认按钮，写入 `artifact_reviewed` evidence 上的对应 marker；守门仍重新计算所有证据，不因点击按钮绕过 `pending|sensitive` fail-closed。
+- 外部动作守门卡片提供「批准动作 / 记录回滚」显式确认；批准写入 `user_decision` evidence，回滚必须填写文本后写入 `connector_context_collected` evidence，因此不会把空回滚方案伪装成可恢复。
 - Context Retrieval 候选行的「摘要」按钮会写入 `artifact_created` 摘要 evidence；「确认」按钮会创建 owner-side ask_user，并在用户回答后写入 `user_decision` evidence；「证据」按钮可把当前推荐来源/文档/会议/表格/决策落成 domain evidence，并刷新通用任务工作台；「冲突」按钮会写入 `claim_checked` 冲突证据；「转任务」按钮可把候选落成 session task，形成“看到缺口 -> 生成摘要 / 用户确认 / 补证据 / 标冲突 / 建任务 -> 守门和进度重新评估”的真实 owner action。
 - 面板会根据证据缺口、P0/P1 review finding、验证失败、领域复核阻塞、交付守门、外部动作守门和 Soak incident 状态生成“下一步”提示；每条提示、每个守门 check、每条需复核 evidence 和每个长跑事故都可由用户显式点击「转任务」落入 TaskProgressPanel 追踪。
 - 最近 evidence 行展示 evidence type、domain、access scope、redaction status 与时间，让用户知道来源、草稿、批准、复核和决策证据是否已经真实落盘。
-- 交付守门与外部动作守门仍保持只读：它们提示能否交付/执行外部动作；「复核产物」只创建 Domain Quality run，check 行与需复核 evidence 行「转任务」只创建用户可见待办；真正发送、分享、修改外部系统仍必须走工具审批和连接器授权。
+- 交付守门与外部动作守门的判定仍保持只读：它们提示能否交付/执行外部动作；「复核产物」只创建 Domain Quality run，显式确认按钮只写当前 session evidence，check 行与需复核 evidence 行「转任务」只创建用户可见待办；真正发送、分享、修改外部系统仍必须走工具审批和连接器授权。
 
 ## 13. 推荐顺序
 

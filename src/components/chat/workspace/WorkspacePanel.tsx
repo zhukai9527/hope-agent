@@ -492,6 +492,7 @@ type DomainQualityReviewEvidenceTarget = {
 }
 
 type DomainArtifactExportReviewMarker = "exportReview" | "exportReady" | "redactionChecked"
+type DomainConnectorActionConfirmationMarker = "explicitUserApproval" | "rollbackPlan"
 
 const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
@@ -5354,6 +5355,107 @@ function domainArtifactExportReviewEvidenceInput(
   }
 }
 
+function domainConnectorActionLabel(report: DomainConnectorActionGuardReport): string {
+  return (
+    [report.connector, report.action].filter(Boolean).join(":") ||
+    report.toolName ||
+    report.scope.domain ||
+    "external action"
+  )
+}
+
+function domainConnectorActionConfirmationLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  marker: DomainConnectorActionConfirmationMarker,
+): string {
+  switch (marker) {
+    case "explicitUserApproval":
+      return t("workspace.domainConnectorGuard.recordApproval", "批准动作")
+    case "rollbackPlan":
+      return t("workspace.domainConnectorGuard.recordRollback", "记录回滚")
+  }
+}
+
+function domainConnectorActionBaseMetadata(
+  report: DomainConnectorActionGuardReport,
+  marker: DomainConnectorActionConfirmationMarker,
+): Record<string, unknown> {
+  return {
+    sourceType: "connector_action_guard_confirmation",
+    marker,
+    guardStatus: report.status,
+    guardGeneratedAt: report.generatedAt,
+    toolName: report.toolName ?? null,
+    connector: report.connector ?? null,
+    action: report.action ?? null,
+    risk: report.risk ?? null,
+    relatedEvidenceIds: report.relatedEvidence.map((item) => item.id),
+    blockers: report.blockers,
+  }
+}
+
+function domainConnectorActionApprovalEvidenceInput(
+  report: DomainConnectorActionGuardReport,
+  sessionId: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): RecordDomainEvidenceInput {
+  const actionLabel = domainConnectorActionLabel(report)
+  return {
+    goalId: report.scope.goalId ?? null,
+    sessionId,
+    projectId: report.scope.projectId ?? null,
+    domain: report.scope.domain ?? "general",
+    evidenceType: "user_decision",
+    title: t("workspace.domainConnectorGuard.approvalEvidenceTitle", "批准外部动作：{{action}}", {
+      action: actionLabel,
+    }),
+    summary: t(
+      "workspace.domainConnectorGuard.approvalEvidenceSummary",
+      "用户确认该外部动作可以进入执行前审批流程；真正执行仍需工具审批。",
+    ),
+    sourceMetadata: {
+      ...domainConnectorActionBaseMetadata(report, "explicitUserApproval"),
+      explicitUserApproval: true,
+      userApproved: true,
+      approved: true,
+      approval: { explicit: true, approved: true },
+      decision: { approved: true, confirmed: true },
+    },
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
+function domainConnectorActionRollbackEvidenceInput(
+  report: DomainConnectorActionGuardReport,
+  sessionId: string,
+  rollbackPlan: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): RecordDomainEvidenceInput {
+  const actionLabel = domainConnectorActionLabel(report)
+  return {
+    goalId: report.scope.goalId ?? null,
+    sessionId,
+    projectId: report.scope.projectId ?? null,
+    domain: report.scope.domain ?? "general",
+    evidenceType: "connector_context_collected",
+    title: t("workspace.domainConnectorGuard.rollbackEvidenceTitle", "回滚方案：{{action}}", {
+      action: actionLabel,
+    }),
+    summary: rollbackPlan,
+    sourceMetadata: {
+      ...domainConnectorActionBaseMetadata(report, "rollbackPlan"),
+      rollbackPlan,
+      canRollback: true,
+      rollback: { available: true, plan: rollbackPlan },
+    },
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
 function DomainQualityCheckRow({ check }: { check: DomainQualityCheck }) {
   const { t } = useTranslation()
   const icon =
@@ -6481,11 +6583,16 @@ function DomainConnectorActionGuardPanel({
 }) {
   const { t } = useTranslation()
   const [creatingTaskKey, setCreatingTaskKey] = useState<string | null>(null)
+  const [recordingConfirmation, setRecordingConfirmation] =
+    useState<DomainConnectorActionConfirmationMarker | null>(null)
+  const [rollbackPlanDraft, setRollbackPlanDraft] = useState("")
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const relatedEvidence = report?.relatedEvidence ?? []
   const clean = report?.status === "passed"
   const canCreateTasks = Boolean(sessionId) && !disabled
+  const canRecordConfirmation = Boolean(report) && Boolean(sessionId) && !disabled
+  const rollbackPlan = rollbackPlanDraft.trim()
 
   const createCheckTask = async (
     check: DomainConnectorActionGuardReport["checks"][number],
@@ -6519,6 +6626,36 @@ function DomainConnectorActionGuardPanel({
       toast.error(message)
     } finally {
       setCreatingTaskKey(null)
+    }
+  }
+
+  const recordConfirmation = async (marker: DomainConnectorActionConfirmationMarker) => {
+    if (!sessionId || !report || !canRecordConfirmation || recordingConfirmation) return
+    if (marker === "rollbackPlan" && !rollbackPlan) return
+    setRecordingConfirmation(marker)
+    try {
+      const input =
+        marker === "explicitUserApproval"
+          ? domainConnectorActionApprovalEvidenceInput(report, sessionId, t)
+          : domainConnectorActionRollbackEvidenceInput(report, sessionId, rollbackPlan, t)
+      const item = await getTransport().call<DomainEvidenceItem>("record_domain_evidence", {
+        input,
+      })
+      if (marker === "rollbackPlan") {
+        setRollbackPlanDraft("")
+      }
+      toast.success(
+        t("workspace.domainConnectorGuard.confirmationRecorded", "已记录外部动作证据：{{title}}", {
+          title: item.title,
+        }),
+      )
+      void onRefresh()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainConnectorActionGuardPanel", "Record connector confirmation failed", e)
+      toast.error(message)
+    } finally {
+      setRecordingConfirmation(null)
     }
   }
 
@@ -6583,6 +6720,54 @@ function DomainConnectorActionGuardPanel({
           {report.connector ? <StatusPill label={report.connector} tone="info" /> : null}
           {report.action ? <StatusPill label={report.action} tone="muted" /> : null}
           {report.toolName ? <StatusPill label={report.toolName} tone="muted" /> : null}
+        </div>
+      ) : null}
+
+      {report && !clean ? (
+        <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
+          <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+            <CheckCircle2 className="h-3 w-3 shrink-0" />
+            <span className="truncate">{t("workspace.domainConnectorGuard.explicitConfirm", "显式确认")}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              onClick={() => void recordConfirmation("explicitUserApproval")}
+              disabled={!canRecordConfirmation || Boolean(recordingConfirmation)}
+              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {recordingConfirmation === "explicitUserApproval" ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              ) : (
+                <Check className="h-3 w-3 shrink-0" />
+              )}
+              <span className="truncate">
+                {domainConnectorActionConfirmationLabel(t, "explicitUserApproval")}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void recordConfirmation("rollbackPlan")}
+              disabled={!canRecordConfirmation || !rollbackPlan || Boolean(recordingConfirmation)}
+              className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {recordingConfirmation === "rollbackPlan" ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              ) : (
+                <Check className="h-3 w-3 shrink-0" />
+              )}
+              <span className="truncate">
+                {domainConnectorActionConfirmationLabel(t, "rollbackPlan")}
+              </span>
+            </button>
+          </div>
+          <Textarea
+            value={rollbackPlanDraft}
+            onChange={(event) => setRollbackPlanDraft(event.target.value)}
+            placeholder={t("workspace.domainConnectorGuard.rollbackPlaceholder", "回滚方案")}
+            rows={2}
+            className="mt-1.5 min-h-12 resize-none bg-background/55 px-2 py-1 text-[11px]"
+          />
         </div>
       ) : null}
 

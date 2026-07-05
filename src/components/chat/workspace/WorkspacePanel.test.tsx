@@ -2284,6 +2284,130 @@ describe("WorkspacePanel workflow section", () => {
     expect(sourceMetadata.redactionChecked).toBeUndefined()
   })
 
+  it("records connector approval and rollback evidence without mixing markers", async () => {
+    const rollbackPlan = "Undo by deleting the sent draft and sending a correction note."
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard")
+        return Promise.resolve(domainConnectorActionGuardReport())
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "record_domain_evidence") {
+        const input = args?.input as RecordDomainEvidenceInput
+        return Promise.resolve({
+          id: `de-${input.evidenceType}`,
+          goalId: input.goalId ?? null,
+          sessionId: input.sessionId ?? "s1",
+          projectId: input.projectId ?? null,
+          domain: input.domain,
+          evidenceType: input.evidenceType,
+          title: input.title,
+          summary: input.summary ?? null,
+          sourceMetadata: input.sourceMetadata ?? {},
+          confidence: input.confidence ?? null,
+          accessScope: input.accessScope ?? "session",
+          redactionStatus: input.redactionStatus ?? "none",
+          createdAt: "2026-01-01T00:11:00Z",
+          updatedAt: "2026-01-01T00:11:00Z",
+        } satisfies DomainEvidenceItem)
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    const approveButtons = await screen.findAllByRole("button", { name: "批准动作" })
+    fireEvent.click(approveButtons[0])
+
+    await waitFor(() => {
+      const calls = transportMock.call.mock.calls.filter(([name]) => name === "record_domain_evidence")
+      expect(calls).toHaveLength(1)
+    })
+
+    const rollbackInputs = screen.getAllByPlaceholderText("回滚方案")
+    fireEvent.change(rollbackInputs[0], { target: { value: rollbackPlan } })
+    const rollbackButtons = screen.getAllByRole("button", { name: "记录回滚" })
+    fireEvent.click(rollbackButtons[0])
+
+    await waitFor(() => {
+      const calls = transportMock.call.mock.calls.filter(([name]) => name === "record_domain_evidence")
+      expect(calls).toHaveLength(2)
+    })
+
+    const evidenceCalls = transportMock.call.mock.calls
+      .filter(([name]) => name === "record_domain_evidence")
+      .map(([, args]) => (args as { input: RecordDomainEvidenceInput }).input)
+
+    expect(evidenceCalls[0]).toEqual(
+      expect.objectContaining({
+        sessionId: "s1",
+        domain: "inbox",
+        evidenceType: "user_decision",
+        title: "批准外部动作：gmail:send",
+        summary: "用户确认该外部动作可以进入执行前审批流程；真正执行仍需工具审批。",
+        confidence: 1,
+        accessScope: "session",
+        redactionStatus: "none",
+      }),
+    )
+    expect(evidenceCalls[0].sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "connector_action_guard_confirmation",
+        marker: "explicitUserApproval",
+        explicitUserApproval: true,
+        userApproved: true,
+        approved: true,
+        connector: "gmail",
+        action: "send",
+        toolName: "gmail_send",
+        risk: "external_write",
+        guardStatus: "failed",
+        relatedEvidenceIds: ["e-draft"],
+        blockers: ["approval missing"],
+        approval: { explicit: true, approved: true },
+        decision: { approved: true, confirmed: true },
+      }),
+    )
+    expect((evidenceCalls[0].sourceMetadata as Record<string, unknown>).rollbackPlan).toBeUndefined()
+
+    expect(evidenceCalls[1]).toEqual(
+      expect.objectContaining({
+        sessionId: "s1",
+        domain: "inbox",
+        evidenceType: "connector_context_collected",
+        title: "回滚方案：gmail:send",
+        summary: rollbackPlan,
+        confidence: 1,
+        accessScope: "session",
+        redactionStatus: "none",
+      }),
+    )
+    expect(evidenceCalls[1].sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "connector_action_guard_confirmation",
+        marker: "rollbackPlan",
+        connector: "gmail",
+        action: "send",
+        toolName: "gmail_send",
+        rollbackPlan,
+        canRollback: true,
+        rollback: { available: true, plan: rollbackPlan },
+      }),
+    )
+    expect(
+      (evidenceCalls[1].sourceMetadata as Record<string, unknown>).explicitUserApproval,
+    ).toBeUndefined()
+  })
+
   it("creates tasks from export guard evidence and connector guard checks", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
