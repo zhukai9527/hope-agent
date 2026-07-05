@@ -3026,8 +3026,17 @@ type DomainAcceptanceCoverageSummary = {
   readinessPercent: number
   requiredPassed: number
   requiredTotal: number
+  requirements: DomainAcceptanceRequirement[]
   tone: StatusTone
   gaps: DomainAcceptanceGap[]
+}
+
+type DomainAcceptanceRequirement = {
+  key: string
+  label: string
+  detail: string
+  passed: boolean
+  tone: StatusTone
 }
 
 type DomainAcceptanceGapSeverity = "danger" | "warn" | "info"
@@ -3183,16 +3192,96 @@ function domainAcceptanceCoverageSummary(
   const sortedGaps = gaps.sort(
     (a, b) => domainAcceptanceGapRank(a.severity) - domainAcceptanceGapRank(b.severity),
   )
-  const requiredChecks = [
-    domains.size > 0,
-    args.evidence.length > 0,
-    drainedRuns > 0,
-    controlRecords > 0 && criticalIncidents === 0 && warningIncidents === 0,
-    !hasFailedGate,
+  const requirements: DomainAcceptanceRequirement[] = [
+    {
+      key: "domain",
+      label: t("workspace.domainWorkbench.acceptanceReqDomain", "领域样本"),
+      detail:
+        domains.size > 0
+          ? t("workspace.domainWorkbench.acceptanceReqDomainOk", "{{count}} 个领域", {
+              count: domains.size,
+            })
+          : t("workspace.domainWorkbench.acceptanceReqDomainMissing", "还没有真实领域"),
+      passed: domains.size > 0,
+      tone: domains.size > 0 ? "good" : "warn",
+    },
+    {
+      key: "evidence",
+      label: t("workspace.domainWorkbench.acceptanceReqEvidence", "证据链"),
+      detail:
+        args.evidence.length > 0
+          ? t("workspace.domainWorkbench.acceptanceReqEvidenceOk", "{{count}} 条 evidence", {
+              count: args.evidence.length,
+            })
+          : t("workspace.domainWorkbench.acceptanceReqEvidenceMissing", "缺来源/草稿/决策证据"),
+      passed: args.evidence.length > 0,
+      tone: args.evidence.length > 0 ? "good" : "warn",
+    },
+    {
+      key: "drain",
+      label: t("workspace.domainWorkbench.acceptanceReqDrain", "排空样本"),
+      detail:
+        drainedRuns > 0
+          ? t("workspace.domainWorkbench.acceptanceReqDrainOk", "{{count}} 个已排空", {
+              count: drainedRuns,
+            })
+          : t("workspace.domainWorkbench.acceptanceReqDrainMissing", "缺 Workflow / Loop / Campaign"),
+      passed: drainedRuns > 0,
+      tone: drainedRuns > 0 ? "good" : "warn",
+    },
+    {
+      key: "incidents",
+      label: t("workspace.domainWorkbench.acceptanceReqIncidents", "事故清零"),
+      detail:
+        criticalIncidents > 0 || warningIncidents > 0
+          ? t(
+              "workspace.domainWorkbench.acceptanceReqIncidentsOpen",
+              "critical {{critical}} / warning {{warning}}",
+              { critical: criticalIncidents, warning: warningIncidents },
+            )
+          : controlRecords > 0
+            ? t("workspace.domainWorkbench.acceptanceReqIncidentsOk", "无未收口事故")
+            : t("workspace.domainWorkbench.acceptanceReqIncidentsNoSample", "先补控制面记录"),
+      passed: controlRecords > 0 && criticalIncidents === 0 && warningIncidents === 0,
+      tone:
+        criticalIncidents > 0
+          ? "danger"
+          : warningIncidents > 0 || controlRecords === 0
+            ? "warn"
+            : "good",
+    },
+    {
+      key: "gates",
+      label: t("workspace.domainWorkbench.acceptanceReqGates", "守门通过"),
+      detail: hasFailedGate
+        ? t("workspace.domainWorkbench.acceptanceReqGatesFailed", "{{gates}} 未通过", {
+            gates: failedGateLabels.join("、"),
+          })
+        : t("workspace.domainWorkbench.acceptanceReqGatesOk", "无 failed gate"),
+      passed: !hasFailedGate,
+      tone: hasFailedGate ? "danger" : "good",
+    },
   ]
   if (connectorE2eHasScope) {
-    requiredChecks.push(connectorE2eEvidence > 0 && args.connectorE2eGate?.status === "passed")
+    const connectorPassed = connectorE2eEvidence > 0 && args.connectorE2eGate?.status === "passed"
+    requirements.push({
+      key: "connector-e2e",
+      label: t("workspace.domainWorkbench.acceptanceReqConnectorE2E", "连接器 E2E"),
+      detail: connectorPassed
+        ? t("workspace.domainWorkbench.acceptanceReqConnectorE2EOk", "{{count}} 条 evidence", {
+            count: connectorE2eEvidence,
+          })
+        : t("workspace.domainWorkbench.acceptanceReqConnectorE2EMissing", "缺执行/复核闭环"),
+      passed: connectorPassed,
+      tone:
+        args.connectorE2eGate?.status === "failed"
+          ? "danger"
+          : connectorPassed
+            ? "good"
+            : "warn",
+    })
   }
+  const requiredChecks = requirements.map((requirement) => requirement.passed)
   const requiredPassed = requiredChecks.filter(Boolean).length
   const requiredTotal = requiredChecks.length
   const requiredPercent = requiredTotal > 0 ? (requiredPassed / requiredTotal) * 90 : 0
@@ -3217,6 +3306,7 @@ function domainAcceptanceCoverageSummary(
     readinessPercent,
     requiredPassed,
     requiredTotal,
+    requirements,
     tone,
     gaps: sortedGaps.slice(0, 3),
   }
@@ -3228,6 +3318,15 @@ function domainAcceptanceProgressBarClass(tone: StatusTone): string {
   if (tone === "good") return "bg-emerald-500"
   if (tone === "info") return "bg-blue-500"
   return "bg-muted-foreground/50"
+}
+
+function domainAcceptanceRequirementStatusLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  requirement: DomainAcceptanceRequirement,
+): string {
+  if (requirement.passed) return t("workspace.domainWorkbench.acceptanceReqPassed", "通过")
+  if (requirement.tone === "danger") return t("workspace.domainWorkbench.acceptanceReqBlocked", "阻塞")
+  return t("workspace.domainWorkbench.acceptanceReqMissing", "待补")
 }
 
 function domainAcceptanceGapRank(severity: DomainAcceptanceGapSeverity): number {
@@ -3365,6 +3464,23 @@ function DomainAcceptanceCoverageCard({
             style={{ width: `${summary.readinessPercent}%` }}
           />
         </div>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
+        {summary.requirements.map((requirement) => (
+          <div
+            key={requirement.key}
+            className="min-w-0 rounded-md bg-background/40 px-1.5 py-1 text-[10px]"
+          >
+            <div className="flex min-w-0 items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-medium">{requirement.label}</span>
+              <StatusPill
+                label={domainAcceptanceRequirementStatusLabel(t, requirement)}
+                tone={requirement.tone}
+              />
+            </div>
+            <div className="mt-0.5 truncate text-muted-foreground/75">{requirement.detail}</div>
+          </div>
+        ))}
       </div>
       <div className="mt-2 grid grid-cols-4 gap-1.5">
         <DomainWorkbenchMetric

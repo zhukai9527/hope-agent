@@ -2091,6 +2091,10 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("真实样本验收")).toBeTruthy()
     expect(screen.getByText("样本有事故")).toBeTruthy()
     expect(screen.getByText("36% · 2/5")).toBeTruthy()
+    expect(screen.getByText("证据链")).toBeTruthy()
+    expect(screen.getByText("缺来源/草稿/决策证据")).toBeTruthy()
+    expect(screen.getByText("守门通过")).toBeTruthy()
+    expect(screen.getByText("运行稳定性、长跑审计 未通过")).toBeTruthy()
     expect(screen.getByText("3 条")).toBeTruthy()
     expect(screen.getByText("长跑审计仍有事故需要收口。")).toBeTruthy()
 
