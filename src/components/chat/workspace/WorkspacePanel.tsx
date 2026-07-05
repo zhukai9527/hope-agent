@@ -3092,6 +3092,23 @@ function domainAcceptanceCoverageSummary(
     args.exportGuard?.status === "failed" ||
     args.connectorGuard?.status === "failed" ||
     args.connectorE2eGate?.status === "failed"
+  const failedGateLabels = [
+    args.exportGuard?.status === "failed"
+      ? t("workspace.domainWorkbench.acceptanceGateExport", "交付守门")
+      : null,
+    args.connectorGuard?.status === "failed"
+      ? t("workspace.domainWorkbench.acceptanceGateConnector", "外部动作守门")
+      : null,
+    args.connectorE2eGate?.status === "failed"
+      ? t("workspace.domainWorkbench.acceptanceGateConnectorE2E", "连接器 E2E")
+      : null,
+    args.operationalGate?.status === "failed"
+      ? t("workspace.domainWorkbench.acceptanceGateOperational", "运行稳定性")
+      : null,
+    args.soakReport?.status === "failed"
+      ? t("workspace.domainWorkbench.acceptanceGateSoak", "长跑审计")
+      : null,
+  ].filter(Boolean)
   const gaps: DomainAcceptanceGap[] = []
   const pushGap = (
     key: string,
@@ -3142,6 +3159,17 @@ function domainAcceptanceCoverageSummary(
       criticalIncidents > 0 ? "danger" : "warn",
     )
   }
+  if (failedGateLabels.length > 0 && criticalIncidents === 0) {
+    pushGap(
+      "failed-gates",
+      t(
+        "workspace.domainWorkbench.acceptanceGapFailedGates",
+        "仍有未通过守门：{{gates}}。",
+        { gates: failedGateLabels.join("、") },
+      ),
+      "danger",
+    )
+  }
   if (domains.size === 1 && controlRecords > 0) {
     pushGap(
       "more-domains",
@@ -3160,6 +3188,7 @@ function domainAcceptanceCoverageSummary(
     args.evidence.length > 0,
     drainedRuns > 0,
     controlRecords > 0 && criticalIncidents === 0 && warningIncidents === 0,
+    !hasFailedGate,
   ]
   if (connectorE2eHasScope) {
     requiredChecks.push(connectorE2eEvidence > 0 && args.connectorE2eGate?.status === "passed")
