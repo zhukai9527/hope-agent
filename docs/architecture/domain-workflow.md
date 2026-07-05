@@ -167,7 +167,7 @@ Workflow runtime 也提供脚本内 sugar：`workflow.evidence.record({ domain, 
 
 Phase 7.15 新增 `evaluate_domain_artifact_export_guard(input)`，用于最终发送、分享、导出、发布前的只读门禁。它只读 `domain_evidence_items`，不调用 LLM、不访问连接器、不创建文件、不执行外部动作。
 
-输入要求 `sessionId` 或 `goalId`；若传 `goalId`，session 从 goal 解析并校验，避免跨 session 伪造。incognito session fail closed。可选 `domain` 过滤同一领域 evidence；可选 `artifactPath/title/kind` 只进入 report 展示，当前不作为授权条件。
+输入要求 `sessionId` 或 `goalId`；若传 `goalId`，session 从 goal 解析并校验，避免跨 session 伪造。incognito session fail closed。可选 `domain` 过滤同一领域 evidence；可选 `artifactPath/title/kind` 进入 report 展示和 Workspace「复核产物」入口，但 Artifact Export Guard 自身仍只读 evidence，不把这些字段当作授权条件。
 
 默认阈值：
 

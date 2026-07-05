@@ -233,6 +233,7 @@ struct QualityContext {
     domain: String,
     template: DomainWorkflowTemplate,
     evidence: Vec<DomainEvidenceItem>,
+    evidence_scope: Value,
     input: RunDomainQualityInput,
 }
 
@@ -428,6 +429,7 @@ impl SessionDB {
             evidence_type: None,
             limit: Some(DOMAIN_QUALITY_LIMIT_DEFAULT),
         })?;
+        let (evidence, evidence_scope) = scope_domain_quality_evidence(&input, evidence);
 
         Ok(QualityContext {
             session_id,
@@ -435,6 +437,7 @@ impl SessionDB {
             domain,
             template,
             evidence,
+            evidence_scope,
             input,
         })
     }
@@ -528,6 +531,7 @@ impl SessionDB {
                     "title": context.input.artifact_title,
                     "kind": context.input.artifact_kind,
                 },
+                "evidenceScope": context.evidence_scope,
                 "source": context.input.source_metadata,
             }),
         );
@@ -835,6 +839,273 @@ fn infer_domain_from_quality_input(
         .max_by_key(|(_, count)| *count)
         .map(|(domain, _)| domain)
         .ok_or_else(|| anyhow!("no domain signal available"))
+}
+
+#[derive(Debug, Clone, Default)]
+struct DomainQualityArtifactTarget {
+    id: Option<String>,
+    title: Option<String>,
+    kind: Option<String>,
+    path: Option<String>,
+}
+
+fn scope_domain_quality_evidence(
+    input: &RunDomainQualityInput,
+    evidence: Vec<DomainEvidenceItem>,
+) -> (Vec<DomainEvidenceItem>, Value) {
+    let total = evidence.len();
+    let Some(target) = domain_quality_artifact_target(input) else {
+        return (
+            evidence,
+            json!({
+                "enabled": false,
+                "mode": "all",
+                "total": total,
+                "matched": total,
+            }),
+        );
+    };
+
+    let explicit_artifact_evidence = evidence
+        .iter()
+        .filter(|item| domain_quality_evidence_has_artifact_signal(item))
+        .count();
+    let target_json = domain_quality_artifact_target_json(&target);
+    if explicit_artifact_evidence == 0 {
+        return (
+            evidence,
+            json!({
+                "enabled": true,
+                "mode": "legacy_fallback_all",
+                "target": target_json,
+                "total": total,
+                "matched": total,
+                "explicitArtifactEvidence": explicit_artifact_evidence,
+            }),
+        );
+    }
+
+    let matched = evidence
+        .into_iter()
+        .filter(|item| domain_quality_evidence_matches_artifact(item, &target))
+        .collect::<Vec<_>>();
+    let matched_len = matched.len();
+    (
+        matched,
+        json!({
+            "enabled": true,
+            "mode": "artifact_matched",
+            "target": target_json,
+            "total": total,
+            "matched": matched_len,
+            "explicitArtifactEvidence": explicit_artifact_evidence,
+        }),
+    )
+}
+
+fn domain_quality_artifact_target(
+    input: &RunDomainQualityInput,
+) -> Option<DomainQualityArtifactTarget> {
+    let metadata = &input.source_metadata;
+    let target = DomainQualityArtifactTarget {
+        id: json_string(metadata, "artifactId")
+            .or_else(|| json_nested_string(metadata, "artifact", "id")),
+        title: input
+            .artifact_title
+            .as_deref()
+            .and_then(non_empty)
+            .map(str::to_string)
+            .or_else(|| json_string(metadata, "artifactTitle"))
+            .or_else(|| json_nested_string(metadata, "artifact", "title")),
+        kind: input
+            .artifact_kind
+            .as_deref()
+            .and_then(non_empty)
+            .map(normalize_domain)
+            .or_else(|| json_string(metadata, "artifactKind").map(|value| normalize_domain(&value)))
+            .or_else(|| {
+                json_nested_string(metadata, "artifact", "kind")
+                    .map(|value| normalize_domain(&value))
+            }),
+        path: json_string(metadata, "artifactPath")
+            .or_else(|| json_nested_string(metadata, "artifact", "path"))
+            .or_else(|| json_string(metadata, "path"))
+            .or_else(|| json_string(metadata, "filePath"))
+            .or_else(|| json_string(metadata, "outputPath"))
+            .or_else(|| json_string(metadata, "draftPath")),
+    };
+    if target.id.is_some()
+        || target.title.is_some()
+        || target.kind.is_some()
+        || target.path.is_some()
+    {
+        Some(target)
+    } else {
+        None
+    }
+}
+
+fn domain_quality_artifact_target_json(target: &DomainQualityArtifactTarget) -> Value {
+    json!({
+        "id": target.id,
+        "title": target.title,
+        "kind": target.kind,
+        "path": target.path,
+    })
+}
+
+fn domain_quality_evidence_has_artifact_signal(item: &DomainEvidenceItem) -> bool {
+    matches!(
+        item.evidence_type.as_str(),
+        "artifact_created" | "artifact_reviewed"
+    ) || domain_quality_evidence_artifact_id(item).is_some()
+        || !domain_quality_evidence_artifact_titles(item).is_empty()
+        || domain_quality_evidence_artifact_kind(item).is_some()
+        || !domain_quality_evidence_artifact_paths(item).is_empty()
+}
+
+fn domain_quality_evidence_matches_artifact(
+    item: &DomainEvidenceItem,
+    target: &DomainQualityArtifactTarget,
+) -> bool {
+    if let Some(target_id) = target.id.as_deref() {
+        if domain_quality_evidence_artifact_id(item)
+            .as_deref()
+            .is_some_and(|id| normalized_eq(id, target_id))
+        {
+            return true;
+        }
+    }
+    if let Some(target_path) = target.path.as_deref() {
+        if domain_quality_evidence_artifact_paths(item)
+            .iter()
+            .any(|path| normalized_path_eq(path, target_path))
+        {
+            return true;
+        }
+    }
+    if let Some(target_title) = target.title.as_deref() {
+        if domain_quality_evidence_artifact_titles(item)
+            .iter()
+            .any(|title| title_matches(title, target_title))
+        {
+            return true;
+        }
+    }
+    let has_specific_target =
+        target.id.is_some() || target.path.is_some() || target.title.is_some();
+    if !has_specific_target {
+        if let Some(target_kind) = target.kind.as_deref() {
+            if domain_quality_evidence_artifact_kind(item)
+                .as_deref()
+                .is_some_and(|kind| normalized_eq(kind, target_kind))
+                && matches!(
+                    item.evidence_type.as_str(),
+                    "artifact_created" | "artifact_reviewed"
+                )
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn domain_quality_evidence_artifact_id(item: &DomainEvidenceItem) -> Option<String> {
+    json_string(&item.source_metadata, "artifactId")
+        .or_else(|| json_nested_string(&item.source_metadata, "artifact", "id"))
+}
+
+fn domain_quality_evidence_artifact_titles(item: &DomainEvidenceItem) -> Vec<String> {
+    let mut values = Vec::new();
+    if matches!(
+        item.evidence_type.as_str(),
+        "artifact_created" | "artifact_reviewed"
+    ) {
+        values.push(item.title.clone());
+        if let Some(summary) = item.summary.as_deref().and_then(non_empty) {
+            values.push(summary.to_string());
+        }
+    }
+    push_optional(
+        &mut values,
+        json_string(&item.source_metadata, "artifactTitle"),
+    );
+    push_optional(
+        &mut values,
+        json_nested_string(&item.source_metadata, "artifact", "title"),
+    );
+    if matches!(
+        item.evidence_type.as_str(),
+        "artifact_created" | "artifact_reviewed"
+    ) {
+        push_optional(&mut values, json_string(&item.source_metadata, "title"));
+    }
+    values
+}
+
+fn domain_quality_evidence_artifact_kind(item: &DomainEvidenceItem) -> Option<String> {
+    json_string(&item.source_metadata, "artifactKind")
+        .or_else(|| json_nested_string(&item.source_metadata, "artifact", "kind"))
+        .map(|value| normalize_domain(&value))
+}
+
+fn domain_quality_evidence_artifact_paths(item: &DomainEvidenceItem) -> Vec<String> {
+    let mut values = Vec::new();
+    for key in [
+        "artifactPath",
+        "path",
+        "filePath",
+        "outputPath",
+        "draftPath",
+    ] {
+        push_optional(&mut values, json_string(&item.source_metadata, key));
+    }
+    push_optional(
+        &mut values,
+        json_nested_string(&item.source_metadata, "artifact", "path"),
+    );
+    values
+}
+
+fn push_optional(values: &mut Vec<String>, value: Option<String>) {
+    if let Some(value) = value.and_then(|value| non_empty(&value).map(str::to_string)) {
+        values.push(value);
+    }
+}
+
+fn json_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(non_empty)
+        .map(str::to_string)
+}
+
+fn json_nested_string(value: &Value, object_key: &str, key: &str) -> Option<String> {
+    value
+        .get(object_key)
+        .and_then(|object| json_string(object, key))
+}
+
+fn normalized_eq(left: &str, right: &str) -> bool {
+    normalize_domain(left) == normalize_domain(right)
+}
+
+fn normalized_path_eq(left: &str, right: &str) -> bool {
+    let normalize = |value: &str| value.trim().trim_end_matches('/').to_ascii_lowercase();
+    let left = normalize(left);
+    let right = normalize(right);
+    !left.is_empty() && left == right
+}
+
+fn title_matches(left: &str, right: &str) -> bool {
+    let left = left.trim().to_ascii_lowercase();
+    let right = right.trim().to_ascii_lowercase();
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    left == right || left.contains(&right) || right.contains(&left)
 }
 
 fn infer_domain_from_text(text: &str) -> String {
@@ -1235,6 +1506,7 @@ fn build_quality_stats(context: &QualityContext, checks: &[CandidateCheck]) -> V
         "source": context.input.source_metadata.clone(),
         "profiles": active_profiles(&context.input.profiles, &context.domain),
         "evidence": evidence_counts(&context.evidence),
+        "evidenceScope": context.evidence_scope,
         "checks": checks.len(),
         "passed": passed,
         "failed": failed,
@@ -1465,6 +1737,7 @@ fn emit_domain_quality_event(event: &str, quality_event: &DomainQualityEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain_workflow::RecordDomainEvidenceInput;
     use crate::goal::{CreateGoalInput, GoalState};
     use crate::session::SessionDB;
     use tempfile::tempdir;
@@ -1629,6 +1902,145 @@ mod tests {
                 .pointer("/source/sourceType")
                 .and_then(Value::as_str),
             Some("artifact_export_guard")
+        );
+    }
+
+    #[test]
+    fn domain_quality_scopes_evidence_to_matching_artifact() {
+        let (_dir, db) = test_db();
+        let session = db.create_session("ha-main").expect("create session");
+        for evidence_type in ["artifact_created", "artifact_reviewed"] {
+            db.record_domain_evidence(RecordDomainEvidenceInput {
+                session_id: Some(session.id.clone()),
+                domain: "writing".to_string(),
+                evidence_type: evidence_type.to_string(),
+                title: format!("Other memo {evidence_type}"),
+                source_metadata: json!({
+                    "artifactTitle": "Other memo",
+                    "artifactKind": "memo",
+                }),
+                ..Default::default()
+            })
+            .expect("record other artifact evidence");
+        }
+
+        let target_missing = db
+            .run_domain_quality_for_session(RunDomainQualityInput {
+                session_id: session.id.clone(),
+                domain: Some("writing".to_string()),
+                artifact_title: Some("Target memo".to_string()),
+                artifact_kind: Some("memo".to_string()),
+                ..Default::default()
+            })
+            .expect("run target quality");
+        assert_eq!(
+            target_missing
+                .run
+                .stats
+                .pointer("/evidenceScope/mode")
+                .and_then(Value::as_str),
+            Some("artifact_matched")
+        );
+        assert_eq!(
+            target_missing
+                .run
+                .stats
+                .pointer("/evidenceScope/matched")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert!(target_missing.checks.iter().any(|check| {
+            check.evidence_type.as_deref() == Some("artifact_created")
+                && check.status == DomainQualityCheckStatus::Failed
+        }));
+
+        for evidence_type in ["artifact_created", "artifact_reviewed"] {
+            db.record_domain_evidence(RecordDomainEvidenceInput {
+                session_id: Some(session.id.clone()),
+                domain: "writing".to_string(),
+                evidence_type: evidence_type.to_string(),
+                title: format!("Target memo {evidence_type}"),
+                source_metadata: json!({
+                    "artifactTitle": "Target memo",
+                    "artifactKind": "memo",
+                }),
+                ..Default::default()
+            })
+            .expect("record target artifact evidence");
+        }
+
+        let target_ready = db
+            .run_domain_quality_for_session(RunDomainQualityInput {
+                session_id: session.id,
+                domain: Some("writing".to_string()),
+                artifact_title: Some("Target memo".to_string()),
+                artifact_kind: Some("memo".to_string()),
+                ..Default::default()
+            })
+            .expect("run target quality with matching evidence");
+        assert_eq!(
+            target_ready
+                .run
+                .stats
+                .pointer("/evidence/artifact_created")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            target_ready
+                .run
+                .stats
+                .pointer("/evidence/artifact_reviewed")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(target_ready.checks.iter().any(|check| {
+            check.evidence_type.as_deref() == Some("artifact_created")
+                && check.status == DomainQualityCheckStatus::Passed
+        }));
+    }
+
+    #[test]
+    fn domain_quality_falls_back_when_legacy_evidence_has_no_artifact_signal() {
+        let (_dir, db) = test_db();
+        let session = db.create_session("ha-main").expect("create session");
+        db.record_domain_evidence(RecordDomainEvidenceInput {
+            session_id: Some(session.id.clone()),
+            domain: "research".to_string(),
+            evidence_type: "source_cited".to_string(),
+            title: "Official source".to_string(),
+            source_metadata: json!({
+                "retrievedAt": "2026-07-03T00:00:00Z",
+            }),
+            ..Default::default()
+        })
+        .expect("record legacy evidence");
+
+        let snapshot = db
+            .run_domain_quality_for_session(RunDomainQualityInput {
+                session_id: session.id,
+                domain: Some("research".to_string()),
+                artifact_title: Some("Research brief".to_string()),
+                artifact_kind: Some("brief".to_string()),
+                ..Default::default()
+            })
+            .expect("run quality");
+
+        assert_eq!(
+            snapshot
+                .run
+                .stats
+                .pointer("/evidenceScope/mode")
+                .and_then(Value::as_str),
+            Some("legacy_fallback_all")
+        );
+        assert_eq!(
+            snapshot
+                .run
+                .stats
+                .pointer("/evidence/source_cited")
+                .and_then(Value::as_u64),
+            Some(1)
         );
     }
 

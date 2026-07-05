@@ -140,7 +140,15 @@ Workspace「交付守门」卡片在报告包含 `artifactTitle` / `artifactKind
 - `artifactTitle` / `artifactKind`：报告中的产物标题和类型。
 - `sourceMetadata.sourceType="artifact_export_guard"`，并附带 `artifactPath`、`artifactTitle`、`artifactKind`、`artifactGuardStatus`。
 
-这是一条 owner-plane 复核入口，不新增执行系统。Domain Quality 仍按当前 session/domain 的 evidence、template required evidence 和 approval gate 做确定性复核；artifact 上下文进入 `domain_quality_started` event 与 run stats，供 timeline、学习闭环和后续更细 artifact evidence 过滤使用。按钮不会创建 WorkflowRun、不会导出产物、不会访问连接器、不会批准外部动作。
+这是一条 owner-plane 复核入口，不新增执行系统。Domain Quality 仍按当前 session/domain 的 template required evidence 和 approval gate 做确定性复核；当输入带 artifact title / kind / path 且当前 evidence 已有 artifact 线索时，会先把 evidence 收窄到匹配该 artifact 的记录，避免其它产物的 evidence 把本次复核托过关。artifact 上下文进入 `domain_quality_started` event 与 run stats，供 timeline、学习闭环和后续复核追溯使用。按钮不会创建 WorkflowRun、不会导出产物、不会访问连接器、不会批准外部动作。
+
+Artifact evidence scope 写入 `run.stats.evidenceScope` 和 `domain_quality_started.payload.evidenceScope`：
+
+| mode | 说明 |
+| --- | --- |
+| `all` | 本次没有 artifact target，使用 session/domain 全量 evidence。 |
+| `artifact_matched` | 当前 evidence 已有 artifact title / path / id / kind 等线索，只使用匹配 target 的 evidence。 |
+| `legacy_fallback_all` | 本次有 artifact target，但历史 evidence 完全没有 artifact 线索；为避免旧记录突然全部失效，回退全量 evidence，并在 stats/event 中显式标记。 |
 
 ## Dashboard 趋势输入
 

@@ -380,7 +380,7 @@ Gold task pack -> Domain eval task pack
 剩余不作为 Phase 7 第一版 blocker，但仍属于“超越 Codex / Claude Code”的长期增强：
 
 - 真实外部账号的端到端演练需要在具备 Gmail / Calendar / Drive / Sheets / Feishu / Lark 等可用测试账号后继续做，当前 worktree 主要用 deterministic / mock / fail-closed 证据覆盖。
-- 通用任务工作台后续仍可继续接入更多 owner action，例如更细的 artifact evidence 过滤和复核结果回写；当前已支持从交付守门对具体 artifact 发起领域复核、来源一键加入 evidence、从证据缺口/守门 check/需复核 evidence/长跑事故创建 task，不再只依赖 Workspace「领域复核」和 Dashboard Learning。
+- 通用任务工作台后续仍可继续接入更多 owner action，例如复核结果回写、产物版本对比和更细的人工确认；当前已支持从交付守门对具体 artifact 发起领域复核，并在 evidence 已带 artifact 线索时按目标产物收窄复核范围，来源一键加入 evidence、从证据缺口/守门 check/需复核 evidence/长跑事故创建 task 也已落地，不再只依赖 Workspace「领域复核」和 Dashboard Learning。
 - 长期运行稳定性还需要跨天 loop、campaign 和真实连接器动作的 soak run 数据；Phase 8.1 已把 workflow / loop / campaign 运行残留产品化为 Operational Gate，Phase 8.2 已把连接器 E2E 链路证据产品化为 Gate，Phase 8.3 已把这些历史导出为 Soak Report，Phase 8.4 已在 Workspace「通用任务工作台」内补上真实样本验收卡片，让当前会话的领域覆盖、控制面记录、已排空样本、Connector E2E evidence 和事故缺口可见；真实跨天样本仍需继续积累。
 
 ## 12. Phase 8：真实场景产品级验收
