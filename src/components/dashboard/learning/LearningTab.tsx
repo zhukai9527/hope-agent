@@ -3203,6 +3203,17 @@ function DomainSoakReportPanel({ report }: { report: DomainSoakReport | null }) 
               tone={report.summary.recoveryEvents > 0 ? "warn" : "muted"}
             />
             <MetricPill
+              label="IN"
+              value={report.summary.workflowControlInterventionEvents}
+              tone={
+                report.summary.workflowControlInterventionEvents > 1
+                  ? "warn"
+                  : report.summary.workflowControlInterventionEvents > 0
+                    ? "accent"
+                    : "muted"
+              }
+            />
+            <MetricPill
               label="TK"
               value={formatOutputTokenBudget(report.summary)}
               tone={

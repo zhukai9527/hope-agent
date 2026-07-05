@@ -837,6 +837,7 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
       resumeEvents: 0,
       cancelEvents: 0,
       recoveryEvents: 0,
+      workflowControlInterventionEvents: 3,
       workflowBudgetUsageEvents: 2,
       workflowBudgetExhaustedEvents: 1,
       maxWorkflowOutputTokensSpent: 10,
@@ -2156,6 +2157,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("Workflow failed").length).toBeGreaterThan(1)
     expect(screen.getAllByText("4m").length).toBeGreaterThan(1)
     expect(screen.getByText("2m")).toBeTruthy()
+    expect(screen.getByText("干预")).toBeTruthy()
     expect(screen.getByText("Token")).toBeTruthy()
     expect(screen.getByText("10/10")).toBeTruthy()
 

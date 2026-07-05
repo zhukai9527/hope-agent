@@ -1148,6 +1148,7 @@ pub struct DomainSoakReportSummary {
     pub resume_events: usize,
     pub cancel_events: usize,
     pub recovery_events: usize,
+    pub workflow_control_intervention_events: usize,
     pub workflow_budget_usage_events: usize,
     pub workflow_budget_exhausted_events: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3396,10 +3397,22 @@ impl SessionDB {
         for event in self.domain_soak_workflow_events(&scope)? {
             if event.event_type == "run_control_action" {
                 match json_string_value(&event.payload, "action").as_deref() {
-                    Some("approve") => summary.approval_events += 1,
-                    Some("pause") => summary.pause_events += 1,
-                    Some("resume") => summary.resume_events += 1,
-                    Some("cancel") => summary.cancel_events += 1,
+                    Some("approve") => {
+                        summary.approval_events += 1;
+                        summary.workflow_control_intervention_events += 1;
+                    }
+                    Some("pause") => {
+                        summary.pause_events += 1;
+                        summary.workflow_control_intervention_events += 1;
+                    }
+                    Some("resume") => {
+                        summary.resume_events += 1;
+                        summary.workflow_control_intervention_events += 1;
+                    }
+                    Some("cancel") => {
+                        summary.cancel_events += 1;
+                        summary.workflow_control_intervention_events += 1;
+                    }
                     _ => {}
                 }
             }
@@ -7482,6 +7495,9 @@ fn domain_soak_recommendations(
     if summary.open_approval_waits > 0 {
         push_unique_soak_recommendation(&mut recommendations, "Resolve open workflow approvals: approve, deny, pause, or cancel them before trusting unattended long-run stability.");
     }
+    if summary.workflow_control_intervention_events > 1 {
+        push_unique_soak_recommendation(&mut recommendations, "Review repeated workflow control interventions and adjust the workflow plan, approval gates, or loop strategy before widening unattended usage.");
+    }
     if summary.connector_e2e_evidence > 0 && summary.connector_verification_evidence == 0 {
         push_unique_soak_recommendation(&mut recommendations, "Finish connector verification evidence for real external actions instead of stopping at draft or execution records.");
     }
@@ -7565,7 +7581,8 @@ fn render_domain_soak_markdown(
         summary.connector_verification_evidence
     ));
     out.push_str(&format!(
-        "- Control events: {} approval request(s), {} approval decision(s), {} open approval wait(s), {} pause, {} resume, {} cancel, {} recovery; max closed/open approval wait: {}/{}\n",
+        "- Control events: {} owner intervention(s); {} approval request(s), {} approval decision(s), {} open approval wait(s), {} pause, {} resume, {} cancel, {} recovery; max closed/open approval wait: {}/{}\n",
+        summary.workflow_control_intervention_events,
         summary.approval_request_events,
         summary.approval_decision_events,
         summary.open_approval_waits,
@@ -8633,6 +8650,8 @@ mod tests {
         )
         .unwrap();
         db.approve_workflow_run(&run.id).unwrap();
+        db.pause_workflow_run(&run.id).unwrap();
+        db.resume_workflow_run(&run.id).unwrap();
         db.claim_workflow_run_for_recovery(&run.id, "test-owner")
             .unwrap();
         db.append_workflow_event(
@@ -8693,6 +8712,9 @@ mod tests {
         assert_eq!(report.summary.max_approval_wait_secs, Some(90));
         assert_eq!(report.summary.average_approval_wait_secs, Some(90.0));
         assert_eq!(report.summary.recovery_events, 1);
+        assert_eq!(report.summary.workflow_control_intervention_events, 3);
+        assert_eq!(report.summary.pause_events, 1);
+        assert_eq!(report.summary.resume_events, 1);
         assert_eq!(report.summary.workflow_budget_usage_events, 2);
         assert_eq!(report.summary.workflow_budget_exhausted_events, 1);
         assert_eq!(report.summary.max_workflow_output_tokens_spent, Some(10));
@@ -8707,6 +8729,10 @@ mod tests {
             .recommended_next_steps
             .iter()
             .any(|step| step.contains("output-token budget exhaustion")));
+        assert!(report
+            .recommended_next_steps
+            .iter()
+            .any(|step| step.contains("workflow control interventions")));
     }
 
     #[test]

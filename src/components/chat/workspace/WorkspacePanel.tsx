@@ -6405,6 +6405,12 @@ function DomainSoakReportPanel({
       : (summary?.workflowBudgetUsageEvents ?? 0) > 0
         ? "info"
         : "muted"
+  const interventionTone: StatusTone =
+    (summary?.workflowControlInterventionEvents ?? 0) > 1
+      ? "warn"
+      : (summary?.workflowControlInterventionEvents ?? 0) > 0
+        ? "info"
+        : "muted"
   const canCreateIncidentTasks = Boolean(sessionId) && !disabled
   const recommendedSteps = (report?.recommendedNextSteps ?? []).filter(Boolean).slice(0, 2)
   const canCreateRecommendationTasks = Boolean(sessionId) && !disabled
@@ -6557,6 +6563,11 @@ function DomainSoakReportPanel({
               t("workspace.domainSoakReport.recovery", "恢复"),
               summary.recoveryEvents,
               summary.recoveryEvents > 0 ? "info" : "muted",
+            ],
+            [
+              t("workspace.domainSoakReport.interventions", "干预"),
+              summary.workflowControlInterventionEvents,
+              interventionTone,
             ],
             [t("workspace.domainSoakReport.outputTokens", "Token"), outputTokenBudget, outputTokenTone],
           ].map(([label, value, tone]) => (
