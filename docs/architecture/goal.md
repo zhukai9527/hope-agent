@@ -253,13 +253,22 @@ Workspace / Workflow Control Center 内有 Goal strip：
 
 每轮主对话 system prompt 会注入当前 active Goal 的 state、objective、domain、workflow template、task type、completion criteria、blocked reason / latest audit 摘要。Goal 更新后，下一轮 prompt 重新构建即可让模型感知最新目标与领域约束。
 
-## 9. 非目标
+## 9. 非目标与后续边界
 
 当前 Goal 控制面仍不包含：
 
 - `/loop` 的定时、重复、轮询调度，详见 [Loop 控制平面](loop.md)。
 - agent 工具面直接修改 Goal。
 - LLM side-query evaluator。
-- 独立 Goal detail 全屏页面。
 
-这些后续仍在 `docs/roadmap/` 跟踪；实现稳定后再沉淀到对应 architecture 文档。
+已归档的 Goal v2 设计决策只作为后续边界，不能被当成当前已实现能力：
+
+- Goal v2 的方向是把 Goal 从“目标标签 + 证据汇总”升级为长期任务目标控制台，核心问题是“目标是什么、现在做到哪、还差什么、为什么没结束、哪些进入后续池”。
+- 后续可引入 structured criteria：把 completion criteria 派生为稳定 item，并区分 `required` / `optional` / `follow_up`。只有 required blocker 阻塞 Goal 关闭。
+- 后续可引入 Goal revision：objective、criteria、domain 或 workflow template 变更后，旧 final audit 必须标记 stale，避免旧完成结论污染新目标。
+- 后续可引入 closure decision：记录用户选择 `accept_v1`、`needs_strict_evidence`、`cancelled` 或 `superseded`。模型和规则可以建议完成，但长期目标关闭必须能表达用户最终确认。
+- 后续可引入 follow-up pool：把非阻塞增强从当前 Goal 中剥离，转为 goal-scoped 后续项，避免长期目标无限扩大。
+- 后续 Goal detail 可展开 Criteria / Evidence / Timeline / Budget / Closure，但在实现前，当前 GUI 仍以 Workspace Goal strip/detail 为准。
+- Workflow / Loop 后续可声明自己推进哪条 Goal criteria；Goal 仍只拥有目标与证据语义，不拥有 workflow op 或 loop trigger。
+
+这些边界用于保证后续增强不推翻当前已实现契约：Goal 是终点和完成证据，不是执行引擎，也不是持续调度器。

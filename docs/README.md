@@ -4,20 +4,15 @@
 
 ---
 
-## 规划与路线图
+## 规划归档
 
-> `docs/roadmap/` 放尚未完全实现、仍处在规划或方案设计阶段的路线图与 RFC；`docs/architecture/` 只放已经实现并稳定下来的最终技术架构。
+历史调研、RFC、计划方案、roadmap、review packet 和原始参考材料已按任务归档到本机 iCloud：
 
-| 文档 | 说明 |
-| --- | --- |
-| [Coding 能力强化总纲](roadmap/coding-capability-roadmap.md) | 面向 coding-first 的总体路线：调研线索、能力模型、动态 workflow / loop、阶段计划与验收指标；P6 已补 Campaign / Leaderboard / Corpus / Report / Continuous Gate 阶段规划 |
-| [通用场景层与 Domain Workflow 路线图](roadmap/general-domain-workflows.md) | P6 后续通用场景层规划；Phase 7.1-7.16 已落地 Domain Workflow Registry、General Evidence Model、Domain Context Retrieval、Domain Quality 领域复核、Domain Learning Loop、General Eval / Quality Gate、Domain Readiness、Artifact Export Guard 与 Connector Action Guard；Phase 8.1-8.4 已补 Domain Operational Gate、Connector E2E Gate、Domain Soak Report 与 Workspace 通用任务工作台 |
-| [Coding Eval 体系方案](roadmap/coding-eval.md) | Phase 0 评测体系 + Phase 5.1-6.1 task scorer / agent execution / Gold Task Pack / gates / Benchmark Run Center 索引；P6 后续跟踪真实 benchmark 产品化 |
-| [Coding Eval 首批 Gold Tasks](roadmap/coding-eval-tasks.md) | 首批 20 个 coding eval 任务；20 个 active 任务均已进入自动化 Gold Task Pack |
-| [Coding Eval Phase 0 完成报告](roadmap/coding-eval-phase0-report.md) | Phase 0 完成审计：5 个校准试跑、schema 修订、失败分类补充与 Phase 1 决策 |
-| [ToolDefinition v2 RFC](roadmap/tool-definition-v2.md) | Phase 1 工具元数据、tool_search v2、deferred 默认策略和 prompt render debug 设计 |
-| [ToolDefinition v2 迁移 Checklist](roadmap/tool-definition-v2-checklist.md) | Phase 1 工具覆盖、默认 deferred 清单和验收状态 |
-| [Goal-driven Workflow v2 路线图](roadmap/goal-driven-workflow-v2.md) | Goal-driven Workflow 增强路线：Evidence v2、Goal detail、Evaluator v2、budget v2、Loop/Worktree/LSP/Review 接入 |
+```text
+/Users/shiwenwen/Library/Mobile Documents/com~apple~CloudDocs/HopeAI/Hope Agent/Plans/hope-agent-control-plane-plans-2026-07-05
+```
+
+仓库内 `docs/architecture/` 只保留已经实现并稳定下来的最终技术架构。重要设计决策已经沉淀到对应 architecture 文档的实现契约、非目标或后续边界中；新的规划材料应先进入外部 Plans 归档，待实现稳定后再同步到 architecture。
 
 
 ---

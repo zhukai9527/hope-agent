@@ -2,7 +2,7 @@
 
 > 返回 [技术文档索引](../README.md)
 >
-> 状态：Phase 6.6 已实现。本文只记录已经落地的自动化评测层；人工 gold task 体系仍见 [Coding Eval 体系方案](../roadmap/coding-eval.md)。
+> 状态：Phase 6.6 已实现。本文只记录已经落地的自动化评测层；人工 gold task 体系的职责边界见本文“与人工 Coding Eval 的关系”。
 
 ## 目标
 
@@ -379,7 +379,7 @@ Harness 输出 `FixtureReport`：
 
 ## 与人工 Coding Eval 的关系
 
-Phase 0 的 `docs/roadmap/coding-eval*.md` 仍然负责真实任务质量：
+人工 Gold Task 层负责真实任务质量：
 
 - 任务是否真实。
 - Agent 是否理解需求。
