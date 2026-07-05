@@ -148,7 +148,9 @@
     "reattach": "Voltar ao painel",
     "refresh": "Atualizar",
     "snapshot": "Captura",
-    "versions": "Histórico de versões"
+    "versions": "Histórico de versões",
+    "panelTitle": "Tela",
+    "resizePanel": "Redimensionar painel de tela"
   },
   "channels": {
     "accountLabel": "Nome da conta",
@@ -304,7 +306,8 @@
       "refresh": "Atualizar agora",
       "resumeMirror": "Retomar espelho",
       "takeOver": "Assumir",
-      "takeOverHint": "Pausa a atualização de 1Hz enquanto você opera o Chrome"
+      "takeOverHint": "Pausa a atualização de 1Hz enquanto você opera o Chrome",
+      "resizePanel": "Redimensionar painel do navegador"
     },
     "asyncToolJobFallbackName": "Tarefa em segundo plano",
     "asyncToolJobNames": {
@@ -663,6 +666,29 @@
         "label": "Workspace Sandbox"
       },
       "menuLabel": "Sandbox"
+    },
+    "browserExtensionRequired": {
+      "nextAction": "Próxima ação: {{nextAction}}",
+      "openSettings": "Abra Configurações > Navegador para instalar ou ativar a extensão.",
+      "title": "Extensão do Chrome necessária"
+    },
+    "conversationEmpty": "Nenhuma mensagem nesta conversa",
+    "pendingCancelForceInsert": "Cancelar inserção desta rodada",
+    "pendingFallbackAfterReply": "Enviar após resposta",
+    "pendingFallbackAfterReplyTip": "O ponto de conclusão da ferramenta não foi encontrado e será enviado após o término da resposta atual.",
+    "pendingForceInsertTip": "Ele irá esperar até que a ferramenta que está sendo executada seja concluída e então inseri-la no modelo sem interromper a ferramenta atual.",
+    "pendingInserted": "inserido",
+    "pendingInsertedTip": "Ele foi inserido no modelo após a conclusão desta rodada de ferramentas.",
+    "pendingQueuedShort": "Na fila",
+    "pendingQueuedTip": "Ele foi adicionado à fila de espera e será enviado após o término da resposta atual.",
+    "pendingQueueTitle": "Para ser enviado",
+    "pendingWaitingToolBoundary": "Aguarde o ponto de conclusão da ferramenta",
+    "pendingWaitingToolBoundaryTip": "Aguarde até que a última chamada da ferramenta seja concluída; caso a ferramenta não seja mais convocada nesta rodada, ela será enviada após a conclusão da resposta.",
+    "processNotification": "processo finalizado",
+    "rightPanel": {
+      "collapse": "Recolher painel direito",
+      "expand": "Expandir painel direito",
+      "switch": "Alternar painel direito"
     }
   },
   "codexAuth": {
@@ -701,7 +727,12 @@
     "testing": "Testando...",
     "create": "Criar",
     "clear": "Limpar",
-    "on": "Ligado"
+    "on": "Ligado",
+    "available": "Disponível",
+    "collapse": "fechar",
+    "expand": "Expandir",
+    "retry": "Tentar novamente",
+    "unavailable": "Indisponível"
   },
   "context": {
     "ago": "atrás",
@@ -1187,7 +1218,9 @@
       "total": "Total",
       "trend": "Tendência de uso de tokens",
       "ttft": "TTFT",
-      "ttftTrend": "Tempo até o primeiro token (TTFT)"
+      "ttftTrend": "Tempo até o primeiro token (TTFT)",
+      "inputTokens": "Tokens de entrada",
+      "outputTokens": "Tokens de saída"
     },
     "tool": {
       "avgDuration": "Duração média",
@@ -1345,7 +1378,23 @@
     "noDiffData": "Sem dados de diff",
     "openDiff": "Abrir diff",
     "resizePanel": "Redimensionar painel de diff",
-    "title": "Alterações de arquivo"
+    "title": "Alterações de arquivo",
+    "actionCreate": "criar",
+    "actionDelete": "excluir",
+    "actionEdit": "Revisar",
+    "copyLocation": "Copiar localização atual",
+    "expandHiddenLines": "Expanda a linha {{count}} com conteúdo inalterado",
+    "ignoreWhitespace": "Ignorar alterações de espaço em branco",
+    "locationCopied": "Segmentação copiada",
+    "locationCopyFailed": "Falha no posicionamento da cópia",
+    "matchingFiles": "Arquivos {{shown}}/{{total}}",
+    "nextHunk": "Próxima mudança",
+    "noMatchingFiles": "Nenhum arquivo correspondente",
+    "openLocation": "Visualizar a linha atual",
+    "prevHunk": "Última alteração",
+    "renderMore": "Mostrar linhas {{count}} restantes",
+    "searchFiles": "Pesquisar arquivos",
+    "toggleContext": "Recolher contexto inalterado"
   },
   "effort": {
     "high": "Alto",
@@ -2165,7 +2214,8 @@
     "submittingPlan": "Enviando plano…",
     "toggleLabel": "Plano",
     "versionHistory": "Versões do plano",
-    "versions": "Histórico de versões"
+    "versions": "Histórico de versões",
+    "resizePanel": "Redimensionar painel do plano"
   },
   "project": {
     "addProject": "Adicionar projeto",
@@ -2247,7 +2297,8 @@
     "knowledge": {
       "label": "Espaços de conhecimento",
       "hint": "Os espaços anexados permitem que os chats deste projeto pesquisem e citem suas notas."
-    }
+    },
+    "projectEmojiPlaceholder": "Opcional"
   },
   "provider": {
     "addProvider": "Adicionar Provedor",
@@ -2434,7 +2485,13 @@
       "days": "Últimos {{n}} dias",
       "incremental": "Desde o último relatório"
     },
-    "selectReport": "Selecione um relatório no menu de histórico."
+    "selectReport": "Selecione um relatório no menu de histórico.",
+    "chatCard": {
+      "missingId": "O ID do relatório de recapitulação está ausente.",
+      "open": "Abrir recapitulação",
+      "title": "Relatório de recapitulação",
+      "waiting": "Aguardando o progresso da recapitulação..."
+    }
   },
   "settings": {
     "about": "Sobre",
@@ -3398,7 +3455,11 @@
         "knowledgeGap": "Lacunas de conhecimento",
         "autoTag": "Auto-etiqueta",
         "mocUpkeep": "Manutenção de MOC",
-        "memoryToNote": "Memória → nota"
+        "memoryToNote": "Memória → nota",
+        "sourceCompile": "Fonte para nota",
+        "sourceConflict": "Source conflicts",
+        "openQuestionsMoc": "Open Questions MOC",
+        "forAgentSummary": "For Agent summaries"
       }
     },
     "knowledgePassiveRecall": {
@@ -4920,7 +4981,30 @@
     "webSearchRecommended": "Recomendado",
     "webSearchSaved": "Salvo",
     "webSearchTimeout": "Timeout (segundos)",
-    "webSearchTimeoutDesc": "Timeout HTTP para requisições de pesquisa (5-120 s)"
+    "webSearchTimeoutDesc": "Timeout HTTP para requisições de pesquisa (5-120 s)",
+    "knowledgeCompile": {
+      "agent": "Agente de organização de fontes",
+      "agentDefault": "Usar agente padrão global",
+      "agentDesc": "Agente usado para transformar fontes em sugestões de notas revisáveis. Quando não definido, herda o agente padrão global."
+    },
+    "knowledgeMediaRetention": {
+      "saved": "Salvo",
+      "title": "Retenção da mídia original",
+      "description": "Opcionalmente mantenha os originais importados de áudio, vídeo e imagem para revisar evidências das fontes.",
+      "maxTotal": "Cota total (MiB)",
+      "maxSource": "Por fonte (MiB)",
+      "thumbnail": "Maior lado da miniatura (px)",
+      "prune": "Remover mídias mais antigas ao exceder a cota",
+      "pruneDesc": "Quando um novo arquivo retido excederia a cota, remova os originais retidos mais antigos antes de ignorar o novo arquivo."
+    },
+    "serverKnowledgeAgentReadToken": "Token de leitura do Knowledge Agent",
+    "serverKnowledgeAgentReadTokenPlaceholder": "Deixe vazio para desativar o acesso de agent somente leitura",
+    "serverKnowledgeAgentReadTokenDesc": "Token com escopo para agents externos. Ele só funciona quando uma API key owner também está configurada; então só pode chamar endpoints somente leitura do knowledge agent e nunca concede acesso à API owner.",
+    "devVisualTest": "Teste de animação de UI",
+    "permLoading": "Verificando permissões...",
+    "uiEffects": "Animação de fundo",
+    "uiEffectsDesc": "Ative a vinculação de plano de fundo para qualquer clima e efeitos climáticos",
+    "uiEffectsToggle": "Ativar efeito"
   },
   "shortcuts": {
     "actionOpenSettings": "Abrir configurações",
@@ -4941,7 +5025,18 @@
       "draftCreated": "Habilidade de rascunho criada automaticamente: {{name}}. Clique para revisar.",
       "review": "Revisar",
       "unnamedSkill": "(habilidade sem nome)"
-    }
+    },
+    "chatFork": {
+      "completed": "Concluído. O resultado foi injetado neste chat.",
+      "error": "Fracassado.",
+      "killed": "Cancelado.",
+      "missingRunId": "O ID da execução da habilidade está faltando.",
+      "running": "O subagente de habilidade está em execução. O resultado será injetado aqui.",
+      "spawning": "Iniciando subagente de habilidade...",
+      "timeout": "Tempo limite esgotado.",
+      "title": "Habilidade {{skill}}"
+    },
+    "defaultName": "habilidade"
   },
   "slashCommands": {
     "agent": {
@@ -5074,7 +5169,15 @@
       "spawning": "Iniciando",
       "timeout": "Tempo esgotado"
     },
-    "viewChildSession": "Abrir sessão do sub-agente"
+    "viewChildSession": "Abrir sessão do sub-agente",
+    "agentId": "ID do agente",
+    "childSessionId": "Sessão infantil",
+    "duration": "Duração",
+    "model": "Modelo",
+    "openSession": "Sessão aberta",
+    "runId": "ID de execução",
+    "task": "Tarefa",
+    "tokens": "Fichas"
   },
   "team": {
     "active": "Ativo",
@@ -5111,7 +5214,23 @@
     "todo": "A fazer",
     "totalTokens": "Uso de Token",
     "viewSession": "Ver sessão",
-    "worker": "Executor"
+    "worker": "Executor",
+    "loading": "Carregando...",
+    "messagePlaceholder": "Equipe de mensagens... (@nome para DM)",
+    "noTasks": "Nenhuma tarefa",
+    "panelTitle": "Equipe",
+    "resizePanel": "Redimensionar painel da equipe",
+    "role": {
+      "lead": "Liderar",
+      "reviewer": "Revisor",
+      "worker": "Trabalhador"
+    },
+    "tab": {
+      "dashboard": "Painel",
+      "messages": "Mensagens",
+      "tasks": "Tarefas"
+    },
+    "view": "Ver"
   },
   "theme": {
     "auto": "Automático",
@@ -5156,7 +5275,8 @@
     "execPanel": {
       "noOutput": "无输出",
       "running": "运行中...",
-      "title": "Shell"
+      "title": "Shell",
+      "asyncStarted": "Tarefa em segundo plano iniciada"
     },
     "find": "Encontrar arquivos",
     "get_settings": "Obter configuração",
@@ -5429,7 +5549,10 @@
         "noWorkingDir": "No dir",
         "nonGit": "Non-Git",
         "unknown": "Unknown"
-      }
+      },
+      "gitDiffFailed": "Falha na leitura da comparação do Git",
+      "loadingDiff": "Ler diferença",
+      "noTextDiff": "Nenhum texto para exibir a diferença"
     },
     "action": {
       "create": "Novo",
@@ -5577,6 +5700,16 @@
     "moveToTitle": "Mover \"{{name}}\" para…",
     "rootFolder": "Raiz",
     "remoteWritesDisabled": "A gravação remota de arquivos está desativada. Ative em Configurações → Servidor → Permitir gravações remotas de arquivos (no host do servidor).",
+    "externalRawSync": "Espelho externo de snapshots de fontes",
+    "externalRawSyncHint": "Copie os snapshots de texto de fontes gerenciados pelo Hope para este vault. Arquivos originais de áudio, vídeo e imagem não são espelhados.",
+    "externalRawSyncDisabled": "Desativado",
+    "externalRawSyncRaw": "raw/",
+    "externalRawSyncSources": "sources/",
+    "externalRawSyncExistingHint": "Snapshots existentes só são sincronizados quando você executa aqui; futuras importações sincronizam automaticamente.",
+    "externalRawSyncNow": "Sincronizar agora",
+    "externalRawSyncPartial": "{{synced}} snapshots sincronizados; {{failed}} falharam.",
+    "externalRawSyncDone": "{{count}} snapshots de fontes sincronizados",
+    "externalRawSyncFailed": "Não foi possível sincronizar os snapshots de fontes",
     "retrievalSettings": "Configurações de recuperação",
     "reindexing": "Reindexando…",
     "reindexDone": "Índice reconstruído",
@@ -5610,6 +5743,7 @@
       "runFailed": "Não foi possível executar a manutenção",
       "applyFailed": "Não foi possível aplicar a sugestão",
       "rejectFailed": "Não foi possível dispensar a sugestão",
+      "compileQueued": "Revisão gerada da fonte à nota. Verifique o painel de sugestões de notas para diferenças.",
       "kind": {
         "auto_link": "Vincular",
         "orphan_rescue": "Resgate",
@@ -5618,8 +5752,22 @@
         "knowledge_gap": "Lacuna",
         "auto_tag": "Etiqueta",
         "moc_upkeep": "MOC",
-        "memory_to_note": "Memória"
-      }
+        "memory_to_note": "Memória",
+        "source_compile": "Organizar",
+        "source_conflict": "Conflict",
+        "open_questions_moc": "Questions",
+        "for_agent_summary": "Summary"
+      },
+      "evidenceCoverage": "Cobertura de evidências",
+      "evidenceCoverageDetail": "{{pct}}% · Reivindicações {{claimsWithEvidence}}/{{claims}} · Notas {{notesWithEvidence}}/{{notes}}",
+      "evidenceRebuildFailed": "Não foi possível reconstruir o índice de evidências",
+      "evidenceRebuilt": "Índice de evidências reconstruído para notas {{notes}}, referências {{refs}}, reivindicações {{claims}}",
+      "missingEvidence": "Evidências ausentes",
+      "missingRefs": "Faltam árbitros",
+      "needsReview": "Precisa de revisão",
+      "rebuildEvidenceTip": "Reconstrua o índice de evidências derivado",
+      "schemaIssues": "Problemas de esquema",
+      "staleRefs": "Referências obsoletas"
     },
     "graph": {
       "toggle": "Vista de grafo",
@@ -5647,6 +5795,188 @@
     "allowExternalWritesHint": "Cofres externos são somente leitura por padrão. Ative para permitir que o editor e as ferramentas de IA gravem na pasta vinculada. A manutenção em segundo plano nunca grava em cofres externos.",
     "result": {
       "memory": "Memória"
+    },
+    "compile": {
+      "applied": "Proposta aplicada",
+      "apply": "Aplicar",
+      "applyFailed": "Não foi possível aplicar a proposta",
+      "cancel": "Cancelar",
+      "cancelFailed": "Não foi possível cancelar a execução",
+      "cancelled": "Execução da fonte à nota cancelada",
+      "description": "Os rascunhos de IA observam mudanças de fontes selecionadas. Revise a diferença antes de escrever qualquer coisa.",
+      "empty": "Selecione uma proposta para analisar",
+      "emptyHint": "As propostas geradas permanecem aqui até que você as aplique ou rejeite.",
+      "failed": "Falha na execução da fonte para nota",
+      "loadFailed": "Não foi possível carregar execuções de origem para nota",
+      "noProposals": "Não há propostas para esta corrida.",
+      "noRuns": "Nenhuma execução de fonte para nota ainda.",
+      "proposals": "Propostas",
+      "proposalsLoadFailed": "Não foi possível carregar as propostas",
+      "refresh": "Atualizar",
+      "reject": "Rejeitar",
+      "rejectFailed": "Não foi possível rejeitar a proposta",
+      "rejected": "Proposta rejeitada",
+      "runPending": "Execução da fonte para a nota pendente",
+      "runSources": "Fonte(s) {{count}}",
+      "running": "Organizando fontes em notas…",
+      "runs": "Corre",
+      "startFailed": "Não foi possível organizar as fontes em notas",
+      "startSelected": "Organizar {{count}}",
+      "started": "Sugestões de notas {{n}} geradas",
+      "title": "Organize em notas"
+    },
+    "sources": {
+      "archiveAttachment": "Arquivar para conhecimento",
+      "archiveAttachmentFailed": "Falha ao arquivar o anexo",
+      "archivedAttachment": "Arquivado em fontes de conhecimento",
+      "browser": "Navegador",
+      "browserAuto": "Automático",
+      "browserPage": "Página",
+      "browserSelection": "Seleção",
+      "chooseFile": "Escolha os arquivos",
+      "comparePrevious": "Comparar anterior",
+      "compileOne": "Organize em nota",
+      "compileSelected": "Organize os selecionados em notas",
+      "compiled": "Organizado",
+      "compiledClaims": "Observe as reivindicações usando esta fonte",
+      "currentVersion": "Atual",
+      "delete": "Excluir",
+      "deleteBody": "Excluir {{name}} da caixa de entrada de origem bruta?",
+      "deleteFailed": "Não foi possível excluir a fonte",
+      "deleteTitle": "Excluir fonte",
+      "deleted": "Fonte excluída",
+      "diffFailed": "Não foi possível carregar a diferença de origem",
+      "diffTruncated": "Visualização truncada",
+      "dismissSimilar": "Ignorar",
+      "downloadOriginal": "Baixar original",
+      "empty": "Nenhuma fonte ainda.",
+      "evidenceSources": "Fontes",
+      "externalRawPath": "Instantâneo externo",
+      "file": "Arquivo",
+      "import": "Fonte de importação",
+      "importAction": "Importar",
+      "importDesc": "Adicione matéria-prima a este espaço de conhecimento.",
+      "importFailed": "Não foi possível importar a origem",
+      "importHistory": "Histórico de importação",
+      "importHistoryFailed": "Não foi possível abrir o histórico de importação",
+      "importRunDeduped": "{{imported}} importado, duplicado {{duplicate}} ignorado",
+      "importRunPartial": "{{imported}} importado, duplicado {{duplicate}} ignorado, {{failed}} com falha",
+      "importRunStarted": "Importação iniciada para fontes {{count}}",
+      "imported": "Fonte importada",
+      "importedCount": "Fontes {{count}} importadas",
+      "keepSource": "Mantenha {{name}}",
+      "loadTargetsFailed": "Falha ao carregar espaços de conhecimento",
+      "loading": "Carregando…",
+      "loadingClaims": "Carregando índice de evidências...",
+      "loadingDiff": "Carregando diferenças...",
+      "mediaRetained": "Mídia retida",
+      "missingSource": "Fonte ausente",
+      "moreClaims": "+{{count}} mais reivindicações",
+      "noCompiledClaims": "Nenhuma reivindicação de nota cita esta fonte ainda.",
+      "noImportRuns": "Nenhuma importação foi executada ainda.",
+      "noKb": "Selecione um espaço para ver as fontes.",
+      "noKnowledgeBase": "Nenhum espaço de conhecimento disponível",
+      "noLocalDuplicates": "Nenhuma fonte duplicada neste espaço para excluir",
+      "noSimilarGroups": "Nenhum grupo de origem semelhante.",
+      "open": "Abrir",
+      "openOriginal": "Abrir original",
+      "otherKb": "Outro espaço {{id}}",
+      "readFailed": "Não foi possível abrir o código-fonte",
+      "reextract": "Extrair novamente",
+      "reextractFailed": "Não foi possível extrair novamente a fonte",
+      "reextracted": "Fonte reextraída",
+      "refresh": "Atualizar",
+      "refreshChanged": "Fonte atualizada para v{{version}}",
+      "refreshFailed": "Não foi possível atualizar a fonte",
+      "refreshSource": "Atualizar instantâneo",
+      "refreshUnchanged": "A fonte já está atualizada",
+      "resolveSimilarConfirm": "Manter {{name}} e excluir fontes duplicadas {{count}} deste espaço?",
+      "retainedMedia": "Mídia retida",
+      "retryFailed": "Não foi possível tentar novamente as importações com falha",
+      "retryFailedAction": "Falha na nova tentativa",
+      "selectImportRun": "Selecione uma execução de importação.",
+      "selectKnowledgeBase": "Selecione o espaço de conhecimento",
+      "similarCount": "Grupos semelhantes {{count}}",
+      "similarDismissFailed": "Não foi possível ocultar a sugestão de similaridade",
+      "similarDismissed": "Sugestão de similaridade oculta",
+      "similarGroups": "Fontes semelhantes",
+      "similarResolveFailed": "Não foi possível resolver fontes duplicadas",
+      "similarResolved": "Fonte(s) duplicada(s) {{count}} excluída(s)",
+      "sourceDiff": "Diferença de origem",
+      "staleSource": "Fonte alterada depois de organizada",
+      "supersededSource": "Versão de origem mais recente disponível",
+      "text": "Texto",
+      "textPlaceholder": "Colar o texto fonte…",
+      "thumbnailOnly": "Somente miniatura",
+      "title": "Fontes",
+      "titlePlaceholder": "Título",
+      "uncompiled": "Não organizado",
+      "url": "URL",
+      "urlKindAudio": "Transcrição de áudio",
+      "urlKindImage": "OCR de imagem",
+      "urlKindPage": "Página da web",
+      "urlKindVideo": "Transcrição do vídeo",
+      "versionHistory": "Histórico de versões",
+      "versionHistoryDesc": "Instantâneos arquivados {{count}}. Atual: {{current}}",
+      "versionsFailed": "Não foi possível carregar as versões de origem",
+      "itemStatus": {
+        "duplicate": "Duplicar",
+        "failed": "Falha",
+        "imported": "Importado",
+        "pending": "Pendente",
+        "running": "Correndo"
+      },
+      "kind": {
+        "audioTranscript": "Transcrição de áudio",
+        "browserSnapshot": "Navegador",
+        "docx": "DOCX",
+        "imageOcr": "OCR de imagem",
+        "markdown": "Markdown",
+        "pdf": "PDF",
+        "text": "Texto",
+        "urlSnapshot": "URL",
+        "videoTranscript": "Transcrição do vídeo"
+      },
+      "runStatus": {
+        "completed": "Concluído",
+        "completedWithErrors": "Concluído com erros",
+        "failed": "Falha",
+        "running": "Correndo"
+      },
+      "similarKind": {
+        "exactDuplicate": "Duplicata exata",
+        "similar": "Semelhante"
+      },
+      "similarScope": {
+        "crossKb": "Espaço cruzado",
+        "sameKb": "Este espaço"
+      }
+    },
+    "queryFile": {
+      "action": "Arquivo",
+      "applied": "Arquivado no espaço de conhecimento",
+      "apply": "Aplicar",
+      "applyFailed": "Não foi possível aplicar o arquivamento",
+      "description": "Crie uma comparação de revisão antes de escrever.",
+      "empty": "Escolha onde esta resposta deve chegar.",
+      "generateFailed": "Não foi possível criar a proposta de arquivamento",
+      "reject": "Rejeitar",
+      "rejected": "Arquivo descartado",
+      "rejectFailed": "Não foi possível descartar o arquivamento",
+      "review": "Revisão",
+      "title": "Resposta do arquivo",
+      "titlePlaceholder": "Título",
+      "mode": {
+        "createNote": "Nova nota",
+        "updateCurrentNote": "Atualizar nota atual",
+        "appendToMoc": "Adicionar ao MOC",
+        "openQuestions": "Perguntas abertas"
+      },
+      "defaultTitle": "Conversa arquivada",
+      "currentNotePlaceholder": "Caminho da nota atual",
+      "openQuestionsPlaceholder": "Nota com perguntas abertas",
+      "mocPlaceholder": "MOCs/Conversation Filings.md",
+      "createNotePlaceholder": "Filed Conversations/example.md"
     }
   },
   "backgroundJobs": {
@@ -5672,6 +6002,26 @@
       "interrupted": "Interrompida",
       "timed_out": "Tempo esgotado",
       "cancelled": "Cancelada"
+    },
+    "errorOutput": "erro",
+    "liveOutput": "saída em tempo real",
+    "outputFile": "resultados completos",
+    "resultPreview": "Visualização dos resultados"
+  },
+  "browser": {
+    "panelTitle": "Navegador"
+  },
+  "error": {
+    "appCrash": "Algo deu errado",
+    "retry": "Tente novamente",
+    "unknown": "Ocorreu um erro inesperado"
+  },
+  "localModels": {
+    "actions": {
+      "download": "Baixar"
     }
+  },
+  "macControl": {
+    "panelTitle": "Controle Mac"
   }
 }

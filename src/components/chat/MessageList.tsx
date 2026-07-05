@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { useTranslation } from "react-i18next"
 import { ArrowDown, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -77,6 +85,7 @@ interface MessageListProps {
   ) => void
   onResume?: (message: string) => void
   onAddQuickPrompt?: (content: string) => void
+  renderMessageActions?: (msg: Message, index: number) => ReactNode
   displayMode?: ChatDisplayMode
   autoCollapseCompletedTurns?: boolean
 }
@@ -628,6 +637,7 @@ export default function MessageList({
   onOpenDiff,
   onResume,
   onAddQuickPrompt,
+  renderMessageActions,
   displayMode = "bubble",
   autoCollapseCompletedTurns = true,
 }: MessageListProps) {
@@ -1544,6 +1554,7 @@ export default function MessageList({
                       : undefined
                   }
                 />
+                {renderMessageActions?.(msg, originalIndex)}
               </div>
             )
           })}
