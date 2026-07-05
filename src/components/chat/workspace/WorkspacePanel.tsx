@@ -3032,8 +3032,19 @@ type DomainAcceptanceCoverageSummary = {
   requiredTotal: number
   requirements: DomainAcceptanceRequirement[]
   sampleLanes: DomainAcceptanceSampleLane[]
+  provenance: DomainAcceptanceProvenanceSummary
   tone: StatusTone
   gaps: DomainAcceptanceGap[]
+}
+
+type DomainAcceptanceProvenanceSummary = {
+  total: number
+  workflow: number
+  connector: number
+  fixtureOrMock: number
+  manual: number
+  publicSource: number
+  restrictedAccess: number
 }
 
 type DomainAcceptanceRequirement = {
@@ -3098,6 +3109,65 @@ type DomainAcceptanceReviewGate = {
 
 const DOMAIN_ACCEPTANCE_FRESH_SAMPLE_MAX_AGE_SECS = 7 * 24 * 60 * 60
 
+function domainAcceptanceProvenanceSummary(
+  evidence: DomainEvidenceItem[],
+): DomainAcceptanceProvenanceSummary {
+  const summary: DomainAcceptanceProvenanceSummary = {
+    total: evidence.length,
+    workflow: 0,
+    connector: 0,
+    fixtureOrMock: 0,
+    manual: 0,
+    publicSource: 0,
+    restrictedAccess: 0,
+  }
+  for (const item of evidence) {
+    const metadata = asRecord(item.sourceMetadata) ?? {}
+    const metadataText = JSON.stringify(metadata).toLowerCase()
+    const evidenceType = item.evidenceType.toLowerCase()
+    const accessScope = item.accessScope.toLowerCase()
+    if (metadataText.includes("workflow") || metadataText.includes("runid")) {
+      summary.workflow += 1
+    }
+    if (
+      evidenceType.startsWith("connector") ||
+      accessScope === "connector" ||
+      metadataText.includes("connector") ||
+      metadataText.includes("gmail") ||
+      metadataText.includes("calendar") ||
+      metadataText.includes("drive")
+    ) {
+      summary.connector += 1
+    }
+    if (
+      metadataText.includes("fixture") ||
+      metadataText.includes("mock") ||
+      metadataText.includes("deterministic")
+    ) {
+      summary.fixtureOrMock += 1
+    }
+    if (
+      evidenceType === "user_decision" ||
+      evidenceType === "artifact_reviewed" ||
+      evidenceType === "message_draft_approved" ||
+      metadataText.includes("confirmation") ||
+      metadataText.includes("explicituserapproval")
+    ) {
+      summary.manual += 1
+    }
+    if (evidenceType === "source_cited" && accessScope === "public") {
+      summary.publicSource += 1
+    }
+    if (
+      accessScope !== "public" ||
+      (item.redactionStatus && item.redactionStatus !== "none" && item.redactionStatus !== "clean")
+    ) {
+      summary.restrictedAccess += 1
+    }
+  }
+  return summary
+}
+
 function domainAcceptanceCoverageSummary(
   t: ReturnType<typeof useTranslation>["t"],
   args: {
@@ -3113,6 +3183,7 @@ function domainAcceptanceCoverageSummary(
   for (const item of args.evidence) {
     if (item.domain) domains.add(item.domain)
   }
+  const provenance = domainAcceptanceProvenanceSummary(args.evidence)
   if (args.exportGuard?.scope?.domain) domains.add(args.exportGuard.scope.domain)
   if (args.connectorGuard?.scope?.domain) domains.add(args.connectorGuard.scope.domain)
   if (args.connectorE2eGate?.scope?.domain) domains.add(args.connectorE2eGate.scope.domain)
@@ -3659,6 +3730,7 @@ function domainAcceptanceCoverageSummary(
     requiredTotal,
     requirements,
     sampleLanes,
+    provenance,
     tone,
     gaps: sortedGaps.slice(0, 3),
   }
@@ -3946,6 +4018,25 @@ function domainAcceptanceReviewProtocolLines(
   ].map((line) => `- ${line}`)
 }
 
+function domainAcceptanceProvenanceText(
+  t: ReturnType<typeof useTranslation>["t"],
+  provenance: DomainAcceptanceProvenanceSummary,
+): string {
+  return t(
+    "workspace.domainWorkbench.acceptanceProvenanceText",
+    "evidence {{total}} · workflow {{workflow}} · connector {{connector}} · fixture/mock {{fixture}} · manual {{manual}} · public {{public}} · restricted {{restricted}}",
+    {
+      total: provenance.total,
+      workflow: provenance.workflow,
+      connector: provenance.connector,
+      fixture: provenance.fixtureOrMock,
+      manual: provenance.manual,
+      public: provenance.publicSource,
+      restricted: provenance.restrictedAccess,
+    },
+  )
+}
+
 function domainAcceptanceSnapshotId(
   summary: DomainAcceptanceCoverageSummary,
   context?: DomainAcceptanceReviewContext,
@@ -3990,6 +4081,7 @@ function domainAcceptanceSnapshotId(
     `requirements=${summary.requirements
       .map((requirement) => `${requirement.key}:${requirement.passed ? 1 : 0}:${requirement.tone}`)
       .join("|")}`,
+    `provenance=${summary.provenance.total}:${summary.provenance.workflow}:${summary.provenance.connector}:${summary.provenance.fixtureOrMock}:${summary.provenance.manual}:${summary.provenance.publicSource}:${summary.provenance.restrictedAccess}`,
     `lanes=${summary.sampleLanes
       .map((lane) => `${lane.key}:${lane.passed ? 1 : 0}:${lane.tone}`)
       .join("|")}`,
@@ -4123,6 +4215,7 @@ function domainAcceptancePlanTaskContent(
     `${t("workspace.domainWorkbench.acceptancePlanStatus", "状态")}：${domainAcceptanceStatusLabel(t, summary)}`,
     `${t("workspace.domainWorkbench.acceptanceVerdict", "验收结论")}：${verdict.label} - ${verdict.detail}`,
     `${t("workspace.domainWorkbench.acceptanceEvidenceLevel", "证据等级")}：${evidenceLevel.label} - ${evidenceLevel.detail}`,
+    `${t("workspace.domainWorkbench.acceptanceProvenance", "来源分布")}：${domainAcceptanceProvenanceText(t, summary.provenance)}`,
     `${t("workspace.domainWorkbench.acceptancePlanProgress", "验收进度")}：${summary.readinessPercent}% (${summary.requiredPassed}/${summary.requiredTotal})`,
     `${t("workspace.domainWorkbench.acceptancePlanDomains", "领域")}：${domains}`,
     `${t("workspace.domainWorkbench.acceptancePlanRecords", "控制面记录")}：${summary.controlRecords}`,
@@ -4389,6 +4482,7 @@ function domainAcceptanceReviewMarkdown(
     `${t("workspace.domainWorkbench.acceptancePlanStatus", "状态")}：${domainAcceptanceStatusLabel(t, summary)}`,
     `${t("workspace.domainWorkbench.acceptanceVerdict", "验收结论")}：${verdict.label} - ${verdict.detail}`,
     `${t("workspace.domainWorkbench.acceptanceEvidenceLevel", "证据等级")}：${evidenceLevel.label} - ${evidenceLevel.detail}`,
+    `${t("workspace.domainWorkbench.acceptanceProvenance", "来源分布")}：${domainAcceptanceProvenanceText(t, summary.provenance)}`,
     `${t("workspace.domainWorkbench.acceptancePlanProgress", "验收进度")}：${summary.readinessPercent}% (${summary.requiredPassed}/${summary.requiredTotal})`,
     `${t("workspace.domainWorkbench.acceptancePlanDomains", "领域")}：${domains}`,
     `${t("workspace.domainWorkbench.acceptancePlanRecords", "控制面记录")}：${summary.controlRecords}`,
@@ -4543,6 +4637,15 @@ function DomainAcceptanceCoverageCard({
         </span>
         <StatusPill label={evidenceLevel.label} tone={evidenceLevel.tone} />
         <span className="min-w-0 flex-1 text-muted-foreground/75">{evidenceLevel.detail}</span>
+      </div>
+      <div className="mt-2 flex min-w-0 items-start gap-1.5 text-[10px]">
+        <GitBranch className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 font-medium text-muted-foreground">
+          {t("workspace.domainWorkbench.acceptanceProvenance", "来源分布")}
+        </span>
+        <span className="min-w-0 flex-1 text-muted-foreground/75">
+          {domainAcceptanceProvenanceText(t, summary.provenance)}
+        </span>
       </div>
       <div className="mt-2 flex min-w-0 items-start gap-1.5 text-[10px]">
         <Shield className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
