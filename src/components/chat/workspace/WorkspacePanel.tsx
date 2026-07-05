@@ -482,6 +482,15 @@ type DomainArtifactReviewTarget = {
   guardStatus?: string | null
 }
 
+type DomainQualityReviewEvidenceTarget = {
+  label: string
+  title?: string | null
+  kind?: string | null
+  path?: string | null
+  id?: string | null
+  evidenceScope?: Record<string, unknown> | null
+}
+
 const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
   good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
@@ -5174,6 +5183,60 @@ function domainQualityEvidenceScopeView(
   }
 }
 
+function domainQualityReviewEvidenceTarget(
+  run: DomainQualityRunSnapshot["run"],
+): DomainQualityReviewEvidenceTarget | null {
+  const stats = asRecord(run.stats)
+  const artifact = asRecord(stats?.artifact)
+  const source = asRecord(stats?.source)
+  const evidenceScope = asRecord(stats?.evidenceScope)
+  const target = asRecord(evidenceScope?.target)
+  const title =
+    stringField(artifact, "title") ??
+    stringField(source, "artifactTitle") ??
+    stringField(target, "title")
+  const path = stringField(source, "artifactPath") ?? stringField(target, "path")
+  const kind =
+    stringField(artifact, "kind") ??
+    stringField(source, "artifactKind") ??
+    stringField(target, "kind")
+  const id = stringField(source, "artifactId") ?? stringField(target, "id")
+  const label = title ?? path ?? kind ?? id
+  if (!label) return null
+  return { label, title, kind, path, id, evidenceScope }
+}
+
+function domainQualityReviewEvidenceInput(
+  run: DomainQualityRunSnapshot["run"],
+  sessionId: string,
+  target: DomainQualityReviewEvidenceTarget,
+): RecordDomainEvidenceInput {
+  return {
+    sessionId,
+    domain: run.domain,
+    evidenceType: "artifact_reviewed",
+    title: `复核通过：${target.label}`,
+    summary: run.summary || null,
+    sourceMetadata: {
+      sourceType: "domain_quality",
+      domainQualityRunId: run.id,
+      qualityState: run.state,
+      templateId: run.templateId ?? null,
+      templateVersion: run.templateVersion ?? null,
+      artifactId: target.id ?? null,
+      artifactTitle: target.title ?? null,
+      artifactKind: target.kind ?? null,
+      artifactPath: target.path ?? null,
+      evidenceScope: target.evidenceScope ?? null,
+      reviewCompleted: true,
+      reviewedAt: run.completedAt ?? run.updatedAt,
+    },
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
 function DomainQualityCheckRow({ check }: { check: DomainQualityCheck }) {
   const { t } = useTranslation()
   const icon =
@@ -5229,6 +5292,7 @@ function DomainQualitySection({
 }) {
   const { t } = useTranslation()
   const [learningRunId, setLearningRunId] = useState<string | null>(null)
+  const [recordingReviewEvidence, setRecordingReviewEvidence] = useState(false)
   const ownedDomainQualityRunsState = useDomainQualityRuns(sessionId, {
     incognito,
     turnActive,
@@ -5262,6 +5326,7 @@ function DomainQualitySection({
   const active = running || latest?.state === "running"
   const disabled = !sessionId || incognito || active || loading
   const evidenceScopeView = latest ? domainQualityEvidenceScopeView(t, latest) : null
+  const reviewEvidenceTarget = latest ? domainQualityReviewEvidenceTarget(latest) : null
   const learning =
     learningRunId !== null && latest !== undefined && learningRunId === latest.id
   const canGenerateLearning =
@@ -5272,6 +5337,15 @@ function DomainQualitySection({
     latest.state !== "cancelled" &&
     !loading &&
     !learning
+  const canRecordReviewEvidence =
+    !!sessionId &&
+    !incognito &&
+    !!latest &&
+    latest.state === "completed" &&
+    !!reviewEvidenceTarget &&
+    !active &&
+    !loading
+  const recordReviewEvidenceDisabled = !canRecordReviewEvidence || recordingReviewEvidence
   const meta = active ? (
     <StatusPill label={t("workspace.domainQuality.running", "复核中")} tone="info" loading />
   ) : latest ? (
@@ -5353,6 +5427,41 @@ function DomainQualitySection({
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
       setLearningRunId(null)
+    }
+  }
+
+  const handleRecordReviewEvidence = async () => {
+    if (
+      !sessionId ||
+      !latest ||
+      !reviewEvidenceTarget ||
+      !canRecordReviewEvidence ||
+      recordingReviewEvidence
+    ) {
+      return
+    }
+    setRecordingReviewEvidence(true)
+    try {
+      const item = await getTransport().call<DomainEvidenceItem>("record_domain_evidence", {
+        input: domainQualityReviewEvidenceInput(latest, sessionId, reviewEvidenceTarget),
+      })
+      toast.success(
+        t("workspace.domainQuality.reviewEvidenceRecorded", "已记录复核证据：{{title}}", {
+          title: item.title,
+        }),
+      )
+      void refreshExportGuard()
+      void refreshConnectorGuard()
+    } catch (e) {
+      logger.error(
+        "ui",
+        "DomainQualitySection::recordReviewEvidence",
+        "Failed to record domain quality review evidence",
+        e,
+      )
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRecordingReviewEvidence(false)
     }
   }
 
@@ -5467,6 +5576,21 @@ function DomainQualitySection({
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 {latest.id.slice(0, 10)}
               </span>
+              {canRecordReviewEvidence ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRecordReviewEvidence()}
+                  disabled={recordReviewEvidenceDisabled}
+                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {recordingReviewEvidence ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3" />
+                  )}
+                  <span>{t("workspace.domainQuality.recordReviewEvidence", "记录复核证据")}</span>
+                </button>
+              ) : null}
             </div>
             <div className="mt-1 flex min-w-0 flex-wrap gap-1 pl-5">
               <StatusPill label={domainLabel(latest.domain)} tone="info" />

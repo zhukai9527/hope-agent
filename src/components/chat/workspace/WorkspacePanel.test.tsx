@@ -19,6 +19,7 @@ import type {
   DomainWorkflowDraft,
   DomainWorkflowTemplate,
   ManagedWorktree,
+  RecordDomainEvidenceInput,
   WorkspaceEnvironmentSnapshot,
 } from "@/lib/transport"
 import type { BackgroundJobSnapshot } from "@/types/background-jobs"
@@ -1732,6 +1733,108 @@ describe("WorkspacePanel domain quality section", () => {
 
     expect(await screen.findByText("产物证据")).toBeTruthy()
     expect(screen.getByText("Research brief · 2/5 条匹配")).toBeTruthy()
+  })
+
+  it("records completed artifact review evidence without bypassing export guards", async () => {
+    const snapshot = domainQualitySnapshot()
+    snapshot.run.stats = {
+      ...snapshot.run.stats,
+      artifact: {
+        title: "Research brief",
+        kind: "brief",
+      },
+      source: {
+        artifactPath: "/tmp/research.md",
+      },
+      evidenceScope: {
+        mode: "artifact_matched",
+        total: 5,
+        matched: 2,
+        target: {
+          title: "Research brief",
+          kind: "brief",
+          path: "/tmp/research.md",
+        },
+      },
+    }
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_domain_quality_runs") return Promise.resolve([snapshot.run])
+      if (name === "get_domain_quality_run") return Promise.resolve(snapshot)
+      if (name === "record_domain_evidence") {
+        const input = args?.input as RecordDomainEvidenceInput
+        return Promise.resolve({
+          id: "de-review",
+          goalId: input.goalId ?? null,
+          sessionId: input.sessionId ?? "s1",
+          projectId: null,
+          domain: input.domain,
+          evidenceType: input.evidenceType,
+          title: input.title,
+          summary: input.summary ?? null,
+          sourceMetadata: input.sourceMetadata ?? {},
+          confidence: input.confidence ?? null,
+          accessScope: input.accessScope ?? "session",
+          redactionStatus: input.redactionStatus ?? "none",
+          createdAt: "2026-01-01T00:05:00Z",
+          updatedAt: "2026-01-01T00:05:00Z",
+        } satisfies DomainEvidenceItem)
+      }
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      if (name === "get_coding_trend_report") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel({
+      workingDir: { path: null, source: "none", exists: false, name: null },
+      git: null,
+    })
+
+    await clickSectionHeader("领域复核")
+
+    fireEvent.click(await screen.findByRole("button", { name: "记录复核证据" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("record_domain_evidence", {
+        input: expect.objectContaining({
+          sessionId: "s1",
+          domain: "research",
+          evidenceType: "artifact_reviewed",
+          title: "复核通过：Research brief",
+          summary: "Research quality passed",
+          confidence: 1,
+          accessScope: "session",
+          redactionStatus: "none",
+        }),
+      })
+    })
+
+    const recordCall = transportMock.call.mock.calls.find(
+      ([name]) => name === "record_domain_evidence",
+    )
+    expect(recordCall).toBeTruthy()
+    const input = (recordCall?.[1] as { input: RecordDomainEvidenceInput }).input
+    expect(input.sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "domain_quality",
+        domainQualityRunId: "dq-1",
+        qualityState: "completed",
+        templateId: "research-brief",
+        templateVersion: "1.0.0",
+        artifactTitle: "Research brief",
+        artifactKind: "brief",
+        artifactPath: "/tmp/research.md",
+        reviewCompleted: true,
+        evidenceScope: expect.objectContaining({ mode: "artifact_matched" }),
+      }),
+    )
+    const sourceMetadata = input.sourceMetadata as Record<string, unknown>
+    expect(sourceMetadata.exportReview).toBeUndefined()
+    expect(sourceMetadata.exportReady).toBeUndefined()
+    expect(sourceMetadata.redactionChecked).toBeUndefined()
   })
 
   it("imports promoted domain eval proposals from the coding trend section", async () => {
