@@ -491,6 +491,8 @@ type DomainQualityReviewEvidenceTarget = {
   evidenceScope?: Record<string, unknown> | null
 }
 
+type DomainArtifactExportReviewMarker = "exportReview" | "exportReady" | "redactionChecked"
+
 const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
   good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
@@ -5237,6 +5239,121 @@ function domainQualityReviewEvidenceInput(
   }
 }
 
+function domainArtifactExportGuardArtifactLabel(
+  report: DomainArtifactExportGuardReport,
+): string {
+  return (
+    report.artifactTitle ??
+    report.artifactPath ??
+    report.artifactKind ??
+    report.scope.domain ??
+    "artifact"
+  )
+}
+
+function domainArtifactExportReviewMarkerLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  marker: DomainArtifactExportReviewMarker,
+): string {
+  switch (marker) {
+    case "exportReview":
+      return t("workspace.domainExportGuard.recordExportReview", "导出复核")
+    case "exportReady":
+      return t("workspace.domainExportGuard.recordExportReady", "可交付确认")
+    case "redactionChecked":
+      return t("workspace.domainExportGuard.recordRedactionChecked", "脱敏复核")
+  }
+}
+
+function domainArtifactExportReviewMarkerTitle(
+  t: ReturnType<typeof useTranslation>["t"],
+  marker: DomainArtifactExportReviewMarker,
+  artifactLabel: string,
+): string {
+  switch (marker) {
+    case "exportReview":
+      return t("workspace.domainExportGuard.exportReviewEvidenceTitle", "导出复核：{{artifact}}", {
+        artifact: artifactLabel,
+      })
+    case "exportReady":
+      return t("workspace.domainExportGuard.exportReadyEvidenceTitle", "可交付确认：{{artifact}}", {
+        artifact: artifactLabel,
+      })
+    case "redactionChecked":
+      return t(
+        "workspace.domainExportGuard.redactionCheckedEvidenceTitle",
+        "脱敏复核：{{artifact}}",
+        { artifact: artifactLabel },
+      )
+  }
+}
+
+function domainArtifactExportReviewMarkerSummary(
+  t: ReturnType<typeof useTranslation>["t"],
+  marker: DomainArtifactExportReviewMarker,
+): string {
+  switch (marker) {
+    case "exportReview":
+      return t(
+        "workspace.domainExportGuard.exportReviewEvidenceSummary",
+        "用户确认已完成最终交付复核。",
+      )
+    case "exportReady":
+      return t(
+        "workspace.domainExportGuard.exportReadyEvidenceSummary",
+        "用户确认该产物可以进入发送、分享或导出前的最终确认。",
+      )
+    case "redactionChecked":
+      return t(
+        "workspace.domainExportGuard.redactionCheckedEvidenceSummary",
+        "用户确认已检查脱敏状态；原始 pending/sensitive 证据仍需由守门重新计算。",
+      )
+  }
+}
+
+function domainArtifactExportReviewEvidenceInput(
+  report: DomainArtifactExportGuardReport,
+  sessionId: string,
+  marker: DomainArtifactExportReviewMarker,
+  t: ReturnType<typeof useTranslation>["t"],
+): RecordDomainEvidenceInput {
+  const artifactLabel = domainArtifactExportGuardArtifactLabel(report)
+  const sourceMetadata: Record<string, unknown> = {
+    sourceType: "artifact_export_guard_confirmation",
+    marker,
+    [marker]: true,
+    guardStatus: report.status,
+    guardGeneratedAt: report.generatedAt,
+    artifactPath: report.artifactPath ?? null,
+    artifactTitle: report.artifactTitle ?? null,
+    artifactKind: report.artifactKind ?? null,
+    reviewedEvidenceIds: report.evidenceRequiringReview.map((item) => item.id),
+    reviewReasons: report.evidenceRequiringReview.map((item) => item.reason),
+    blockers: report.blockers,
+  }
+  if (marker === "exportReview") {
+    sourceMetadata.export = { reviewed: true }
+  } else if (marker === "exportReady") {
+    sourceMetadata.export = { ready: true }
+  } else {
+    sourceMetadata.review = { redactionChecked: true }
+  }
+
+  return {
+    goalId: report.scope.goalId ?? null,
+    sessionId,
+    projectId: report.scope.projectId ?? null,
+    domain: report.scope.domain ?? "general",
+    evidenceType: "artifact_reviewed",
+    title: domainArtifactExportReviewMarkerTitle(t, marker, artifactLabel),
+    summary: domainArtifactExportReviewMarkerSummary(t, marker),
+    sourceMetadata,
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
 function DomainQualityCheckRow({ check }: { check: DomainQualityCheck }) {
   const { t } = useTranslation()
   const icon =
@@ -6016,6 +6133,8 @@ function DomainArtifactExportGuardPanel({
   const { t } = useTranslation()
   const [creatingTaskKey, setCreatingTaskKey] = useState<string | null>(null)
   const [reviewingArtifact, setReviewingArtifact] = useState(false)
+  const [recordingReviewMarker, setRecordingReviewMarker] =
+    useState<DomainArtifactExportReviewMarker | null>(null)
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const evidenceRequiringReview = report?.evidenceRequiringReview ?? []
@@ -6025,6 +6144,7 @@ function DomainArtifactExportGuardPanel({
     report?.artifactTitle || report?.artifactPath || report?.artifactKind || null
   const canReviewArtifact =
     Boolean(onReviewArtifact) && Boolean(artifactLabel) && Boolean(sessionId) && !disabled
+  const canRecordReviewMarker = Boolean(report) && Boolean(sessionId) && !disabled
 
   const reviewArtifact = async () => {
     if (!report || !onReviewArtifact || !canReviewArtifact || reviewingArtifact) return
@@ -6053,6 +6173,28 @@ function DomainArtifactExportGuardPanel({
       toast.error(message)
     } finally {
       setReviewingArtifact(false)
+    }
+  }
+
+  const recordReviewMarker = async (marker: DomainArtifactExportReviewMarker) => {
+    if (!sessionId || !report || !canRecordReviewMarker || recordingReviewMarker) return
+    setRecordingReviewMarker(marker)
+    try {
+      const item = await getTransport().call<DomainEvidenceItem>("record_domain_evidence", {
+        input: domainArtifactExportReviewEvidenceInput(report, sessionId, marker, t),
+      })
+      toast.success(
+        t("workspace.domainExportGuard.reviewMarkerRecorded", "已记录交付确认：{{title}}", {
+          title: item.title,
+        }),
+      )
+      void onRefresh()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainArtifactExportGuardPanel", "Record export review marker failed", e)
+      toast.error(message)
+    } finally {
+      setRecordingReviewMarker(null)
     }
   }
 
@@ -6200,6 +6342,33 @@ function DomainArtifactExportGuardPanel({
               <div className="text-xs font-semibold tabular-nums">{count as number}</div>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {report && !clean ? (
+        <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
+          <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+            <CheckCircle2 className="h-3 w-3 shrink-0" />
+            <span className="truncate">{t("workspace.domainExportGuard.explicitConfirm", "显式确认")}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {(["exportReview", "exportReady", "redactionChecked"] as const).map((marker) => (
+              <button
+                key={marker}
+                type="button"
+                onClick={() => void recordReviewMarker(marker)}
+                disabled={!canRecordReviewMarker || Boolean(recordingReviewMarker)}
+                className="inline-flex min-w-0 items-center justify-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {recordingReviewMarker === marker ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3 shrink-0" />
+                )}
+                <span className="truncate">{domainArtifactExportReviewMarkerLabel(t, marker)}</span>
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 

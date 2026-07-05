@@ -2199,6 +2199,91 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
+  it("records explicit export review evidence from the export guard", async () => {
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_artifact_export_guard")
+        return Promise.resolve(domainArtifactExportGuardReport())
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "record_domain_evidence") {
+        const input = args?.input as RecordDomainEvidenceInput
+        return Promise.resolve({
+          id: "de-export-review",
+          goalId: input.goalId ?? null,
+          sessionId: input.sessionId ?? "s1",
+          projectId: input.projectId ?? null,
+          domain: input.domain,
+          evidenceType: input.evidenceType,
+          title: input.title,
+          summary: input.summary ?? null,
+          sourceMetadata: input.sourceMetadata ?? {},
+          confidence: input.confidence ?? null,
+          accessScope: input.accessScope ?? "session",
+          redactionStatus: input.redactionStatus ?? "none",
+          createdAt: "2026-01-01T00:10:00Z",
+          updatedAt: "2026-01-01T00:10:00Z",
+        } satisfies DomainEvidenceItem)
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    const exportReviewButtons = await screen.findAllByRole("button", { name: "导出复核" })
+    fireEvent.click(exportReviewButtons[0])
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("record_domain_evidence", {
+        input: expect.objectContaining({
+          goalId: null,
+          sessionId: "s1",
+          projectId: null,
+          domain: "research",
+          evidenceType: "artifact_reviewed",
+          title: "导出复核：Research brief",
+          summary: "用户确认已完成最终交付复核。",
+          confidence: 1,
+          accessScope: "session",
+          redactionStatus: "none",
+        }),
+      })
+    })
+
+    const recordCall = transportMock.call.mock.calls.find(
+      ([name]) => name === "record_domain_evidence",
+    )
+    expect(recordCall).toBeTruthy()
+    const input = (recordCall?.[1] as { input: RecordDomainEvidenceInput }).input
+    expect(input.sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "artifact_export_guard_confirmation",
+        marker: "exportReview",
+        exportReview: true,
+        guardStatus: "failed",
+        guardGeneratedAt: "2026-01-01T00:07:00Z",
+        artifactTitle: "Research brief",
+        artifactKind: "brief",
+        reviewedEvidenceIds: ["e-sensitive"],
+        reviewReasons: ["sensitive_unreviewed"],
+        blockers: ["artifact review missing"],
+        export: { reviewed: true },
+      }),
+    )
+    const sourceMetadata = input.sourceMetadata as Record<string, unknown>
+    expect(sourceMetadata.exportReady).toBeUndefined()
+    expect(sourceMetadata.redactionChecked).toBeUndefined()
+  })
+
   it("creates tasks from export guard evidence and connector guard checks", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
