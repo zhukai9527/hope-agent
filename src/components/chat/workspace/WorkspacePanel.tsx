@@ -3356,6 +3356,7 @@ function DomainTaskWorkbenchSection({
     operationalGate,
     soakReport,
   })
+  const canCreateStepTasks = !disabled && (tone === "warn" || tone === "danger")
   const acceptanceSummary = domainAcceptanceCoverageSummary(t, {
     evidence,
     exportGuard,
@@ -3382,6 +3383,7 @@ function DomainTaskWorkbenchSection({
     (soakReport?.incidents?.length ?? 0)
 
   const focusSignal = focusRequest?.nonce ?? 0
+  const [creatingStepTaskKey, setCreatingStepTaskKey] = useState<string | null>(null)
 
   const handleRefresh = () => {
     void refreshAll()
@@ -3401,6 +3403,28 @@ function DomainTaskWorkbenchSection({
       toast.error(t("workspace.domainWorkbench.domainQualityBlocked", "领域复核发现阻塞项"))
     }
     void refreshAll()
+  }
+
+  const createNextStepTask = async (step: string, index: number) => {
+    if (!sessionId || disabled || creatingStepTaskKey) return
+    const taskKey = `${index}:${step}`
+    setCreatingStepTaskKey(taskKey)
+    try {
+      await getTransport().call<Task[]>("create_session_task", {
+        sessionId,
+        content: step,
+        activeForm: t("workspace.domainWorkbench.stepTaskActiveForm", "正在处理通用任务缺口：{{step}}", {
+          step,
+        }),
+      })
+      toast.success(t("workspace.domainWorkbench.stepTaskCreated", "已创建任务"))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainTaskWorkbenchSection", "Create next-step task failed", e)
+      toast.error(message)
+    } finally {
+      setCreatingStepTaskKey(null)
+    }
   }
 
   const handlePlanVerification = async () => {
@@ -3563,9 +3587,24 @@ function DomainTaskWorkbenchSection({
             {nextSteps.map((step, index) => (
               <div
                 key={`${index}:${step}`}
-                className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
+                className="flex min-w-0 items-start gap-1.5 rounded-md px-1.5 py-1 text-[11px] leading-snug text-muted-foreground"
               >
-                {step}
+                <span className="line-clamp-2 min-w-0 flex-1">{step}</span>
+                {canCreateStepTasks ? (
+                  <button
+                    type="button"
+                    onClick={() => void createNextStepTask(step, index)}
+                    disabled={Boolean(creatingStepTaskKey)}
+                    className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {creatingStepTaskKey === `${index}:${step}` ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Plus className="h-3 w-3" />
+                    )}
+                    <span>{t("workspace.domainWorkbench.createStepTask", "转任务")}</span>
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>

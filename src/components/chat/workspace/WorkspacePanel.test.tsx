@@ -2022,6 +2022,41 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
+  it("creates a task from domain workbench next-step gaps", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "list_domain_evidence") return Promise.resolve([])
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_e2e_gate") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "create_session_task") return Promise.resolve([])
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    const taskButtons = await screen.findAllByRole("button", { name: "转任务" })
+    fireEvent.click(taskButtons[0])
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
+        sessionId: "s1",
+        content: "先让模型记录来源、草稿或决策证据。",
+        activeForm: "正在处理通用任务缺口：先让模型记录来源、草稿或决策证据。",
+      })
+    })
+  })
+
   it("links workflow loop rows to their derived workflow run", async () => {
     const otherRun = workflowRun({
       id: "wf-other",
