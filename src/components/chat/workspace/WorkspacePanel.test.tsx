@@ -2119,6 +2119,25 @@ describe("WorkspacePanel workflow section", () => {
         activeForm: "正在处理长跑事故：Workflow failed",
       })
     })
+
+    const recommendation = screen
+      .getAllByText("Repair the failed workflow.")
+      .find((element) => element.tagName.toLowerCase() === "span")
+    expect(recommendation).toBeTruthy()
+    if (!recommendation) throw new Error("missing soak recommendation row")
+    const recommendationRow = recommendation.parentElement
+    expect(recommendationRow).toBeTruthy()
+    fireEvent.click(
+      within(recommendationRow as HTMLElement).getByRole("button", { name: "转任务" }),
+    )
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
+        sessionId: "s1",
+        content: "处理长跑审计建议：Repair the failed workflow.",
+        activeForm: "正在处理长跑审计建议",
+      })
+    })
   })
 
   it("opens export and connector guard evidence from readiness actions", async () => {
