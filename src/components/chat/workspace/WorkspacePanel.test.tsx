@@ -2519,6 +2519,139 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
+  it("records connector E2E execution and verification evidence", async () => {
+    const executionResult = "Message sent successfully; provider result id msg-123."
+    const verificationResult = "Read Gmail thread back and confirmed the reply is visible."
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_connector_e2e_gate")
+        return Promise.resolve(domainConnectorE2EGateReport())
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "record_domain_evidence") {
+        const input = args?.input as RecordDomainEvidenceInput
+        return Promise.resolve({
+          id: `de-${input.evidenceType}`,
+          goalId: input.goalId ?? null,
+          sessionId: input.sessionId ?? "s1",
+          projectId: input.projectId ?? null,
+          domain: input.domain,
+          evidenceType: input.evidenceType,
+          title: input.title,
+          summary: input.summary ?? null,
+          sourceMetadata: input.sourceMetadata ?? {},
+          confidence: input.confidence ?? null,
+          accessScope: input.accessScope ?? "session",
+          redactionStatus: input.redactionStatus ?? "none",
+          createdAt: "2026-01-01T00:12:00Z",
+          updatedAt: "2026-01-01T00:12:00Z",
+        } satisfies DomainEvidenceItem)
+      }
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("连接器 E2E")).toBeTruthy()
+
+    fireEvent.change(screen.getByPlaceholderText("执行结果"), {
+      target: { value: executionResult },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "记录执行" }))
+
+    await waitFor(() => {
+      const calls = transportMock.call.mock.calls.filter(
+        ([name]) => name === "record_domain_evidence",
+      )
+      expect(calls).toHaveLength(1)
+    })
+
+    fireEvent.change(screen.getByPlaceholderText("执行后复核"), {
+      target: { value: verificationResult },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "记录复核" }))
+
+    await waitFor(() => {
+      const calls = transportMock.call.mock.calls.filter(
+        ([name]) => name === "record_domain_evidence",
+      )
+      expect(calls).toHaveLength(2)
+    })
+
+    const evidenceCalls = transportMock.call.mock.calls
+      .filter(([name]) => name === "record_domain_evidence")
+      .map(([, args]) => (args as { input: RecordDomainEvidenceInput }).input)
+
+    expect(evidenceCalls[0]).toEqual(
+      expect.objectContaining({
+        sessionId: "s1",
+        domain: "inbox",
+        evidenceType: "connector_action_executed",
+        title: "执行结果：gmail:send",
+        summary: executionResult,
+        confidence: 1,
+        accessScope: "session",
+        redactionStatus: "none",
+      }),
+    )
+    expect(evidenceCalls[0].sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "connector_e2e_gate_sample",
+        marker: "action_execution",
+        connector: "gmail",
+        action: "send",
+        toolName: "gmail_send",
+        risk: "external_write",
+        gateStatus: "insufficient_data",
+        relatedEvidenceIds: ["e-connector-input"],
+        actionExecuted: true,
+        executed: true,
+        execution: { status: "recorded", summary: executionResult },
+        result: { status: "recorded", summary: executionResult },
+      }),
+    )
+    expect(
+      (evidenceCalls[0].sourceMetadata as Record<string, unknown>).postActionVerification,
+    ).toBeUndefined()
+
+    expect(evidenceCalls[1]).toEqual(
+      expect.objectContaining({
+        sessionId: "s1",
+        domain: "inbox",
+        evidenceType: "connector_action_verified",
+        title: "执行后复核：gmail:send",
+        summary: verificationResult,
+        confidence: 1,
+        accessScope: "session",
+        redactionStatus: "none",
+      }),
+    )
+    expect(evidenceCalls[1].sourceMetadata).toEqual(
+      expect.objectContaining({
+        sourceType: "connector_e2e_gate_sample",
+        marker: "post_action_verification",
+        connector: "gmail",
+        action: "send",
+        toolName: "gmail_send",
+        postActionVerification: true,
+        externalStateVerified: true,
+        deliveryVerified: true,
+        verification: { passed: true, verified: true, summary: verificationResult },
+      }),
+    )
+    expect((evidenceCalls[1].sourceMetadata as Record<string, unknown>).actionExecuted).toBeUndefined()
+  })
+
   it("creates a task from domain workbench next-step gaps", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())

@@ -493,6 +493,7 @@ type DomainQualityReviewEvidenceTarget = {
 
 type DomainArtifactExportReviewMarker = "exportReview" | "exportReady" | "redactionChecked"
 type DomainConnectorActionConfirmationMarker = "explicitUserApproval" | "rollbackPlan"
+type DomainConnectorE2ESampleMarker = "action_execution" | "post_action_verification"
 
 const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
@@ -3684,6 +3685,7 @@ function DomainTaskWorkbenchSection({
             onRefresh={domainWorkbenchState.refreshConnectorGuard}
           />
           <DomainConnectorE2EGatePanel
+            sessionId={sessionId}
             report={connectorE2eGate}
             loading={connectorE2eGateLoading}
             error={connectorE2eGateError}
@@ -5456,6 +5458,105 @@ function domainConnectorActionRollbackEvidenceInput(
   }
 }
 
+function domainConnectorE2EActionLabel(report: DomainConnectorE2EGateReport): string {
+  return (
+    [report.connector, report.action].filter(Boolean).join(":") ||
+    report.toolName ||
+    report.scope.domain ||
+    "connector action"
+  )
+}
+
+function domainConnectorE2ESampleLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  marker: DomainConnectorE2ESampleMarker,
+): string {
+  switch (marker) {
+    case "action_execution":
+      return t("workspace.domainConnectorE2E.recordExecution", "记录执行")
+    case "post_action_verification":
+      return t("workspace.domainConnectorE2E.recordVerification", "记录复核")
+  }
+}
+
+function domainConnectorE2EBaseMetadata(
+  report: DomainConnectorE2EGateReport,
+  marker: DomainConnectorE2ESampleMarker,
+): Record<string, unknown> {
+  return {
+    sourceType: "connector_e2e_gate_sample",
+    marker,
+    gateStatus: report.status,
+    gateGeneratedAt: report.generatedAt,
+    toolName: report.toolName ?? null,
+    connector: report.connector ?? null,
+    action: report.action ?? null,
+    risk: report.risk ?? null,
+    relatedEvidenceIds: report.relatedEvidence.map((item) => item.id),
+    blockers: report.blockers,
+  }
+}
+
+function domainConnectorE2EExecutionEvidenceInput(
+  report: DomainConnectorE2EGateReport,
+  sessionId: string,
+  result: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): RecordDomainEvidenceInput {
+  const actionLabel = domainConnectorE2EActionLabel(report)
+  return {
+    goalId: report.scope.goalId ?? null,
+    sessionId,
+    projectId: report.scope.projectId ?? null,
+    domain: report.scope.domain ?? "general",
+    evidenceType: "connector_action_executed",
+    title: t("workspace.domainConnectorE2E.executionEvidenceTitle", "执行结果：{{action}}", {
+      action: actionLabel,
+    }),
+    summary: result,
+    sourceMetadata: {
+      ...domainConnectorE2EBaseMetadata(report, "action_execution"),
+      actionExecuted: true,
+      executed: true,
+      execution: { status: "recorded", summary: result },
+      result: { status: "recorded", summary: result },
+    },
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
+function domainConnectorE2EVerificationEvidenceInput(
+  report: DomainConnectorE2EGateReport,
+  sessionId: string,
+  verification: string,
+  t: ReturnType<typeof useTranslation>["t"],
+): RecordDomainEvidenceInput {
+  const actionLabel = domainConnectorE2EActionLabel(report)
+  return {
+    goalId: report.scope.goalId ?? null,
+    sessionId,
+    projectId: report.scope.projectId ?? null,
+    domain: report.scope.domain ?? "general",
+    evidenceType: "connector_action_verified",
+    title: t("workspace.domainConnectorE2E.verificationEvidenceTitle", "执行后复核：{{action}}", {
+      action: actionLabel,
+    }),
+    summary: verification,
+    sourceMetadata: {
+      ...domainConnectorE2EBaseMetadata(report, "post_action_verification"),
+      postActionVerification: true,
+      externalStateVerified: true,
+      deliveryVerified: true,
+      verification: { passed: true, verified: true, summary: verification },
+    },
+    confidence: 1,
+    accessScope: "session",
+    redactionStatus: "none",
+  }
+}
+
 function DomainQualityCheckRow({ check }: { check: DomainQualityCheck }) {
   const { t } = useTranslation()
   const icon =
@@ -6848,12 +6949,14 @@ function DomainConnectorActionGuardPanel({
 }
 
 function DomainConnectorE2EGatePanel({
+  sessionId,
   report,
   loading,
   error,
   disabled,
   onRefresh,
 }: {
+  sessionId?: string | null
   report: DomainConnectorE2EGateReport | null
   loading: boolean
   error: string | null
@@ -6861,10 +6964,16 @@ function DomainConnectorE2EGatePanel({
   onRefresh: () => Promise<DomainConnectorE2EGateReport | null>
 }) {
   const { t } = useTranslation()
+  const [recordingSample, setRecordingSample] = useState<DomainConnectorE2ESampleMarker | null>(null)
+  const [executionResultDraft, setExecutionResultDraft] = useState("")
+  const [verificationDraft, setVerificationDraft] = useState("")
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const relatedEvidence = report?.relatedEvidence ?? []
   const clean = report?.status === "passed"
+  const canRecordSample = Boolean(report) && Boolean(sessionId) && !disabled
+  const executionResult = executionResultDraft.trim()
+  const verification = verificationDraft.trim()
   const metrics = summary
     ? [
         {
@@ -6899,6 +7008,39 @@ function DomainConnectorE2EGatePanel({
         },
       ]
     : []
+
+  const recordSample = async (marker: DomainConnectorE2ESampleMarker) => {
+    if (!sessionId || !report || !canRecordSample || recordingSample) return
+    if (marker === "action_execution" && !executionResult) return
+    if (marker === "post_action_verification" && !verification) return
+    setRecordingSample(marker)
+    try {
+      const input =
+        marker === "action_execution"
+          ? domainConnectorE2EExecutionEvidenceInput(report, sessionId, executionResult, t)
+          : domainConnectorE2EVerificationEvidenceInput(report, sessionId, verification, t)
+      const item = await getTransport().call<DomainEvidenceItem>("record_domain_evidence", {
+        input,
+      })
+      if (marker === "action_execution") {
+        setExecutionResultDraft("")
+      } else {
+        setVerificationDraft("")
+      }
+      toast.success(
+        t("workspace.domainConnectorE2E.sampleRecorded", "已记录 E2E 证据：{{title}}", {
+          title: item.title,
+        }),
+      )
+      void onRefresh()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainConnectorE2EGatePanel", "Record connector E2E sample failed", e)
+      toast.error(message)
+    } finally {
+      setRecordingSample(null)
+    }
+  }
 
   return (
     <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
@@ -6975,6 +7117,65 @@ function DomainConnectorE2EGatePanel({
             ) : null}
           </div>
         </>
+      ) : null}
+
+      {report && !clean ? (
+        <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
+          <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+            <CheckCircle2 className="h-3 w-3 shrink-0" />
+            <span className="truncate">{t("workspace.domainConnectorE2E.realSample", "真实样本")}</span>
+          </div>
+          <div className="grid grid-cols-1 gap-1.5">
+            <div className="space-y-1">
+              <Textarea
+                value={executionResultDraft}
+                onChange={(event) => setExecutionResultDraft(event.target.value)}
+                placeholder={t("workspace.domainConnectorE2E.executionPlaceholder", "执行结果")}
+                rows={2}
+                className="min-h-12 resize-none bg-background/55 px-2 py-1 text-[11px]"
+              />
+              <button
+                type="button"
+                onClick={() => void recordSample("action_execution")}
+                disabled={!canRecordSample || !executionResult || Boolean(recordingSample)}
+                className="inline-flex w-full min-w-0 items-center justify-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {recordingSample === "action_execution" ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3 shrink-0" />
+                )}
+                <span className="truncate">
+                  {domainConnectorE2ESampleLabel(t, "action_execution")}
+                </span>
+              </button>
+            </div>
+            <div className="space-y-1">
+              <Textarea
+                value={verificationDraft}
+                onChange={(event) => setVerificationDraft(event.target.value)}
+                placeholder={t("workspace.domainConnectorE2E.verificationPlaceholder", "执行后复核")}
+                rows={2}
+                className="min-h-12 resize-none bg-background/55 px-2 py-1 text-[11px]"
+              />
+              <button
+                type="button"
+                onClick={() => void recordSample("post_action_verification")}
+                disabled={!canRecordSample || !verification || Boolean(recordingSample)}
+                className="inline-flex w-full min-w-0 items-center justify-center gap-1 rounded-md border border-border/55 bg-background/45 px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {recordingSample === "post_action_verification" ? (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                ) : (
+                  <Check className="h-3 w-3 shrink-0" />
+                )}
+                <span className="truncate">
+                  {domainConnectorE2ESampleLabel(t, "post_action_verification")}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {error ? (
