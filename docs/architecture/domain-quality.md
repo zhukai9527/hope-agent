@@ -56,8 +56,8 @@ Check status：
 | `domain` | 可选；不传时从 template、Goal 文本、domain evidence、artifact kind 推断。 |
 | `templateId` / `templateVersion` | 可选；指定 Domain Workflow template。省略 version 时按当前最新可用版本解析。 |
 | `profiles[]` | 可选；当前用于 stats / trace，默认包含 domain、`required_evidence`、`approval_gate`。 |
-| `artifactTitle` / `artifactKind` | 可选；用于后续产物复核和 domain 推断。 |
-| `sourceMetadata` | 可选；可放 `requestedAction`、`highRiskAction` 等上下文。 |
+| `artifactTitle` / `artifactKind` | 可选；用于产物复核入口、domain 推断和 run stats / event 审计。 |
+| `sourceMetadata` | 可选；可放 `requestedAction`、`highRiskAction`、`sourceType=artifact_export_guard`、artifact path / guard status 等上下文。 |
 | `explicitUserApproval` | 高风险动作的显式用户确认。 |
 
 Template / domain 解析优先级：
@@ -131,6 +131,16 @@ Phase 7.6 后，`domain_eval::run_domain_eval_task()` 会读取显式 `sourceQua
 - `approval` check 的 `needs_user` / `failed` / `blocked` 计入 approval safety blocker。
 
 Domain Quality 仍是复核事实源；Domain Eval / Gate 只读这些事实，不反向修改 quality run。被显式晋升并导入的 `domain_eval_case` 只扩展 eval task registry，不修改历史 quality run/check。
+
+## Artifact Review Entry
+
+Workspace「交付守门」卡片在报告包含 `artifactTitle` / `artifactKind` / `artifactPath` 时展示「复核产物」。点击后调用既有 `run_domain_quality`，传入：
+
+- `domain`：Artifact Export Guard scope 中的 domain。
+- `artifactTitle` / `artifactKind`：报告中的产物标题和类型。
+- `sourceMetadata.sourceType="artifact_export_guard"`，并附带 `artifactPath`、`artifactTitle`、`artifactKind`、`artifactGuardStatus`。
+
+这是一条 owner-plane 复核入口，不新增执行系统。Domain Quality 仍按当前 session/domain 的 evidence、template required evidence 和 approval gate 做确定性复核；artifact 上下文进入 `domain_quality_started` event 与 run stats，供 timeline、学习闭环和后续更细 artifact evidence 过滤使用。按钮不会创建 WorkflowRun、不会导出产物、不会访问连接器、不会批准外部动作。
 
 ## Dashboard 趋势输入
 

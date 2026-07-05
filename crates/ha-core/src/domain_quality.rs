@@ -524,6 +524,11 @@ impl SessionDB {
                 "templateId": context.template.id,
                 "templateVersion": context.template.version,
                 "profiles": active_profiles(&context.input.profiles, &context.domain),
+                "artifact": {
+                    "title": context.input.artifact_title,
+                    "kind": context.input.artifact_kind,
+                },
+                "source": context.input.source_metadata,
             }),
         );
         emit_domain_quality_run("domain_quality:created", &run);
@@ -1577,6 +1582,53 @@ mod tests {
                 .get("templateVersion")
                 .and_then(Value::as_str),
             Some("1.0.0")
+        );
+    }
+
+    #[test]
+    fn domain_quality_started_event_records_artifact_review_context() {
+        let (_dir, db) = test_db();
+        let session = db.create_session("ha-main").expect("create session");
+
+        let snapshot = db
+            .run_domain_quality_for_session(RunDomainQualityInput {
+                session_id: session.id,
+                domain: Some("research".to_string()),
+                artifact_title: Some("Research brief".to_string()),
+                artifact_kind: Some("brief".to_string()),
+                source_metadata: json!({
+                    "sourceType": "artifact_export_guard",
+                    "artifactGuardStatus": "failed",
+                }),
+                ..Default::default()
+            })
+            .expect("run quality");
+
+        let started = snapshot
+            .events
+            .iter()
+            .find(|event| event.kind == "domain_quality_started")
+            .expect("started event");
+        assert_eq!(
+            started
+                .payload
+                .pointer("/artifact/title")
+                .and_then(Value::as_str),
+            Some("Research brief")
+        );
+        assert_eq!(
+            started
+                .payload
+                .pointer("/artifact/kind")
+                .and_then(Value::as_str),
+            Some("brief")
+        );
+        assert_eq!(
+            started
+                .payload
+                .pointer("/source/sourceType")
+                .and_then(Value::as_str),
+            Some("artifact_export_guard")
         );
     }
 

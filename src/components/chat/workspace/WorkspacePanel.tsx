@@ -474,6 +474,14 @@ function EmptyHint({ children }: { children: ReactNode }) {
 
 type StatusTone = "muted" | "good" | "warn" | "danger" | "info"
 
+type DomainArtifactReviewTarget = {
+  title?: string | null
+  kind?: string | null
+  path?: string | null
+  domain?: string | null
+  guardStatus?: string | null
+}
+
 const STATUS_TONE_CLASS: Record<StatusTone, string> = {
   muted: "border-border bg-muted/50 text-muted-foreground",
   good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
@@ -3406,6 +3414,23 @@ function DomainTaskWorkbenchSection({
     void refreshAll()
   }
 
+  const handleArtifactReview = async (target: DomainArtifactReviewTarget) => {
+    const next = await domainQualityRunsState.runDomainQuality({
+      domain: target.domain || undefined,
+      artifactTitle: target.title || undefined,
+      artifactKind: target.kind || undefined,
+      sourceMetadata: {
+        sourceType: "artifact_export_guard",
+        artifactPath: target.path ?? null,
+        artifactTitle: target.title ?? null,
+        artifactKind: target.kind ?? null,
+        artifactGuardStatus: target.guardStatus ?? null,
+      },
+    })
+    if (next) void refreshAll()
+    return next
+  }
+
   const createNextStepTask = async (step: string, index: number) => {
     if (!sessionId || disabled || creatingStepTaskKey) return
     const taskKey = `${index}:${step}`
@@ -3636,6 +3661,7 @@ function DomainTaskWorkbenchSection({
             error={exportGuardError}
             disabled={disabled || exportGuardLoading}
             onRefresh={domainWorkbenchState.refreshExportGuard}
+            onReviewArtifact={handleArtifactReview}
           />
           <DomainConnectorActionGuardPanel
             sessionId={sessionId}
@@ -5205,6 +5231,26 @@ function DomainQualitySection({
     }
   }
 
+  const handleArtifactReview = async (target: DomainArtifactReviewTarget) => {
+    const next = await runDomainQuality({
+      domain: target.domain || undefined,
+      artifactTitle: target.title || undefined,
+      artifactKind: target.kind || undefined,
+      sourceMetadata: {
+        sourceType: "artifact_export_guard",
+        artifactPath: target.path ?? null,
+        artifactTitle: target.title ?? null,
+        artifactKind: target.kind ?? null,
+        artifactGuardStatus: target.guardStatus ?? null,
+      },
+    })
+    if (next) {
+      void refreshExportGuard()
+      void refreshConnectorGuard()
+    }
+    return next
+  }
+
   const handleGenerateLearning = async () => {
     if (!sessionId || !latest || !canGenerateLearning) return
     setLearningRunId(latest.id)
@@ -5331,6 +5377,7 @@ function DomainQualitySection({
               error={exportGuardError}
               disabled={!sessionId || exportGuardLoading}
               onRefresh={refreshExportGuard}
+              onReviewArtifact={handleArtifactReview}
             />
           </>
         ) : null}
@@ -5754,6 +5801,7 @@ function DomainArtifactExportGuardPanel({
   error,
   disabled,
   onRefresh,
+  onReviewArtifact,
 }: {
   sessionId?: string | null
   report: DomainArtifactExportGuardReport | null
@@ -5761,14 +5809,52 @@ function DomainArtifactExportGuardPanel({
   error: string | null
   disabled: boolean
   onRefresh: () => Promise<DomainArtifactExportGuardReport | null>
+  onReviewArtifact?: (
+    target: DomainArtifactReviewTarget,
+  ) => Promise<DomainQualityRunSnapshot | null>
 }) {
   const { t } = useTranslation()
   const [creatingTaskKey, setCreatingTaskKey] = useState<string | null>(null)
+  const [reviewingArtifact, setReviewingArtifact] = useState(false)
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const evidenceRequiringReview = report?.evidenceRequiringReview ?? []
   const clean = report?.status === "passed"
   const canCreateTasks = Boolean(sessionId) && !disabled
+  const artifactLabel =
+    report?.artifactTitle || report?.artifactPath || report?.artifactKind || null
+  const canReviewArtifact =
+    Boolean(onReviewArtifact) && Boolean(artifactLabel) && Boolean(sessionId) && !disabled
+
+  const reviewArtifact = async () => {
+    if (!report || !onReviewArtifact || !canReviewArtifact || reviewingArtifact) return
+    setReviewingArtifact(true)
+    try {
+      const next = await onReviewArtifact({
+        title: report.artifactTitle,
+        kind: report.artifactKind,
+        path: report.artifactPath,
+        domain: report.scope.domain,
+        guardStatus: report.status,
+      })
+      if (!next) return
+      if (next.run.state === "completed") {
+        toast.success(t("workspace.domainExportGuard.artifactReviewClean", "产物复核通过"))
+      } else if (next.run.state === "needs_user") {
+        toast.warning(
+          t("workspace.domainExportGuard.artifactReviewNeedsUser", "产物复核需要确认"),
+        )
+      } else {
+        toast.error(t("workspace.domainExportGuard.artifactReviewBlocked", "产物复核发现阻塞项"))
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainArtifactExportGuardPanel", "Run artifact review failed", e)
+      toast.error(message)
+    } finally {
+      setReviewingArtifact(false)
+    }
+  }
 
   const createCheckTask = async (
     check: DomainArtifactExportGuardReport["checks"][number],
@@ -5867,6 +5953,21 @@ function DomainArtifactExportGuardPanel({
           tone={domainArtifactExportGuardTone(report?.status, loading)}
           loading={loading}
         />
+        {canReviewArtifact ? (
+          <button
+            type="button"
+            onClick={() => void reviewArtifact()}
+            disabled={reviewingArtifact}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border/60 bg-secondary/35 px-2 text-[11px] font-medium text-foreground transition-colors hover:bg-secondary/55 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            {reviewingArtifact ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ClipboardCheck className="h-3.5 w-3.5" />
+            )}
+            <span>{t("workspace.domainExportGuard.reviewArtifact", "复核产物")}</span>
+          </button>
+        ) : null}
         <IconTip label={t("workspace.domainExportGuard.refresh", "刷新交付守门")}>
           <button
             type="button"

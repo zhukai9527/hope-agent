@@ -2017,6 +2017,50 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("explicit_user_approval")).toBeTruthy()
   })
 
+  it("runs artifact-scoped domain quality from export guard", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_artifact_export_guard")
+        return Promise.resolve(domainArtifactExportGuardReport())
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "run_domain_quality") return Promise.resolve(domainQualitySnapshot())
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    const reviewButtons = await screen.findAllByRole("button", { name: "复核产物" })
+    fireEvent.click(reviewButtons[0])
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("run_domain_quality", {
+        input: {
+          sessionId: "s1",
+          domain: "research",
+          artifactTitle: "Research brief",
+          artifactKind: "brief",
+          sourceMetadata: {
+            sourceType: "artifact_export_guard",
+            artifactPath: null,
+            artifactTitle: "Research brief",
+            artifactKind: "brief",
+            artifactGuardStatus: "failed",
+          },
+        },
+      })
+    })
+  })
+
   it("creates tasks from export guard evidence and connector guard checks", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
