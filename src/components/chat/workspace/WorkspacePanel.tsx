@@ -3134,6 +3134,53 @@ function domainAcceptanceStatusLabel(
   return t("workspace.domainWorkbench.acceptanceIdle", "待采样")
 }
 
+function domainAcceptancePlanTaskContent(
+  t: ReturnType<typeof useTranslation>["t"],
+  summary: DomainAcceptanceCoverageSummary,
+  gaps: string[],
+): string {
+  const domains = summary.domains.length > 0 ? summary.domains.join(", ") : "0"
+  const metrics = [
+    `${t("workspace.domainWorkbench.acceptancePlanStatus", "状态")}：${domainAcceptanceStatusLabel(t, summary)}`,
+    `${t("workspace.domainWorkbench.acceptancePlanDomains", "领域")}：${domains}`,
+    `${t("workspace.domainWorkbench.acceptancePlanRecords", "控制面记录")}：${summary.controlRecords}`,
+    `${t("workspace.domainWorkbench.acceptancePlanDrained", "已排空样本")}：${summary.drainedRuns}`,
+    `${t("workspace.domainWorkbench.acceptancePlanConnector", "连接器 E2E evidence")}：${summary.connectorE2eEvidence}`,
+    `${t("workspace.domainWorkbench.acceptancePlanIncidents", "事故")}：critical ${summary.criticalIncidents} / warning ${summary.warningIncidents}`,
+  ]
+  const actions = [
+    t(
+      "workspace.domainWorkbench.acceptancePlanActionEvidence",
+      "补齐来源、草稿、复核或用户决策 evidence 后刷新工作台。",
+    ),
+    t(
+      "workspace.domainWorkbench.acceptancePlanActionDrain",
+      "至少排空一个 Workflow / Loop / Campaign，再刷新运行稳定性和长跑审计。",
+    ),
+    t(
+      "workspace.domainWorkbench.acceptancePlanActionConnector",
+      "涉及外部动作时按读取 -> 草稿 -> 批准 -> 执行 -> 复核 -> 回滚说明记录 E2E evidence。",
+    ),
+    t(
+      "workspace.domainWorkbench.acceptancePlanActionSoak",
+      "处理 Soak Report 事故或把事故转任务，直到 Operational Gate / Soak Report 不再 failed。",
+    ),
+  ]
+
+  return [
+    t("workspace.domainWorkbench.acceptancePlanTaskContent", "补齐真实样本验收清单："),
+    "",
+    t("workspace.domainWorkbench.acceptancePlanMetrics", "当前指标："),
+    ...metrics.map((metric) => `- ${metric}`),
+    "",
+    t("workspace.domainWorkbench.acceptancePlanGaps", "验收缺口："),
+    ...gaps.map((gap) => `- ${gap}`),
+    "",
+    t("workspace.domainWorkbench.acceptancePlanActions", "采样动作："),
+    ...actions.map((action) => `- ${action}`),
+  ].join("\n")
+}
+
 function DomainAcceptanceCoverageCard({
   summary,
   creatingGapTaskKey,
@@ -3542,13 +3589,9 @@ function DomainTaskWorkbenchSection({
     if (!sessionId || disabled || creatingAcceptancePlanTask || gaps.length === 0) return
     setCreatingAcceptancePlanTask(true)
     try {
-      const items = gaps.map((gap) => `- ${gap}`).join("\n")
       await getTransport().call<Task[]>("create_session_task", {
         sessionId,
-        content: `${t(
-          "workspace.domainWorkbench.acceptancePlanTaskContent",
-          "补齐真实样本验收清单：",
-        )}\n${items}`,
+        content: domainAcceptancePlanTaskContent(t, acceptanceSummary, gaps),
         activeForm: t(
           "workspace.domainWorkbench.acceptancePlanTaskActiveForm",
           "正在补齐真实样本验收清单",
