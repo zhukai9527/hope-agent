@@ -27,12 +27,13 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeEvidenceClaim, KnowledgeEvidenceCoverage,
-    KnowledgeEvidenceRebuildResult, KnowledgeGraph, KnowledgeSource, KnowledgeSourceAssetKind,
-    KnowledgeSourceAssetLink, KnowledgeSourceDiff, KnowledgeSourceExternalRawSyncResult,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
-    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeBrowserSourceImportInput, KnowledgeCompileConfig, KnowledgeEvidenceClaim,
+    KnowledgeEvidenceCoverage, KnowledgeEvidenceRebuildResult, KnowledgeGraph, KnowledgeSource,
+    KnowledgeSourceAssetKind, KnowledgeSourceAssetLink, KnowledgeSourceDiff,
+    KnowledgeSourceExternalRawSyncResult, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceReadResult,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
     KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
     KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
     KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
@@ -1286,6 +1287,18 @@ pub async fn knowledge_media_retention_config_set(
         body.config,
         "http",
     )?))
+}
+
+/// `GET /api/knowledge/compile/config`
+pub async fn knowledge_compile_config_get() -> Result<Json<KnowledgeCompileConfig>, AppError> {
+    Ok(Json(service::get_compile_config()))
+}
+
+/// `POST /api/knowledge/compile/config` — body `{ config: KnowledgeCompileConfig }`.
+pub async fn knowledge_compile_config_set(
+    Json(body): Json<crate::routes::config::ConfigBody<KnowledgeCompileConfig>>,
+) -> Result<Json<KnowledgeCompileConfig>, AppError> {
+    Ok(Json(service::set_compile_config(body.config, "http")?))
 }
 
 // ── Sprite / inspiration mode ───────────────────────────────────

@@ -84,7 +84,7 @@ export default function KnowledgeCompilePanel({
       )
     } catch (e) {
       logger.warn("knowledge", "KnowledgeCompilePanel::loadRuns", "load failed", e)
-      toast.error(t("knowledge.compile.loadFailed", "Couldn't load compile runs"))
+      toast.error(t("knowledge.compile.loadFailed", "Couldn't load source-to-note runs"))
     } finally {
       setLoadingRuns(false)
     }
@@ -136,21 +136,21 @@ export default function KnowledgeCompilePanel({
         setSelectedRunId(run.id)
         if (run.status === "completed") {
           toast.success(
-            t("knowledge.compile.started", "Generated {{n}} proposal(s)", {
+            t("knowledge.compile.started", "Generated {{n}} note suggestion(s)", {
               n: run.proposalCount,
             }),
           )
         } else if (run.status === "cancelled") {
-          toast.message(t("knowledge.compile.cancelled", "Compile run cancelled"))
+          toast.message(t("knowledge.compile.cancelled", "Source-to-note run cancelled"))
         } else if (run.status === "failed") {
-          toast.error(run.error || t("knowledge.compile.failed", "Compile run failed"))
+          toast.error(run.error || t("knowledge.compile.failed", "Source-to-note run failed"))
         }
         await loadRuns()
         await loadProposals(run.id)
         onAfterRun?.()
       } catch (e) {
         logger.warn("knowledge", "KnowledgeCompilePanel::start", "compile failed", e)
-        toast.error(t("knowledge.compile.startFailed", "Couldn't compile sources"))
+        toast.error(t("knowledge.compile.startFailed", "Couldn't organize sources into notes"))
       } finally {
         setStarting(false)
       }
@@ -172,7 +172,7 @@ export default function KnowledgeCompilePanel({
         runId: selectedRunId,
       })
       setRuns((items) => items.map((item) => (item.id === run.id ? run : item)))
-      toast.message(t("knowledge.compile.cancelled", "Compile run cancelled"))
+      toast.message(t("knowledge.compile.cancelled", "Source-to-note run cancelled"))
     } catch (e) {
       logger.warn("knowledge", "KnowledgeCompilePanel::cancel", "cancel failed", e)
       toast.error(t("knowledge.compile.cancelFailed", "Couldn't cancel run"))
@@ -261,12 +261,12 @@ export default function KnowledgeCompilePanel({
             <div className="min-w-0">
               <DialogTitle className="flex items-center gap-2 text-base">
                 <Sparkles className="h-4 w-4 text-primary" />
-                {t("knowledge.compile.title", "Compile sources")}
+                {t("knowledge.compile.title", "Organize into notes")}
               </DialogTitle>
               <DialogDescription className="mt-1">
                 {t(
                   "knowledge.compile.description",
-                  "Review generated note changes before anything is written.",
+                  "AI drafts note changes from selected sources. Review the diff before anything is written.",
                 )}
               </DialogDescription>
             </div>
@@ -284,7 +284,7 @@ export default function KnowledgeCompilePanel({
                 ) : (
                   <Play className="h-3.5 w-3.5" />
                 )}
-                {t("knowledge.compile.startSelected", "Compile {{count}}", {
+                {t("knowledge.compile.startSelected", "Organize {{count}}", {
                   count: sourceIds.length,
                 })}
               </Button>
@@ -322,7 +322,7 @@ export default function KnowledgeCompilePanel({
             <div className="max-h-44 overflow-auto border-b border-border-soft/60 p-2">
               {runs.length === 0 && !loadingRuns ? (
                 <div className="px-2 py-5 text-center text-[11px] text-muted-foreground">
-                  {t("knowledge.compile.noRuns", "No compile runs yet.")}
+                  {t("knowledge.compile.noRuns", "No source-to-note runs yet.")}
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -407,7 +407,7 @@ export default function KnowledgeCompilePanel({
                     <StatusPill status={selectedRun.status} />
                     <span className="truncate text-sm font-medium">
                       {selectedRun.summary ||
-                        t("knowledge.compile.runPending", "Compile run pending")}
+                        t("knowledge.compile.runPending", "Source-to-note run pending")}
                     </span>
                   </div>
                   {selectedRun.error ? (
@@ -497,7 +497,7 @@ export default function KnowledgeCompilePanel({
                 <Sparkles className="h-7 w-7" />
                 <div className="text-sm font-medium text-foreground/80">
                   {starting
-                    ? t("knowledge.compile.running", "Compiling sources…")
+                    ? t("knowledge.compile.running", "Organizing sources into notes…")
                     : t("knowledge.compile.empty", "Select a proposal to review")}
                 </div>
                 <div className="max-w-sm text-xs leading-relaxed">

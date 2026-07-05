@@ -454,7 +454,9 @@ export function parseSessionMessages(
       let isProcessNotification = false
       let isPlanTrigger = false
       let planComment: { selectedText: string; comment: string } | undefined
-      let channelInbound: { channelId: string; senderName?: string } | undefined
+      let channelInbound:
+        | { channelId: string; accountId?: string; chatId?: string; senderName?: string }
+        | undefined
       const attachments = parseUserAttachmentsMeta(msg.attachmentsMeta)
       if (msg.attachmentsMeta) {
         try {
@@ -486,10 +488,21 @@ export function parseSessionMessages(
               comment: meta.plan_comment.comment,
             }
           }
-          if (meta?.channel_inbound) {
+          if (meta?.channel_inbound && typeof meta.channel_inbound.channelId === "string") {
             channelInbound = {
               channelId: meta.channel_inbound.channelId,
-              senderName: meta.channel_inbound.senderName,
+              accountId:
+                typeof meta.channel_inbound.accountId === "string"
+                  ? meta.channel_inbound.accountId
+                  : undefined,
+              chatId:
+                typeof meta.channel_inbound.chatId === "string"
+                  ? meta.channel_inbound.chatId
+                  : undefined,
+              senderName:
+                typeof meta.channel_inbound.senderName === "string"
+                  ? meta.channel_inbound.senderName
+                  : undefined,
             }
           }
         } catch {

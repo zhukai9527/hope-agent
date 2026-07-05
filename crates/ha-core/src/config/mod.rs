@@ -969,6 +969,10 @@ pub struct AppConfig {
     /// setting (GUI + `update_settings`), unlike `knowledge_chunk`.
     #[serde(default)]
     pub knowledge_search: crate::knowledge::KnowledgeSearchConfig,
+    /// Knowledge source-to-note organization agent. Defaults to inheriting the
+    /// global default agent, but can be pinned independently from recap/chat.
+    #[serde(default)]
+    pub knowledge_compile: crate::knowledge::KnowledgeCompileConfig,
     /// Knowledge Layer-2 autonomous maintenance (WS6): scheduling + per-task
     /// toggles + auto-approve for the proposal review queue. Disabled by default.
     #[serde(default)]
@@ -1316,6 +1320,7 @@ impl Default for AppConfig {
             knowledge_embedding: crate::memory::EmbeddingSelection::default(),
             knowledge_chunk: crate::knowledge::ChunkConfig::default(),
             knowledge_search: crate::knowledge::KnowledgeSearchConfig::default(),
+            knowledge_compile: crate::knowledge::KnowledgeCompileConfig::default(),
             knowledge_maintenance: crate::knowledge::maintenance::MaintenanceConfig::default(),
             knowledge_passive_recall: crate::knowledge::PassiveRecallConfig::default(),
             knowledge_media_retention: crate::knowledge::KnowledgeMediaRetentionConfig::default(),

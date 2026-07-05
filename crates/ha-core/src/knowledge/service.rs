@@ -894,6 +894,32 @@ pub fn set_search_config(
     Ok(clamped)
 }
 
+// ── Source-to-note organization agent config (owner plane GUI) ──────────
+
+/// Current agent selection for organizing raw sources into reviewable note
+/// proposals. `agent_id = None` inherits the global default agent.
+pub fn get_compile_config() -> super::KnowledgeCompileConfig {
+    crate::config::cached_config()
+        .knowledge_compile
+        .clone()
+        .normalized()
+}
+
+/// Persist source-to-note organization agent selection. This only affects
+/// future compile runs; existing review proposals keep their original content.
+pub fn set_compile_config(
+    cfg: super::KnowledgeCompileConfig,
+    source: &str,
+) -> Result<super::KnowledgeCompileConfig> {
+    let normalized = cfg.normalized();
+    let to_save = normalized.clone();
+    crate::config::mutate_config(("knowledge_compile", source), move |store| {
+        store.knowledge_compile = to_save.clone();
+        Ok(())
+    })?;
+    Ok(normalized)
+}
+
 // ── Maintenance config (WS6, owner plane GUI) ───────────────────
 
 /// Current (clamped) maintenance config for the GUI panel.

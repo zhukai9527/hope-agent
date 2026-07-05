@@ -151,6 +151,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_maintenance_reject_all_cmd:   { method: "POST",   path: "/api/knowledge/{kbId}/maintenance/reject-all" },
   kb_maintenance_config_get_cmd:   { method: "GET",    path: "/api/knowledge/maintenance/config" },
   kb_maintenance_config_set_cmd:   { method: "POST",   path: "/api/knowledge/maintenance/config" },
+  knowledge_compile_config_get_cmd:{ method: "GET",    path: "/api/knowledge/compile/config" },
+  knowledge_compile_config_set_cmd:{ method: "POST",   path: "/api/knowledge/compile/config" },
   kb_passive_recall_config_get_cmd:{ method: "GET",    path: "/api/knowledge/passive-recall/config" },
   kb_passive_recall_config_set_cmd:{ method: "POST",   path: "/api/knowledge/passive-recall/config" },
   knowledge_media_retention_config_get_cmd: { method: "GET", path: "/api/knowledge/media-retention/config" },

@@ -19,13 +19,25 @@ import { AnimatedCollapse } from "@/components/ui/animated-presence"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DeferredNumberInput } from "@/components/ui/deferred-number-input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
+import {
+  AgentSelectDisplay,
+  INHERIT_AGENT_SENTINEL,
+  InheritAgentSelectDisplay,
+} from "@/components/common/AgentSelectDisplay"
 import { getTransport } from "@/lib/transport-provider"
 import { cn } from "@/lib/utils"
 import { logger } from "@/lib/logger"
 import type {
   ChunkConfig,
+  KnowledgeCompileConfig,
   KnowledgeMediaRetentionConfig,
   KnowledgeSearchConfig,
   PassiveRecallConfig,
@@ -48,6 +60,13 @@ import {
 import EmbeddingActivationDialog from "./memory-panel/EmbeddingActivationDialog"
 import KnowledgeMaintenanceSection from "./KnowledgeMaintenanceSection"
 import SpriteSection from "./SpriteSection"
+
+interface AgentItem {
+  id: string
+  name: string
+  emoji?: string | null
+  avatar?: string | null
+}
 
 const EMPTY_STATE: EmbeddingSelectionState = {
   selection: { enabled: false, modelConfigId: null, activeSignature: null, lastReembeddedSignature: null },
@@ -172,6 +191,8 @@ export default function KnowledgePanel() {
         </p>
       </div>
 
+      <CompileAgentSection />
+
       <div className="flex items-center justify-between rounded-lg bg-secondary/30 px-3 py-3">
         <div>
           <div className="text-sm font-medium">{t("settings.knowledgeEmbedding.enabled")}</div>
@@ -226,6 +247,107 @@ export default function KnowledgePanel() {
         embeddingModels={models}
         onConfirm={activate}
       />
+    </div>
+  )
+}
+
+function CompileAgentSection() {
+  const { t } = useTranslation()
+  const [config, setConfig] = useState<KnowledgeCompileConfig>({ agentId: null })
+  const [agents, setAgents] = useState<AgentItem[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      getTransport().call<KnowledgeCompileConfig>("knowledge_compile_config_get_cmd"),
+      getTransport().call<AgentItem[]>("list_agents").catch(() => [] as AgentItem[]),
+    ])
+      .then(([cfg, agentList]) => {
+        if (cancelled) return
+        setConfig({ agentId: cfg.agentId?.trim() || null })
+        setAgents(agentList)
+        setLoaded(true)
+      })
+      .catch((e) => {
+        logger.error("settings", "KnowledgePanel::compileAgentLoad", "Failed to load", e)
+        setLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleAgentChange = useCallback(
+    async (value: string) => {
+      const next: KnowledgeCompileConfig = {
+        agentId: value === INHERIT_AGENT_SENTINEL ? null : value,
+      }
+      setConfig(next)
+      try {
+        const saved = await getTransport().call<KnowledgeCompileConfig>(
+          "knowledge_compile_config_set_cmd",
+          { config: next },
+        )
+        setConfig({ agentId: saved.agentId?.trim() || null })
+      } catch (e) {
+        logger.error("settings", "KnowledgePanel::compileAgentSave", "Failed to save", e)
+        toast.error(String(e))
+      }
+    },
+    [],
+  )
+
+  if (!loaded) return null
+
+  const selectedAgentId = config.agentId?.trim() || null
+  const selectedAgent = selectedAgentId
+    ? agents.find((agent) => agent.id === selectedAgentId)
+    : undefined
+  const selectedAgentExists = selectedAgentId
+    ? agents.some((agent) => agent.id === selectedAgentId)
+    : false
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg bg-secondary/30 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 sm:pr-4">
+        <div className="text-sm font-medium">{t("settings.knowledgeCompile.agent")}</div>
+        <div className="text-xs text-muted-foreground">
+          {t("settings.knowledgeCompile.agentDesc")}
+        </div>
+      </div>
+      <Select
+        value={selectedAgentId ?? INHERIT_AGENT_SENTINEL}
+        onValueChange={(value) => void handleAgentChange(value)}
+      >
+        <SelectTrigger className="h-8 w-full overflow-hidden text-sm sm:w-72">
+          <div className="flex min-w-0 flex-1 items-center overflow-hidden">
+            {selectedAgentId ? (
+              <AgentSelectDisplay agent={selectedAgent} fallbackName={selectedAgentId} />
+            ) : (
+              <InheritAgentSelectDisplay label={t("settings.knowledgeCompile.agentDefault")} />
+            )}
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem
+            value={INHERIT_AGENT_SENTINEL}
+            textValue={t("settings.knowledgeCompile.agentDefault")}
+          >
+            {t("settings.knowledgeCompile.agentDefault")}
+          </SelectItem>
+          {selectedAgentId && !selectedAgentExists && (
+            <SelectItem value={selectedAgentId} textValue={selectedAgentId}>
+              <AgentSelectDisplay fallbackName={selectedAgentId} />
+            </SelectItem>
+          )}
+          {agents.map((agent) => (
+            <SelectItem key={agent.id} value={agent.id} textValue={agent.name}>
+              <AgentSelectDisplay agent={agent} />
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }

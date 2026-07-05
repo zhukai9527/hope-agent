@@ -516,6 +516,10 @@ export interface CompileStartInput {
   strategy?: string | null
 }
 
+export interface KnowledgeCompileConfig {
+  agentId?: string | null
+}
+
 export type QueryFileMode =
   | "create_note"
   | "update_current_note"

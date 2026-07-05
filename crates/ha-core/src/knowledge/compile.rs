@@ -180,7 +180,8 @@ pub fn query_file(kb_id: &str, input: QueryFileInput) -> Result<CompileProposal>
         return existing_query_file_proposal(kb_id, &run.id, &proposal.fingerprint);
     }
 
-    let inserted = registry()?.insert_compile_proposals(&run.id, kb_id, &[proposal.clone()])?;
+    let inserted =
+        registry()?.insert_compile_proposals(&run.id, kb_id, std::slice::from_ref(&proposal))?;
     registry()?.finish_compile_run(
         &run.id,
         CompileRunStatus::Completed,
@@ -769,7 +770,12 @@ async fn generate_summary(
     related: &[String],
 ) -> Result<(String, Option<String>)> {
     let config = crate::config::cached_config();
-    let (agent, model) = crate::recap::report::build_analysis_agent(&config).await?;
+    let compile_cfg = config.knowledge_compile.clone().normalized();
+    let (agent, model) = crate::recap::report::build_analysis_agent_with_explicit_agent(
+        &config,
+        compile_cfg.agent_id.as_deref(),
+    )
+    .await?;
     let prompt = summary_prompt(kb_id, source_meta, content, related);
     let fut = agent.side_query(&prompt, LLM_MAX_TOKENS);
     let res = tokio::time::timeout(std::time::Duration::from_secs(LLM_TIMEOUT_SECS), fut)

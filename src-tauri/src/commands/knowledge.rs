@@ -14,12 +14,13 @@ use ha_core::knowledge::{
     KnowledgeAgentExpandResult, KnowledgeAgentReadInput, KnowledgeAgentReadResult,
     KnowledgeAgentSearchInput, KnowledgeAgentSearchResult, KnowledgeAgentSourcesInput,
     KnowledgeAgentSourcesResult, KnowledgeBase, KnowledgeBaseMeta,
-    KnowledgeBrowserSourceImportInput, KnowledgeEvidenceClaim, KnowledgeEvidenceCoverage,
-    KnowledgeEvidenceRebuildResult, KnowledgeGraph, KnowledgeSource, KnowledgeSourceAssetKind,
-    KnowledgeSourceAssetLink, KnowledgeSourceDiff, KnowledgeSourceExternalRawSyncResult,
-    KnowledgeSourceImportBatchInput, KnowledgeSourceImportInput, KnowledgeSourceImportRun,
-    KnowledgeSourceImportRunDetail, KnowledgeSourceImportSessionAttachmentInput,
-    KnowledgeSourceReadResult, KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
+    KnowledgeBrowserSourceImportInput, KnowledgeCompileConfig, KnowledgeEvidenceClaim,
+    KnowledgeEvidenceCoverage, KnowledgeEvidenceRebuildResult, KnowledgeGraph, KnowledgeSource,
+    KnowledgeSourceAssetKind, KnowledgeSourceAssetLink, KnowledgeSourceDiff,
+    KnowledgeSourceExternalRawSyncResult, KnowledgeSourceImportBatchInput,
+    KnowledgeSourceImportInput, KnowledgeSourceImportRun, KnowledgeSourceImportRunDetail,
+    KnowledgeSourceImportSessionAttachmentInput, KnowledgeSourceReadResult,
+    KnowledgeSourceRefreshInput, KnowledgeSourceRefreshResult,
     KnowledgeSourceSimilarityDismissInput, KnowledgeSourceSimilarityGroup,
     KnowledgeSourceSimilarityResolveInput, KnowledgeSourceSimilarityResolveResult,
     KnowledgeSourceVersionHistory, Note, NoteReadResult, NoteSearchHit, NoteSourceRef,
@@ -330,6 +331,18 @@ pub async fn kb_query_file_cmd(
     input: QueryFileInput,
 ) -> Result<CompileProposal, CmdError> {
     service::query_file(&kb_id, input).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn knowledge_compile_config_get_cmd() -> Result<KnowledgeCompileConfig, CmdError> {
+    Ok(service::get_compile_config())
+}
+
+#[tauri::command]
+pub async fn knowledge_compile_config_set_cmd(
+    config: KnowledgeCompileConfig,
+) -> Result<KnowledgeCompileConfig, CmdError> {
+    service::set_compile_config(config, "desktop").map_err(Into::into)
 }
 
 // ── Schema profile + evidence refs (Phase 3) ─────────────────────

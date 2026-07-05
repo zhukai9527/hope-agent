@@ -898,7 +898,7 @@ pub fn reextract_source(kb_id: &str, source_id: &str) -> Result<KnowledgeSource>
             source_id,
             &content_hash,
             Some(&content_hash),
-            content.as_bytes().len() as i64,
+            content.len() as i64,
             &chunks,
         )?
         .ok_or_else(|| anyhow!("source not found during reextract: {source_id}"))?;
@@ -1071,10 +1071,10 @@ fn import_text_snapshot(
     file_name: Option<String>,
     content: String,
 ) -> Result<ImportedSourceOutcome> {
-    if content.as_bytes().len() > MAX_DIRECT_SOURCE_BYTES {
+    if content.len() > MAX_DIRECT_SOURCE_BYTES {
         bail!(
             "source is too large ({} bytes, max {})",
-            content.as_bytes().len(),
+            content.len(),
             MAX_DIRECT_SOURCE_BYTES
         );
     }
@@ -2074,7 +2074,7 @@ fn persist_source_draft(
         compiled_at: None,
         created_at: now,
         updated_at: now,
-        size: draft.content.as_bytes().len() as i64,
+        size: draft.content.len() as i64,
         chunk_count: chunks.len() as u32,
         version_of_source_id,
         version_index,

@@ -70,6 +70,18 @@ pub async fn build_analysis_agent(config: &AppConfig) -> Result<(AssistantAgent,
     build_analysis_agent_inner(config, false).await
 }
 
+/// Build an analysis-style one-shot agent from an explicit agent id. `None`
+/// inherits the global default agent. This is shared by non-recap workflows that
+/// need the same model-chain/fallback behavior without borrowing
+/// `recap.analysisAgent`.
+pub async fn build_analysis_agent_with_explicit_agent(
+    config: &AppConfig,
+    agent_id: Option<&str>,
+) -> Result<(AssistantAgent, String)> {
+    let explicit = normalize_agent_id(agent_id);
+    build_analysis_agent_from_explicit(config, explicit, false).await
+}
+
 /// Build an analysis agent that can accept image attachments.
 ///
 /// Used by owner-plane OCR workflows. Models explicitly marked as text-only
@@ -84,6 +96,14 @@ async fn build_analysis_agent_inner(
     require_vision: bool,
 ) -> Result<(AssistantAgent, String)> {
     let explicit = normalize_agent_id(config.recap.analysis_agent.as_deref());
+    build_analysis_agent_from_explicit(config, explicit, require_vision).await
+}
+
+async fn build_analysis_agent_from_explicit(
+    config: &AppConfig,
+    explicit: Option<String>,
+    require_vision: bool,
+) -> Result<(AssistantAgent, String)> {
     let inherited = normalize_agent_id(config.default_agent_id.as_deref())
         .unwrap_or_else(|| crate::agent::resolver::HARDCODED_DEFAULT_AGENT_ID.to_string());
 
@@ -121,7 +141,7 @@ async fn build_analysis_agent_inner(
         if require_vision {
             anyhow!("no vision-capable LLM model configured — configure a model that accepts image input before importing image sources")
         } else {
-            anyhow!("no LLM provider available — configure a provider before running /recap")
+            anyhow!("no LLM provider available — configure a provider before running analysis tasks")
         }
     }))
 }

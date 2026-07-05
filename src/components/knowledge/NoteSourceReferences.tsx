@@ -117,7 +117,7 @@ export default function NoteSourceReferences({
                 : ref.superseded
                   ? t("knowledge.sources.supersededSource", "Newer source version available")
                   : ref.stale
-                  ? t("knowledge.sources.staleSource", "Source changed after compile")
+                  ? t("knowledge.sources.staleSource", "Source changed after it was organized")
                   : ref.originUri || ref.sourceId}
             </span>
           </button>

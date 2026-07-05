@@ -122,18 +122,13 @@ impl KbAccess {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KnowledgeExternalRawSyncMode {
+    #[default]
     Disabled,
     Raw,
     Sources,
-}
-
-impl Default for KnowledgeExternalRawSyncMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 impl KnowledgeExternalRawSyncMode {
@@ -415,7 +410,7 @@ const MEDIA_RETENTION_DEFAULT_MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
 const MEDIA_RETENTION_DEFAULT_THUMBNAIL_MAX_EDGE_PX: u32 = 512;
 const MEDIA_RETENTION_MIN_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MEDIA_RETENTION_MAX_TOTAL_BYTES: u64 = 100 * 1024 * 1024 * 1024;
-const MEDIA_RETENTION_MIN_SOURCE_BYTES: u64 = 1 * 1024 * 1024;
+const MEDIA_RETENTION_MIN_SOURCE_BYTES: u64 = 1024 * 1024;
 const MEDIA_RETENTION_MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MEDIA_RETENTION_MIN_THUMBNAIL_EDGE_PX: u32 = 128;
 const MEDIA_RETENTION_MAX_THUMBNAIL_EDGE_PX: u32 = 2048;
@@ -1345,6 +1340,30 @@ pub enum CompileProposalAction {
         #[serde(default)]
         overwrite: bool,
     },
+}
+
+/// Agent selection for source-to-note organization. `None` inherits the global
+/// default agent so first-run behavior stays smooth, while power users can pin
+/// a stronger/cheaper agent for this knowledge workflow only.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeCompileConfig {
+    #[serde(default)]
+    pub agent_id: Option<String>,
+}
+
+impl KnowledgeCompileConfig {
+    pub fn normalized(mut self) -> Self {
+        self.agent_id = self.agent_id.and_then(|id| {
+            let trimmed = id.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

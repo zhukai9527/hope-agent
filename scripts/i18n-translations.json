@@ -582,6 +582,11 @@
       "knowledge": {
         "tab": "ナレッジ"
       },
+      "knowledgeCompile": {
+        "agent": "資料整理エージェント",
+        "agentDefault": "グローバル既定エージェントを使用",
+        "agentDesc": "ソース資料をレビュー可能なノート提案に整理するエージェントです。未設定の場合はグローバル既定エージェントを継承します。"
+      },
       "knowledgeEmbedding": {
         "title": "ベクトル検索（埋め込み）",
         "description": "ナレッジベースのセマンティック検索に使う埋め込みモデルを設定します。メモリとは独立しており、同じ共有モデルライブラリから選びますが、有効化と再構築は個別に行われるため、メモリの埋め込みが無効でも動作します。",
@@ -625,7 +630,8 @@
           "knowledgeGap": "知識ギャップ",
           "autoTag": "自動タグ",
           "mocUpkeep": "MOC 整備",
-          "memoryToNote": "メモリ→ノート"
+          "memoryToNote": "メモリ→ノート",
+          "sourceCompile": "ソースからノートまで"
         }
       },
       "knowledgePassiveRecall": {
@@ -1385,7 +1391,8 @@
           "knowledge_gap": "ギャップ",
           "auto_tag": "タグ",
           "moc_upkeep": "MOC",
-          "memory_to_note": "メモリ"
+          "memory_to_note": "メモリ",
+          "source_compile": "整理する"
         },
         "evidenceCoverage": "証拠の網羅性",
         "evidenceCoverageDetail": "{{pct}}% · {{claimsWithEvidence}}/{{claims}} クレーム · {{notesWithEvidence}}/{{notes}} メモ",
@@ -1396,7 +1403,8 @@
         "needsReview": "見直しが必要",
         "rebuildEvidenceTip": "派生した証拠インデックスを再構築する",
         "schemaIssues": "スキーマの問題",
-        "staleRefs": "古い参照"
+        "staleRefs": "古い参照",
+        "compileQueued": "ソースからノートまでのレビューを生成。メモの提案パネルで差分を確認してください。"
       },
       "graph": {
         "toggle": "グラフ表示",
@@ -1535,28 +1543,28 @@
         "applyFailed": "プロポーザルを適用できませんでした",
         "cancel": "キャンセル",
         "cancelFailed": "実行をキャンセルできませんでした",
-        "cancelled": "コンパイル実行がキャンセルされました",
-        "description": "何かを書き込む前に、生成されたノートの変更を確認します。",
+        "cancelled": "ソースからノートへの実行がキャンセルされました",
+        "description": "AI ドラフトは、選択されたソースからの変更をメモします。何かを書き込む前に diff を確認してください。",
         "empty": "レビューする提案を選択してください",
         "emptyHint": "生成された提案は、申請または拒否されるまでここに残ります。",
-        "failed": "コンパイル実行に失敗しました",
-        "loadFailed": "コンパイル実行をロードできませんでした",
+        "failed": "ソースからノートへの実行に失敗しました",
+        "loadFailed": "ソースからノートへの実行をロードできませんでした",
         "noProposals": "この実行に対する提案はありません。",
-        "noRuns": "まだコンパイルは実行されません。",
+        "noRuns": "ソースからノートへの実行はまだ行われていません。",
         "proposals": "提案",
         "proposalsLoadFailed": "提案を読み込めませんでした",
         "refresh": "リフレッシュ",
         "reject": "拒否する",
         "rejectFailed": "提案を拒否できませんでした",
         "rejected": "提案は拒否されました",
-        "runPending": "コンパイル実行が保留中",
+        "runPending": "ソースからノートへの実行は保留中です",
         "runSources": "{{count}} ソース",
-        "running": "ソースをコンパイル中…",
+        "running": "ソースをメモに整理しています…",
         "runs": "走る",
-        "startFailed": "ソースをコンパイルできませんでした",
-        "startSelected": "{{count}} をコンパイルする",
-        "started": "生成された {{n}} プロポーザル",
-        "title": "ソースをコンパイルする"
+        "startFailed": "ソースをメモに整理できませんでした",
+        "startSelected": "{{count}}を整理する",
+        "started": "生成された {{n}} メモの提案",
+        "title": "メモに整理する"
       },
       "sources": {
         "archiveAttachment": "知識へのアーカイブ",
@@ -1568,10 +1576,10 @@
         "browserSelection": "選択",
         "chooseFile": "ファイルの選択",
         "comparePrevious": "以前と比較する",
-        "compileOne": "コンパイル",
-        "compileSelected": "選択したソースをコンパイルする",
-        "compiled": "コンパイル済み",
-        "compiledClaims": "このソースを使用してコンパイルされたクレーム",
+        "compileOne": "ノートに整理する",
+        "compileSelected": "選択したものをメモに整理します",
+        "compiled": "組織化された",
+        "compiledClaims": "この情報源を使用した主張に注意してください",
         "currentVersion": "現在",
         "delete": "削除",
         "deleteBody": "{{name}} を生ソースの受信箱から削除しますか?",
@@ -1605,7 +1613,7 @@
         "mediaRetained": "メディアの保持",
         "missingSource": "ソースがありません",
         "moreClaims": "+{{count}} 件の申し立てが増加",
-        "noCompiledClaims": "この情報源を引用した編集ノートの主張はまだありません。",
+        "noCompiledClaims": "この出典を引用した注記はまだありません。",
         "noImportRuns": "インポートはまだ実行されていません。",
         "noKb": "スペースを選択してソースを表示します。",
         "noKnowledgeBase": "利用可能な知識スペースがありません",
@@ -1636,14 +1644,14 @@
         "similarResolveFailed": "重複したソースを解決できませんでした",
         "similarResolved": "{{count}} 重複ソースを削除しました",
         "sourceDiff": "ソースの差分",
-        "staleSource": "コンパイル後にソースが変更されました",
+        "staleSource": "整理後にソースを変更しました",
         "supersededSource": "新しいソースバージョンが利用可能",
         "text": "テキスト",
         "textPlaceholder": "ソーステキストを貼り付け…",
         "thumbnailOnly": "サムネイルのみ",
         "title": "情報源",
         "titlePlaceholder": "タイトル",
-        "uncompiled": "未コンパイル",
+        "uncompiled": "整理されていない",
         "url": "URL",
         "urlKindAudio": "音声トランスクリプト",
         "urlKindImage": "画像OCR",
@@ -2357,6 +2365,11 @@
       "knowledge": {
         "tab": "지식"
       },
+      "knowledgeCompile": {
+        "agent": "자료 정리 Agent",
+        "agentDefault": "전역 기본 Agent 사용",
+        "agentDesc": "소스 자료를 검토 가능한 노트 제안으로 정리하는 Agent입니다. 설정하지 않으면 전역 기본 Agent를 상속합니다."
+      },
       "knowledgeEmbedding": {
         "title": "벡터 검색(임베딩)",
         "description": "지식 베이스 시맨틱 검색에 사용할 임베딩 모델을 구성합니다. 메모리와 독립적이며 동일한 공유 모델 라이브러리에서 선택하지만, 활성화와 재구축은 별도로 이루어지므로 메모리 임베딩이 꺼져 있어도 작동합니다.",
@@ -2400,7 +2413,8 @@
           "knowledgeGap": "지식 공백",
           "autoTag": "자동 태그",
           "mocUpkeep": "MOC 관리",
-          "memoryToNote": "메모리→노트"
+          "memoryToNote": "메모리→노트",
+          "sourceCompile": "소스-노트"
         }
       },
       "knowledgePassiveRecall": {
@@ -3160,7 +3174,8 @@
           "knowledge_gap": "공백",
           "auto_tag": "태그",
           "moc_upkeep": "MOC",
-          "memory_to_note": "메모리"
+          "memory_to_note": "메모리",
+          "source_compile": "정리하다"
         },
         "evidenceCoverage": "증거 범위",
         "evidenceCoverageDetail": "{{pct}}% · {{claimsWithEvidence}}/{{claims}} 주장 · {{notesWithEvidence}}/{{notes}} 참고",
@@ -3171,7 +3186,8 @@
         "needsReview": "검토 필요",
         "rebuildEvidenceTip": "파생 증거 인덱스 다시 작성",
         "schemaIssues": "스키마 문제",
-        "staleRefs": "오래된 심판"
+        "staleRefs": "오래된 심판",
+        "compileQueued": "소스-노트 리뷰가 생성되었습니다. 메모 제안 패널에서 차이점을 확인하세요."
       },
       "graph": {
         "toggle": "그래프 보기",
@@ -3310,28 +3326,28 @@
         "applyFailed": "제안을 적용할 수 없습니다.",
         "cancel": "취소",
         "cancelFailed": "실행을 취소할 수 없습니다.",
-        "cancelled": "컴파일 실행이 취소되었습니다.",
-        "description": "무언가를 작성하기 전에 생성된 메모 변경 사항을 검토하세요.",
+        "cancelled": "소스-노트 실행이 취소되었습니다.",
+        "description": "AI는 선택한 소스의 변경 사항을 초안으로 작성합니다. 무엇이든 작성하기 전에 차이점을 검토하세요.",
         "empty": "검토할 제안을 선택하세요.",
         "emptyHint": "생성된 제안은 적용하거나 거부할 때까지 여기에 유지됩니다.",
-        "failed": "컴파일 실행 실패",
-        "loadFailed": "컴파일 실행을 로드할 수 없습니다.",
+        "failed": "소스-노트 실행 실패",
+        "loadFailed": "소스-노트 실행을 로드할 수 없습니다.",
         "noProposals": "이번 실행에 대한 제안이 없습니다.",
-        "noRuns": "아직 컴파일이 실행되지 않습니다.",
+        "noRuns": "아직 소스-노트 실행이 없습니다.",
         "proposals": "제안",
         "proposalsLoadFailed": "제안을 로드할 수 없습니다.",
         "refresh": "새로고침",
         "reject": "거부",
         "rejectFailed": "제안을 거부할 수 없습니다.",
         "rejected": "제안이 거부됨",
-        "runPending": "컴파일 실행 보류 중",
+        "runPending": "소스-노트 실행 보류 중",
         "runSources": "{{count}} 소스",
-        "running": "소스 컴파일 중…",
+        "running": "소스를 메모로 정리 중…",
         "runs": "실행",
-        "startFailed": "소스를 컴파일할 수 없습니다.",
-        "startSelected": "{{count}} 컴파일",
-        "started": "생성된 {{n}} 제안",
-        "title": "소스 컴파일"
+        "startFailed": "소스를 메모로 정리할 수 없습니다.",
+        "startSelected": "{{count}} 구성",
+        "started": "{{n}} 메모 제안이 생성되었습니다.",
+        "title": "메모로 정리"
       },
       "sources": {
         "archiveAttachment": "지식으로 아카이브",
@@ -3343,10 +3359,10 @@
         "browserSelection": "선택",
         "chooseFile": "파일 선택",
         "comparePrevious": "이전 비교",
-        "compileOne": "컴파일",
-        "compileSelected": "선택한 소스 컴파일",
-        "compiled": "컴파일됨",
-        "compiledClaims": "이 소스를 사용하여 컴파일된 소유권 주장",
+        "compileOne": "메모로 정리하기",
+        "compileSelected": "선택한 항목을 메모로 정리",
+        "compiled": "정리됨",
+        "compiledClaims": "이 소스를 사용한 주장을 참고하세요.",
         "currentVersion": "현재",
         "delete": "삭제",
         "deleteBody": "원시 소스 받은 편지함에서 {{name}}를 삭제하시겠습니까?",
@@ -3380,7 +3396,7 @@
         "mediaRetained": "미디어 보유",
         "missingSource": "소스 누락",
         "moreClaims": "+{{count}}개 이상의 주장",
-        "noCompiledClaims": "아직 이 출처를 인용한 컴파일된 메모 주장이 없습니다.",
+        "noCompiledClaims": "아직 이 출처를 인용한 메모 주장이 없습니다.",
         "noImportRuns": "아직 가져오기가 실행되지 않습니다.",
         "noKb": "소스를 보려면 스페이스를 선택하세요.",
         "noKnowledgeBase": "지식 공간이 없습니다.",
@@ -3411,14 +3427,14 @@
         "similarResolveFailed": "중복된 소스를 해결할 수 없습니다.",
         "similarResolved": "{{count}} 중복 소스가 삭제되었습니다.",
         "sourceDiff": "소스 차이",
-        "staleSource": "컴파일 후 소스가 변경됨",
+        "staleSource": "정리 후 소스가 변경되었습니다.",
         "supersededSource": "최신 소스 버전 사용 가능",
         "text": "텍스트",
         "textPlaceholder": "원본 텍스트 붙여넣기…",
         "thumbnailOnly": "썸네일만",
         "title": "출처",
         "titlePlaceholder": "제목",
-        "uncompiled": "컴파일되지 않은",
+        "uncompiled": "정리되지 않음",
         "url": "URL",
         "urlKindAudio": "오디오 대본",
         "urlKindImage": "이미지 OCR",
@@ -4132,6 +4148,11 @@
       "knowledge": {
         "tab": "知識空間"
       },
+      "knowledgeCompile": {
+        "agent": "資料整理 Agent",
+        "agentDefault": "使用全域預設 Agent",
+        "agentDesc": "用於將來源資料整理成可審閱的筆記建議，未設定時繼承全域預設 Agent。"
+      },
       "knowledgeEmbedding": {
         "title": "向量檢索（Embedding）",
         "description": "設定知識空間語義檢索使用的 embedding 模型。獨立於記憶——從同一個共用模型庫中選擇，但啟用與重建各自獨立，即使記憶未啟用 embedding 也能正常運作。",
@@ -4175,7 +4196,8 @@
           "knowledgeGap": "知識缺口",
           "autoTag": "自動標籤",
           "mocUpkeep": "MOC 維護",
-          "memoryToNote": "記憶轉筆記"
+          "memoryToNote": "記憶轉筆記",
+          "sourceCompile": "資料整理"
         }
       },
       "knowledgePassiveRecall": {
@@ -4901,7 +4923,8 @@
           "knowledge_gap": "缺口",
           "auto_tag": "標籤",
           "moc_upkeep": "MOC",
-          "memory_to_note": "記憶"
+          "memory_to_note": "記憶",
+          "source_compile": "整理"
         },
         "evidenceCoverage": "證據覆蓋範圍",
         "evidenceCoverageDetail": "{{pct}}% · {{claimsWithEvidence}}/{{claims}} 聲明 · {{notesWithEvidence}}/{{notes}} 註釋",
@@ -4912,7 +4935,8 @@
         "needsReview": "需要審查",
         "rebuildEvidenceTip": "重建派生證據索引",
         "schemaIssues": "架構問題",
-        "staleRefs": "過時的參考文獻"
+        "staleRefs": "過時的參考文獻",
+        "compileQueued": "已產生整理審閱，請到筆記建議面板查看 diff。"
       },
       "graph": {
         "toggle": "圖譜檢視",
@@ -5051,28 +5075,28 @@
         "applyFailed": "無法套用建議",
         "cancel": "取消",
         "cancelFailed": "無法取消執行",
-        "cancelled": "編譯執行已取消",
-        "description": "在寫入任何內容前先審閱產生的筆記變更。",
+        "cancelled": "資料整理已取消",
+        "description": "AI 會從所選資料產生筆記修改建議；寫入前你可以先審閱 diff。",
         "empty": "選擇一個建議進行審閱",
         "emptyHint": "產生的建議會保留在這裡，直到你套用或忽略。",
-        "failed": "編譯執行失敗",
-        "loadFailed": "無法載入編譯執行",
+        "failed": "資料整理失敗",
+        "loadFailed": "無法載入資料整理記錄",
         "noProposals": "本次執行沒有建議。",
-        "noRuns": "還沒有編譯執行。",
+        "noRuns": "還沒有資料整理記錄。",
         "proposals": "建議",
         "proposalsLoadFailed": "無法載入建議",
         "refresh": "重新整理",
         "reject": "忽略",
         "rejectFailed": "無法忽略建議",
         "rejected": "已忽略建議",
-        "runPending": "編譯執行等待中",
+        "runPending": "資料整理等待中",
         "runSources": "{{count}} 個資料",
-        "running": "正在編譯資料…",
+        "running": "正在把資料整理成筆記…",
         "runs": "執行",
-        "startFailed": "無法編譯資料",
-        "startSelected": "編譯 {{count}} 個",
-        "started": "已產生 {{n}} 條建議",
-        "title": "編譯資料"
+        "startFailed": "無法把資料整理成筆記",
+        "startSelected": "整理 {{count}} 個",
+        "started": "已產生 {{n}} 條筆記建議",
+        "title": "整理資料為筆記"
       },
       "sources": {
         "archiveAttachment": "歸檔到知識空間",
@@ -5084,10 +5108,10 @@
         "browserSelection": "選取範圍",
         "chooseFile": "選擇檔案",
         "comparePrevious": "比較上一版",
-        "compileOne": "編譯",
-        "compileSelected": "編譯所選資料",
-        "compiled": "已編譯",
-        "compiledClaims": "使用此資料的已編譯結論",
+        "compileOne": "整理成筆記",
+        "compileSelected": "整理所選資料為筆記",
+        "compiled": "已整理",
+        "compiledClaims": "使用此資料的筆記結論",
         "currentVersion": "目前",
         "delete": "刪除",
         "deleteBody": "要從原始資料艙刪除「{{name}}」嗎？",
@@ -5121,7 +5145,7 @@
         "mediaRetained": "已留存媒體",
         "missingSource": "資料缺失",
         "moreClaims": "還有 {{count}} 條結論",
-        "noCompiledClaims": "還沒有已編譯筆記結論引用此資料。",
+        "noCompiledClaims": "還沒有筆記結論引用此資料。",
         "noImportRuns": "還沒有匯入執行。",
         "noKb": "選擇一個空間以查看資料。",
         "noKnowledgeBase": "沒有可用的知識空間",
@@ -5152,14 +5176,14 @@
         "similarResolveFailed": "無法處理重複資料",
         "similarResolved": "已刪除 {{count}} 個重複資料",
         "sourceDiff": "資料差異",
-        "staleSource": "編譯後資料已變更",
+        "staleSource": "整理後資料已變更",
         "supersededSource": "有更新的資料版本",
         "text": "文字",
         "textPlaceholder": "貼上資料文字…",
         "thumbnailOnly": "僅縮圖",
         "title": "資料",
         "titlePlaceholder": "標題",
-        "uncompiled": "未編譯",
+        "uncompiled": "未整理",
         "url": "URL",
         "urlKindAudio": "音訊轉錄",
         "urlKindImage": "圖片 OCR",
@@ -5890,6 +5914,11 @@
       "knowledge": {
         "tab": "Bilgi"
       },
+      "knowledgeCompile": {
+        "agent": "Kaynak düzenleme ajanı",
+        "agentDefault": "Genel varsayılan ajanı kullan",
+        "agentDesc": "Kaynakları incelenebilir not önerilerine dönüştüren ajan. Ayarlanmadığında genel varsayılan ajanı devralır."
+      },
       "knowledgeEmbedding": {
         "title": "Vektör arama (gömme)",
         "description": "Bilgi tabanı anlamsal araması için gömme modelini yapılandırın. Bellekten bağımsızdır — aynı paylaşılan model kitaplığından seçer, ancak ayrı olarak etkinleştirilir ve yeniden oluşturulur, bu yüzden bellek gömmesi kapalı olsa bile çalışır.",
@@ -5933,7 +5962,8 @@
           "knowledgeGap": "Bilgi boşlukları",
           "autoTag": "Otomatik etiket",
           "mocUpkeep": "MOC bakımı",
-          "memoryToNote": "Bellek → not"
+          "memoryToNote": "Bellek → not",
+          "sourceCompile": "Kaynaktan nota"
         }
       },
       "knowledgePassiveRecall": {
@@ -6693,7 +6723,8 @@
           "knowledge_gap": "Boşluk",
           "auto_tag": "Etiket",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Bellek"
+          "memory_to_note": "Bellek",
+          "source_compile": "Organize et"
         },
         "evidenceCoverage": "Kanıt kapsamı",
         "evidenceCoverageDetail": "{{pct}}% · {{claimsWithEvidence}}/{{claims}} iddiaları · {{notesWithEvidence}}/{{notes}} notları",
@@ -6704,7 +6735,8 @@
         "needsReview": "İncelenmesi gerekiyor",
         "rebuildEvidenceTip": "Türetilmiş kanıt dizinini yeniden oluşturun",
         "schemaIssues": "Şema sorunları",
-        "staleRefs": "Eski referanslar"
+        "staleRefs": "Eski referanslar",
+        "compileQueued": "Kaynaktan nota inceleme oluşturuldu. Farklılıklar için not önerileri panelini kontrol edin."
       },
       "graph": {
         "toggle": "Grafik görünümü",
@@ -6843,28 +6875,28 @@
         "applyFailed": "Teklif uygulanamadı",
         "cancel": "İptal",
         "cancelFailed": "Çalıştırma iptal edilemedi",
-        "cancelled": "Derleme çalıştırması iptal edildi",
-        "description": "Herhangi bir şey yazılmadan önce oluşturulan not değişikliklerini inceleyin.",
+        "cancelled": "Kaynaktan nota çalışması iptal edildi",
+        "description": "AI, seçilen kaynaklardan gelen değişiklikleri not eder. Herhangi bir şey yazılmadan önce farkı gözden geçirin.",
         "empty": "İncelenecek teklifi seçin",
         "emptyHint": "Oluşturulan teklifler, siz uygulayana veya reddedene kadar burada kalır.",
-        "failed": "Derleme çalıştırması başarısız oldu",
-        "loadFailed": "Derleme çalıştırmaları yüklenemedi",
+        "failed": "Kaynaktan nota çalıştırma başarısız oldu",
+        "loadFailed": "Kaynaktan nota çalıştırmalar yüklenemedi",
         "noProposals": "Bu çalıştırma için teklif yok.",
-        "noRuns": "Henüz derleme çalışması yok.",
+        "noRuns": "Henüz kaynaktan nota çalıştırma yok.",
         "proposals": "Teklifler",
         "proposalsLoadFailed": "Teklifler yüklenemedi",
         "refresh": "Yenile",
         "reject": "Reddet",
         "rejectFailed": "Teklif reddedilemedi",
         "rejected": "Teklif reddedildi",
-        "runPending": "Derleme çalıştırması beklemede",
+        "runPending": "Kaynaktan nota çalıştırma beklemede",
         "runSources": "{{count}} kaynak(lar)ı",
-        "running": "Kaynaklar derleniyor…",
+        "running": "Kaynakları notlar halinde düzenlemek…",
         "runs": "Koşular",
-        "startFailed": "Kaynaklar derlenemedi",
-        "startSelected": "{{count}}'i derleyin",
-        "started": "{{n}} teklif(ler)i oluşturuldu",
-        "title": "Kaynakları derleyin"
+        "startFailed": "Kaynaklar notlar halinde düzenlenemedi",
+        "startSelected": "{{count}}'i organize edin",
+        "started": "{{n}} notu önerileri oluşturuldu",
+        "title": "Notlar halinde düzenleyin"
       },
       "sources": {
         "archiveAttachment": "Bilgiye arşivle",
@@ -6876,10 +6908,10 @@
         "browserSelection": "Seçim",
         "chooseFile": "Dosyaları seçin",
         "comparePrevious": "Öncekini karşılaştır",
-        "compileOne": "Derle",
-        "compileSelected": "Seçilen kaynakları derle",
-        "compiled": "Derlenmiş",
-        "compiledClaims": "Bu kaynağı kullanarak derlenmiş hak talepleri",
+        "compileOne": "Not halinde düzenleyin",
+        "compileSelected": "Seçilenleri notlar halinde düzenleyin",
+        "compiled": "Organize",
+        "compiledClaims": "Bu kaynağı kullanan iddiaları not edin",
         "currentVersion": "Mevcut",
         "delete": "Sil",
         "deleteBody": "{{name}} ham kaynak gelen kutusundan silinsin mi?",
@@ -6913,7 +6945,7 @@
         "mediaRetained": "Medya tutuldu",
         "missingSource": "Kaynak eksik",
         "moreClaims": "+{{count}} daha fazla hak talebi",
-        "noCompiledClaims": "Henüz hiçbir derlenmiş not iddiasında bu kaynaktan bahsedilmiyor.",
+        "noCompiledClaims": "Henüz bu kaynağa atıfta bulunan bir not iddiası yok.",
         "noImportRuns": "Henüz içe aktarma işlemi gerçekleştirilmiyor.",
         "noKb": "Kaynakları görmek için bir alan seçin.",
         "noKnowledgeBase": "Bilgi alanı yok",
@@ -6944,14 +6976,14 @@
         "similarResolveFailed": "Yinelenen kaynaklar çözülemedi",
         "similarResolved": "{{count}} kopya kaynak(lar)ı silindi",
         "sourceDiff": "Kaynak farkı",
-        "staleSource": "Kaynak derlemeden sonra değiştirildi",
+        "staleSource": "Düzenlendikten sonra kaynak değiştirildi",
         "supersededSource": "Daha yeni kaynak sürümü mevcut",
         "text": "Metin",
         "textPlaceholder": "Kaynak metni yapıştırın…",
         "thumbnailOnly": "Yalnızca küçük resim",
         "title": "Kaynaklar",
         "titlePlaceholder": "Başlık",
-        "uncompiled": "derlenmemiş",
+        "uncompiled": "Organize değil",
         "url": "URL",
         "urlKindAudio": "Ses metni",
         "urlKindImage": "Görüntü OCR'si",
@@ -7665,6 +7697,11 @@
       "knowledge": {
         "tab": "Kiến thức"
       },
+      "knowledgeCompile": {
+        "agent": "Agent sắp xếp nguồn",
+        "agentDefault": "Dùng Agent mặc định toàn cục",
+        "agentDesc": "Agent dùng để chuyển nguồn thành đề xuất ghi chú có thể xem lại. Khi chưa đặt, sẽ kế thừa Agent mặc định toàn cục."
+      },
       "knowledgeEmbedding": {
         "title": "Tìm kiếm vector (embedding)",
         "description": "Cấu hình mô hình embedding cho tìm kiếm ngữ nghĩa của kho kiến thức. Độc lập với bộ nhớ — chọn từ cùng thư viện mô hình dùng chung, nhưng bật và xây dựng lại riêng, nên vẫn hoạt động ngay cả khi embedding của bộ nhớ tắt.",
@@ -7708,7 +7745,8 @@
           "knowledgeGap": "Lỗ hổng tri thức",
           "autoTag": "Tự gắn thẻ",
           "mocUpkeep": "Bảo trì MOC",
-          "memoryToNote": "Bộ nhớ → ghi chú"
+          "memoryToNote": "Bộ nhớ → ghi chú",
+          "sourceCompile": "Nguồn cần ghi chú"
         }
       },
       "knowledgePassiveRecall": {
@@ -8468,7 +8506,8 @@
           "knowledge_gap": "Thiếu",
           "auto_tag": "Thẻ",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Bộ nhớ"
+          "memory_to_note": "Bộ nhớ",
+          "source_compile": "tổ chức"
         },
         "evidenceCoverage": "Bảo hiểm bằng chứng",
         "evidenceCoverageDetail": "{{pct}}% · Yêu cầu {{claimsWithEvidence}}/{{claims}} · Ghi chú {{notesWithEvidence}}/{{notes}}",
@@ -8479,7 +8518,8 @@
         "needsReview": "Cần xem xét",
         "rebuildEvidenceTip": "Xây dựng lại chỉ số bằng chứng dẫn xuất",
         "schemaIssues": "Các vấn đề về lược đồ",
-        "staleRefs": "Giới thiệu cũ"
+        "staleRefs": "Giới thiệu cũ",
+        "compileQueued": "Đã tạo đánh giá từ nguồn đến ghi chú. Kiểm tra bảng gợi ý ghi chú để biết những khác biệt."
       },
       "graph": {
         "toggle": "Xem dạng đồ thị",
@@ -8618,28 +8658,28 @@
         "applyFailed": "Không thể áp dụng đề xuất",
         "cancel": "Hủy bỏ",
         "cancelFailed": "Không thể hủy cuộc chạy",
-        "cancelled": "Quá trình biên dịch bị hủy",
-        "description": "Xem lại các thay đổi ghi chú đã tạo trước khi viết bất cứ điều gì.",
+        "cancelled": "Việc chạy từ nguồn đến ghi chú đã bị hủy",
+        "description": "Bản nháp AI ghi chú những thay đổi từ các nguồn được chọn. Xem lại sự khác biệt trước khi viết bất cứ điều gì.",
         "empty": "Chọn một đề xuất để xem xét",
         "emptyHint": "Các đề xuất đã tạo vẫn ở đây cho đến khi bạn áp dụng hoặc từ chối chúng.",
-        "failed": "Chạy biên dịch không thành công",
-        "loadFailed": "Không thể tải các lần chạy biên dịch",
+        "failed": "Chạy từ nguồn tới ghi chú không thành công",
+        "loadFailed": "Không thể tải các lần chạy từ nguồn đến ghi chú",
         "noProposals": "Không có đề xuất nào cho lần chạy này.",
-        "noRuns": "Chưa có biên dịch chạy nào.",
+        "noRuns": "Chưa có nguồn ghi chú nào chạy.",
         "proposals": "Đề xuất",
         "proposalsLoadFailed": "Không thể tải đề xuất",
         "refresh": "Làm mới",
         "reject": "Từ chối",
         "rejectFailed": "Không thể từ chối đề xuất",
         "rejected": "Đề xuất bị từ chối",
-        "runPending": "Biên dịch đang chờ xử lý",
+        "runPending": "Nguồn-ghi chú đang chờ xử lý",
         "runSources": "(Các) nguồn {{count}}",
-        "running": "Tổng hợp nguồn…",
+        "running": "Sắp xếp các nguồn thành ghi chú…",
         "runs": "Chạy",
-        "startFailed": "Không thể biên dịch nguồn",
-        "startSelected": "Biên dịch {{count}}",
-        "started": "(Các) đề xuất {{n}} đã tạo",
-        "title": "Biên dịch nguồn"
+        "startFailed": "Không thể sắp xếp các nguồn thành ghi chú",
+        "startSelected": "Tổ chức {{count}}",
+        "started": "Đã tạo (các) đề xuất ghi chú {{n}}",
+        "title": "Sắp xếp thành ghi chú"
       },
       "sources": {
         "archiveAttachment": "Lưu trữ kiến thức",
@@ -8651,10 +8691,10 @@
         "browserSelection": "Lựa chọn",
         "chooseFile": "Chọn tập tin",
         "comparePrevious": "So sánh trước đó",
-        "compileOne": "Biên dịch",
-        "compileSelected": "Biên soạn các nguồn đã chọn",
-        "compiled": "biên soạn",
-        "compiledClaims": "Các xác nhận quyền sở hữu được tổng hợp bằng cách sử dụng nguồn này",
+        "compileOne": "Sắp xếp thành ghi chú",
+        "compileSelected": "Sắp xếp các lựa chọn thành ghi chú",
+        "compiled": "Có tổ chức",
+        "compiledClaims": "Lưu ý các khiếu nại sử dụng nguồn này",
         "currentVersion": "hiện tại",
         "delete": "Xóa",
         "deleteBody": "Xóa {{name}} khỏi hộp thư đến nguồn thô?",
@@ -8688,7 +8728,7 @@
         "mediaRetained": "Phương tiện được giữ lại",
         "missingSource": "Thiếu nguồn",
         "moreClaims": "+{{count}} nhiều yêu cầu hơn",
-        "noCompiledClaims": "Chưa có yêu cầu ghi chú tổng hợp nào trích dẫn nguồn này.",
+        "noCompiledClaims": "Chưa có ghi chú nào trích dẫn nguồn này.",
         "noImportRuns": "Chưa có thao tác nhập nào.",
         "noKb": "Chọn một không gian để xem các nguồn.",
         "noKnowledgeBase": "Không có không gian kiến thức",
@@ -8719,14 +8759,14 @@
         "similarResolveFailed": "Không thể giải quyết các nguồn trùng lặp",
         "similarResolved": "Đã xóa (các) nguồn trùng lặp {{count}}",
         "sourceDiff": "Nguồn khác biệt",
-        "staleSource": "Nguồn đã thay đổi sau khi biên dịch",
+        "staleSource": "Nguồn đã thay đổi sau khi được tổ chức",
         "supersededSource": "Đã có phiên bản nguồn mới hơn",
         "text": "văn bản",
         "textPlaceholder": "Dán văn bản nguồn…",
         "thumbnailOnly": "Chỉ hình thu nhỏ",
         "title": "Nguồn",
         "titlePlaceholder": "Tiêu đề",
-        "uncompiled": "Chưa biên dịch",
+        "uncompiled": "Không được tổ chức",
         "url": "URL",
         "urlKindAudio": "Bản ghi âm",
         "urlKindImage": "OCR hình ảnh",
@@ -9440,6 +9480,11 @@
       "knowledge": {
         "tab": "Conhecimento"
       },
+      "knowledgeCompile": {
+        "agent": "Agente de organização de fontes",
+        "agentDefault": "Usar agente padrão global",
+        "agentDesc": "Agente usado para transformar fontes em sugestões de notas revisáveis. Quando não definido, herda o agente padrão global."
+      },
       "knowledgeEmbedding": {
         "title": "Busca vetorial (embedding)",
         "description": "Configure o modelo de embedding para a busca semântica da base de conhecimento. É independente da memória: escolhe da mesma biblioteca compartilhada de modelos, mas é ativado e reconstruído separadamente, funcionando mesmo que o embedding da memória esteja desativado.",
@@ -9483,7 +9528,8 @@
           "knowledgeGap": "Lacunas de conhecimento",
           "autoTag": "Auto-etiqueta",
           "mocUpkeep": "Manutenção de MOC",
-          "memoryToNote": "Memória → nota"
+          "memoryToNote": "Memória → nota",
+          "sourceCompile": "Fonte para nota"
         }
       },
       "knowledgePassiveRecall": {
@@ -10243,7 +10289,8 @@
           "knowledge_gap": "Lacuna",
           "auto_tag": "Etiqueta",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Memória"
+          "memory_to_note": "Memória",
+          "source_compile": "Organizar"
         },
         "evidenceCoverage": "Cobertura de evidências",
         "evidenceCoverageDetail": "{{pct}}% · Reivindicações {{claimsWithEvidence}}/{{claims}} · Notas {{notesWithEvidence}}/{{notes}}",
@@ -10254,7 +10301,8 @@
         "needsReview": "Precisa de revisão",
         "rebuildEvidenceTip": "Reconstrua o índice de evidências derivado",
         "schemaIssues": "Problemas de esquema",
-        "staleRefs": "Referências obsoletas"
+        "staleRefs": "Referências obsoletas",
+        "compileQueued": "Revisão gerada da fonte à nota. Verifique o painel de sugestões de notas para diferenças."
       },
       "graph": {
         "toggle": "Vista de grafo",
@@ -10393,28 +10441,28 @@
         "applyFailed": "Não foi possível aplicar a proposta",
         "cancel": "Cancelar",
         "cancelFailed": "Não foi possível cancelar a execução",
-        "cancelled": "Execução de compilação cancelada",
-        "description": "Revise as alterações nas notas geradas antes de qualquer coisa ser escrita.",
+        "cancelled": "Execução da fonte à nota cancelada",
+        "description": "Os rascunhos de IA observam mudanças de fontes selecionadas. Revise a diferença antes de escrever qualquer coisa.",
         "empty": "Selecione uma proposta para analisar",
         "emptyHint": "As propostas geradas permanecem aqui até que você as aplique ou rejeite.",
-        "failed": "Falha na execução da compilação",
-        "loadFailed": "Não foi possível carregar execuções de compilação",
+        "failed": "Falha na execução da fonte para nota",
+        "loadFailed": "Não foi possível carregar execuções de origem para nota",
         "noProposals": "Não há propostas para esta corrida.",
-        "noRuns": "Nenhuma compilação foi executada ainda.",
+        "noRuns": "Nenhuma execução de fonte para nota ainda.",
         "proposals": "Propostas",
         "proposalsLoadFailed": "Não foi possível carregar as propostas",
         "refresh": "Atualizar",
         "reject": "Rejeitar",
         "rejectFailed": "Não foi possível rejeitar a proposta",
         "rejected": "Proposta rejeitada",
-        "runPending": "Execução de compilação pendente",
+        "runPending": "Execução da fonte para a nota pendente",
         "runSources": "Fonte(s) {{count}}",
-        "running": "Compilando fontes…",
+        "running": "Organizando fontes em notas…",
         "runs": "Corre",
-        "startFailed": "Não foi possível compilar fontes",
-        "startSelected": "Compilar {{count}}",
-        "started": "Proposta(s) {{n}} gerada(s)",
-        "title": "Compilar fontes"
+        "startFailed": "Não foi possível organizar as fontes em notas",
+        "startSelected": "Organizar {{count}}",
+        "started": "Sugestões de notas {{n}} geradas",
+        "title": "Organize em notas"
       },
       "sources": {
         "archiveAttachment": "Arquivar para conhecimento",
@@ -10426,10 +10474,10 @@
         "browserSelection": "Seleção",
         "chooseFile": "Escolha os arquivos",
         "comparePrevious": "Comparar anterior",
-        "compileOne": "Compilar",
-        "compileSelected": "Compilar fontes selecionadas",
-        "compiled": "Compilado",
-        "compiledClaims": "Declarações compiladas usando esta fonte",
+        "compileOne": "Organize em nota",
+        "compileSelected": "Organize os selecionados em notas",
+        "compiled": "Organizado",
+        "compiledClaims": "Observe as reivindicações usando esta fonte",
         "currentVersion": "Atual",
         "delete": "Excluir",
         "deleteBody": "Excluir {{name}} da caixa de entrada de origem bruta?",
@@ -10463,7 +10511,7 @@
         "mediaRetained": "Mídia retida",
         "missingSource": "Fonte ausente",
         "moreClaims": "+{{count}} mais reivindicações",
-        "noCompiledClaims": "Nenhuma reivindicação de nota compilada cita esta fonte ainda.",
+        "noCompiledClaims": "Nenhuma reivindicação de nota cita esta fonte ainda.",
         "noImportRuns": "Nenhuma importação foi executada ainda.",
         "noKb": "Selecione um espaço para ver as fontes.",
         "noKnowledgeBase": "Nenhum espaço de conhecimento disponível",
@@ -10494,14 +10542,14 @@
         "similarResolveFailed": "Não foi possível resolver fontes duplicadas",
         "similarResolved": "Fonte(s) duplicada(s) {{count}} excluída(s)",
         "sourceDiff": "Diferença de origem",
-        "staleSource": "Fonte alterada após compilação",
+        "staleSource": "Fonte alterada depois de organizada",
         "supersededSource": "Versão de origem mais recente disponível",
         "text": "Texto",
         "textPlaceholder": "Colar o texto fonte…",
         "thumbnailOnly": "Somente miniatura",
         "title": "Fontes",
         "titlePlaceholder": "Título",
-        "uncompiled": "Não compilado",
+        "uncompiled": "Não organizado",
         "url": "URL",
         "urlKindAudio": "Transcrição de áudio",
         "urlKindImage": "OCR de imagem",
@@ -11215,6 +11263,11 @@
       "knowledge": {
         "tab": "База знаний"
       },
+      "knowledgeCompile": {
+        "agent": "Агент для организации источников",
+        "agentDefault": "Использовать глобального агента по умолчанию",
+        "agentDesc": "Агент, который превращает источники в предложения заметок для проверки. Если не задан, наследует глобального агента по умолчанию."
+      },
       "knowledgeEmbedding": {
         "title": "Векторный поиск (эмбеддинг)",
         "description": "Настройте модель эмбеддинга для семантического поиска по базе знаний. Независима от памяти — выбирается из той же общей библиотеки моделей, но включается и перестраивается отдельно, поэтому работает даже если эмбеддинг памяти отключён.",
@@ -11258,7 +11311,8 @@
           "knowledgeGap": "Пробелы в знаниях",
           "autoTag": "Авто-теги",
           "mocUpkeep": "Обслуживание MOC",
-          "memoryToNote": "Память → заметка"
+          "memoryToNote": "Память → заметка",
+          "sourceCompile": "Источник к сведению"
         }
       },
       "knowledgePassiveRecall": {
@@ -12018,7 +12072,8 @@
           "knowledge_gap": "Пробел",
           "auto_tag": "Тег",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Память"
+          "memory_to_note": "Память",
+          "source_compile": "Организовать"
         },
         "evidenceCoverage": "Охват доказательств",
         "evidenceCoverageDetail": "{{pct}}% · Претензии {{claimsWithEvidence}}/{{claims}} · Примечания к {{notesWithEvidence}}/{{notes}}",
@@ -12029,7 +12084,8 @@
         "needsReview": "Требуется проверка",
         "rebuildEvidenceTip": "Восстановить индекс производных доказательств",
         "schemaIssues": "Проблемы со схемой",
-        "staleRefs": "Устаревшие ссылки"
+        "staleRefs": "Устаревшие ссылки",
+        "compileQueued": "Создан подробный обзор источника. Проверьте панель предложений заметок на наличие различий."
       },
       "graph": {
         "toggle": "Граф связей",
@@ -12168,28 +12224,28 @@
         "applyFailed": "Не удалось применить предложение",
         "cancel": "Отмена",
         "cancelFailed": "Не удалось отменить запуск.",
-        "cancelled": "Запуск компиляции отменен",
-        "description": "Просматривайте изменения в созданных заметках, прежде чем что-либо писать.",
+        "cancelled": "Прогон от источника к примечанию отменен",
+        "description": "ИИ вносит изменения в черновики из выбранных источников. Просмотрите разницу, прежде чем что-либо писать.",
         "empty": "Выберите предложение для рассмотрения",
         "emptyHint": "Сгенерированные предложения остаются здесь до тех пор, пока вы их не примените или не отклоните.",
-        "failed": "Компиляция не удалась",
-        "loadFailed": "Не удалось загрузить запуски компиляции",
+        "failed": "Не удалось выполнить переход от источника к примечанию.",
+        "loadFailed": "Не удалось загрузить прогоны от источника к заметке.",
         "noProposals": "Нет предложений по данному запуску.",
-        "noRuns": "Компиляция пока не выполняется.",
+        "noRuns": "Пока еще не выполнено преобразование источника в заметку.",
         "proposals": "Предложения",
         "proposalsLoadFailed": "Не удалось загрузить предложения.",
         "refresh": "Обновить",
         "reject": "Отклонить",
         "rejectFailed": "Не удалось отклонить предложение",
         "rejected": "Предложение отклонено",
-        "runPending": "Ожидается выполнение компиляции",
+        "runPending": "Ожидается запуск перехода от источника к примечанию",
         "runSources": "Источник(и) {{count}}",
-        "running": "Собираем исходники…",
+        "running": "Организация источников в заметки…",
         "runs": "Бежит",
-        "startFailed": "Не удалось скомпилировать исходники",
-        "startSelected": "Скомпилировать {{count}}",
-        "started": "Сгенерированные предложения {{n}}",
-        "title": "Компилировать исходники"
+        "startFailed": "Не удалось организовать источники в заметки.",
+        "startSelected": "Организовать {{count}}",
+        "started": "Сгенерированные предложения примечаний {{n}}",
+        "title": "Организовать в заметки"
       },
       "sources": {
         "archiveAttachment": "Архивировать к знаниям",
@@ -12201,10 +12257,10 @@
         "browserSelection": "Выбор",
         "chooseFile": "Выберите файлы",
         "comparePrevious": "Сравнить предыдущие",
-        "compileOne": "Скомпилировать",
-        "compileSelected": "Компилировать выбранные источники",
-        "compiled": "Скомпилировано",
-        "compiledClaims": "Составленные претензии с использованием этого источника",
+        "compileOne": "Организовать в заметку",
+        "compileSelected": "Организовать выбранное в заметки",
+        "compiled": "Организованный",
+        "compiledClaims": "Обратите внимание на претензии, использующие этот источник",
         "currentVersion": "Текущий",
         "delete": "Удалить",
         "deleteBody": "Удалить {{name}} из папки «Входящие» с исходным кодом?",
@@ -12238,7 +12294,7 @@
         "mediaRetained": "СМИ сохранены",
         "missingSource": "Отсутствует источник",
         "moreClaims": "+{{count}} больше претензий",
-        "noCompiledClaims": "Ни одна составленная записка пока не ссылается на этот источник.",
+        "noCompiledClaims": "Ни одна заявка пока не ссылается на этот источник.",
         "noImportRuns": "Импорт пока не выполняется.",
         "noKb": "Выберите пространство, чтобы увидеть источники.",
         "noKnowledgeBase": "Нет места для знаний",
@@ -12269,14 +12325,14 @@
         "similarResolveFailed": "Не удалось устранить повторяющиеся источники",
         "similarResolved": "Удалены повторяющиеся источники {{count}}.",
         "sourceDiff": "Разница в исходном коде",
-        "staleSource": "Исходный код изменен после компиляции",
+        "staleSource": "Источник изменен после организации",
         "supersededSource": "Доступна более новая исходная версия",
         "text": "Текст",
         "textPlaceholder": "Вставить исходный текст…",
         "thumbnailOnly": "Только миниатюра",
         "title": "Источники",
         "titlePlaceholder": "Название",
-        "uncompiled": "Некомпилированный",
+        "uncompiled": "Не организовано",
         "url": "URL",
         "urlKindAudio": "Аудио расшифровка",
         "urlKindImage": "Распознавание изображений",
@@ -12990,6 +13046,11 @@
       "knowledge": {
         "tab": "المعرفة"
       },
+      "knowledgeCompile": {
+        "agent": "وكيل تنظيم المصادر",
+        "agentDefault": "استخدام الوكيل الافتراضي العام",
+        "agentDesc": "الوكيل المستخدم لتحويل المصادر إلى اقتراحات ملاحظات قابلة للمراجعة. عند عدم ضبطه، يرث الوكيل الافتراضي العام."
+      },
       "knowledgeEmbedding": {
         "title": "البحث المتجه (التضمين)",
         "description": "اضبط نموذج التضمين للبحث الدلالي في قاعدة المعرفة. مستقل عن الذاكرة — يختار من نفس مكتبة النماذج المشتركة، لكنه يُفعَّل ويُعاد بناؤه بشكل منفصل، لذا يعمل حتى لو كان تضمين الذاكرة معطّلاً.",
@@ -13033,7 +13094,8 @@
           "knowledgeGap": "فجوات المعرفة",
           "autoTag": "وسم تلقائي",
           "mocUpkeep": "صيانة MOC",
-          "memoryToNote": "ذاكرة → ملاحظة"
+          "memoryToNote": "ذاكرة → ملاحظة",
+          "sourceCompile": "المصدر إلى ملاحظة"
         }
       },
       "knowledgePassiveRecall": {
@@ -13793,7 +13855,8 @@
           "knowledge_gap": "فجوة",
           "auto_tag": "وسم",
           "moc_upkeep": "MOC",
-          "memory_to_note": "ذاكرة"
+          "memory_to_note": "ذاكرة",
+          "source_compile": "تنظيم"
         },
         "evidenceCoverage": "تغطية الأدلة",
         "evidenceCoverageDetail": "{{pct}}% · مطالبات {{claimsWithEvidence}}/{{claims}} · ملاحظات {{notesWithEvidence}}/{{notes}}",
@@ -13804,7 +13867,8 @@
         "needsReview": "يحتاج إلى مراجعة",
         "rebuildEvidenceTip": "إعادة بناء فهرس الأدلة المشتقة",
         "schemaIssues": "قضايا المخطط",
-        "staleRefs": "المراجع التي لا معنى لها"
+        "staleRefs": "المراجع التي لا معنى لها",
+        "compileQueued": "مراجعة المصدر إلى الملاحظة التي تم إنشاؤها. تحقق من لوحة اقتراحات الملاحظات لمعرفة الاختلافات."
       },
       "graph": {
         "toggle": "عرض الرسم البياني",
@@ -13943,28 +14007,28 @@
         "applyFailed": "تعذر تطبيق الاقتراح",
         "cancel": "إلغاء",
         "cancelFailed": "تعذر إلغاء التشغيل",
-        "cancelled": "تم إلغاء تشغيل الترجمة",
-        "description": "قم بمراجعة تغييرات الملاحظة التي تم إنشاؤها قبل كتابة أي شيء.",
+        "cancelled": "تم إلغاء تشغيل المصدر إلى ملاحظة",
+        "description": "تلاحظ مسودات الذكاء الاصطناعي التغييرات من المصادر المحددة. راجع الفرق قبل كتابة أي شيء.",
         "empty": "حدد اقتراحًا للمراجعة",
         "emptyHint": "تظل المقترحات التي تم إنشاؤها هنا حتى تقوم بتقديمها أو رفضها.",
-        "failed": "فشل تشغيل الترجمة",
-        "loadFailed": "تعذر تحميل عمليات الترجمة",
+        "failed": "فشل تشغيل المصدر إلى ملاحظة",
+        "loadFailed": "تعذر تحميل عمليات التشغيل من المصدر إلى الملاحظة",
         "noProposals": "لا توجد مقترحات لهذا المدى.",
-        "noRuns": "لا يتم تشغيل التجميع حتى الآن.",
+        "noRuns": "لم يتم تشغيل المصدر إلى المذكرة حتى الآن.",
         "proposals": "المقترحات",
         "proposalsLoadFailed": "تعذر تحميل المقترحات",
         "refresh": "تحديث",
         "reject": "رفض",
         "rejectFailed": "لا يمكن رفض الاقتراح",
         "rejected": "تم رفض الاقتراح",
-        "runPending": "ترجمة التشغيل معلقة",
+        "runPending": "تشغيل المصدر إلى ملاحظة معلق",
         "runSources": "مصدر (مصادر) {{count}}",
-        "running": "جارٍ تجميع المصادر…",
+        "running": "تنظيم المصادر في الملاحظات...",
         "runs": "أشواط",
-        "startFailed": "لا يمكن تجميع المصادر",
-        "startSelected": "تجميع {{count}}",
-        "started": "الاقتراح (المقترحات) التي تم إنشاؤها {{n}}",
-        "title": "تجميع المصادر"
+        "startFailed": "لا يمكن تنظيم المصادر في الملاحظات",
+        "startSelected": "تنظيم {{count}}",
+        "started": "اقتراح (اقتراحات) ملاحظة {{n}} التي تم إنشاؤها",
+        "title": "تنظيم في الملاحظات"
       },
       "sources": {
         "archiveAttachment": "الأرشيف للمعرفة",
@@ -13976,10 +14040,10 @@
         "browserSelection": "التحديد",
         "chooseFile": "اختر الملفات",
         "comparePrevious": "قارن السابقة",
-        "compileOne": "تجميع",
-        "compileSelected": "تجميع المصادر المختارة",
-        "compiled": "تم تجميعها",
-        "compiledClaims": "المطالبات المجمعة باستخدام هذا المصدر",
+        "compileOne": "تنظيم في المذكرة",
+        "compileSelected": "تنظيم المحدد في الملاحظات",
+        "compiled": "منظمة",
+        "compiledClaims": "لاحظ المطالبات باستخدام هذا المصدر",
         "currentVersion": "الحالي",
         "delete": "حذف",
         "deleteBody": "هل تريد حذف {{name}} من صندوق الوارد المصدر الأولي؟",
@@ -14013,7 +14077,7 @@
         "mediaRetained": "تم الاحتفاظ بالوسائط",
         "missingSource": "المصدر مفقود",
         "moreClaims": "+{{count}} المزيد من المطالبات",
-        "noCompiledClaims": "لا توجد مطالبة بالملاحظة المجمعة تستشهد بهذا المصدر حتى الآن.",
+        "noCompiledClaims": "لا توجد مطالبة بالملاحظة تستشهد بهذا المصدر حتى الآن.",
         "noImportRuns": "لم يتم تشغيل أي استيراد حتى الآن.",
         "noKb": "حدد مساحة لرؤية المصادر.",
         "noKnowledgeBase": "لا توجد مساحة معرفية متاحة",
@@ -14044,14 +14108,14 @@
         "similarResolveFailed": "لا يمكن حل المصادر المكررة",
         "similarResolved": "تم حذف المصدر (المصادر) المكررة لـ {{count}}",
         "sourceDiff": "اختلاف المصدر",
-        "staleSource": "تم تغيير المصدر بعد التجميع",
+        "staleSource": "تغير المصدر بعد تنظيمه",
         "supersededSource": "يتوفر إصدار مصدر أحدث",
         "text": "نص",
         "textPlaceholder": "لصق النص المصدر...",
         "thumbnailOnly": "الصورة المصغرة فقط",
         "title": "المصادر",
         "titlePlaceholder": "العنوان",
-        "uncompiled": "غير مجمعة",
+        "uncompiled": "غير منظم",
         "url": "URL",
         "urlKindAudio": "نسخة صوتية",
         "urlKindImage": "صورة التعرف الضوئي على الحروف",
@@ -14765,6 +14829,11 @@
       "knowledge": {
         "tab": "Conocimiento"
       },
+      "knowledgeCompile": {
+        "agent": "Agente de organización de fuentes",
+        "agentDefault": "Usar agente predeterminado global",
+        "agentDesc": "Agente usado para convertir fuentes en sugerencias de notas revisables. Si no se configura, hereda el agente predeterminado global."
+      },
       "knowledgeEmbedding": {
         "title": "Búsqueda vectorial (embedding)",
         "description": "Configura el modelo de embedding para la búsqueda semántica de la base de conocimiento. Es independiente de la memoria: elige de la misma biblioteca compartida de modelos, pero se activa y reconstruye por separado, por lo que funciona aunque el embedding de memoria esté desactivado.",
@@ -14808,7 +14877,8 @@
           "knowledgeGap": "Lagunas de conocimiento",
           "autoTag": "Etiquetado automático",
           "mocUpkeep": "Mantenimiento de MOC",
-          "memoryToNote": "Memoria → nota"
+          "memoryToNote": "Memoria → nota",
+          "sourceCompile": "Fuente a nota"
         }
       },
       "knowledgePassiveRecall": {
@@ -15568,7 +15638,8 @@
           "knowledge_gap": "Vacío",
           "auto_tag": "Etiqueta",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Memoria"
+          "memory_to_note": "Memoria",
+          "source_compile": "organizar"
         },
         "evidenceCoverage": "Cobertura de evidencia",
         "evidenceCoverageDetail": "{{pct}}% · Reclamaciones {{claimsWithEvidence}}/{{claims}} · Notas {{notesWithEvidence}}/{{notes}}",
@@ -15579,7 +15650,8 @@
         "needsReview": "Necesita revisión",
         "rebuildEvidenceTip": "Reconstruir el índice de evidencia derivada",
         "schemaIssues": "Problemas de esquema",
-        "staleRefs": "árbitros obsoletos"
+        "staleRefs": "árbitros obsoletos",
+        "compileQueued": "Revisión de fuente a nota generada. Consulte el panel de sugerencias de notas para ver las diferencias."
       },
       "graph": {
         "toggle": "Vista de grafo",
@@ -15718,28 +15790,28 @@
         "applyFailed": "No se pudo aplicar la propuesta",
         "cancel": "Cancelar",
         "cancelFailed": "No se pudo cancelar la ejecución",
-        "cancelled": "Ejecución de compilación cancelada",
-        "description": "Revise los cambios de notas generados antes de escribir algo.",
+        "cancelled": "Ejecución de fuente a nota cancelada",
+        "description": "Los borradores de IA notan los cambios de fuentes seleccionadas. Revise la diferencia antes de escribir algo.",
         "empty": "Seleccione una propuesta para revisar",
         "emptyHint": "Las propuestas generadas permanecen aquí hasta que las apliques o las rechaces.",
-        "failed": "Error al ejecutar la compilación",
-        "loadFailed": "No se pudieron cargar ejecuciones de compilación",
+        "failed": "Error al ejecutar la fuente a la nota",
+        "loadFailed": "No se pudieron cargar ejecuciones de fuente a nota",
         "noProposals": "No hay propuestas para esta carrera.",
-        "noRuns": "Aún no se ejecuta ninguna compilación.",
+        "noRuns": "Aún no se han ejecutado fuentes a notas.",
         "proposals": "Propuestas",
         "proposalsLoadFailed": "No se pudieron cargar las propuestas.",
         "refresh": "Actualizar",
         "reject": "Rechazar",
         "rejectFailed": "No se pudo rechazar la propuesta",
         "rejected": "Propuesta rechazada",
-        "runPending": "Pendiente de ejecución de compilación",
+        "runPending": "Ejecución de fuente a nota pendiente",
         "runSources": "Fuente(s) {{count}}",
-        "running": "Recopilando fuentes…",
+        "running": "Organizando fuentes en notas...",
         "runs": "Corre",
-        "startFailed": "No se pudieron compilar las fuentes",
-        "startSelected": "Compilar {{count}}",
-        "started": "Propuesta(s) {{n}} generadas",
-        "title": "compilar fuentes"
+        "startFailed": "No se pudieron organizar las fuentes en notas",
+        "startSelected": "Organizar {{count}}",
+        "started": "Sugerencias de notas {{n}} generadas",
+        "title": "Organizar en notas"
       },
       "sources": {
         "archiveAttachment": "Archivar al conocimiento",
@@ -15751,10 +15823,10 @@
         "browserSelection": "Selección",
         "chooseFile": "Elige archivos",
         "comparePrevious": "Comparar anterior",
-        "compileOne": "compilar",
-        "compileSelected": "Compilar fuentes seleccionadas",
-        "compiled": "compilado",
-        "compiledClaims": "Reclamaciones compiladas utilizando esta fuente",
+        "compileOne": "Organizar en nota",
+        "compileSelected": "Organizar lo seleccionado en notas",
+        "compiled": "organizado",
+        "compiledClaims": "Tenga en cuenta las afirmaciones que utilizan esta fuente",
         "currentVersion": "Actual",
         "delete": "Eliminar",
         "deleteBody": "¿Eliminar {{name}} de la bandeja de entrada del código fuente sin procesar?",
@@ -15788,7 +15860,7 @@
         "mediaRetained": "Medios retenidos",
         "missingSource": "fuente faltante",
         "moreClaims": "+{{count}} más reclamaciones",
-        "noCompiledClaims": "Ninguna nota compilada cita esta fuente todavía.",
+        "noCompiledClaims": "Ninguna nota cita esta fuente todavía.",
         "noImportRuns": "Aún no se ejecuta ninguna importación.",
         "noKb": "Selecciona un espacio para ver fuentes.",
         "noKnowledgeBase": "No hay espacio de conocimiento disponible",
@@ -15819,14 +15891,14 @@
         "similarResolveFailed": "No se pudieron resolver fuentes duplicadas",
         "similarResolved": "Fuentes duplicadas {{count}} eliminadas",
         "sourceDiff": "Diferencia de fuente",
-        "staleSource": "Fuente cambiada después de la compilación.",
+        "staleSource": "La fuente cambió después de que se organizó.",
         "supersededSource": "Nueva versión fuente disponible",
         "text": "Texto",
         "textPlaceholder": "Pegar texto fuente…",
         "thumbnailOnly": "Solo miniatura",
         "title": "Fuentes",
         "titlePlaceholder": "Título",
-        "uncompiled": "sin compilar",
+        "uncompiled": "No organizado",
         "url": "URL",
         "urlKindAudio": "Transcripción de audio",
         "urlKindImage": "OCR de imagen",
@@ -16540,6 +16612,11 @@
       "knowledge": {
         "tab": "Pengetahuan"
       },
+      "knowledgeCompile": {
+        "agent": "Ejen penyusunan sumber",
+        "agentDefault": "Gunakan ejen lalai global",
+        "agentDesc": "Ejen yang menukar sumber kepada cadangan nota yang boleh disemak. Jika tidak ditetapkan, ia mewarisi ejen lalai global."
+      },
       "knowledgeEmbedding": {
         "title": "Carian vektor (embedding)",
         "description": "Konfigurasikan model embedding untuk carian semantik pangkalan pengetahuan. Bebas daripada memori — memilih dari pustaka model dikongsi yang sama, tetapi diaktifkan dan dibina semula secara berasingan, jadi ia berfungsi walaupun embedding memori dimatikan.",
@@ -16583,7 +16660,8 @@
           "knowledgeGap": "Jurang pengetahuan",
           "autoTag": "Auto-tag",
           "mocUpkeep": "Penyelenggaraan MOC",
-          "memoryToNote": "Memori → nota"
+          "memoryToNote": "Memori → nota",
+          "sourceCompile": "Sumber-untuk-nota"
         }
       },
       "knowledgePassiveRecall": {
@@ -17343,7 +17421,8 @@
           "knowledge_gap": "Jurang",
           "auto_tag": "Tag",
           "moc_upkeep": "MOC",
-          "memory_to_note": "Memori"
+          "memory_to_note": "Memori",
+          "source_compile": "menyusun"
         },
         "evidenceCoverage": "Liputan bukti",
         "evidenceCoverageDetail": "{{pct}}% · Tuntutan {{claimsWithEvidence}}/{{claims}} · nota {{notesWithEvidence}}/{{notes}}",
@@ -17354,7 +17433,8 @@
         "needsReview": "Perlu semakan",
         "rebuildEvidenceTip": "Bina semula indeks bukti terbitan",
         "schemaIssues": "Isu skema",
-        "staleRefs": "Rujukan basi"
+        "staleRefs": "Rujukan basi",
+        "compileQueued": "Kajian sumber-ke-nota yang dijana. Semak panel cadangan nota untuk perbezaan."
       },
       "graph": {
         "toggle": "Paparan graf",
@@ -17493,28 +17573,28 @@
         "applyFailed": "Tidak dapat memohon cadangan",
         "cancel": "Batal",
         "cancelFailed": "Tidak dapat membatalkan larian",
-        "cancelled": "Jalan kompil dibatalkan",
-        "description": "Semak perubahan nota yang dijana sebelum apa-apa ditulis.",
+        "cancelled": "Larian sumber-ke-nota dibatalkan",
+        "description": "Draf AI mencatatkan perubahan daripada sumber terpilih. Semak perbezaan sebelum apa-apa ditulis.",
         "empty": "Pilih cadangan untuk disemak",
         "emptyHint": "Cadangan yang dijana kekal di sini sehingga anda memohon atau menolaknya.",
-        "failed": "Jalan kompil gagal",
-        "loadFailed": "Tidak dapat memuatkan larian kompilasi",
+        "failed": "Larian sumber-ke-nota gagal",
+        "loadFailed": "Tidak dapat memuatkan larian sumber-ke-nota",
         "noProposals": "Tiada cadangan untuk larian ini.",
-        "noRuns": "Tiada kompilasi dijalankan lagi.",
+        "noRuns": "Tiada larian sumber-ke-nota.",
         "proposals": "Cadangan",
         "proposalsLoadFailed": "Tidak dapat memuatkan cadangan",
         "refresh": "Segarkan semula",
         "reject": "Tolak",
         "rejectFailed": "Tidak dapat menolak cadangan",
         "rejected": "Cadangan ditolak",
-        "runPending": "Larian kompilasi belum selesai",
+        "runPending": "Larian sumber-ke-nota belum selesai",
         "runSources": "Sumber {{count}}",
-        "running": "Menyusun sumber…",
+        "running": "Menyusun sumber ke dalam nota…",
         "runs": "Berlari",
-        "startFailed": "Tidak dapat menyusun sumber",
+        "startFailed": "Tidak dapat menyusun sumber menjadi nota",
         "startSelected": "Susun {{count}}",
-        "started": "Cadangan {{n}} yang dijana",
-        "title": "Susun sumber"
+        "started": "Cadangan nota {{n}} yang dijana",
+        "title": "Susun ke dalam nota"
       },
       "sources": {
         "archiveAttachment": "Arkibkan kepada pengetahuan",
@@ -17526,10 +17606,10 @@
         "browserSelection": "Pemilihan",
         "chooseFile": "Pilih fail",
         "comparePrevious": "Bandingkan sebelumnya",
-        "compileOne": "Susun",
-        "compileSelected": "Susun sumber yang dipilih",
-        "compiled": "Disusun",
-        "compiledClaims": "Tuntutan yang disusun menggunakan sumber ini",
+        "compileOne": "Susun ke dalam nota",
+        "compileSelected": "Susun yang dipilih ke dalam nota",
+        "compiled": "Tersusun",
+        "compiledClaims": "Perhatikan tuntutan menggunakan sumber ini",
         "currentVersion": "semasa",
         "delete": "Padam",
         "deleteBody": "Padamkan {{name}} daripada peti masuk sumber mentah?",
@@ -17563,7 +17643,7 @@
         "mediaRetained": "Media dikekalkan",
         "missingSource": "Sumber hilang",
         "moreClaims": "+{{count}} lagi tuntutan",
-        "noCompiledClaims": "Tiada tuntutan nota terkumpul yang memetik sumber ini lagi.",
+        "noCompiledClaims": "Tiada tuntutan nota memetik sumber ini lagi.",
         "noImportRuns": "Tiada import dijalankan lagi.",
         "noKb": "Pilih ruang untuk melihat sumber.",
         "noKnowledgeBase": "Tiada ruang pengetahuan tersedia",
@@ -17594,14 +17674,14 @@
         "similarResolveFailed": "Tidak dapat menyelesaikan sumber pendua",
         "similarResolved": "Sumber pendua {{count}} dipadamkan",
         "sourceDiff": "Perbezaan sumber",
-        "staleSource": "Sumber berubah selepas disusun",
+        "staleSource": "Sumber berubah selepas ia dianjurkan",
         "supersededSource": "Versi sumber yang lebih baharu tersedia",
         "text": "Teks",
         "textPlaceholder": "Tampal teks sumber…",
         "thumbnailOnly": "Thumbnail sahaja",
         "title": "Sumber",
         "titlePlaceholder": "Tajuk",
-        "uncompiled": "Tidak tersusun",
+        "uncompiled": "Tidak teratur",
         "url": "URL",
         "urlKindAudio": "Transkrip audio",
         "urlKindImage": "OCR imej",
@@ -17881,7 +17961,17 @@
       "permLoading": "正在检查权限...",
       "uiEffects": "背景动画",
       "uiEffectsDesc": "启用全天候背景和天气效果联动",
-      "uiEffectsToggle": "开启效果"
+      "uiEffectsToggle": "开启效果",
+      "knowledgeMaintenance": {
+        "task": {
+          "sourceCompile": "资料整理"
+        }
+      },
+      "knowledgeCompile": {
+        "agent": "资料整理 Agent",
+        "agentDefault": "使用全局默认 Agent",
+        "agentDesc": "用于把来源资料整理成可审阅的笔记建议，未设置时继承全局默认 Agent。"
+      }
     },
     "chat": {
       "handover": {
@@ -18015,28 +18105,28 @@
         "applyFailed": "无法应用建议",
         "cancel": "取消",
         "cancelFailed": "无法取消运行",
-        "cancelled": "编译运行已取消",
-        "description": "在写入任何内容前先审阅生成的笔记变更。",
+        "cancelled": "资料整理已取消",
+        "description": "AI 会从所选资料生成笔记修改建议；写入前你可以先审阅 diff。",
         "empty": "选择一个建议进行审阅",
         "emptyHint": "生成的建议会保留在这里，直到你应用或忽略。",
-        "failed": "编译运行失败",
-        "loadFailed": "无法加载编译运行",
+        "failed": "资料整理失败",
+        "loadFailed": "无法加载资料整理记录",
         "noProposals": "本次运行没有建议。",
-        "noRuns": "还没有编译运行。",
+        "noRuns": "还没有资料整理记录。",
         "proposals": "建议",
         "proposalsLoadFailed": "无法加载建议",
         "refresh": "刷新",
         "reject": "忽略",
         "rejectFailed": "无法忽略建议",
         "rejected": "已忽略建议",
-        "runPending": "编译运行等待中",
+        "runPending": "资料整理等待中",
         "runSources": "{{count}} 个资料",
-        "running": "正在编译资料…",
+        "running": "正在把资料整理成笔记…",
         "runs": "运行",
-        "startFailed": "无法编译资料",
-        "startSelected": "编译 {{count}} 个",
-        "started": "已生成 {{n}} 条建议",
-        "title": "编译资料"
+        "startFailed": "无法把资料整理成笔记",
+        "startSelected": "整理 {{count}} 个",
+        "started": "已生成 {{n}} 条笔记建议",
+        "title": "整理资料为笔记"
       },
       "sources": {
         "archiveAttachment": "归档到知识空间",
@@ -18048,10 +18138,10 @@
         "browserSelection": "选区",
         "chooseFile": "选择文件",
         "comparePrevious": "对比上一版",
-        "compileOne": "编译",
-        "compileSelected": "编译所选资料",
-        "compiled": "已编译",
-        "compiledClaims": "使用此资料的已编译结论",
+        "compileOne": "整理成笔记",
+        "compileSelected": "整理所选资料为笔记",
+        "compiled": "已整理",
+        "compiledClaims": "使用此资料的笔记结论",
         "currentVersion": "当前",
         "delete": "删除",
         "deleteBody": "要从原始资料舱删除「{{name}}」吗？",
@@ -18085,7 +18175,7 @@
         "mediaRetained": "已留存媒体",
         "missingSource": "资料缺失",
         "moreClaims": "还有 {{count}} 条结论",
-        "noCompiledClaims": "还没有已编译笔记结论引用此资料。",
+        "noCompiledClaims": "还没有笔记结论引用此资料。",
         "noImportRuns": "还没有导入运行。",
         "noKb": "选择一个空间以查看资料。",
         "noKnowledgeBase": "没有可用的知识空间",
@@ -18116,14 +18206,14 @@
         "similarResolveFailed": "无法处理重复资料",
         "similarResolved": "已删除 {{count}} 个重复资料",
         "sourceDiff": "资料差异",
-        "staleSource": "编译后资料已变更",
+        "staleSource": "整理后资料已变更",
         "supersededSource": "有更新的资料版本",
         "text": "文本",
         "textPlaceholder": "粘贴资料文本…",
         "thumbnailOnly": "仅缩略图",
         "title": "资料",
         "titlePlaceholder": "标题",
-        "uncompiled": "未编译",
+        "uncompiled": "未整理",
         "url": "URL",
         "urlKindAudio": "音频转录",
         "urlKindImage": "图片 OCR",
@@ -18175,7 +18265,11 @@
         "needsReview": "需要审查",
         "rebuildEvidenceTip": "重建派生证据索引",
         "schemaIssues": "架构问题",
-        "staleRefs": "过时的参考文献"
+        "staleRefs": "过时的参考文献",
+        "compileQueued": "已生成整理审阅，请到笔记建议面板查看 diff。",
+        "kind": {
+          "source_compile": "整理"
+        }
       },
       "queryFile": {
         "action": "文件",

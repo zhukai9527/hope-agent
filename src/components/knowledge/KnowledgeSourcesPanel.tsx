@@ -683,7 +683,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
             </Button>
           </IconTip>
           <IconTip
-            label={t("knowledge.sources.compileSelected", "Compile selected sources")}
+            label={t("knowledge.sources.compileSelected", "Organize selected into notes")}
             side="bottom"
           >
             <Button
@@ -805,8 +805,8 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
                       <span>·</span>
                       <span>
                         {source.compiledAt
-                          ? t("knowledge.sources.compiled", "Compiled")
-                          : t("knowledge.sources.uncompiled", "Uncompiled")}
+                          ? t("knowledge.sources.compiled", "Organized")
+                          : t("knowledge.sources.uncompiled", "Not organized")}
                       </span>
                       {source.originUri ? (
                         <>
@@ -838,7 +838,7 @@ export default function KnowledgeSourcesPanel({ kbId }: KnowledgeSourcesPanelPro
               </ContextMenuItem>
               <ContextMenuItem onClick={() => openCompile([source.id])}>
                 <Sparkles className="mr-2 h-3.5 w-3.5" />
-                {t("knowledge.sources.compileOne", "Compile")}
+                {t("knowledge.sources.compileOne", "Organize into note")}
               </ContextMenuItem>
               <ContextMenuItem
                 disabled={!isRefreshableSourceKind(source.kind) || refreshingSourceId === source.id}
@@ -1686,7 +1686,7 @@ function SourceClaimsSummary({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 font-medium">
           <FileText className="h-3.5 w-3.5 text-primary" />
-          <span>{t("knowledge.sources.compiledClaims", "Compiled claims using this source")}</span>
+          <span>{t("knowledge.sources.compiledClaims", "Note claims using this source")}</span>
           {claims.length > 0 ? (
             <span className="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
               {claims.length}
@@ -1703,7 +1703,7 @@ function SourceClaimsSummary({
         <div className="mt-2 text-[11px] text-muted-foreground">
           {t(
             "knowledge.sources.noCompiledClaims",
-            "No compiled note claim cites this source yet.",
+            "No note claim cites this source yet.",
           )}
         </div>
       ) : (
@@ -1720,7 +1720,7 @@ function SourceClaimsSummary({
                 </span>
                 {claim.stale ? (
                   <span className="shrink-0 rounded bg-amber-500/10 px-1 text-[10px] text-amber-700 dark:text-amber-300">
-                    {t("knowledge.sources.staleSource", "Source changed after compile")}
+                    {t("knowledge.sources.staleSource", "Source changed after it was organized")}
                   </span>
                 ) : null}
                 {claim.missing ? (

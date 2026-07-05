@@ -3481,7 +3481,7 @@ mod tests {
             after_text: Some("# Article\n".into()),
         };
         assert_eq!(
-            reg.insert_compile_proposals(&run.id, &kb.id, &[proposal.clone()])
+            reg.insert_compile_proposals(&run.id, &kb.id, std::slice::from_ref(&proposal))
                 .unwrap(),
             1
         );

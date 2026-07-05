@@ -463,6 +463,11 @@ fn build_router_with_cors(
                 .post(routes::knowledge::knowledge_search_config_set),
         )
         .route(
+            "/knowledge/compile/config",
+            get(routes::knowledge::knowledge_compile_config_get)
+                .post(routes::knowledge::knowledge_compile_config_set),
+        )
+        .route(
             "/knowledge/ai/rewrite",
             post(routes::knowledge::kb_ai_rewrite),
         )
