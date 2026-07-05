@@ -1643,6 +1643,7 @@ export interface DomainSoakReportSummary {
   approvalEvents: number;
   approvalRequestEvents: number;
   approvalDecisionEvents: number;
+  openApprovalWaits: number;
   pauseEvents: number;
   resumeEvents: number;
   cancelEvents: number;
@@ -1653,6 +1654,7 @@ export interface DomainSoakReportSummary {
   maxWorkflowOutputTokenBudget?: number | null;
   averageApprovalWaitSecs?: number | null;
   maxApprovalWaitSecs?: number | null;
+  maxOpenApprovalWaitSecs?: number | null;
   averageWorkflowDrainSecs?: number | null;
   maxWorkflowDrainSecs?: number | null;
   loopRuns: number;

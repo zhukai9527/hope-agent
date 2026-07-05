@@ -3184,11 +3184,14 @@ function DomainSoakReportPanel({ report }: { report: DomainSoakReport | null }) 
             <MetricPill
               label="AP"
               value={
-                report.summary.maxApprovalWaitSecs != null
+                report.summary.maxOpenApprovalWaitSecs != null
+                  ? formatSecs(report.summary.maxOpenApprovalWaitSecs)
+                  : report.summary.maxApprovalWaitSecs != null
                   ? formatSecs(report.summary.maxApprovalWaitSecs)
                   : `${report.summary.approvalDecisionEvents}/${report.summary.approvalRequestEvents}`
               }
               tone={
+                report.summary.openApprovalWaits > 0 ||
                 report.summary.approvalRequestEvents > report.summary.approvalDecisionEvents
                   ? "warn"
                   : "muted"

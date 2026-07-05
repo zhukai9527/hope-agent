@@ -6380,9 +6380,17 @@ function DomainSoakReportPanel({
       ? formatLoopDuration(Math.max(1, Math.round(summary.maxWorkflowDrainSecs)))
       : "-"
   const maxApprovalWait =
-    summary?.maxApprovalWaitSecs != null
-      ? formatLoopDuration(Math.max(1, Math.round(summary.maxApprovalWaitSecs)))
-      : "-"
+    summary?.maxOpenApprovalWaitSecs != null
+      ? formatLoopDuration(Math.max(1, Math.round(summary.maxOpenApprovalWaitSecs)))
+      : summary?.maxApprovalWaitSecs != null
+        ? formatLoopDuration(Math.max(1, Math.round(summary.maxApprovalWaitSecs)))
+        : "-"
+  const approvalWaitTone: StatusTone =
+    (summary?.openApprovalWaits ?? 0) > 0
+      ? "warn"
+      : (summary?.approvalRequestEvents ?? 0) > (summary?.approvalDecisionEvents ?? 0)
+        ? "warn"
+        : "muted"
   const maxOutputTokensSpent = summary?.maxWorkflowOutputTokensSpent
   const maxOutputTokenBudget = summary?.maxWorkflowOutputTokenBudget
   const outputTokenBudget =
@@ -6543,7 +6551,7 @@ function DomainSoakReportPanel({
             [
               t("workspace.domainSoakReport.approvalWait", "审批"),
               maxApprovalWait,
-              summary.approvalRequestEvents > summary.approvalDecisionEvents ? "warn" : "muted",
+              approvalWaitTone,
             ],
             [
               t("workspace.domainSoakReport.recovery", "恢复"),

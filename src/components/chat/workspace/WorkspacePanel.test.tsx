@@ -830,8 +830,9 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
       awaitingApprovalWorkflowRuns: 0,
       repairWorkflowRuns: 0,
       approvalEvents: 0,
-      approvalRequestEvents: 0,
+      approvalRequestEvents: 1,
       approvalDecisionEvents: 0,
+      openApprovalWaits: 1,
       pauseEvents: 0,
       resumeEvents: 0,
       cancelEvents: 0,
@@ -842,6 +843,7 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
       maxWorkflowOutputTokenBudget: 10,
       averageApprovalWaitSecs: null,
       maxApprovalWaitSecs: null,
+      maxOpenApprovalWaitSecs: 120,
       averageWorkflowDrainSecs: 120,
       maxWorkflowDrainSecs: 240,
       loopRuns: 1,
@@ -2153,6 +2155,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("最近时间线")).toBeTruthy()
     expect(screen.getAllByText("Workflow failed").length).toBeGreaterThan(1)
     expect(screen.getAllByText("4m").length).toBeGreaterThan(1)
+    expect(screen.getByText("2m")).toBeTruthy()
     expect(screen.getByText("Token")).toBeTruthy()
     expect(screen.getByText("10/10")).toBeTruthy()
 

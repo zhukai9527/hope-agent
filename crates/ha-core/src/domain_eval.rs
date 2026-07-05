@@ -1143,6 +1143,7 @@ pub struct DomainSoakReportSummary {
     pub approval_events: usize,
     pub approval_request_events: usize,
     pub approval_decision_events: usize,
+    pub open_approval_waits: usize,
     pub pause_events: usize,
     pub resume_events: usize,
     pub cancel_events: usize,
@@ -1157,6 +1158,8 @@ pub struct DomainSoakReportSummary {
     pub average_approval_wait_secs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_approval_wait_secs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_open_approval_wait_secs: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub average_workflow_drain_secs: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3467,6 +3470,12 @@ impl SessionDB {
         }
         summary.average_approval_wait_secs = average_secs(&approval_wait_durations);
         summary.max_approval_wait_secs = approval_wait_durations.iter().copied().max();
+        let open_approval_wait_durations: Vec<i64> = approval_wait_started
+            .values()
+            .filter_map(|started_at| timestamp_delta_secs(started_at, &until))
+            .collect();
+        summary.open_approval_waits = open_approval_wait_durations.len();
+        summary.max_open_approval_wait_secs = open_approval_wait_durations.iter().copied().max();
 
         let loop_rows = self.domain_soak_loop_runs(&scope)?;
         let mut loop_durations = Vec::new();
@@ -7470,6 +7479,9 @@ fn domain_soak_recommendations(
     if summary.warning_incidents > 0 {
         push_unique_soak_recommendation(&mut recommendations, "Drain active or approval-waiting work so the report reflects completed long-running behavior.");
     }
+    if summary.open_approval_waits > 0 {
+        push_unique_soak_recommendation(&mut recommendations, "Resolve open workflow approvals: approve, deny, pause, or cancel them before trusting unattended long-run stability.");
+    }
     if summary.connector_e2e_evidence > 0 && summary.connector_verification_evidence == 0 {
         push_unique_soak_recommendation(&mut recommendations, "Finish connector verification evidence for real external actions instead of stopping at draft or execution records.");
     }
@@ -7553,15 +7565,20 @@ fn render_domain_soak_markdown(
         summary.connector_verification_evidence
     ));
     out.push_str(&format!(
-        "- Control events: {} approval request(s), {} approval decision(s), {} pause, {} resume, {} cancel, {} recovery; max approval wait: {}\n",
+        "- Control events: {} approval request(s), {} approval decision(s), {} open approval wait(s), {} pause, {} resume, {} cancel, {} recovery; max closed/open approval wait: {}/{}\n",
         summary.approval_request_events,
         summary.approval_decision_events,
+        summary.open_approval_waits,
         summary.pause_events,
         summary.resume_events,
         summary.cancel_events,
         summary.recovery_events,
         summary
             .max_approval_wait_secs
+            .map(|secs| format!("{secs}s"))
+            .unwrap_or_else(|| "n/a".to_string()),
+        summary
+            .max_open_approval_wait_secs
             .map(|secs| format!("{secs}s"))
             .unwrap_or_else(|| "n/a".to_string())
     ));
@@ -8680,7 +8697,9 @@ mod tests {
         assert_eq!(report.summary.workflow_budget_exhausted_events, 1);
         assert_eq!(report.summary.max_workflow_output_tokens_spent, Some(10));
         assert_eq!(report.summary.max_workflow_output_token_budget, Some(10));
-        assert!(report.markdown.contains("max approval wait: 90s"));
+        assert!(report
+            .markdown
+            .contains("max closed/open approval wait: 90s/n/a"));
         assert!(report
             .markdown
             .contains("Budget events: 2 output-token sample(s), 1 exhausted"));
@@ -8688,6 +8707,68 @@ mod tests {
             .recommended_next_steps
             .iter()
             .any(|step| step.contains("output-token budget exhaustion")));
+    }
+
+    #[test]
+    fn domain_soak_report_tracks_open_approval_wait_age() {
+        let (_dir, db) = test_db();
+        let session = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .unwrap();
+        let run = db
+            .create_workflow_run(CreateWorkflowRunInput {
+                session_id: session.id.clone(),
+                kind: "domain:research".to_string(),
+                execution_mode: "guarded".to_string(),
+                script_source: default_domain_workflow_script(),
+                budget: json!({}),
+                parent_run_id: None,
+                origin: Some("soak-report-test".to_string()),
+                goal_id: None,
+                worktree_id: None,
+            })
+            .unwrap();
+        db.transition_workflow_run(
+            &run.id,
+            WorkflowRunState::AwaitingApproval,
+            Some("permission_preview"),
+        )
+        .unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE workflow_events
+                    SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-120 seconds')
+                  WHERE run_id = ?1
+                    AND type = 'run_state_changed'
+                    AND payload_json LIKE '%\"to\":\"awaiting_approval\"%'",
+                params![run.id],
+            )
+            .unwrap();
+        }
+
+        let report = db
+            .generate_domain_soak_report(DomainSoakReportInput {
+                session_id: Some(session.id),
+                window_days: Some(1),
+                max_items: Some(20),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(report.summary.approval_request_events, 1);
+        assert_eq!(report.summary.approval_decision_events, 0);
+        assert_eq!(report.summary.open_approval_waits, 1);
+        let open_wait = report.summary.max_open_approval_wait_secs.unwrap();
+        assert!(
+            (115..=125).contains(&open_wait),
+            "unexpected open wait age: {open_wait}"
+        );
+        assert!(report.markdown.contains("1 open approval wait(s)"));
+        assert!(report
+            .recommended_next_steps
+            .iter()
+            .any(|step| step.contains("Resolve open workflow approvals")));
     }
 
     #[test]
