@@ -3704,6 +3704,33 @@ function domainAcceptanceSampleLaneTaskContent(
   ].join("\n")
 }
 
+function domainAcceptanceSampleLaneChecklistLines(
+  t: ReturnType<typeof useTranslation>["t"],
+  lanes: DomainAcceptanceSampleLane[],
+  options: { includeRefreshTargets?: boolean } = {},
+): string[] {
+  return lanes.flatMap((lane) => {
+    const status = domainAcceptanceSampleLaneStatusLabel(t, lane)
+    const evidenceLines = lane.evidence.map((item) =>
+      `  - ${t("workspace.domainWorkbench.acceptanceLaneChecklistEvidence", "证据：{{item}}", {
+        item,
+      })}`,
+    )
+    const refreshLines = options.includeRefreshTargets
+      ? lane.refreshTargets.map((item) =>
+          `  - ${t("workspace.domainWorkbench.acceptanceLaneChecklistRefresh", "刷新：{{item}}", {
+            item,
+          })}`,
+        )
+      : []
+    return [
+      `- [${status}] ${lane.label}：${lane.detail}；${lane.action}`,
+      ...evidenceLines,
+      ...refreshLines,
+    ]
+  })
+}
+
 function domainAcceptanceGapRank(severity: DomainAcceptanceGapSeverity): number {
   if (severity === "danger") return 0
   if (severity === "warn") return 1
@@ -3777,9 +3804,8 @@ function domainAcceptancePlanTaskContent(
     const status = domainAcceptanceRequirementStatusLabel(t, requirement)
     return `- [${status}] ${requirement.label}：${requirement.detail}`
   })
-  const sampleLanes = summary.sampleLanes.map((lane) => {
-    const status = domainAcceptanceSampleLaneStatusLabel(t, lane)
-    return `- [${status}] ${lane.label}：${lane.detail}；${lane.action}`
+  const sampleLanes = domainAcceptanceSampleLaneChecklistLines(t, summary.sampleLanes, {
+    includeRefreshTargets: true,
   })
   const actions = [
     t(
@@ -4007,10 +4033,7 @@ function domainAcceptanceReviewMarkdown(
     const status = domainAcceptanceRequirementStatusLabel(t, requirement)
     return `- [${status}] ${requirement.label}：${requirement.detail}`
   })
-  const sampleLaneLines = summary.sampleLanes.map((lane) => {
-    const status = domainAcceptanceSampleLaneStatusLabel(t, lane)
-    return `- [${status}] ${lane.label}：${lane.detail}；${lane.action}`
-  })
+  const sampleLaneLines = domainAcceptanceSampleLaneChecklistLines(t, summary.sampleLanes)
   const gapLines =
     summary.gaps.length > 0
       ? summary.gaps.map((gap) => `- [${domainAcceptanceGapLabel(t, gap.severity)}] ${gap.message}`)
