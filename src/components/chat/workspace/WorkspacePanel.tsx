@@ -110,6 +110,7 @@ import type {
   DomainApprovalGate,
   DomainArtifactExportGuardReport,
   DomainConnectorActionGuardReport,
+  DomainConnectorE2EGateReport,
   DomainEvidenceItem,
   DomainEvidenceRequirement,
   DomainOperationalGateReport,
@@ -2872,6 +2873,7 @@ function domainWorkbenchOverallTone(args: {
   domainNeedsUser: number
   exportStatus?: string | null
   connectorStatus?: string | null
+  connectorE2EStatus?: string | null
   operationalStatus?: string | null
   soakStatus?: string | null
 }): StatusTone {
@@ -2882,6 +2884,7 @@ function domainWorkbenchOverallTone(args: {
     args.domainFailed > 0 ||
     args.exportStatus === "failed" ||
     args.connectorStatus === "failed" ||
+    args.connectorE2EStatus === "failed" ||
     args.operationalStatus === "failed" ||
     args.soakStatus === "failed"
   ) {
@@ -2894,6 +2897,7 @@ function domainWorkbenchOverallTone(args: {
     args.draftCount === 0 ||
     args.exportStatus === "insufficient_data" ||
     args.connectorStatus === "insufficient_data" ||
+    args.connectorE2EStatus === "insufficient_data" ||
     args.operationalStatus === "insufficient_data" ||
     args.soakStatus === "insufficient_data"
   ) {
@@ -2927,6 +2931,7 @@ function domainWorkbenchNextSteps(
     domainNeedsUser: number
     exportGuard: DomainArtifactExportGuardReport | null
     connectorGuard: DomainConnectorActionGuardReport | null
+    connectorE2eGate: DomainConnectorE2EGateReport | null
     operationalGate: DomainOperationalGateReport | null
     soakReport: DomainSoakReport | null
   },
@@ -2965,6 +2970,12 @@ function domainWorkbenchNextSteps(
         t("workspace.domainWorkbench.nextConnectorGuard", "补齐外部动作批准和回滚证据。"),
     )
   }
+  if (args.connectorE2eGate?.status && args.connectorE2eGate.status !== "passed") {
+    steps.push(
+      args.connectorE2eGate.recommendedNextSteps[0] ??
+        t("workspace.domainWorkbench.nextConnectorE2E", "补齐连接器输入、草稿、批准、执行、复核和回滚证据。"),
+    )
+  }
   if (args.operationalGate?.status && args.operationalGate.status !== "passed") {
     steps.push(
       args.operationalGate.recommendedNextSteps[0] ??
@@ -2999,6 +3010,7 @@ function domainAcceptanceCoverageSummary(
     evidence: DomainEvidenceItem[]
     exportGuard: DomainArtifactExportGuardReport | null
     connectorGuard: DomainConnectorActionGuardReport | null
+    connectorE2eGate: DomainConnectorE2EGateReport | null
     operationalGate: DomainOperationalGateReport | null
     soakReport: DomainSoakReport | null
   },
@@ -3009,11 +3021,13 @@ function domainAcceptanceCoverageSummary(
   }
   if (args.exportGuard?.scope?.domain) domains.add(args.exportGuard.scope.domain)
   if (args.connectorGuard?.scope?.domain) domains.add(args.connectorGuard.scope.domain)
+  if (args.connectorE2eGate?.scope?.domain) domains.add(args.connectorE2eGate.scope.domain)
   if (args.operationalGate?.domain) domains.add(args.operationalGate.domain)
   if (args.soakReport?.domain) domains.add(args.soakReport.domain)
 
   const operationalSummary = args.operationalGate?.summary
   const soakSummary = args.soakReport?.summary
+  const connectorE2eSummary = args.connectorE2eGate?.summary
   const workflowRuns = soakSummary?.workflowRuns ?? operationalSummary?.workflowRuns ?? 0
   const loopRuns = soakSummary?.loopRuns ?? operationalSummary?.loopRuns ?? 0
   const campaignItems = soakSummary?.campaignItems ?? operationalSummary?.campaignItems ?? 0
@@ -3025,16 +3039,25 @@ function domainAcceptanceCoverageSummary(
     (soakSummary?.succeededLoopRuns ?? operationalSummary?.succeededLoopRuns ?? 0) +
     (soakSummary?.passedCampaignItems ?? operationalSummary?.passedCampaignItems ?? 0)
   const connectorE2eEvidence =
+    connectorE2eSummary?.evidenceItems ??
     soakSummary?.connectorE2eEvidence ??
     ((soakSummary?.connectorExecutionEvidence ?? 0) +
       (soakSummary?.connectorVerificationEvidence ?? 0))
   const criticalIncidents = soakSummary?.criticalIncidents ?? 0
   const warningIncidents = soakSummary?.warningIncidents ?? 0
+  const connectorE2eHasScope = Boolean(
+    args.connectorE2eGate?.connector ||
+      args.connectorE2eGate?.action ||
+      args.connectorE2eGate?.toolName ||
+      connectorE2eSummary?.evidenceItems ||
+      args.connectorGuard?.summary?.actionEvidence,
+  )
   const hasFailedGate =
     args.operationalGate?.status === "failed" ||
     args.soakReport?.status === "failed" ||
     args.exportGuard?.status === "failed" ||
-    args.connectorGuard?.status === "failed"
+    args.connectorGuard?.status === "failed" ||
+    args.connectorE2eGate?.status === "failed"
   const gaps: string[] = []
 
   if (domains.size === 0) {
@@ -3046,7 +3069,10 @@ function domainAcceptanceCoverageSummary(
   if (drainedRuns === 0) {
     gaps.push(t("workspace.domainWorkbench.acceptanceGapDrain", "还没有已排空的 Workflow / Loop / Campaign 样本。"))
   }
-  if (args.connectorGuard?.summary?.actionEvidence && connectorE2eEvidence === 0) {
+  if (
+    connectorE2eHasScope &&
+    (connectorE2eEvidence === 0 || args.connectorE2eGate?.status !== "passed")
+  ) {
     gaps.push(t("workspace.domainWorkbench.acceptanceGapConnector", "外部动作还缺端到端执行与复核样本。"))
   }
   if (criticalIncidents > 0 || warningIncidents > 0) {
@@ -3233,7 +3259,7 @@ function DomainTaskWorkbenchSection({
   domainQualityRunsState: DomainQualityRunsState
   domainWorkbenchState: DomainTaskWorkbenchState
   focusRequest?: {
-    target: "export" | "connector" | "operational" | "soak"
+    target: "export" | "connector" | "connector-e2e" | "operational" | "soak"
     nonce: number
   } | null
 }) {
@@ -3248,6 +3274,9 @@ function DomainTaskWorkbenchSection({
     connectorGuard,
     connectorGuardLoading,
     connectorGuardError,
+    connectorE2eGate,
+    connectorE2eGateLoading,
+    connectorE2eGateError,
     operationalGate,
     operationalGateLoading,
     operationalGateError,
@@ -3284,6 +3313,7 @@ function DomainTaskWorkbenchSection({
     evidenceLoading ||
     exportGuardLoading ||
     connectorGuardLoading ||
+    connectorE2eGateLoading ||
     operationalGateLoading ||
     soakReportLoading ||
     reviewRunsState.loading ||
@@ -3307,6 +3337,7 @@ function DomainTaskWorkbenchSection({
     domainNeedsUser,
     exportStatus: exportGuard?.status,
     connectorStatus: connectorGuard?.status,
+    connectorE2EStatus: connectorE2eGate?.status,
     operationalStatus: operationalGate?.status,
     soakStatus: soakReport?.status,
   })
@@ -3321,6 +3352,7 @@ function DomainTaskWorkbenchSection({
     domainNeedsUser,
     exportGuard,
     connectorGuard,
+    connectorE2eGate,
     operationalGate,
     soakReport,
   })
@@ -3328,6 +3360,7 @@ function DomainTaskWorkbenchSection({
     evidence,
     exportGuard,
     connectorGuard,
+    connectorE2eGate,
     operationalGate,
     soakReport,
   })
@@ -3336,6 +3369,7 @@ function DomainTaskWorkbenchSection({
     evidenceError ??
     exportGuardError ??
     connectorGuardError ??
+    connectorE2eGateError ??
     operationalGateError ??
     soakReportError
   const count =
@@ -3343,6 +3377,7 @@ function DomainTaskWorkbenchSection({
     openReviewFindings.length +
     verificationSteps.length +
     (domainQualityRunsState.snapshot?.checks.length ?? 0) +
+    (connectorE2eGate?.checks?.length ?? 0) +
     (operationalGate?.checks?.length ?? 0) +
     (soakReport?.incidents?.length ?? 0)
 
@@ -3566,6 +3601,13 @@ function DomainTaskWorkbenchSection({
             error={connectorGuardError}
             disabled={disabled || connectorGuardLoading}
             onRefresh={domainWorkbenchState.refreshConnectorGuard}
+          />
+          <DomainConnectorE2EGatePanel
+            report={connectorE2eGate}
+            loading={connectorE2eGateLoading}
+            error={connectorE2eGateError}
+            disabled={disabled || connectorE2eGateLoading}
+            onRefresh={domainWorkbenchState.refreshConnectorE2eGate}
           />
         </div>
 
@@ -3910,6 +3952,9 @@ interface DomainTaskWorkbenchState {
   connectorGuard: DomainConnectorActionGuardReport | null
   connectorGuardLoading: boolean
   connectorGuardError: string | null
+  connectorE2eGate: DomainConnectorE2EGateReport | null
+  connectorE2eGateLoading: boolean
+  connectorE2eGateError: string | null
   operationalGate: DomainOperationalGateReport | null
   operationalGateLoading: boolean
   operationalGateError: string | null
@@ -3919,6 +3964,7 @@ interface DomainTaskWorkbenchState {
   refreshEvidence: () => Promise<DomainEvidenceItem[]>
   refreshExportGuard: () => Promise<DomainArtifactExportGuardReport | null>
   refreshConnectorGuard: () => Promise<DomainConnectorActionGuardReport | null>
+  refreshConnectorE2eGate: () => Promise<DomainConnectorE2EGateReport | null>
   refreshOperationalGate: () => Promise<DomainOperationalGateReport | null>
   refreshSoakReport: () => Promise<DomainSoakReport | null>
   refreshAll: () => Promise<void>
@@ -3939,6 +3985,10 @@ function useDomainTaskWorkbench(
     useState<DomainConnectorActionGuardReport | null>(null)
   const [connectorGuardLoading, setConnectorGuardLoading] = useState(false)
   const [connectorGuardError, setConnectorGuardError] = useState<string | null>(null)
+  const [connectorE2eGate, setConnectorE2eGate] =
+    useState<DomainConnectorE2EGateReport | null>(null)
+  const [connectorE2eGateLoading, setConnectorE2eGateLoading] = useState(false)
+  const [connectorE2eGateError, setConnectorE2eGateError] = useState<string | null>(null)
   const [operationalGate, setOperationalGate] = useState<DomainOperationalGateReport | null>(null)
   const [operationalGateLoading, setOperationalGateLoading] = useState(false)
   const [operationalGateError, setOperationalGateError] = useState<string | null>(null)
@@ -4059,6 +4109,49 @@ function useDomainTaskWorkbench(
     }
   }, [disabled, incognito, sessionId])
 
+  const refreshConnectorE2eGate = useCallback(async () => {
+    if (disabled || !sessionId || incognito) {
+      setConnectorE2eGate(null)
+      setConnectorE2eGateError(null)
+      setConnectorE2eGateLoading(false)
+      return null
+    }
+    setConnectorE2eGateLoading(true)
+    setConnectorE2eGateError(null)
+    try {
+      const report = await getTransport().call<DomainConnectorE2EGateReport | null>(
+        "evaluate_domain_connector_e2e_gate",
+        {
+          input: {
+            sessionId,
+            requireConnectorInput: true,
+            requireDraft: true,
+            requireExplicitApproval: true,
+            requireExecutionResult: true,
+            requirePostActionVerification: true,
+            requireRollbackPlan: true,
+            requireExportGuardForDelivery: true,
+          },
+        },
+      )
+      const safeReport = isReportObject(report) ? report : null
+      setConnectorE2eGate(safeReport)
+      return safeReport
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error(
+        "ui",
+        "useDomainTaskWorkbench",
+        "Failed to evaluate connector E2E gate",
+        e,
+      )
+      setConnectorE2eGateError(message)
+      return null
+    } finally {
+      setConnectorE2eGateLoading(false)
+    }
+  }, [disabled, incognito, sessionId])
+
   const refreshOperationalGate = useCallback(async () => {
     if (disabled || !sessionId || incognito) {
       setOperationalGate(null)
@@ -4143,10 +4236,12 @@ function useDomainTaskWorkbench(
       refreshEvidence(),
       refreshExportGuard(),
       refreshConnectorGuard(),
+      refreshConnectorE2eGate(),
       refreshOperationalGate(),
       refreshSoakReport(),
     ])
   }, [
+    refreshConnectorE2eGate,
     refreshConnectorGuard,
     refreshEvidence,
     refreshExportGuard,
@@ -4206,6 +4301,9 @@ function useDomainTaskWorkbench(
     connectorGuard,
     connectorGuardLoading,
     connectorGuardError,
+    connectorE2eGate,
+    connectorE2eGateLoading,
+    connectorE2eGateError,
     operationalGate,
     operationalGateLoading,
     operationalGateError,
@@ -4215,6 +4313,7 @@ function useDomainTaskWorkbench(
     refreshEvidence,
     refreshExportGuard,
     refreshConnectorGuard,
+    refreshConnectorE2eGate,
     refreshOperationalGate,
     refreshSoakReport,
     refreshAll,
@@ -5807,6 +5906,219 @@ function DomainConnectorActionGuardPanel({
   )
 }
 
+function DomainConnectorE2EGatePanel({
+  report,
+  loading,
+  error,
+  disabled,
+  onRefresh,
+}: {
+  report: DomainConnectorE2EGateReport | null
+  loading: boolean
+  error: string | null
+  disabled: boolean
+  onRefresh: () => Promise<DomainConnectorE2EGateReport | null>
+}) {
+  const { t } = useTranslation()
+  const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
+  const summary = report?.summary
+  const relatedEvidence = report?.relatedEvidence ?? []
+  const clean = report?.status === "passed"
+  const metrics = summary
+    ? [
+        {
+          label: t("workspace.domainConnectorE2E.input", "输入"),
+          value: summary.connectorInputEvidence,
+          tone: summary.connectorInputEvidence > 0 ? "good" : "warn",
+        },
+        {
+          label: t("workspace.domainConnectorE2E.draft", "草稿"),
+          value: summary.draftEvidence,
+          tone: summary.draftEvidence > 0 ? "good" : "muted",
+        },
+        {
+          label: t("workspace.domainConnectorE2E.approval", "批准"),
+          value: summary.approvalEvidence,
+          tone: summary.approvalEvidence > 0 ? "good" : "danger",
+        },
+        {
+          label: t("workspace.domainConnectorE2E.execution", "执行"),
+          value: summary.executionEvidence,
+          tone: summary.executionEvidence > 0 ? "good" : "warn",
+        },
+        {
+          label: t("workspace.domainConnectorE2E.verification", "复核"),
+          value: summary.verificationEvidence,
+          tone: summary.verificationEvidence > 0 ? "good" : "warn",
+        },
+        {
+          label: t("workspace.domainConnectorE2E.rollback", "回滚"),
+          value: summary.rollbackEvidence,
+          tone: summary.rollbackEvidence > 0 ? "good" : "warn",
+        },
+      ]
+    : []
+
+  return (
+    <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <GitCompare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium text-foreground/90">
+            {t("workspace.domainConnectorE2E.title", "连接器 E2E")}
+          </div>
+          <div className="truncate text-[10px] text-muted-foreground">
+            {report
+              ? t("workspace.domainConnectorE2E.generated", "最近评估 {{time}}", {
+                  time: formatMessageTime(report.generatedAt),
+                })
+              : t("workspace.domainConnectorE2E.emptyHint", "检查输入、草稿、批准、执行、复核和回滚证据")}
+          </div>
+        </div>
+        <StatusPill
+          label={domainConnectorE2EGateLabel(t, report?.status, loading)}
+          tone={domainConnectorE2EGateTone(report?.status, loading)}
+          loading={loading}
+        />
+        <IconTip label={t("workspace.domainConnectorE2E.refresh", "刷新连接器 E2E")}>
+          <button
+            type="button"
+            onClick={() => void onRefresh()}
+            disabled={disabled}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-secondary/25 text-muted-foreground transition-colors hover:bg-secondary/45 hover:text-foreground disabled:opacity-55"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </IconTip>
+      </div>
+
+      {summary ? (
+        <>
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            {metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className={cn(
+                  "rounded-md border px-2 py-1.5",
+                  STATUS_TONE_CLASS[metric.tone as StatusTone],
+                )}
+              >
+                <div className="truncate text-[10px]">{metric.label}</div>
+                <div className="text-xs font-semibold tabular-nums">{metric.value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex min-w-0 flex-wrap gap-1">
+            {report?.connector ? <StatusPill label={report.connector} tone="info" /> : null}
+            {report?.action ? <StatusPill label={report.action} tone="muted" /> : null}
+            {report?.toolName ? <StatusPill label={report.toolName} tone="muted" /> : null}
+            {summary.connectorActionGuardStatus ? (
+              <StatusPill
+                label={t("workspace.domainConnectorE2E.actionGuard", "动作 {{status}}", {
+                  status: summary.connectorActionGuardStatus,
+                })}
+                tone={domainConnectorE2EGateTone(summary.connectorActionGuardStatus)}
+              />
+            ) : null}
+            {summary.exportGuardStatus ? (
+              <StatusPill
+                label={t("workspace.domainConnectorE2E.exportGuard", "交付 {{status}}", {
+                  status: summary.exportGuardStatus,
+                })}
+                tone={domainConnectorE2EGateTone(summary.exportGuardStatus)}
+              />
+            ) : null}
+          </div>
+        </>
+      ) : null}
+
+      {error ? (
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          {error}
+        </div>
+      ) : clean ? (
+        <div className="mt-2 rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+          {t("workspace.domainConnectorE2E.clean", "连接器端到端证据通过；真正写入外部系统前仍会逐次确认。")}
+        </div>
+      ) : issueChecks.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {issueChecks.slice(0, 4).map((check) => (
+            <div
+              key={check.name}
+              className={cn(
+                "rounded-md px-2 py-1.5 text-[11px]",
+                check.status === "failed"
+                  ? "bg-destructive/10 text-destructive"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <CircleAlert className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
+                <span className="shrink-0 tabular-nums">{check.actual}</span>
+              </div>
+              <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
+            </div>
+          ))}
+        </div>
+      ) : !loading ? (
+        <EmptyHint>{t("workspace.domainConnectorE2E.empty", "还没有连接器 E2E 评估结果")}</EmptyHint>
+      ) : null}
+
+      {relatedEvidence.length ? (
+        <div className="mt-2 space-y-1">
+          {relatedEvidence.slice(0, 2).map((item) => (
+            <div
+              key={item.id}
+              className="min-w-0 rounded-md border border-border/40 bg-secondary/25 px-2 py-1.5 text-[11px] text-muted-foreground"
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <GitCompare className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground/80">
+                  {item.title}
+                </span>
+                <StatusPill label={item.reason} tone="muted" />
+              </div>
+              <div className="mt-0.5 truncate font-mono text-[10px] opacity-75">
+                {item.accessScope} · {item.redactionStatus}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function domainConnectorE2EGateTone(
+  status?: string | null,
+  loading?: boolean,
+): StatusTone {
+  if (loading) return "info"
+  if (status === "passed") return "good"
+  if (status === "failed") return "danger"
+  if (status === "insufficient_data") return "warn"
+  return "muted"
+}
+
+function domainConnectorE2EGateLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  status?: string | null,
+  loading?: boolean,
+): string {
+  if (loading) return t("workspace.domainConnectorE2E.loading", "评估中")
+  if (status === "passed") return t("workspace.domainConnectorE2E.passed", "已闭环")
+  if (status === "failed") return t("workspace.domainConnectorE2E.failed", "阻塞")
+  if (status === "insufficient_data") {
+    return t("workspace.domainConnectorE2E.insufficient", "缺证据")
+  }
+  return t("workspace.domainConnectorE2E.idle", "未评估")
+}
+
 function domainConnectorActionGuardTone(
   status?: string | null,
   loading?: boolean,
@@ -7364,6 +7676,7 @@ function readinessStatusTone(args: {
   loopProblems: number
   exportStatus?: string | null
   connectorStatus?: string | null
+  connectorE2EStatus?: string | null
   operationalStatus?: string | null
   soakStatus?: string | null
 }): StatusTone {
@@ -7373,6 +7686,7 @@ function readinessStatusTone(args: {
     args.loopProblems > 0 ||
     args.exportStatus === "failed" ||
     args.connectorStatus === "failed" ||
+    args.connectorE2EStatus === "failed" ||
     args.operationalStatus === "failed" ||
     args.soakStatus === "failed"
   ) {
@@ -7384,6 +7698,7 @@ function readinessStatusTone(args: {
   if (
     args.exportStatus === "insufficient_data" ||
     args.connectorStatus === "insufficient_data" ||
+    args.connectorE2EStatus === "insufficient_data" ||
     args.operationalStatus === "insufficient_data" ||
     args.soakStatus === "insufficient_data"
   ) {
@@ -7430,6 +7745,7 @@ function autonomousReadinessNextSteps(
     workflowLoopCount: number
     exportGuard: DomainArtifactExportGuardReport | null
     connectorGuard: DomainConnectorActionGuardReport | null
+    connectorE2eGate: DomainConnectorE2EGateReport | null
     operationalGate: DomainOperationalGateReport | null
     soakReport: DomainSoakReport | null
   },
@@ -7465,6 +7781,12 @@ function autonomousReadinessNextSteps(
     steps.push(
       args.connectorGuard.recommendedNextSteps[0] ??
         t("workspace.autonomousReadiness.nextConnector", "补齐外部动作批准和回滚证据。"),
+    )
+  }
+  if (args.connectorE2eGate?.status && args.connectorE2eGate.status !== "passed") {
+    steps.push(
+      args.connectorE2eGate.recommendedNextSteps[0] ??
+        t("workspace.autonomousReadiness.nextConnectorE2E", "补齐连接器端到端执行、复核和回滚证据。"),
     )
   }
   if (args.operationalGate?.status && args.operationalGate.status !== "passed") {
@@ -7515,6 +7837,7 @@ function AutonomousReadinessCard({
   onOpenLoopProblem,
   onOpenExportGuard,
   onOpenConnectorGuard,
+  onOpenConnectorE2EGate,
   onOpenOperationalGate,
   onOpenSoakReport,
 }: {
@@ -7539,6 +7862,7 @@ function AutonomousReadinessCard({
   onOpenLoopProblem?: (loopId: string) => void
   onOpenExportGuard?: () => void
   onOpenConnectorGuard?: () => void
+  onOpenConnectorE2EGate?: () => void
   onOpenOperationalGate?: () => void
   onOpenSoakReport?: () => void
 }) {
@@ -7560,6 +7884,7 @@ function AutonomousReadinessCard({
     loopSchedulesState.loading ||
     domainWorkbenchState.exportGuardLoading ||
     domainWorkbenchState.connectorGuardLoading ||
+    domainWorkbenchState.connectorE2eGateLoading ||
     domainWorkbenchState.operationalGateLoading ||
     domainWorkbenchState.soakReportLoading
   const tone = readinessStatusTone({
@@ -7571,6 +7896,7 @@ function AutonomousReadinessCard({
     loopProblems,
     exportStatus: domainWorkbenchState.exportGuard?.status,
     connectorStatus: domainWorkbenchState.connectorGuard?.status,
+    connectorE2EStatus: domainWorkbenchState.connectorE2eGate?.status,
     operationalStatus: domainWorkbenchState.operationalGate?.status,
     soakStatus: domainWorkbenchState.soakReport?.status,
   })
@@ -7584,6 +7910,7 @@ function AutonomousReadinessCard({
     workflowLoopCount,
     exportGuard: domainWorkbenchState.exportGuard,
     connectorGuard: domainWorkbenchState.connectorGuard,
+    connectorE2eGate: domainWorkbenchState.connectorE2eGate,
     operationalGate: domainWorkbenchState.operationalGate,
     soakReport: domainWorkbenchState.soakReport,
   })
@@ -7593,6 +7920,7 @@ function AutonomousReadinessCard({
   const guardStatuses = [
     domainWorkbenchState.exportGuard?.status,
     domainWorkbenchState.connectorGuard?.status,
+    domainWorkbenchState.connectorE2eGate?.status,
     domainWorkbenchState.operationalGate?.status,
     domainWorkbenchState.soakReport?.status,
   ]
@@ -7658,6 +7986,19 @@ function AutonomousReadinessCard({
       label: t("workspace.autonomousReadiness.actionViewConnector", "查看外部动作"),
       icon: ShieldAlert,
       onClick: onOpenConnectorGuard,
+    })
+  }
+  if (
+    !incognito &&
+    domainWorkbenchState.connectorE2eGate?.status &&
+    domainWorkbenchState.connectorE2eGate.status !== "passed" &&
+    onOpenConnectorE2EGate
+  ) {
+    quickActions.push({
+      key: "connector-e2e",
+      label: t("workspace.autonomousReadiness.actionViewConnectorE2E", "查看 E2E"),
+      icon: GitCompare,
+      onClick: onOpenConnectorE2EGate,
     })
   }
   if (
@@ -9449,7 +9790,9 @@ function WorkflowRunsSection({
   onViewSubagentSession?: (sessionId: string) => void
   onOpenLoopCreate?: () => void
   onOpenLoopProblem?: (loopId: string) => void
-  onOpenDomainWorkbench?: (target: "export" | "connector" | "operational" | "soak") => void
+  onOpenDomainWorkbench?: (
+    target: "export" | "connector" | "connector-e2e" | "operational" | "soak",
+  ) => void
   workflowRunsState?: WorkflowRunsState
   loopSchedulesState: LoopSchedulesState
   goalState: GoalStateSnapshot
@@ -10517,6 +10860,7 @@ ${repairPrompt}`
               onOpenLoopProblem={onOpenLoopProblem}
               onOpenExportGuard={() => onOpenDomainWorkbench?.("export")}
               onOpenConnectorGuard={() => onOpenDomainWorkbench?.("connector")}
+              onOpenConnectorE2EGate={() => onOpenDomainWorkbench?.("connector-e2e")}
               onOpenOperationalGate={() => onOpenDomainWorkbench?.("operational")}
               onOpenSoakReport={() => onOpenDomainWorkbench?.("soak")}
             />
@@ -14797,13 +15141,13 @@ export default function WorkspacePanel({
   const domainTaskWorkbenchState = useDomainTaskWorkbench(sessionId, { incognito, turnActive })
   const domainWorkbenchRef = useRef<HTMLDivElement | null>(null)
   const [domainWorkbenchFocusRequest, setDomainWorkbenchFocusRequest] = useState<{
-    target: "export" | "connector" | "operational" | "soak"
+    target: "export" | "connector" | "connector-e2e" | "operational" | "soak"
     nonce: number
   } | null>(null)
   const workflowSectionRef = useRef<HTMLDivElement | null>(null)
   const [workflowFocusTarget, setWorkflowFocusTarget] = useState<WorkflowFocusTarget | null>(null)
   const focusDomainWorkbench = useCallback(
-    (target: "export" | "connector" | "operational" | "soak") => {
+    (target: "export" | "connector" | "connector-e2e" | "operational" | "soak") => {
       setDomainWorkbenchFocusRequest((current) => ({
         target,
         nonce: (current?.nonce ?? 0) + 1,

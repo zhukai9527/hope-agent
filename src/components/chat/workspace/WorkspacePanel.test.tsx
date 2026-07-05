@@ -11,6 +11,7 @@ import type {
   ContextRetrievalSnapshot,
   DomainArtifactExportGuardReport,
   DomainConnectorActionGuardReport,
+  DomainConnectorE2EGateReport,
   DomainEvidenceItem,
   DomainOperationalGateReport,
   DomainQualityRunSnapshot,
@@ -43,6 +44,7 @@ const transportMock = vi.hoisted(() => ({
       if (name === "get_lsp_status") return Promise.resolve(null)
       if (name === "get_lsp_diagnostics") return Promise.resolve(null)
       if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_e2e_gate") return Promise.resolve(null)
       if (name === "generate_domain_soak_report") return Promise.resolve(null)
       return Promise.resolve([])
     },
@@ -122,6 +124,7 @@ beforeEach(() => {
     if (name === "get_lsp_status") return Promise.resolve(null)
     if (name === "get_lsp_diagnostics") return Promise.resolve(null)
     if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+    if (name === "evaluate_domain_connector_e2e_gate") return Promise.resolve(null)
     if (name === "generate_domain_soak_report") return Promise.resolve(null)
     return Promise.resolve([])
   })
@@ -986,6 +989,74 @@ function domainConnectorActionGuardReport(
         redactionStatus: "none",
         createdAt: "2026-01-01T00:04:00Z",
         reason: "action_scope",
+      },
+    ],
+    ...patch,
+  }
+}
+
+function domainConnectorE2EGateReport(
+  patch: Partial<DomainConnectorE2EGateReport> = {},
+): DomainConnectorE2EGateReport {
+  return {
+    generatedAt: "2026-01-01T00:09:00Z",
+    status: "insufficient_data",
+    scope: { scope: "session", sessionId: "s1", projectId: null, goalId: null, domain: "inbox" },
+    toolName: "gmail_send",
+    connector: "gmail",
+    action: "send",
+    risk: "external_write",
+    thresholds: {
+      requireConnectorInput: true,
+      requireDraft: true,
+      requireExplicitApproval: true,
+      requireExecutionResult: true,
+      requirePostActionVerification: true,
+      requireRollbackPlan: true,
+      requireExportGuardForDelivery: true,
+    },
+    summary: {
+      evidenceItems: 3,
+      connectorInputEvidence: 1,
+      draftEvidence: 1,
+      approvalEvidence: 1,
+      executionEvidence: 0,
+      verificationEvidence: 0,
+      rollbackEvidence: 0,
+      sensitiveEvidence: 1,
+      deliveryAction: true,
+      connectorActionGuardStatus: "passed",
+      exportGuardStatus: "passed",
+    },
+    checks: [
+      {
+        name: "execution_result",
+        status: "insufficient_data",
+        severity: "critical",
+        expected: "connector execution result evidence",
+        actual: "0",
+        detail: "The connector action has not produced an execution result yet.",
+      },
+      {
+        name: "post_action_verification",
+        status: "insufficient_data",
+        severity: "major",
+        expected: "post action verification evidence",
+        actual: "0",
+        detail: "The external state has not been verified after execution.",
+      },
+    ],
+    blockers: [],
+    recommendedNextSteps: ["Execute the approved connector action and verify the external state."],
+    relatedEvidence: [
+      {
+        id: "e-connector-input",
+        evidenceType: "connector_context_collected",
+        title: "Gmail thread context",
+        accessScope: "connector",
+        redactionStatus: "clean",
+        createdAt: "2026-01-01T00:05:00Z",
+        reason: "connector_input",
       },
     ],
     ...patch,
@@ -1905,6 +1976,50 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看外部动作" }))
     expect(await screen.findByText("外部动作守门")).toBeTruthy()
     expect(screen.getByText("explicit_user_approval")).toBeTruthy()
+  })
+
+  it("surfaces connector E2E gate evidence from readiness actions", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_connector_e2e_gate")
+        return Promise.resolve(domainConnectorE2EGateReport())
+      if (name === "evaluate_domain_artifact_export_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_connector_action_guard") return Promise.resolve(null)
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    expect(await screen.findByText("连接器 E2E")).toBeTruthy()
+    expect(screen.getByText("execution_result")).toBeTruthy()
+    expect(screen.getByText("post_action_verification")).toBeTruthy()
+    expect(screen.getByText("外部动作还缺端到端执行与复核样本。")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 E2E" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("evaluate_domain_connector_e2e_gate", {
+        input: {
+          sessionId: "s1",
+          requireConnectorInput: true,
+          requireDraft: true,
+          requireExplicitApproval: true,
+          requireExecutionResult: true,
+          requirePostActionVerification: true,
+          requireRollbackPlan: true,
+          requireExportGuardForDelivery: true,
+        },
+      })
+    })
   })
 
   it("links workflow loop rows to their derived workflow run", async () => {

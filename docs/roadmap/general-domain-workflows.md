@@ -422,6 +422,7 @@ Phase 8 不再新增一套执行系统，而是把 Phase 7 的通用控制面放
 - Checks 覆盖 connector input、draft/preview、explicit approval、execution result、post-action verification、rollback plan、Connector Action Guard、Artifact Export Guard。
 - 缺用户批准为 `failed`；缺真实输入、执行结果或执行后复核为 `insufficient_data`，不把 mock/deterministic 或外部账号缺失伪装成通过。
 - Dashboard Learning 新增「Connector E2E」卡片，展示 IN / DR / OK / EX / VF / RB / GU 和 recommended next steps。
+- Workspace「通用任务工作台」新增当前会话「连接器 E2E」卡片，并把该 gate 纳入真实样本验收和 Autonomous Readiness 的健康状态 /「查看 E2E」快捷入口。
 - 新增核心单测覆盖：完整 Gmail send lifecycle passed；缺 execution result 时保持 `insufficient_data`。
 
 仍需后续真实样本：
