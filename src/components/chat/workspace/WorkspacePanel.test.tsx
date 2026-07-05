@@ -2090,6 +2090,8 @@ describe("WorkspacePanel workflow section", () => {
     expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
     expect(screen.getByText("真实样本验收")).toBeTruthy()
     expect(screen.getByText("样本有事故")).toBeTruthy()
+    expect(screen.getByText("验收结论")).toBeTruthy()
+    expect(screen.getByText("不可验收")).toBeTruthy()
     expect(screen.getByText("39% · 3/7")).toBeTruthy()
     expect(screen.getByText("证据链")).toBeTruthy()
     expect(screen.getByText("缺来源/草稿/决策证据")).toBeTruthy()
@@ -2103,7 +2105,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("验收矩阵")).toBeTruthy()
     expect(screen.getByText("Campaign 样本")).toBeTruthy()
     expect(screen.getByText("缺通过的 Campaign item")).toBeTruthy()
-    expect(screen.getByText("长跑审计仍有事故需要收口。")).toBeTruthy()
+    expect(screen.getAllByText("长跑审计仍有事故需要收口。").length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole("button", { name: "复制验收报告" }))
     await waitFor(() => {
@@ -2115,6 +2117,7 @@ describe("WorkspacePanel workflow section", () => {
     })
     const acceptanceReport = String(writeText.mock.calls[0]?.[0] ?? "")
     expect(acceptanceReport).toContain("## 守门状态")
+    expect(acceptanceReport).toContain("验收结论：不可验收 - 长跑审计仍有事故需要收口。")
     expect(acceptanceReport).toContain("交付守门：未评估")
     expect(acceptanceReport).toContain("运行稳定性：阻塞 (failed)")
     expect(acceptanceReport).toContain("workflow_failed_residue=failed")
@@ -2191,14 +2194,17 @@ describe("WorkspacePanel workflow section", () => {
         String(args?.activeForm ?? "") === "正在补齐真实样本验收清单",
     )?.[1]
     const acceptancePlanContent = String(acceptancePlanTask?.content ?? "")
+    expect(acceptancePlanContent).toContain("验收结论：不可验收 - 长跑审计仍有事故需要收口。")
     expect(acceptancePlanContent).toContain("验收进度：39% (3/7)")
     expect(acceptancePlanContent).toContain("[待补] Campaign 样本：缺通过的 Campaign item")
     expect(acceptancePlanContent).toContain("证据：至少一个 item passed，失败 item 有分类和 retry / cancel 证据。")
     expect(acceptancePlanContent).toContain("刷新：刷新长跑审计 Soak Report。")
     expect(acceptancePlanContent).toContain("证据：使用测试账号或沙箱数据，避免真实用户生产账号。")
 
-    const acceptanceGap = screen.getByText("长跑审计仍有事故需要收口。")
-    const acceptanceGapRow = acceptanceGap.parentElement
+    const acceptanceGapRow = screen
+      .getAllByText("长跑审计仍有事故需要收口。")
+      .map((node) => node.parentElement)
+      .find((row) => row && within(row).queryByRole("button", { name: "转任务" }))
     expect(acceptanceGapRow).toBeTruthy()
     fireEvent.click(within(acceptanceGapRow as HTMLElement).getByRole("button", { name: "转任务" }))
 

@@ -3063,6 +3063,12 @@ type DomainAcceptanceGap = {
   severity: DomainAcceptanceGapSeverity
 }
 
+type DomainAcceptanceVerdict = {
+  label: string
+  detail: string
+  tone: StatusTone
+}
+
 type DomainAcceptanceReviewContext = {
   evidence: DomainEvidenceItem[]
   exportGuard: DomainArtifactExportGuardReport | null
@@ -3762,11 +3768,81 @@ function domainAcceptanceStatusLabel(
   return t("workspace.domainWorkbench.acceptanceIdle", "待采样")
 }
 
+function domainAcceptanceVerdict(
+  t: ReturnType<typeof useTranslation>["t"],
+  summary: DomainAcceptanceCoverageSummary,
+): DomainAcceptanceVerdict {
+  const dangerGap = summary.gaps.find((gap) => gap.severity === "danger")
+  const warningGap = summary.gaps.find((gap) => gap.severity === "warn")
+  const infoGap = summary.gaps.find((gap) => gap.severity === "info")
+  const missingRequirement = summary.requirements.find((requirement) => !requirement.passed)
+  const dangerRequirement = summary.requirements.find(
+    (requirement) => !requirement.passed && requirement.tone === "danger",
+  )
+
+  if (summary.controlRecords === 0) {
+    return {
+      label: t("workspace.domainWorkbench.acceptanceVerdictIdle", "待采样"),
+      detail: t(
+        "workspace.domainWorkbench.acceptanceVerdictIdleDetail",
+        "还没有真实控制面记录，不能作为最终验收证据。",
+      ),
+      tone: "muted",
+    }
+  }
+  if (dangerGap || dangerRequirement) {
+    return {
+      label: t("workspace.domainWorkbench.acceptanceVerdictBlocked", "不可验收"),
+      detail:
+        dangerGap?.message ??
+        t(
+          "workspace.domainWorkbench.acceptanceVerdictBlockedRequirement",
+          "{{label}} 未通过：{{detail}}",
+          {
+            label: dangerRequirement?.label ?? "",
+            detail: dangerRequirement?.detail ?? "",
+          },
+        ),
+      tone: "danger",
+    }
+  }
+  if (missingRequirement || warningGap) {
+    return {
+      label: t("workspace.domainWorkbench.acceptanceVerdictNeedsSamples", "待补样本"),
+      detail: missingRequirement
+        ? t(
+            "workspace.domainWorkbench.acceptanceVerdictNeedsRequirement",
+            "{{label}} 仍缺证据：{{detail}}",
+            { label: missingRequirement.label, detail: missingRequirement.detail },
+          )
+        : warningGap?.message ??
+          t("workspace.domainWorkbench.acceptanceVerdictNeedsSamplesDetail", "仍有样本缺口需要补齐。"),
+      tone: "warn",
+    }
+  }
+  if (infoGap) {
+    return {
+      label: t("workspace.domainWorkbench.acceptanceVerdictNeedsExpansion", "可局部复核"),
+      detail: infoGap.message,
+      tone: "info",
+    }
+  }
+  return {
+    label: t("workspace.domainWorkbench.acceptanceVerdictReady", "可验收"),
+    detail: t(
+      "workspace.domainWorkbench.acceptanceVerdictReadyDetail",
+      "必需项、守门、长跑健康与真实样本证据均已通过。",
+    ),
+    tone: "good",
+  }
+}
+
 function domainAcceptancePlanTaskContent(
   t: ReturnType<typeof useTranslation>["t"],
   summary: DomainAcceptanceCoverageSummary,
   gaps: DomainAcceptanceGap[],
 ): string {
+  const verdict = domainAcceptanceVerdict(t, summary)
   const domains = summary.domains.length > 0 ? summary.domains.join(", ") : "0"
   const sampleFreshness =
     summary.latestActivityAgeSecs != null
@@ -3791,6 +3867,7 @@ function domainAcceptancePlanTaskContent(
         : t("workspace.domainWorkbench.acceptancePlanBudgetOk", "未观察到预算耗尽")
   const metrics = [
     `${t("workspace.domainWorkbench.acceptancePlanStatus", "状态")}：${domainAcceptanceStatusLabel(t, summary)}`,
+    `${t("workspace.domainWorkbench.acceptanceVerdict", "验收结论")}：${verdict.label} - ${verdict.detail}`,
     `${t("workspace.domainWorkbench.acceptancePlanProgress", "验收进度")}：${summary.readinessPercent}% (${summary.requiredPassed}/${summary.requiredTotal})`,
     `${t("workspace.domainWorkbench.acceptancePlanDomains", "领域")}：${domains}`,
     `${t("workspace.domainWorkbench.acceptancePlanRecords", "控制面记录")}：${summary.controlRecords}`,
@@ -4007,6 +4084,7 @@ function domainAcceptanceReviewMarkdown(
   summary: DomainAcceptanceCoverageSummary,
   context: DomainAcceptanceReviewContext,
 ): string {
+  const verdict = domainAcceptanceVerdict(t, summary)
   const domains = summary.domains.length > 0 ? summary.domains.join(", ") : "0"
   const sampleFreshness =
     summary.latestActivityAgeSecs != null
@@ -4043,6 +4121,7 @@ function domainAcceptanceReviewMarkdown(
     `# ${t("workspace.domainWorkbench.acceptanceTitle", "真实样本验收")}`,
     "",
     `${t("workspace.domainWorkbench.acceptancePlanStatus", "状态")}：${domainAcceptanceStatusLabel(t, summary)}`,
+    `${t("workspace.domainWorkbench.acceptanceVerdict", "验收结论")}：${verdict.label} - ${verdict.detail}`,
     `${t("workspace.domainWorkbench.acceptancePlanProgress", "验收进度")}：${summary.readinessPercent}% (${summary.requiredPassed}/${summary.requiredTotal})`,
     `${t("workspace.domainWorkbench.acceptancePlanDomains", "领域")}：${domains}`,
     `${t("workspace.domainWorkbench.acceptancePlanRecords", "控制面记录")}：${summary.controlRecords}`,
@@ -4099,6 +4178,7 @@ function DomainAcceptanceCoverageCard({
   onCreateGapPlan?: (gaps: DomainAcceptanceGap[]) => void
 }) {
   const { t } = useTranslation()
+  const verdict = domainAcceptanceVerdict(t, summary)
   const acceptanceReviewLabel = t("workspace.domainWorkbench.copyAcceptanceReview", "复制验收报告")
   const copyAcceptanceReview = async () => {
     try {
@@ -4172,6 +4252,14 @@ function DomainAcceptanceCoverageCard({
             style={{ width: `${summary.readinessPercent}%` }}
           />
         </div>
+      </div>
+      <div className="mt-2 flex min-w-0 items-start gap-1.5 text-[10px]">
+        <Shield className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+        <span className="shrink-0 font-medium text-muted-foreground">
+          {t("workspace.domainWorkbench.acceptanceVerdict", "验收结论")}
+        </span>
+        <StatusPill label={verdict.label} tone={verdict.tone} />
+        <span className="min-w-0 flex-1 text-muted-foreground/75">{verdict.detail}</span>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-1.5">
         {summary.requirements.map((requirement, index) => {
