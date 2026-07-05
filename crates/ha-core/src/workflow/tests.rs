@@ -25,7 +25,39 @@ use super::{
 fn temp_db() -> (tempfile::TempDir, SessionDB) {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = SessionDB::open(&dir.path().join("sessions.db")).expect("open session db");
+    ensure_channel_conversations_table(&db);
     (dir, db)
+}
+
+fn ensure_channel_conversations_table(db: &SessionDB) {
+    // `SessionDB::open` leaves this table to `ChannelDB::migrate`, but
+    // workflow runtime paths hydrate SessionMeta via a LEFT JOIN against it.
+    let conn = db.conn.lock().expect("lock session db");
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS channel_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            thread_id TEXT,
+            session_id TEXT NOT NULL,
+            sender_id TEXT,
+            sender_name TEXT,
+            chat_type TEXT NOT NULL DEFAULT 'dm',
+            source TEXT NOT NULL DEFAULT 'inbound',
+            attached_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_channel_conv_chat
+            ON channel_conversations(channel_id, account_id, chat_id, COALESCE(thread_id, ''));
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_channel_conv_session
+            ON channel_conversations(session_id);
+        CREATE INDEX IF NOT EXISTS idx_channel_conv_lookup
+            ON channel_conversations(channel_id, account_id, chat_id);",
+    )
+    .expect("create channel_conversations table");
 }
 
 fn create_run(db: &SessionDB) -> (String, String) {
