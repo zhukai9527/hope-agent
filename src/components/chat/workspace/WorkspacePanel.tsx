@@ -3630,6 +3630,7 @@ function DomainTaskWorkbenchSection({
             onRefresh={domainWorkbenchState.refreshSoakReport}
           />
           <DomainArtifactExportGuardPanel
+            sessionId={sessionId}
             report={exportGuard}
             loading={exportGuardLoading}
             error={exportGuardError}
@@ -3637,6 +3638,7 @@ function DomainTaskWorkbenchSection({
             onRefresh={domainWorkbenchState.refreshExportGuard}
           />
           <DomainConnectorActionGuardPanel
+            sessionId={sessionId}
             report={connectorGuard}
             loading={connectorGuardLoading}
             error={connectorGuardError}
@@ -5315,6 +5317,7 @@ function DomainQualitySection({
         {!incognito ? (
           <>
             <DomainConnectorActionGuardPanel
+              sessionId={sessionId}
               report={connectorGuard}
               loading={connectorGuardLoading}
               error={connectorGuardError}
@@ -5322,6 +5325,7 @@ function DomainQualitySection({
               onRefresh={refreshConnectorGuard}
             />
             <DomainArtifactExportGuardPanel
+              sessionId={sessionId}
               report={exportGuard}
               loading={exportGuardLoading}
               error={exportGuardError}
@@ -5744,12 +5748,14 @@ function domainSoakReportLabel(
 }
 
 function DomainArtifactExportGuardPanel({
+  sessionId,
   report,
   loading,
   error,
   disabled,
   onRefresh,
 }: {
+  sessionId?: string | null
   report: DomainArtifactExportGuardReport | null
   loading: boolean
   error: string | null
@@ -5757,10 +5763,47 @@ function DomainArtifactExportGuardPanel({
   onRefresh: () => Promise<DomainArtifactExportGuardReport | null>
 }) {
   const { t } = useTranslation()
+  const [creatingTaskKey, setCreatingTaskKey] = useState<string | null>(null)
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const evidenceRequiringReview = report?.evidenceRequiringReview ?? []
   const clean = report?.status === "passed"
+  const canCreateTasks = Boolean(sessionId) && !disabled
+
+  const createCheckTask = async (
+    check: DomainArtifactExportGuardReport["checks"][number],
+    index: number,
+  ) => {
+    if (!sessionId || disabled || creatingTaskKey) return
+    const taskKey = `check:${index}:${check.name}`
+    setCreatingTaskKey(taskKey)
+    try {
+      await getTransport().call<Task[]>("create_session_task", {
+        sessionId,
+        content: t(
+          "workspace.domainExportGuard.checkTaskContent",
+          "处理交付守门缺口：{{name}}（{{actual}}）- {{detail}}",
+          {
+            name: check.name,
+            actual: check.actual,
+            detail: check.detail || check.expected,
+          },
+        ),
+        activeForm: t(
+          "workspace.domainExportGuard.checkTaskActiveForm",
+          "正在处理交付守门缺口：{{name}}",
+          { name: check.name },
+        ),
+      })
+      toast.success(t("workspace.domainExportGuard.checkTaskCreated", "已创建交付复核任务"))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainArtifactExportGuardPanel", "Create export guard task failed", e)
+      toast.error(message)
+    } finally {
+      setCreatingTaskKey(null)
+    }
+  }
 
   return (
     <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
@@ -5828,24 +5871,42 @@ function DomainArtifactExportGuardPanel({
         </div>
       ) : issueChecks.length > 0 ? (
         <div className="mt-2 space-y-1">
-          {issueChecks.slice(0, 3).map((check) => (
-            <div
-              key={check.name}
-              className={cn(
-                "rounded-md px-2 py-1.5 text-[11px]",
-                check.status === "failed"
-                  ? "bg-destructive/10 text-destructive"
-                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-              )}
-            >
-              <div className="flex min-w-0 items-center gap-1.5">
-                <CircleAlert className="h-3 w-3 shrink-0" />
-                <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
-                <span className="shrink-0 tabular-nums">{check.actual}</span>
+          {issueChecks.slice(0, 3).map((check, index) => {
+            const taskKey = `check:${index}:${check.name}`
+            return (
+              <div
+                key={check.name}
+                className={cn(
+                  "rounded-md px-2 py-1.5 text-[11px]",
+                  check.status === "failed"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <CircleAlert className="h-3 w-3 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
+                  <span className="shrink-0 tabular-nums">{check.actual}</span>
+                  {canCreateTasks ? (
+                    <button
+                      type="button"
+                      onClick={() => void createCheckTask(check, index)}
+                      disabled={Boolean(creatingTaskKey)}
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-current/20 bg-background/45 px-1.5 text-[10px] font-medium transition-colors hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {creatingTaskKey === taskKey ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Plus className="h-3 w-3" />
+                      )}
+                      <span>{t("workspace.domainExportGuard.createCheckTask", "转任务")}</span>
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
               </div>
-              <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       ) : !loading ? (
         <EmptyHint>{t("workspace.domainExportGuard.empty", "还没有交付守门结果")}</EmptyHint>
@@ -5875,12 +5936,14 @@ function DomainArtifactExportGuardPanel({
 }
 
 function DomainConnectorActionGuardPanel({
+  sessionId,
   report,
   loading,
   error,
   disabled,
   onRefresh,
 }: {
+  sessionId?: string | null
   report: DomainConnectorActionGuardReport | null
   loading: boolean
   error: string | null
@@ -5888,10 +5951,47 @@ function DomainConnectorActionGuardPanel({
   onRefresh: () => Promise<DomainConnectorActionGuardReport | null>
 }) {
   const { t } = useTranslation()
+  const [creatingTaskKey, setCreatingTaskKey] = useState<string | null>(null)
   const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const relatedEvidence = report?.relatedEvidence ?? []
   const clean = report?.status === "passed"
+  const canCreateTasks = Boolean(sessionId) && !disabled
+
+  const createCheckTask = async (
+    check: DomainConnectorActionGuardReport["checks"][number],
+    index: number,
+  ) => {
+    if (!sessionId || disabled || creatingTaskKey) return
+    const taskKey = `check:${index}:${check.name}`
+    setCreatingTaskKey(taskKey)
+    try {
+      await getTransport().call<Task[]>("create_session_task", {
+        sessionId,
+        content: t(
+          "workspace.domainConnectorGuard.checkTaskContent",
+          "处理外部动作守门缺口：{{name}}（{{actual}}）- {{detail}}",
+          {
+            name: check.name,
+            actual: check.actual,
+            detail: check.detail || check.expected,
+          },
+        ),
+        activeForm: t(
+          "workspace.domainConnectorGuard.checkTaskActiveForm",
+          "正在处理外部动作守门缺口：{{name}}",
+          { name: check.name },
+        ),
+      })
+      toast.success(t("workspace.domainConnectorGuard.checkTaskCreated", "已创建外部动作复核任务"))
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      logger.error("ui", "DomainConnectorActionGuardPanel", "Create connector guard task failed", e)
+      toast.error(message)
+    } finally {
+      setCreatingTaskKey(null)
+    }
+  }
 
   return (
     <div className="rounded-md border border-border/55 bg-background/45 px-2.5 py-2">
@@ -5967,24 +6067,42 @@ function DomainConnectorActionGuardPanel({
         </div>
       ) : issueChecks.length > 0 ? (
         <div className="mt-2 space-y-1">
-          {issueChecks.slice(0, 3).map((check) => (
-            <div
-              key={check.name}
-              className={cn(
-                "rounded-md px-2 py-1.5 text-[11px]",
-                check.status === "failed"
-                  ? "bg-destructive/10 text-destructive"
-                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-              )}
-            >
-              <div className="flex min-w-0 items-center gap-1.5">
-                <CircleAlert className="h-3 w-3 shrink-0" />
-                <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
-                <span className="shrink-0 tabular-nums">{check.actual}</span>
+          {issueChecks.slice(0, 3).map((check, index) => {
+            const taskKey = `check:${index}:${check.name}`
+            return (
+              <div
+                key={check.name}
+                className={cn(
+                  "rounded-md px-2 py-1.5 text-[11px]",
+                  check.status === "failed"
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <CircleAlert className="h-3 w-3 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate font-medium">{check.name}</span>
+                  <span className="shrink-0 tabular-nums">{check.actual}</span>
+                  {canCreateTasks ? (
+                    <button
+                      type="button"
+                      onClick={() => void createCheckTask(check, index)}
+                      disabled={Boolean(creatingTaskKey)}
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-current/20 bg-background/45 px-1.5 text-[10px] font-medium transition-colors hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {creatingTaskKey === taskKey ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Plus className="h-3 w-3" />
+                      )}
+                      <span>{t("workspace.domainConnectorGuard.createCheckTask", "转任务")}</span>
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
               </div>
-              <div className="mt-0.5 truncate opacity-85">{check.detail}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       ) : !loading ? (
         <EmptyHint>{t("workspace.domainConnectorGuard.empty", "还没有外部动作守门结果")}</EmptyHint>

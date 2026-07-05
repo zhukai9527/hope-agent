@@ -2017,6 +2017,60 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("explicit_user_approval")).toBeTruthy()
   })
 
+  it("creates tasks from export and connector guard checks", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_artifact_export_guard")
+        return Promise.resolve(domainArtifactExportGuardReport())
+      if (name === "evaluate_domain_connector_action_guard")
+        return Promise.resolve(domainConnectorActionGuardReport())
+      if (name === "evaluate_domain_operational_gate") return Promise.resolve(null)
+      if (name === "generate_domain_soak_report") return Promise.resolve(null)
+      if (name === "create_session_task") return Promise.resolve([])
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    const exportCheckLabel = (await screen.findAllByText("artifact_reviewed"))[0]
+    const exportCheckRow = exportCheckLabel.parentElement
+    expect(exportCheckRow).toBeTruthy()
+    fireEvent.click(within(exportCheckRow as HTMLElement).getByRole("button", { name: "转任务" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
+        sessionId: "s1",
+        content:
+          "处理交付守门缺口：artifact_reviewed（0）- The delivery artifact has not been reviewed.",
+        activeForm: "正在处理交付守门缺口：artifact_reviewed",
+      })
+    })
+
+    const connectorCheckLabel = (await screen.findAllByText("explicit_user_approval"))[0]
+    const connectorCheckRow = connectorCheckLabel.parentElement
+    expect(connectorCheckRow).toBeTruthy()
+    fireEvent.click(
+      within(connectorCheckRow as HTMLElement).getByRole("button", { name: "转任务" }),
+    )
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
+        sessionId: "s1",
+        content:
+          "处理外部动作守门缺口：explicit_user_approval（0）- No explicit user approval evidence exists for the external action.",
+        activeForm: "正在处理外部动作守门缺口：explicit_user_approval",
+      })
+    })
+  })
+
   it("surfaces connector E2E gate evidence from readiness actions", async () => {
     transportMock.call.mockImplementation((name: string) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
