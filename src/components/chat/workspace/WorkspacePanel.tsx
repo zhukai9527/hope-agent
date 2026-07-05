@@ -3023,7 +3023,15 @@ type DomainAcceptanceCoverageSummary = {
   criticalIncidents: number
   warningIncidents: number
   tone: StatusTone
-  gaps: string[]
+  gaps: DomainAcceptanceGap[]
+}
+
+type DomainAcceptanceGapSeverity = "danger" | "warn" | "info"
+
+type DomainAcceptanceGap = {
+  key: string
+  message: string
+  severity: DomainAcceptanceGapSeverity
 }
 
 function domainAcceptanceCoverageSummary(
@@ -3080,29 +3088,69 @@ function domainAcceptanceCoverageSummary(
     args.exportGuard?.status === "failed" ||
     args.connectorGuard?.status === "failed" ||
     args.connectorE2eGate?.status === "failed"
-  const gaps: string[] = []
+  const gaps: DomainAcceptanceGap[] = []
+  const pushGap = (
+    key: string,
+    message: string,
+    severity: DomainAcceptanceGapSeverity,
+  ) => {
+    gaps.push({ key, message, severity })
+  }
 
   if (domains.size === 0) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapDomain", "还没有真实领域样本。"))
+    pushGap(
+      "domain",
+      t("workspace.domainWorkbench.acceptanceGapDomain", "还没有真实领域样本。"),
+      "warn",
+    )
   }
   if (args.evidence.length === 0) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapEvidence", "缺少来源、草稿、复核或用户决策证据。"))
+    pushGap(
+      "evidence",
+      t("workspace.domainWorkbench.acceptanceGapEvidence", "缺少来源、草稿、复核或用户决策证据。"),
+      "warn",
+    )
   }
   if (drainedRuns === 0) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapDrain", "还没有已排空的 Workflow / Loop / Campaign 样本。"))
+    pushGap(
+      "drain",
+      t(
+        "workspace.domainWorkbench.acceptanceGapDrain",
+        "还没有已排空的 Workflow / Loop / Campaign 样本。",
+      ),
+      "warn",
+    )
   }
   if (
     connectorE2eHasScope &&
     (connectorE2eEvidence === 0 || args.connectorE2eGate?.status !== "passed")
   ) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapConnector", "外部动作还缺端到端执行与复核样本。"))
+    pushGap(
+      "connector-e2e",
+      t("workspace.domainWorkbench.acceptanceGapConnector", "外部动作还缺端到端执行与复核样本。"),
+      args.connectorE2eGate?.status === "failed" ? "danger" : "warn",
+    )
   }
   if (criticalIncidents > 0 || warningIncidents > 0) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapIncidents", "长跑审计仍有事故需要收口。"))
+    pushGap(
+      "incidents",
+      t("workspace.domainWorkbench.acceptanceGapIncidents", "长跑审计仍有事故需要收口。"),
+      criticalIncidents > 0 ? "danger" : "warn",
+    )
   }
   if (domains.size === 1 && controlRecords > 0) {
-    gaps.push(t("workspace.domainWorkbench.acceptanceGapMoreDomains", "继续补其它通用领域样本，避免只证明单一场景。"))
+    pushGap(
+      "more-domains",
+      t(
+        "workspace.domainWorkbench.acceptanceGapMoreDomains",
+        "继续补其它通用领域样本，避免只证明单一场景。",
+      ),
+      "info",
+    )
   }
+  const sortedGaps = gaps.sort(
+    (a, b) => domainAcceptanceGapRank(a.severity) - domainAcceptanceGapRank(b.severity),
+  )
 
   const tone: StatusTone = hasFailedGate || criticalIncidents > 0
     ? "danger"
@@ -3120,8 +3168,29 @@ function domainAcceptanceCoverageSummary(
     criticalIncidents,
     warningIncidents,
     tone,
-    gaps: gaps.slice(0, 3),
+    gaps: sortedGaps.slice(0, 3),
   }
+}
+
+function domainAcceptanceGapRank(severity: DomainAcceptanceGapSeverity): number {
+  if (severity === "danger") return 0
+  if (severity === "warn") return 1
+  return 2
+}
+
+function domainAcceptanceGapTone(severity: DomainAcceptanceGapSeverity): StatusTone {
+  if (severity === "danger") return "danger"
+  if (severity === "warn") return "warn"
+  return "info"
+}
+
+function domainAcceptanceGapLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  severity: DomainAcceptanceGapSeverity,
+): string {
+  if (severity === "danger") return t("workspace.domainWorkbench.acceptanceGapDanger", "阻塞")
+  if (severity === "warn") return t("workspace.domainWorkbench.acceptanceGapWarn", "待补")
+  return t("workspace.domainWorkbench.acceptanceGapInfo", "扩展")
 }
 
 function domainAcceptanceStatusLabel(
@@ -3137,7 +3206,7 @@ function domainAcceptanceStatusLabel(
 function domainAcceptancePlanTaskContent(
   t: ReturnType<typeof useTranslation>["t"],
   summary: DomainAcceptanceCoverageSummary,
-  gaps: string[],
+  gaps: DomainAcceptanceGap[],
 ): string {
   const domains = summary.domains.length > 0 ? summary.domains.join(", ") : "0"
   const metrics = [
@@ -3174,7 +3243,7 @@ function domainAcceptancePlanTaskContent(
     ...metrics.map((metric) => `- ${metric}`),
     "",
     t("workspace.domainWorkbench.acceptancePlanGaps", "验收缺口："),
-    ...gaps.map((gap) => `- ${gap}`),
+    ...gaps.map((gap) => `- [${domainAcceptanceGapLabel(t, gap.severity)}] ${gap.message}`),
     "",
     t("workspace.domainWorkbench.acceptancePlanActions", "采样动作："),
     ...actions.map((action) => `- ${action}`),
@@ -3191,8 +3260,8 @@ function DomainAcceptanceCoverageCard({
   summary: DomainAcceptanceCoverageSummary
   creatingGapTaskKey?: string | null
   creatingPlanTask?: boolean
-  onCreateGapTask?: (gap: string, index: number) => void
-  onCreateGapPlan?: (gaps: string[]) => void
+  onCreateGapTask?: (gap: DomainAcceptanceGap, index: number) => void
+  onCreateGapPlan?: (gaps: DomainAcceptanceGap[]) => void
 }) {
   const { t } = useTranslation()
   return (
@@ -3269,13 +3338,17 @@ function DomainAcceptanceCoverageCard({
       {summary.gaps.length > 0 ? (
         <div className="mt-2 space-y-1">
           {summary.gaps.map((gap, index) => {
-            const taskKey = `acceptance:${index}:${gap}`
+            const taskKey = `acceptance:${index}:${gap.key}`
             return (
               <div
                 key={taskKey}
                 className="flex min-w-0 items-start gap-1.5 rounded-md px-1.5 py-1 text-[11px] leading-snug text-muted-foreground"
               >
-                <span className="line-clamp-2 min-w-0 flex-1">{gap}</span>
+                <StatusPill
+                  label={domainAcceptanceGapLabel(t, gap.severity)}
+                  tone={domainAcceptanceGapTone(gap.severity)}
+                />
+                <span className="line-clamp-2 min-w-0 flex-1">{gap.message}</span>
                 {onCreateGapTask ? (
                   <button
                     type="button"
@@ -3558,9 +3631,9 @@ function DomainTaskWorkbenchSection({
     }
   }
 
-  const createAcceptanceGapTask = async (gap: string, index: number) => {
+  const createAcceptanceGapTask = async (gap: DomainAcceptanceGap, index: number) => {
     if (!sessionId || disabled || creatingAcceptanceGapTaskKey) return
-    const taskKey = `acceptance:${index}:${gap}`
+    const taskKey = `acceptance:${index}:${gap.key}`
     setCreatingAcceptanceGapTaskKey(taskKey)
     try {
       await getTransport().call<Task[]>("create_session_task", {
@@ -3568,7 +3641,7 @@ function DomainTaskWorkbenchSection({
         content: t(
           "workspace.domainWorkbench.acceptanceTaskContent",
           "补齐真实样本验收缺口：{{gap}}",
-          { gap },
+          { gap: gap.message },
         ),
         activeForm: t(
           "workspace.domainWorkbench.acceptanceTaskActiveForm",
@@ -3585,7 +3658,7 @@ function DomainTaskWorkbenchSection({
     }
   }
 
-  const createAcceptancePlanTask = async (gaps: string[]) => {
+  const createAcceptancePlanTask = async (gaps: DomainAcceptanceGap[]) => {
     if (!sessionId || disabled || creatingAcceptancePlanTask || gaps.length === 0) return
     setCreatingAcceptancePlanTask(true)
     try {
