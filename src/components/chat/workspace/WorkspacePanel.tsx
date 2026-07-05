@@ -6461,6 +6461,16 @@ function DomainSoakReportPanel({
     summary?.maxWorkflowDrainSecs != null
       ? formatLoopDuration(Math.max(1, Math.round(summary.maxWorkflowDrainSecs)))
       : "-"
+  const latestActivityAge =
+    summary?.latestActivityAgeSecs != null
+      ? formatLoopDuration(Math.max(1, Math.round(summary.latestActivityAgeSecs)))
+      : "-"
+  const latestActivityTone: StatusTone =
+    summary?.latestActivityAgeSecs == null
+      ? "muted"
+      : summary.latestActivityAgeSecs > 24 * 60 * 60
+        ? "warn"
+        : "info"
   const maxApprovalWait =
     summary?.maxOpenApprovalWaitSecs != null
       ? formatLoopDuration(Math.max(1, Math.round(summary.maxOpenApprovalWaitSecs)))
@@ -6625,6 +6635,7 @@ function DomainSoakReportPanel({
         <div className="mt-2 grid grid-cols-3 gap-1.5">
           {[
             [t("workspace.domainSoakReport.records", "样本"), summary.totalRecords, "info"],
+            [t("workspace.domainSoakReport.freshness", "新鲜"), latestActivityAge, latestActivityTone],
             [
               t("workspace.domainSoakReport.critical", "事故"),
               summary.criticalIncidents,

@@ -377,6 +377,7 @@ Summary 覆盖：
 - loop：total / succeeded / failed / active、平均与最大 tick 时长。
 - campaign：campaign / active campaign / item / passed / failed / cancelled / interrupted / retried item、平均与最大 item 时长。
 - connector E2E evidence：`connector_context_collected`、`connector_draft_created`、`connector_action_executed`、`connector_action_verified` 聚合，以及 execution / verification 子计数。
+- freshness：`latestActivityAt` 与 `latestActivityAgeSecs` 来自 workflow run / workflow event / loop run / campaign item / connector E2E evidence 的最近活动；它只作为观测和 recommended next step 信号，陈旧样本不会被自动判 failed，但会提醒用户补新样本后再扩大无人值守使用。
 - incidents：critical / warning / total；critical 包含 failed/blocked/cancelled workflow、failed/cancelled/interrupted campaign item、failed/cancelled loop；warning 包含 running/queued/awaiting approval 等未 drain 工作。
 
 Status：
@@ -432,8 +433,8 @@ Dashboard Learning Tab 新增「General domain quality」区块：
 - 展示「Domain model leaderboard」：按模型 / execution 聚合最近 campaign item，显示 rank、平均分、item 通过数、trace evidence 数和 warning。
 - 展示「Domain readiness」卡片：直接调用 `evaluate_domain_readiness_gate`，显示总体 readiness 三态、quality/eval/campaign/leaderboard/learning proposal 核心计数、阻塞 check 和 recommended next steps。
 - 展示「Domain operations」卡片：直接调用 `evaluate_domain_operational_gate`，显示 workflow / loop / campaign 的完成、活跃、最长未排空时长、失败残留和 recommended next steps。
-- 展示「Domain soak report」卡片：直接调用 `generate_domain_soak_report`，显示 workflow / loop / campaign / connector evidence 样本量、critical/warning incidents、最大 drain 时长、最近 timeline 和 recommended next steps。
-- Workspace「通用任务工作台」也复用 `evaluate_domain_operational_gate({ sessionId, windowDays: 14 })`、`generate_domain_soak_report({ sessionId, windowDays: 14, maxItems: 8 })` 与 `evaluate_domain_connector_e2e_gate({ sessionId })`，作为当前会话的运行稳定性、长跑审计和连接器端到端验收卡片；长跑审计会显示 workflow/loop/campaign/connector 样本、已闭环/未闭环审批等待、owner control intervention、恢复、最近 timeline、recommended next steps 和 output-token budget 消耗/耗尽信号。它只读并刷新状态，不自动 approve / retry / cancel / run loop，也不自动执行外部动作。
+- 展示「Domain soak report」卡片：直接调用 `generate_domain_soak_report`，显示 workflow / loop / campaign / connector evidence 样本量、样本新鲜度、critical/warning incidents、最大 drain 时长、最近 timeline 和 recommended next steps。
+- Workspace「通用任务工作台」也复用 `evaluate_domain_operational_gate({ sessionId, windowDays: 14 })`、`generate_domain_soak_report({ sessionId, windowDays: 14, maxItems: 8 })` 与 `evaluate_domain_connector_e2e_gate({ sessionId })`，作为当前会话的运行稳定性、长跑审计和连接器端到端验收卡片；长跑审计会显示 workflow/loop/campaign/connector 样本、样本新鲜度、已闭环/未闭环审批等待、owner control intervention、恢复、最近 timeline、recommended next steps 和 output-token budget 消耗/耗尽信号。它只读并刷新状态，不自动 approve / retry / cancel / run loop，也不自动执行外部动作。
 - Dashboard 展示全局「Connector E2E」卡片：直接调用 `evaluate_domain_connector_e2e_gate`，显示连接器输入、草稿、批准、执行结果、执行后复核、回滚和下层 guard 状态；global scope 只做聚合，不伪装成具体 session/goal 的动作授权。
 - 展示已校准 task 数；最近 eval run 支持点击「Mark reviewed」记录人工复核 calibration。
 - 与 Release Gate / Continuous Benchmark Gate 分开展示，不生成综合分。

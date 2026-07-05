@@ -1659,6 +1659,8 @@ export interface DomainSoakReportSummary {
   maxOpenApprovalWaitSecs?: number | null;
   averageWorkflowDrainSecs?: number | null;
   maxWorkflowDrainSecs?: number | null;
+  latestActivityAt?: string | null;
+  latestActivityAgeSecs?: number | null;
   loopRuns: number;
   succeededLoopRuns: number;
   failedLoopRuns: number;

@@ -3150,7 +3150,7 @@ function DomainSoakReportPanel({ report }: { report: DomainSoakReport | null }) 
       </div>
       {report ? (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-10 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-12 gap-2">
             <MetricPill
               label="WF"
               value={`${report.summary.completedWorkflowRuns}/${report.summary.workflowRuns}`}
@@ -3185,6 +3185,17 @@ function DomainSoakReportPanel({ report }: { report: DomainSoakReport | null }) 
               label="MAX"
               value={formatSecs(report.summary.maxWorkflowDrainSecs)}
               tone="muted"
+            />
+            <MetricPill
+              label="FR"
+              value={formatSecs(report.summary.latestActivityAgeSecs)}
+              tone={
+                report.summary.latestActivityAgeSecs == null
+                  ? "muted"
+                  : report.summary.latestActivityAgeSecs > 24 * 60 * 60
+                    ? "warn"
+                    : "accent"
+              }
             />
             <MetricPill
               label="AP"

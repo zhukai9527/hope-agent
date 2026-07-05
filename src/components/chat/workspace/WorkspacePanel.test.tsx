@@ -848,6 +848,8 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
       maxOpenApprovalWaitSecs: 120,
       averageWorkflowDrainSecs: 120,
       maxWorkflowDrainSecs: 240,
+      latestActivityAt: "2026-01-01T00:04:00Z",
+      latestActivityAgeSecs: 120,
       loopRuns: 1,
       succeededLoopRuns: 1,
       failedLoopRuns: 0,
@@ -2159,6 +2161,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("Workflow failed").length).toBeGreaterThan(1)
     expect(screen.getAllByText("4m").length).toBeGreaterThan(1)
     expect(screen.getAllByText("2m").length).toBeGreaterThan(0)
+    expect(screen.getByText("新鲜")).toBeTruthy()
     expect(screen.getByText("干预")).toBeTruthy()
     expect(screen.getByText("Token")).toBeTruthy()
     expect(screen.getByText("10/10")).toBeTruthy()
