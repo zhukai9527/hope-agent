@@ -155,6 +155,29 @@ git diff --check
 5. GUI 是否足够让普通用户知道“现在目标是什么、还差什么、下一步点哪里”。
 6. 性能风险是否被看见：大 Workspace、长 trace、大 evidence、refresh storm 是否还有后续计划。
 
+可直接复制给 Claude Code 的复核请求：
+
+```text
+请复核 docs/roadmap/agent-control-plane-final-review-packet.md 以及它引用的退出计划、完成状态审计、最终样本包和 UX/性能审计。
+
+目标不是继续设计新功能，而是判断当前 Agent 控制平面主线是否可以进入关闭取舍。
+
+请重点检查：
+1. Workflow Mode 是否已经对齐 Claude Code 的动态 workflow 心智：开启后由模型自主判断是否编排，而不是要求用户手写脚本。
+2. Goal / Mode / Workflow / Loop / Task / Worktree 关系是否清楚，是否会误导用户或模型。
+3. 长任务稳定性证据是否诚实：deterministic Soak 是否只作为替代证据，真实 / 跨窗口 Soak 是否仍被列为严格证明项。
+4. Connector E2E 证据是否诚实：deterministic fixture 是否没有冒充真实外部账号 E2E。
+5. GUI/source-level audit 是否足以作为 v1 关闭证据；若不接受，需要明确要求 GUI smoke/profile。
+6. 是否存在 P0/P1 correctness、permission、安全、长任务稳定性、性能或核心 UX blocker。
+
+请按 Reviewer 决策表输出：
+Decision: accept_v1_close_after_user_ack | needs_strict_evidence_before_close | reject_due_to_blocker
+P0/P1 blockers: none | <list>
+Accepted substitutes: deterministic soak yes/no, deterministic connector yes/no, source-level GUI audit yes/no
+Required before close: none | <real soak / connector E2E / GUI smoke/profile / fixes>
+Notes:
+```
+
 ## 8. Reviewer 决策表
 
 Reviewer 只需要在以下三种结论中选一种，并列出必须处理的问题。
