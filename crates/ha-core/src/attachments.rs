@@ -180,6 +180,45 @@ pub fn persist_chat_user_attachments_meta(
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(b64_data)
                 .unwrap_or_default();
+            if let Some(ref fp) = att.file_path {
+                let src_path = Path::new(fp);
+                match resolve_persisted_user_attachment_path(
+                    src_path,
+                    &canonical_temp_dir,
+                    &canonical_att_dir,
+                    &att_dir,
+                ) {
+                    Ok(final_path) => {
+                        let canonical_final_path =
+                            final_path.canonicalize().with_context(|| {
+                                format!("canonicalize attachment {}", final_path.display())
+                            })?;
+                        if canonical_final_path.starts_with(&canonical_att_dir) {
+                            att.file_path =
+                                Some(canonical_final_path.to_string_lossy().to_string());
+                            let size = std::fs::metadata(&canonical_final_path)
+                                .map(|m| m.len())
+                                .unwrap_or(decoded.len() as u64);
+                            meta_list.push(json!({
+                                "name": att.name,
+                                "mime_type": att.mime_type,
+                                "size": size,
+                                "path": canonical_final_path.to_string_lossy(),
+                            }));
+                            continue;
+                        }
+                    }
+                    Err(err) => {
+                        app_warn!(
+                            "app",
+                            "chat",
+                            "Falling back to attachment bytes for '{}': {}",
+                            att.name,
+                            err
+                        );
+                    }
+                }
+            }
             let path = match save_bytes_in_dir(&att_dir, &att.name, &decoded)
                 .with_context(|| format!("save image attachment {}", att.name))
             {

@@ -10,8 +10,7 @@ export interface Project {
   description?: string | null
   /** Custom instructions appended to the system prompt of every session in the project. */
   instructions?: string | null
-  emoji?: string | null
-  /** Optional logo stored as a `data:image/...;base64,...` URL. Takes precedence over `emoji` in the UI. */
+  /** Optional logo stored as a `data:image/...;base64,...` URL. */
   logo?: string | null
   /** Tailwind-ish color name (e.g. "amber", "violet"). */
   color?: string | null
@@ -25,6 +24,8 @@ export interface Project {
   /** Unix milliseconds. */
   createdAt: number
   updatedAt: number
+  /** Sidebar sort key. Lower values render earlier. */
+  sortOrder: number
   archived: boolean
 }
 
@@ -39,7 +40,6 @@ export interface CreateProjectInput {
   name: string
   description?: string | null
   instructions?: string | null
-  emoji?: string | null
   /** Data URL (e.g. `data:image/webp;base64,...`). */
   logo?: string | null
   color?: string | null
@@ -57,7 +57,6 @@ export interface UpdateProjectInput {
   name?: string
   description?: string
   instructions?: string
-  emoji?: string
   /** Data URL, or empty string to clear the existing logo. */
   logo?: string
   color?: string

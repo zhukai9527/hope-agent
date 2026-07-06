@@ -49,13 +49,15 @@ pub struct SttConfig {
 
 ## Provider 抽象（`SttProviderKind`）
 
-8 个 wire 协议变体，`engine` 按 kind 分发到对应 `providers/*` 实现：
+10 个 wire 协议变体，`engine` 按 kind 分发到对应 `providers/*` 实现：
 
 | 变体 | 协议 | 流式 | Batch | 典型 |
 |---|---|---|---|---|
 | `OpenaiTranscriptions` | HTTP multipart `/v1/audio/transcriptions` | ✗ | ✓ | OpenAI Whisper |
-| `OpenaiCompatible` | HTTP multipart | 视上游 | ✓ | Groq / 四个本地后端 / StepFun / SiliconFlow |
+| `OpenaiCompatible` | HTTP multipart | 视上游 | ✓ | Groq / Mistral Voxtral / DeepInfra / 四个本地后端 / StepFun / SiliconFlow |
 | `OpenaiChatCompletionsAsr` | HTTP JSON（chat/completions + input_audio） | ✗ | ✓ | DashScope Qwen3-ASR / gpt-4o-audio |
+| `ElevenlabsStt` | HTTP multipart `/v1/speech-to-text`（`model_id` + `xi-api-key`） | ✗ | ✓ | ElevenLabs Scribe v2 |
+| `XaiStt` | HTTP multipart `/v1/stt`（`model` + Bearer） | ✗ | ✓ | xAI Grok STT |
 | `DeepgramWs` | WebSocket 二进制 | ✓ | ✗ | Deepgram realtime |
 | `AssemblyaiWs` | WebSocket 二进制 | ✓ | ✗ | AssemblyAI realtime |
 | `AzureWs` | WebSocket（USP 协议） | ✓ | ✗ | Azure Speech |
@@ -73,6 +75,8 @@ helper 方法：`default_base_url()` / `supports_streaming()` / `supports_batch(
 - 全链耗尽返回 `FailoverError`（含所有 `AttemptedModel` 记录 + 终态错误，供遥测）
 
 `SttError` 10 变体：`NotFound` / `NoActiveModel` / `Auth` / `RateLimit` / `Network` / `UnsupportedAudio` / `ProviderUnavailable` / `SsrfBlocked` / `Io` / `Other`。`Display` 渲染为 `stt:<code>: <message>`，便于 Tauri / HTTP 边界两侧解析 code。桌面链 = `current_desktop_chain()`（active + fallback_models），IM 链 = `current_im_chain()`（im_fallback_model 或 active，仅 batch-capable）。
+
+知识空间资料舱的 `audio_transcript` / `video_transcript` 导入复用桌面链：owner-plane import 接收用户选择的音视频字节、SSRF-gated 远程媒体 URL 下载结果，或已经落入 session attachments dir 的聊天 / IM 附件，调用 `failover_transcribe_batch(current_desktop_chain, AudioPayload::Bytes, default_options)`，默认请求 timestamps（若用户未显式配置），成功后只保存带 provenance / provider / model / language / duration / segment 时间戳的 Markdown 转录快照；原始媒体不持久化。未配置 STT 或转录失败时，对应 import item 进入 `failed`，错误保留在导入历史供用户重试。
 
 ## 本地后端
 
@@ -165,6 +169,6 @@ STT 归「**强制留 GUI 的例外**」同类（凭据安全）：
 | [`crates/ha-core/src/stt/local.rs`](../../crates/ha-core/src/stt/local.rs) | 4 本地后端 catalog + probe + upsert |
 | [`crates/ha-core/src/stt/session.rs`](../../crates/ha-core/src/stt/session.rs) | `SttSessionManager` + `stt:*` 事件 + idle GC |
 | [`crates/ha-core/src/stt/crud.rs`](../../crates/ha-core/src/stt/crud.rs) | 唯一写入口 + `check_batch_capable` |
-| [`crates/ha-core/src/stt/providers/`](../../crates/ha-core/src/stt/providers/) | 8 协议实现 + 共享 batch / WS helper |
+| [`crates/ha-core/src/stt/providers/`](../../crates/ha-core/src/stt/providers/) | 10 协议实现 + 共享 batch / WS helper |
 | [`src-tauri/src/commands/stt.rs`](../../src-tauri/src/commands/stt.rs) | 20 Tauri 命令（unmasked） |
 | [`crates/ha-server/src/routes/stt.rs`](../../crates/ha-server/src/routes/stt.rs) | 17 HTTP 路由（masked） |

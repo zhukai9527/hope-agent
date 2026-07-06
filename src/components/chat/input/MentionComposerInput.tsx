@@ -25,21 +25,29 @@ import { createRoot, type Root } from "react-dom/client"
 import { FileText, Folder } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
+import { AgentAvatarBadge } from "@/components/common/AgentSelectDisplay"
 import { FileTypeIcon } from "@/components/icons/FileTypeIcon"
 import { useFileActions } from "@/components/chat/files/useFileActions"
 import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
 import { basename } from "@/lib/path"
 import { cn } from "@/lib/utils"
+import type { AgentSummaryForSidebar } from "@/types/chat"
+import { parseAgentMentions } from "../agent-mention/agentTokens"
 import { parseMentions, parseNoteRefs } from "../file-mention/mentionTokens"
 import { joinAbs } from "../file-mention/types"
 import { SkillMentionIcon } from "../skill-mention/SkillMentionIcon"
-import { isSkillMentionName, parseSkillMentions, skillMentionMeta } from "../skill-mention/skillTokens"
+import {
+  isSkillMentionName,
+  parseSkillMentions,
+  skillMentionMeta,
+} from "../skill-mention/skillTokens"
 import type { ComposerInputHandle } from "./composerInputHandle"
 
 type MentionSpan =
   | { kind: "file"; raw: string; relPath: string; start: number; end: number }
   | { kind: "note"; raw: string; start: number; end: number }
   | { kind: "skill"; raw: string; name: string; start: number; end: number }
+  | { kind: "agent"; raw: string; agentId: string; start: number; end: number }
 
 interface MentionComposerInputProps {
   value: string
@@ -49,6 +57,9 @@ interface MentionComposerInputProps {
   noteEnabled: boolean
   /** Render `@skill:<name>` (allowlisted built-ins) as rose chips. */
   skillEnabled?: boolean
+  /** Render `@agent` delegation mentions as teal chips. */
+  agentMentionEnabled?: boolean
+  agents?: AgentSummaryForSidebar[]
   hero?: boolean
   readOnly?: boolean
   onChange: (value: string) => void
@@ -62,8 +73,11 @@ interface MentionConfig {
   fileEnabled: boolean
   noteEnabled: boolean
   skillEnabled: boolean
+  agentMentionEnabled: boolean
   /** Resolve a skill id → localized chip label (threaded from `t`). */
   skillLabel: (name: string) => string
+  /** Resolve an agent id → current summary for avatar/name chips. */
+  agentById: (id: string) => AgentSummaryForSidebar | undefined
 }
 
 const FILE_CHIP_CLASS =
@@ -72,6 +86,8 @@ const NOTE_CHIP_CLASS =
   "cm-mention-chip cm-mention-note mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 text-sm font-medium text-violet-600 shadow-sm dark:border-violet-300/20 dark:bg-violet-300/15 dark:text-violet-200"
 const SKILL_CHIP_CLASS =
   "cm-mention-chip cm-mention-skill mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center gap-1 rounded-md border border-rose-500/20 bg-rose-500/10 px-1.5 text-sm font-medium text-rose-600 shadow-sm dark:border-rose-300/20 dark:bg-rose-300/15 dark:text-rose-200"
+const AGENT_CHIP_CLASS =
+  "cm-mention-chip cm-mention-agent mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center gap-1 rounded-md border border-teal-500/20 bg-teal-500/10 px-1.5 text-sm font-medium text-teal-700 shadow-sm dark:border-teal-300/20 dark:bg-teal-300/15 dark:text-teal-200"
 const CHIP_ICON_CLASS = "h-4 w-4 shrink-0"
 const CHIP_LABEL_CLASS = "truncate"
 const widgetIconRoots = new WeakMap<HTMLElement, Root>()
@@ -121,6 +137,20 @@ function mentionSpans(input: string, config: MentionConfig): MentionSpan[] {
     }
   }
 
+  if (config.agentMentionEnabled) {
+    // Same markdown-link token shape as `@skill`, so it is self-delimiting and
+    // cannot collide with bare `@path` file mentions.
+    for (const agent of parseAgentMentions(input)) {
+      spans.push({
+        kind: "agent",
+        raw: agent.raw,
+        agentId: agent.agentId,
+        start: agent.start,
+        end: agent.end,
+      })
+    }
+  }
+
   spans.sort((a, b) => a.start - b.start)
   const out: MentionSpan[] = []
   let cursor = 0
@@ -152,16 +182,19 @@ class MentionWidget extends WidgetType {
   private readonly span: MentionSpan
   private readonly workingDir: string | null
   private readonly skillLabel: (name: string) => string
+  private readonly agentById: (id: string) => AgentSummaryForSidebar | undefined
 
   constructor(
     span: MentionSpan,
     workingDir: string | null,
     skillLabel: (name: string) => string,
+    agentById: (id: string) => AgentSummaryForSidebar | undefined,
   ) {
     super()
     this.span = span
     this.workingDir = workingDir
     this.skillLabel = skillLabel
+    this.agentById = agentById
   }
 
   eq(other: MentionWidget): boolean {
@@ -170,8 +203,11 @@ class MentionWidget extends WidgetType {
       other.span.raw === this.span.raw &&
       (other.span.kind !== "file" ||
         (this.span.kind === "file" && other.span.relPath === this.span.relPath)) &&
+      (other.span.kind !== "agent" ||
+        (this.span.kind === "agent" && other.span.agentId === this.span.agentId)) &&
       other.workingDir === this.workingDir &&
-      other.skillLabel === this.skillLabel
+      other.skillLabel === this.skillLabel &&
+      other.agentById === this.agentById
     )
   }
 
@@ -201,6 +237,22 @@ class MentionWidget extends WidgetType {
         )
       }
       appendText(root, CHIP_LABEL_CLASS, this.skillLabel(this.span.name))
+      return root
+    }
+
+    if (this.span.kind === "agent") {
+      const agent = this.agentById(this.span.agentId)
+      const label = agent?.name || this.span.agentId
+      root.className = AGENT_CHIP_CLASS
+      root.title = label
+      appendIcon(
+        root,
+        createElement(AgentAvatarBadge, {
+          agent: agent ?? { id: this.span.agentId, name: label },
+          size: "xs",
+        }),
+      )
+      appendText(root, CHIP_LABEL_CLASS, label)
       return root
     }
 
@@ -250,7 +302,7 @@ function mentionDecorations(getConfig: () => MentionConfig) {
         span.start,
         span.end,
         Decoration.replace({
-          widget: new MentionWidget(span, config.workingDir, config.skillLabel),
+          widget: new MentionWidget(span, config.workingDir, config.skillLabel, config.agentById),
           inclusive: false,
         }),
       )
@@ -465,6 +517,8 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       fileEnabled,
       noteEnabled,
       skillEnabled = false,
+      agentMentionEnabled = false,
+      agents = [],
       hero = false,
       readOnly = false,
       onChange,
@@ -484,6 +538,7 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       },
       [t],
     )
+    const agentById = useCallback((id: string) => agents.find((agent) => agent.id === id), [agents])
     const hostRef = useRef<HTMLDivElement | null>(null)
     const viewRef = useRef<EditorView | null>(null)
     const valueRef = useRef(value)
@@ -494,7 +549,9 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       fileEnabled,
       noteEnabled,
       skillEnabled,
+      agentMentionEnabled,
       skillLabel,
+      agentById,
     })
     const readOnlyComp = useRef(new Compartment())
     const placeholderComp = useRef(new Compartment())
@@ -510,7 +567,15 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
     valueRef.current = value
     onChangeRef.current = onChange
     onSelectionChangeRef.current = onSelectionChange
-    configRef.current = { workingDir, fileEnabled, noteEnabled, skillEnabled, skillLabel }
+    configRef.current = {
+      workingDir,
+      fileEnabled,
+      noteEnabled,
+      skillEnabled,
+      agentMentionEnabled,
+      skillLabel,
+      agentById,
+    }
 
     const { primary: pendingFilePrimary, run: runPendingFileAction } = useFileActions(
       pendingFileAction?.target ?? null,
@@ -527,39 +592,43 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       const parent = hostRef.current
       if (!parent || viewRef.current) return
 
-      const view = withCodeMirrorEditContext(FORCE_CODEMIRROR_EDIT_CONTEXT, () => new EditorView({
-        parent,
-        state: EditorState.create({
-          doc: valueRef.current,
-          extensions: [
-            history(),
-            keymap.of(historyKeymap),
-            EditorView.lineWrapping,
-            // WebKit (Tauri) doesn't paint the native caret in an empty
-            // contenteditable; CM6 draws its own reliable, blinking cursor.
-            drawSelection(),
-            baseTheme,
-            sizeComp.current.of(sizeTheme(hero)),
-            placeholderComp.current.of(composerPlaceholder(placeholder)),
-            readOnlyComp.current.of([
-              EditorState.readOnly.of(readOnly),
-              EditorView.editable.of(!readOnly),
-            ]),
-            mentionDecorations(() => configRef.current),
-            atomicDeleteExtension(() => configRef.current),
-            EditorView.updateListener.of((update) => {
-              if (update.docChanged) {
-                const next = update.state.doc.toString()
-                valueRef.current = next
-                if (!syncingExternalRef.current) onChangeRef.current(next)
-              }
-              if (update.docChanged || update.selectionSet) {
-                onSelectionChangeRef.current()
-              }
+      const view = withCodeMirrorEditContext(
+        FORCE_CODEMIRROR_EDIT_CONTEXT,
+        () =>
+          new EditorView({
+            parent,
+            state: EditorState.create({
+              doc: valueRef.current,
+              extensions: [
+                history(),
+                keymap.of(historyKeymap),
+                EditorView.lineWrapping,
+                // WebKit (Tauri) doesn't paint the native caret in an empty
+                // contenteditable; CM6 draws its own reliable, blinking cursor.
+                drawSelection(),
+                baseTheme,
+                sizeComp.current.of(sizeTheme(hero)),
+                placeholderComp.current.of(composerPlaceholder(placeholder)),
+                readOnlyComp.current.of([
+                  EditorState.readOnly.of(readOnly),
+                  EditorView.editable.of(!readOnly),
+                ]),
+                mentionDecorations(() => configRef.current),
+                atomicDeleteExtension(() => configRef.current),
+                EditorView.updateListener.of((update) => {
+                  if (update.docChanged) {
+                    const next = update.state.doc.toString()
+                    valueRef.current = next
+                    if (!syncingExternalRef.current) onChangeRef.current(next)
+                  }
+                  if (update.docChanged || update.selectionSet) {
+                    onSelectionChangeRef.current()
+                  }
+                }),
+              ],
             }),
-          ],
-        }),
-      }))
+          }),
+      )
 
       viewRef.current = view
       return () => {
@@ -611,7 +680,15 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       const view = viewRef.current
       if (!view) return
       view.dispatch({})
-    }, [fileEnabled, noteEnabled, skillEnabled, skillLabel, workingDir])
+    }, [
+      agentById,
+      agentMentionEnabled,
+      fileEnabled,
+      noteEnabled,
+      skillEnabled,
+      skillLabel,
+      workingDir,
+    ])
 
     useImperativeHandle(
       ref,

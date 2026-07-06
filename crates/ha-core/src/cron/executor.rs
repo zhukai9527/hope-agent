@@ -1668,7 +1668,6 @@ mod tests {
             name: "Project One".into(),
             description: None,
             instructions: None,
-            emoji: None,
             logo: None,
             color: None,
             default_agent_id: agent_id.map(str::to_string),
@@ -1676,6 +1675,7 @@ mod tests {
             working_dir: None,
             created_at: 0,
             updated_at: 0,
+            sort_order: 0,
             archived: false,
         }
     }

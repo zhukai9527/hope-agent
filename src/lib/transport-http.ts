@@ -54,6 +54,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   update_project_cmd:              { method: "PATCH",  path: "/api/projects/{id}" },
   delete_project_cmd:              { method: "DELETE", path: "/api/projects/{id}" },
   archive_project_cmd:             { method: "POST",   path: "/api/projects/{id}/archive" },
+  reorder_projects_cmd:            { method: "POST",   path: "/api/projects/reorder" },
   list_project_sessions_cmd:       { method: "GET",    path: "/api/projects/{id}/sessions" },
   mark_project_sessions_read_cmd:  { method: "POST",   path: "/api/projects/{projectId}/read" },
   move_session_to_project_cmd:     { method: "PATCH",  path: "/api/sessions/{sessionId}/project" },
@@ -66,6 +67,44 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   update_kb_cmd:                   { method: "PATCH",  path: "/api/knowledge/{id}" },
   delete_kb_cmd:                   { method: "DELETE", path: "/api/knowledge/{id}" },
   reindex_kb_cmd:                  { method: "POST",   path: "/api/knowledge/{id}/reindex" },
+  kb_source_import_cmd:            { method: "POST",   path: "/api/knowledge/{kbId}/sources" },
+  kb_source_import_browser_cmd:    { method: "POST",   path: "/api/knowledge/{kbId}/sources/browser" },
+  kb_source_import_session_attachment_cmd:{ method: "POST",   path: "/api/knowledge/{kbId}/sources/session-attachment" },
+  kb_source_import_batch_cmd:      { method: "POST",   path: "/api/knowledge/{kbId}/sources/batch" },
+  kb_source_list_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources" },
+  kb_source_import_runs_list_cmd:  { method: "GET",    path: "/api/knowledge/{kbId}/sources/import-runs" },
+  kb_source_import_run_detail_cmd: { method: "GET",    path: "/api/knowledge/{kbId}/sources/import-runs/{runId}" },
+  kb_source_import_retry_failed_cmd:{ method: "POST",  path: "/api/knowledge/{kbId}/sources/import-runs/{runId}/retry-failed" },
+  kb_source_similarity_groups_cmd: { method: "GET",    path: "/api/knowledge/{kbId}/sources/similar" },
+  kb_source_similarity_dismiss_cmd:{ method: "POST",   path: "/api/knowledge/{kbId}/sources/similar/dismiss" },
+  kb_source_similarity_resolve_cmd:{ method: "POST",   path: "/api/knowledge/{kbId}/sources/similar/resolve" },
+  kb_source_sync_external_raw_cmd: { method: "POST",   path: "/api/knowledge/{kbId}/sources/sync-external-raw" },
+  kb_source_read_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}" },
+  kb_source_asset_link_cmd:         { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/assets/{kind}/link" },
+  kb_source_refresh_cmd:           { method: "POST",   path: "/api/knowledge/{kbId}/sources/{sourceId}/refresh" },
+  kb_source_versions_cmd:          { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/versions" },
+  kb_source_diff_cmd:              { method: "GET",    path: "/api/knowledge/{kbId}/sources/{sourceId}/diff" },
+  kb_source_reextract_cmd:         { method: "POST",   path: "/api/knowledge/{kbId}/sources/{sourceId}/reextract" },
+  kb_source_delete_cmd:            { method: "DELETE", path: "/api/knowledge/{kbId}/sources/{sourceId}" },
+  kb_compile_start_cmd:            { method: "POST",   path: "/api/knowledge/{kbId}/compile-runs" },
+  kb_compile_status_cmd:           { method: "GET",    path: "/api/knowledge/{kbId}/compile-runs/{runId}" },
+  kb_compile_runs_list_cmd:        { method: "GET",    path: "/api/knowledge/{kbId}/compile-runs" },
+  kb_compile_proposals_list_cmd:   { method: "GET",    path: "/api/knowledge/{kbId}/compile-proposals" },
+  kb_compile_proposal_approve_cmd: { method: "POST",   path: "/api/knowledge/{kbId}/compile-proposals/{id}/approve" },
+  kb_compile_proposal_reject_cmd:  { method: "POST",   path: "/api/knowledge/{kbId}/compile-proposals/{id}/reject" },
+  kb_compile_run_cancel_cmd:       { method: "POST",   path: "/api/knowledge/{kbId}/compile-runs/{runId}/cancel" },
+  kb_query_file_cmd:               { method: "POST",   path: "/api/knowledge/{kbId}/query-file" },
+  kb_schema_profile_cmd:           { method: "GET",    path: "/api/knowledge/{kbId}/schema-profile" },
+  kb_schema_issues_cmd:            { method: "GET",    path: "/api/knowledge/{kbId}/schema-issues" },
+  kb_note_source_refs_cmd:         { method: "GET",    path: "/api/knowledge/{kbId}/note/source-refs" },
+  kb_evidence_coverage_cmd:        { method: "GET",    path: "/api/knowledge/{kbId}/evidence/coverage" },
+  kb_evidence_source_claims_cmd:   { method: "GET",    path: "/api/knowledge/{kbId}/evidence/sources/{sourceId}/claims" },
+  kb_evidence_rebuild_cmd:         { method: "POST",   path: "/api/knowledge/{kbId}/evidence/rebuild" },
+  knowledge_agent_search_cmd:      { method: "POST",   path: "/api/knowledge/agent/search" },
+  knowledge_agent_read_cmd:        { method: "POST",   path: "/api/knowledge/agent/read" },
+  knowledge_agent_expand_cmd:      { method: "POST",   path: "/api/knowledge/agent/expand" },
+  knowledge_agent_sources_cmd:     { method: "POST",   path: "/api/knowledge/agent/sources" },
+  knowledge_agent_compile_propose_cmd: { method: "POST", path: "/api/knowledge/agent/compile/propose" },
   attach_session_kb_cmd:           { method: "POST",   path: "/api/knowledge/attach" },
   detach_session_kb_cmd:           { method: "POST",   path: "/api/knowledge/detach" },
   attach_project_kb_cmd:           { method: "POST",   path: "/api/knowledge/attach" },
@@ -112,8 +151,12 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   kb_maintenance_reject_all_cmd:   { method: "POST",   path: "/api/knowledge/{kbId}/maintenance/reject-all" },
   kb_maintenance_config_get_cmd:   { method: "GET",    path: "/api/knowledge/maintenance/config" },
   kb_maintenance_config_set_cmd:   { method: "POST",   path: "/api/knowledge/maintenance/config" },
+  knowledge_compile_config_get_cmd:{ method: "GET",    path: "/api/knowledge/compile/config" },
+  knowledge_compile_config_set_cmd:{ method: "POST",   path: "/api/knowledge/compile/config" },
   kb_passive_recall_config_get_cmd:{ method: "GET",    path: "/api/knowledge/passive-recall/config" },
   kb_passive_recall_config_set_cmd:{ method: "POST",   path: "/api/knowledge/passive-recall/config" },
+  knowledge_media_retention_config_get_cmd: { method: "GET", path: "/api/knowledge/media-retention/config" },
+  knowledge_media_retention_config_set_cmd: { method: "POST", path: "/api/knowledge/media-retention/config" },
   kb_sprite_observe_cmd:           { method: "POST",   path: "/api/knowledge/sprite/observe" },
   sprite_config_get_cmd:           { method: "GET",    path: "/api/knowledge/sprite/config" },
   sprite_config_set_cmd:           { method: "POST",   path: "/api/knowledge/sprite/config" },
@@ -1456,6 +1499,17 @@ export class HttpTransport implements Transport {
       );
     }
 
+    // Retained knowledge source assets:
+    // `~/.hope-agent/knowledge/{kbId}/sources/assets/{sourceId}/{original|thumbnail}.{ext}`
+    const sourceAssetMatch = path.match(
+      /[\\/]knowledge[\\/]([^\\/]+)[\\/]sources[\\/]assets[\\/]([^\\/]+)[\\/](original|thumbnail)\.[^\\/]+$/,
+    );
+    if (sourceAssetMatch) {
+      return stamped(
+        `${this.baseUrl}/api/knowledge/${encodeURIComponent(sourceAssetMatch[1])}/sources/${encodeURIComponent(sourceAssetMatch[2])}/assets/${encodeURIComponent(sourceAssetMatch[3])}`,
+      );
+    }
+
     // Generated images: `~/.hope-agent/image_generate/{file}` → `/api/generated-images/{file}`
     // (Only the last path segment matters — historic `mediaUrls` may encode
     // different working-directory prefixes.)
@@ -1609,6 +1663,29 @@ export class HttpTransport implements Transport {
     }
     // Response already has camelCase keys and matches `DirListing` exactly;
     // assert the shape and return without a per-entry remap.
+    return (await res.json()) as DirListing;
+  }
+
+  async createDirectory(path: string): Promise<DirListing> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
+    const res = await fetch(`${this.baseUrl}/api/filesystem/create-dir`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      this.handleAuthFailure(res.status);
+      let message = text || `create-dir failed: ${res.status}`;
+      try {
+        const parsed = JSON.parse(text) as { error?: string };
+        if (parsed?.error) message = parsed.error;
+      } catch {
+        /* text was not JSON */
+      }
+      throw new Error(message);
+    }
     return (await res.json()) as DirListing;
   }
 

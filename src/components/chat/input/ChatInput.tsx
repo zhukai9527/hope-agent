@@ -39,6 +39,7 @@ import type {
   SessionMode,
   PendingFileQuote,
   PendingSendPreview,
+  AgentSummaryForSidebar,
 } from "@/types/chat"
 import type { KbDraftAttachment } from "@/types/knowledge"
 import { DEFAULT_AGENT_ID } from "@/types/tools"
@@ -74,7 +75,8 @@ import {
   CHAT_INPUT_INLINE_ADD_ACTIONS_CLASS,
   CHAT_INPUT_OVERFLOW_BREAKPOINT_PX,
   CHAT_INPUT_OVERFLOW_MENU_CLASS,
-  CHAT_INPUT_STACKED_TOOLBAR_BREAKPOINT_PX,
+  CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX,
+  CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX,
   CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX,
   getChatInputOverflowActionIds,
   type ChatInputOverflowActionId,
@@ -195,6 +197,9 @@ interface ChatInputProps {
   /** Enable the `@` menu's built-in **skills** section (`@skill:<name>` →
    *  office / browser / mac control). Off by default; the main chat opts in. */
   enableSkillMention?: boolean
+  /** Enable the `@` menu's Agent delegation section (`@agent:<id>`). */
+  enableAgentMention?: boolean
+  agents?: AgentSummaryForSidebar[]
   // Working directory
   workingDir?: string | null
   /** True when `workingDir` is inherited from the parent project rather than
@@ -360,6 +365,8 @@ export default function ChatInput({
   onDraftKbAttachChange,
   enableNoteMention = false,
   enableSkillMention = false,
+  enableAgentMention = false,
+  agents = [],
   workingDir,
   workingDirInherited = false,
   workingDirSaving = false,
@@ -392,7 +399,10 @@ export default function ChatInput({
   // Narrower tier than `toolbarCompact`: Knowledge + Plan stay inline until the
   // toolbar is genuinely cramped, then collapse into the "+" menu too.
   const [toolbarTight, setToolbarTight] = useState(false)
-  const [toolbarStacked, setToolbarStacked] = useState(false)
+  // Progressively deeper tiers: sandbox collapses first, then permission mode.
+  // The floor — "+" · model · send/stop — never collapses and never wraps.
+  const [sandboxCollapsed, setSandboxCollapsed] = useState(false)
+  const [permissionCollapsed, setPermissionCollapsed] = useState(false)
   const [toolbarMinHeight, setToolbarMinHeight] = useState<number | null>(null)
   const [pendingExpanded, setPendingExpanded] = useState(false)
   const [goalComposerMode, setGoalComposerMode] = useState(false)
@@ -689,6 +699,8 @@ export default function ChatInput({
         }
       : undefined,
     enableSkillMention,
+    enableAgentMention ? agents : [],
+    currentAgentId,
   )
   // `[[note]]` picker — knowledge-space notes reachable from this chat.
   const noteMention = useNoteMention(
@@ -718,7 +730,8 @@ export default function ChatInput({
     const update = (width = el.getBoundingClientRect().width) => {
       setToolbarCompact(width <= CHAT_INPUT_OVERFLOW_BREAKPOINT_PX)
       setToolbarTight(width <= CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX)
-      setToolbarStacked(width <= CHAT_INPUT_STACKED_TOOLBAR_BREAKPOINT_PX)
+      setSandboxCollapsed(width <= CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX)
+      setPermissionCollapsed(width <= CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX)
     }
 
     update()
@@ -742,7 +755,7 @@ export default function ChatInput({
 
   useEffect(() => {
     setToolbarMinHeight(null)
-  }, [toolbarCompact, toolbarStacked])
+  }, [toolbarCompact, sandboxCollapsed, permissionCollapsed])
 
   useEffect(() => {
     if (!normalToolbarOpen || typeof window === "undefined") {
@@ -782,7 +795,7 @@ export default function ChatInput({
       if (raf !== null) window.cancelAnimationFrame(raf)
       observer.disconnect()
     }
-  }, [normalToolbarOpen, toolbarCompact, toolbarStacked])
+  }, [normalToolbarOpen, toolbarCompact, sandboxCollapsed, permissionCollapsed])
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
@@ -1277,6 +1290,20 @@ export default function ChatInput({
           </button>
         </>
       )}
+      {sandboxCollapsed && (
+        <SandboxModeSwitcher
+          variant="menu"
+          sandboxMode={sandboxMode}
+          onSandboxModeChange={onSandboxModeChange}
+        />
+      )}
+      {permissionCollapsed && (
+        <PermissionModeSwitcher
+          variant="menu"
+          permissionMode={permissionMode}
+          onPermissionModeChange={handlePermissionModeChange}
+        />
+      )}
     </>
   )
 
@@ -1320,6 +1347,8 @@ export default function ChatInput({
           noteCapable={mention.noteCapable}
           skillEntries={mention.skillEntries}
           skillCapable={mention.skillCapable}
+          agentEntries={mention.agentEntries}
+          agentCapable={mention.agentCapable}
           selectedIndex={mention.selectedIndex}
           mode={mention.mode}
           dirPath={mention.dirPath}
@@ -1331,6 +1360,7 @@ export default function ChatInput({
           onSelect={mention.applyEntry}
           onSelectNote={mention.applyNote}
           onSelectSkill={mention.applySkill}
+          onSelectAgent={mention.applyAgent}
           onHover={mention.setSelectedIndex}
         />
 
@@ -1803,6 +1833,8 @@ export default function ChatInput({
             fileEnabled={!!workingDir}
             noteEnabled={enableNoteMention}
             skillEnabled={enableSkillMention}
+            agentMentionEnabled={enableAgentMention}
+            agents={agents}
             hero={hero}
             readOnly={voice.state === "recording" || voice.state === "transcribing"}
           />
@@ -1853,12 +1885,10 @@ export default function ChatInput({
           <AnimatedCollapse open={normalToolbarOpen} overflow="visible-when-open">
             <div
               ref={toolbarRef}
-              className={cn(
-                "grid gap-2 px-2 pb-2",
-                toolbarStacked
-                  ? "grid-cols-1 items-stretch"
-                  : "grid-cols-[minmax(0,1fr)_auto] items-end",
-              )}
+              // Always two columns so Send/Stop stays pinned in its own column
+              // on a single row — the left group wraps internally but never
+              // pushes the send controls onto a line of their own.
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 px-2 pb-2"
             >
               <div className="flex min-w-0 flex-wrap items-center gap-1">
                 <div className={toolbarCompact ? "hidden" : CHAT_INPUT_INLINE_ADD_ACTIONS_CLASS}>
@@ -1991,26 +2021,25 @@ export default function ChatInput({
                   </IconTip>
                 )}
 
-                {/* Tool Permission Mode */}
-                <PermissionModeSwitcher
-                  permissionMode={permissionMode}
-                  onPermissionModeChange={handlePermissionModeChange}
-                />
-                <SandboxModeSwitcher
-                  sandboxMode={sandboxMode}
-                  onSandboxModeChange={onSandboxModeChange}
-                />
+                {/* Tool Permission Mode — collapses into the "+" menu last, at
+                    the narrowest tier (kept inline longer than Sandbox). */}
+                {!permissionCollapsed && (
+                  <PermissionModeSwitcher
+                    permissionMode={permissionMode}
+                    onPermissionModeChange={handlePermissionModeChange}
+                  />
+                )}
+                {!sandboxCollapsed && (
+                  <SandboxModeSwitcher
+                    sandboxMode={sandboxMode}
+                    onSandboxModeChange={onSandboxModeChange}
+                  />
+                )}
               </div>
 
               {/* Send & Stop — kept in its own column so toolbar wrapping never
               orphans the send button onto a half-empty row. */}
-              <div
-                className={cn(
-                  "flex min-h-8 items-center justify-end gap-1 shrink-0 self-end",
-                  toolbarStacked && "w-full",
-                  !toolbarStacked && "min-w-[76px]",
-                )}
-              >
+              <div className="flex min-h-8 min-w-[76px] shrink-0 items-center justify-end gap-1 self-end">
                 <VoiceRecordButton
                   state={voice.state}
                   durationMs={voice.durationMs}

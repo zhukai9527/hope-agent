@@ -702,6 +702,12 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                 None => extra,
             });
         }
+        if let Some(extra) = crate::subagent::resolve_inline_agent_mentions(&message) {
+            extra_system_context = Some(match extra_system_context.take() {
+                Some(e) => format!("{e}\n\n{extra}"),
+                None => extra,
+            });
+        }
     }
 
     // IM-mirror prefers the friendly `display_text` (e.g. `Using skill **X**...`

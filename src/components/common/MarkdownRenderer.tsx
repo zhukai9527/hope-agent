@@ -47,6 +47,8 @@ import { shouldRenderAsBareJson } from "./markdownJson"
 import { useFileActions } from "@/components/chat/files/useFileActions"
 import { FileContextMenu } from "@/components/chat/files/FileActionMenu"
 import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
+import { AgentMentionChip } from "@/components/chat/agent-mention/AgentMentionChip"
+import { agentIdFromHref } from "@/components/chat/agent-mention/agentTokens"
 import { SkillMentionChip } from "@/components/chat/skill-mention/SkillMentionChip"
 import { isSkillMentionName, skillNameFromHref } from "@/components/chat/skill-mention/skillTokens"
 
@@ -69,15 +71,14 @@ function useHeavyPlugins(content: string) {
     let changed = false
     if (needMath && !cachedMath && !mathLoading) {
       mathLoading = true
-      Promise.all([
-        import("@streamdown/math"),
-        import("katex/dist/katex.min.css"),
-      ]).then(([mod]) => {
-        cachedMath = mod.math
-        mathLoading = false
-        changed = true
-        forceUpdate((n) => n + 1)
-      })
+      Promise.all([import("@streamdown/math"), import("katex/dist/katex.min.css")]).then(
+        ([mod]) => {
+          cachedMath = mod.math
+          mathLoading = false
+          changed = true
+          forceUpdate((n) => n + 1)
+        },
+      )
     }
     if (needMermaid && !cachedMermaid && !mermaidLoading) {
       mermaidLoading = true
@@ -169,17 +170,7 @@ function normalizeLocalPath(href: string): string {
   }
 }
 
-const IMAGE_EXTENSIONS = new Set([
-  "avif",
-  "bmp",
-  "gif",
-  "ico",
-  "jpeg",
-  "jpg",
-  "png",
-  "svg",
-  "webp",
-])
+const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"])
 
 const AUDIO_EXTENSIONS = new Set([
   "aac",
@@ -193,17 +184,7 @@ const AUDIO_EXTENSIONS = new Set([
   "weba",
 ])
 
-const VIDEO_EXTENSIONS = new Set([
-  "avi",
-  "m4v",
-  "mkv",
-  "mov",
-  "mp4",
-  "mpeg",
-  "mpg",
-  "ogv",
-  "webm",
-])
+const VIDEO_EXTENSIONS = new Set(["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ogv", "webm"])
 
 const ARCHIVE_EXTENSIONS = new Set([
   "7z",
@@ -220,17 +201,7 @@ const ARCHIVE_EXTENSIONS = new Set([
 
 const SPREADSHEET_EXTENSIONS = new Set(["csv", "ods", "tsv", "xls", "xlsm", "xlsx"])
 
-const DOCUMENT_EXTENSIONS = new Set([
-  "doc",
-  "docx",
-  "log",
-  "md",
-  "mdx",
-  "odt",
-  "rtf",
-  "tex",
-  "txt",
-])
+const DOCUMENT_EXTENSIONS = new Set(["doc", "docx", "log", "md", "mdx", "odt", "rtf", "tex", "txt"])
 
 const PRESENTATION_EXTENSIONS = new Set(["key", "odp", "ppt", "pptx"])
 
@@ -343,13 +314,7 @@ function MarkdownLinkIcon({ icon }: { icon: LinkIconInfo }) {
   return <Icon aria-hidden="true" className="markdown-link-icon" />
 }
 
-function MarkdownWebLinkIcon({
-  href,
-  enabled,
-}: {
-  href: string | undefined
-  enabled: boolean
-}) {
+function MarkdownWebLinkIcon({ href, enabled }: { href: string | undefined; enabled: boolean }) {
   const faviconBudget = useContext(MarkdownFaviconBudgetContext)
   const faviconDataUrl = useSafeFavicon(href, {
     enabled,
@@ -442,6 +407,11 @@ export function MarkdownLink({
   const skillName = isIncomplete ? null : skillNameFromHref(href)
   if (skillName && isSkillMentionName(skillName)) {
     return <SkillMentionChip name={skillName} />
+  }
+  const agentId = isIncomplete ? null : agentIdFromHref(href)
+  if (agentId) {
+    const fallbackName = typeof children === "string" ? children.replace(/^@/, "") : undefined
+    return <AgentMentionChip agentId={agentId} fallbackName={fallbackName} />
   }
   const localPath = isIncomplete ? null : localPathFromHref(href)
   // Local file links follow the unified file-operation policy (preview / open /

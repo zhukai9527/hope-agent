@@ -152,7 +152,9 @@
     "reattach": "收回到面板",
     "refresh": "刷新",
     "snapshot": "截图",
-    "versions": "版本历史"
+    "versions": "版本历史",
+    "panelTitle": "帆布",
+    "resizePanel": "调整画布面板大小"
   },
   "channels": {
     "accountLabel": "账户名称",
@@ -296,7 +298,7 @@
   },
   "chat": {
     "addWorkingDirectory": "添加工作目录",
-    "askAnything": "告诉我你的想法，@ 找文件/笔记/技能，# 叫出快捷指令...",
+    "askAnything": "告诉我你的想法，@ 找文件/笔记/技能，# 快捷输入，/ 快捷指令...",
     "browserPanel": {
       "backendBadgeTooltip": "浏览器后端：{{backend}}",
       "captureFailed": "截图失败，等待下一帧",
@@ -308,7 +310,8 @@
       "refresh": "立即刷新",
       "resumeMirror": "继续镜像",
       "takeOver": "我来操作",
-      "takeOverHint": "暂停 1Hz 自动刷新，你在 Chrome 里手动操作"
+      "takeOverHint": "暂停 1Hz 自动刷新，你在 Chrome 里手动操作",
+      "resizePanel": "调整浏览器面板大小"
     },
     "asyncToolJobFallbackName": "后台任务",
     "asyncToolJobNames": {
@@ -366,17 +369,17 @@
     "conversations": "会话",
     "collapseSidebar": "收起会话栏",
     "sidebarCompactMode": "切换到简约模式",
-    "sidebarDetailedMode": "切换到详细模式",
+    "sidebarDetailedMode": "切换到普通模式",
     "copied": "已复制",
     "copy": "复制",
     "quickPrompts": {
-      "addAction": "添加到快捷指令",
-      "addFailed": "添加快捷指令失败",
-      "added": "已添加到快捷指令",
-      "duplicate": "这条快捷指令已经在小抄里了",
-      "empty": "还没有快捷指令。先从用户消息底部添加一条吧。",
-      "heading": "快捷指令",
-      "noMatches": "没有匹配的快捷指令"
+      "addAction": "添加到快捷输入",
+      "addFailed": "添加快捷输入失败",
+      "added": "已添加到快捷输入",
+      "duplicate": "这条快捷输入已经在小抄里了",
+      "empty": "还没有快捷输入。先从用户消息底部添加一条吧。",
+      "heading": "快捷输入",
+      "noMatches": "没有匹配的快捷输入"
     },
     "cronTaskStarted": "定时器触发了一个任务",
     "cronTrigger": "定时任务",
@@ -510,6 +513,7 @@
         "desc": "编辑类工具与高危命令需要审批，其余直接放行",
         "label": "默认权限"
       },
+      "menuLabel": "权限模式",
       "smart": {
         "desc": "由模型自评或独立判官模型决定是否需要审批",
         "label": "智能审批"
@@ -524,6 +528,7 @@
         "desc": "隔离副本试跑，编辑审批不放松",
         "label": "隔离沙箱"
       },
+      "menuLabel": "沙箱",
       "off": {
         "desc": "在宿主机执行，审批逻辑不变",
         "label": "关闭沙箱"
@@ -619,8 +624,8 @@
     "viewSystemPrompt": "查看系统提示词",
     "weeksAgo": "{{count}}周前",
     "workingDir": {
-      "browserDescription": "路径将在运行 Agent 的服务器上解析。",
-      "browserTitle": "选择服务器上的目录",
+      "browserDescription": "路径将在运行 Agent 的机器上解析。",
+      "browserTitle": "选择目录",
       "change": "更换目录",
       "clear": "清除目录",
       "current": "工作目录",
@@ -682,6 +687,29 @@
       "reloadBody": "已安装的扩展与宿主版本不匹配,重载扩展即可恢复对真实 Chrome 的控制。",
       "openSettings": "去设置",
       "dismiss": "不再提示"
+    },
+    "browserExtensionRequired": {
+      "nextAction": "下一步行动：{{nextAction}}",
+      "openSettings": "打开“设置”>“浏览器”以安装或启用扩展。",
+      "title": "需要 Chrome 扩展程序"
+    },
+    "conversationEmpty": "此对话中没有消息",
+    "pendingCancelForceInsert": "取消本轮插入",
+    "pendingFallbackAfterReply": "回复后发送",
+    "pendingFallbackAfterReplyTip": "尚未遇到工具完成点，将在当前回复结束后发送。",
+    "pendingForceInsertTip": "它将等待正在执行的刀具完成，然后将其插入到模型中，而不中断当前的刀具。",
+    "pendingInserted": "插入",
+    "pendingInsertedTip": "本轮加工完成后已将其插入模型中。",
+    "pendingQueuedShort": "排队",
+    "pendingQueuedTip": "已加入等待队列，当前回复结束后发送。",
+    "pendingQueueTitle": "待发送",
+    "pendingWaitingToolBoundary": "等待工具完成点",
+    "pendingWaitingToolBoundaryTip": "等待最新的工具调用完成；如果本轮不再调用该工具，则会在回复完成后发送。",
+    "processNotification": "进程结束",
+    "rightPanel": {
+      "collapse": "折叠右侧面板",
+      "expand": "展开右侧面板",
+      "switch": "切换右侧面板"
     }
   },
   "codexAuth": {
@@ -720,7 +748,12 @@
     "testing": "测试中...",
     "create": "创建",
     "clear": "清除",
-    "on": "开"
+    "on": "开",
+    "available": "可用",
+    "collapse": "关闭",
+    "expand": "展开",
+    "retry": "重试",
+    "unavailable": "不可用"
   },
   "context": {
     "ago": "前",
@@ -1206,7 +1239,9 @@
       "total": "合计",
       "trend": "Token 用量趋势",
       "ttft": "首Token耗时",
-      "ttftTrend": "首 Token 耗时趋势 (TTFT)"
+      "ttftTrend": "首 Token 耗时趋势 (TTFT)",
+      "inputTokens": "输入令牌",
+      "outputTokens": "输出代币"
     },
     "tool": {
       "avgDuration": "平均耗时",
@@ -1296,7 +1331,23 @@
     "noDiffData": "无 diff 数据",
     "openDiff": "查看 diff",
     "resizePanel": "调整 diff 面板宽度",
-    "title": "文件改动"
+    "title": "文件改动",
+    "actionCreate": "创造",
+    "actionDelete": "删除",
+    "actionEdit": "修改",
+    "copyLocation": "复制当前位置",
+    "expandHiddenLines": "展开{{count}}行，内容不变",
+    "ignoreWhitespace": "忽略空格变化",
+    "locationCopied": "定位已复制",
+    "locationCopyFailed": "复制定位失败",
+    "matchingFiles": "{{shown}} / {{total}} 文件",
+    "nextHunk": "下一步更改",
+    "noMatchingFiles": "没有匹配的文件",
+    "openLocation": "预览到当前行",
+    "prevHunk": "最后更改",
+    "renderMore": "显示剩余的 {{count}} 行",
+    "searchFiles": "搜索文件",
+    "toggleContext": "折叠未更改的上下文"
   },
   "fileActions": {
     "preview": "预览",
@@ -2184,7 +2235,8 @@
     "submittingPlan": "正在提交计划…",
     "toggleLabel": "计划",
     "versionHistory": "计划版本",
-    "versions": "版本历史"
+    "versions": "版本历史",
+    "resizePanel": "调整计划面板的大小"
   },
   "project": {
     "addProject": "添加项目",
@@ -2216,7 +2268,7 @@
     "inheritGlobal": "跟随全局",
     "memoriesInProject": "{{count}} 条记忆",
     "moveToProject": "移动到项目",
-    "newChatInProject": "在此项目中新建会话",
+    "newChatInProject": "新建会话",
     "newProject": "新建项目",
     "noProjects": "还没有项目",
     "noSessionsHint": "点击创建第一个会话",
@@ -2233,12 +2285,11 @@
     "projectColor": "主题色",
     "projectDescription": "项目描述",
     "projectDescriptionPlaceholder": "这个项目是做什么的？",
-    "projectEmoji": "Emoji",
     "projectInstructions": "项目指令",
     "projectInstructionsHint": "这些指令会自动加入该项目所有会话的系统提示词",
     "projectInstructionsPlaceholder": "例如：始终用中文回复；语气清楚亲切；先给结论再补充细节",
     "projectLogo": "Logo",
-    "projectLogoHint": "可选。设置后会替代侧边栏的 Emoji 图标显示。图片会自动压缩到 256×256。",
+    "projectLogoHint": "可选。图片会自动压缩到 256×256。",
     "projectName": "项目名称",
     "projectNamePlaceholder": "例如：Hope Agent 开发",
     "projects": "项目",
@@ -2258,16 +2309,17 @@
     "uploadLogo": "上传 Logo",
     "workingDir": {
       "clear": "清除",
-      "hint": "项目下的会话默认使用该目录；会话级设置会覆盖此项。",
+      "hint": "可选择已有目录，也可新建目录。留空则自动创建默认项目目录。",
       "invalid": "无效的工作目录",
       "label": "项目工作目录",
       "pick": "选择目录",
-      "placeholder": "未设置（会话可单独覆盖）"
+      "placeholder": "未设置（将自动创建默认项目目录）"
     },
     "knowledge": {
       "label": "知识空间",
       "hint": "附加的空间让该项目的对话可以检索并引用其中的笔记。"
-    }
+    },
+    "projectEmojiPlaceholder": "可选"
   },
   "provider": {
     "addProvider": "添加服务商",
@@ -2454,7 +2506,13 @@
       "days": "最近 {{n}} 天",
       "incremental": "上次报告以来"
     },
-    "selectReport": "从历史下拉列表中选择一份报告。"
+    "selectReport": "从历史下拉列表中选择一份报告。",
+    "chatCard": {
+      "missingId": "缺少回顾报告 ID。",
+      "open": "打开回顾",
+      "title": "报告回顾",
+      "waiting": "等待回顾进展..."
+    }
   },
   "settings": {
     "about": "关于",
@@ -3367,6 +3425,11 @@
     "knowledge": {
       "tab": "知识空间"
     },
+    "knowledgeCompile": {
+      "agent": "资料整理 Agent",
+      "agentDefault": "使用全局默认 Agent",
+      "agentDesc": "用于把来源资料整理成可审阅的笔记建议，未设置时继承全局默认 Agent。"
+    },
     "knowledgeChunk": {
       "title": "高级 · 分块",
       "description": "控制笔记如何切分成检索单元。默认值适合大多数笔记。",
@@ -3418,8 +3481,22 @@
         "knowledgeGap": "知识缺口",
         "autoTag": "自动标签",
         "mocUpkeep": "MOC 维护",
-        "memoryToNote": "记忆转笔记"
+        "memoryToNote": "记忆转笔记",
+        "sourceCompile": "资料整理",
+        "sourceConflict": "资料冲突",
+        "openQuestionsMoc": "开放问题 MOC",
+        "forAgentSummary": "For Agent 摘要"
       }
+    },
+    "knowledgeMediaRetention": {
+      "saved": "已保存",
+      "title": "原始媒体留存",
+      "description": "可选择保留导入的音频、视频和图片原件，用于资料证据回看。",
+      "maxTotal": "总配额（MiB）",
+      "maxSource": "单个资料上限（MiB）",
+      "thumbnail": "缩略图最长边（px）",
+      "prune": "超配额时清理最旧媒体",
+      "pruneDesc": "当新留存文件会超过配额时，先删除最旧的已留存原件；如果仍不足，再跳过新文件留存。"
     },
     "knowledgePassiveRecall": {
       "title": "被动相关笔记",
@@ -4276,6 +4353,9 @@
     "serverEmbeddedBind": "监听地址",
     "serverEmbeddedBindDesc": "默认 127.0.0.1 仅本机访问。改为 0.0.0.0 可对外暴露到局域网",
     "serverGenerateApiKey": "生成",
+    "serverKnowledgeAgentReadToken": "知识空间 Agent 只读 Token",
+    "serverKnowledgeAgentReadTokenPlaceholder": "留空则关闭只读 Agent 访问",
+    "serverKnowledgeAgentReadTokenDesc": "给外部 Agent 使用的受限 Token。只有同时设置 owner API Key 时才生效；生效后只能调用知识空间只读接口，不授予 owner API 权限。",
     "serverMode": "服务器模式",
     "serverModeDesc": "选择内嵌模式或连接远程服务器",
     "serverModeEmbedded": "内嵌",
@@ -4301,7 +4381,7 @@
     "sessionTitleUseChatModel": "使用对话模型",
     "shortcuts": "快捷键",
     "sidebarCompactMode": "简约模式",
-    "sidebarCompactModeDesc": "隐藏会话、Agent 和项目的头像与 emoji，让侧边栏更清爽。",
+    "sidebarCompactModeDesc": "隐藏会话、Agent 的头像与 emoji，以及项目头像，让侧边栏更清爽。",
     "sidebarDisplayMode": "界面显示",
     "skillAnyBins": "以下任一工具",
     "skillBudget": "提示词预算",
@@ -4940,7 +5020,12 @@
     "webSearchRecommended": "推荐",
     "webSearchSaved": "已保存",
     "webSearchTimeout": "超时（秒）",
-    "webSearchTimeoutDesc": "搜索请求 HTTP 超时时间（5-120 秒）"
+    "webSearchTimeoutDesc": "搜索请求 HTTP 超时时间（5-120 秒）",
+    "devVisualTest": "UI动画测试",
+    "permLoading": "正在检查权限...",
+    "uiEffects": "背景动画",
+    "uiEffectsDesc": "启用全天候背景和天气效果联动",
+    "uiEffectsToggle": "开启效果"
   },
   "shortcuts": {
     "actionOpenSettings": "打开设置",
@@ -4961,7 +5046,18 @@
       "draftCreated": "已自动创建草稿技能：{{name}}。点击审核。",
       "review": "审核",
       "unnamedSkill": "(未命名技能)"
-    }
+    },
+    "chatFork": {
+      "completed": "已完成。结果已被注入到此聊天中。",
+      "error": "失败的。",
+      "killed": "取消。",
+      "missingRunId": "技能运行 ID 丢失。",
+      "running": "技能子代理正在运行。结果将被注入此处。",
+      "spawning": "启动技能子代理...",
+      "timeout": "超时了。",
+      "title": "技能{{skill}}"
+    },
+    "defaultName": "技能"
   },
   "slashCommands": {
     "agent": {
@@ -5109,7 +5205,15 @@
       "spawning": "启动中",
       "timeout": "超时"
     },
-    "viewChildSession": "查看子 Agent 会话"
+    "viewChildSession": "查看子 Agent 会话",
+    "agentId": "代理 ID",
+    "childSessionId": "儿童会议",
+    "duration": "持续时间",
+    "model": "型号",
+    "openSession": "公开会议",
+    "runId": "运行ID",
+    "task": "任务",
+    "tokens": "代币"
   },
   "team": {
     "active": "活跃",
@@ -5146,7 +5250,23 @@
     "todo": "待办",
     "totalTokens": "Token 用量",
     "viewSession": "查看会话",
-    "worker": "执行者"
+    "worker": "执行者",
+    "loading": "正在加载...",
+    "messagePlaceholder": "消息团队...（DM 的@name）",
+    "noTasks": "没有任务",
+    "panelTitle": "团队",
+    "resizePanel": "调整团队面板大小",
+    "role": {
+      "lead": "铅",
+      "reviewer": "审稿人",
+      "worker": "工人"
+    },
+    "tab": {
+      "dashboard": "仪表板",
+      "messages": "留言",
+      "tasks": "任务"
+    },
+    "view": "查看"
   },
   "theme": {
     "auto": "自动",
@@ -5191,7 +5311,8 @@
     "execPanel": {
       "noOutput": "无输出",
       "running": "运行中...",
-      "title": "Shell"
+      "title": "Shell",
+      "asyncStarted": "后台任务开始"
     },
     "find": "查找文件",
     "get_settings": "读取设置",
@@ -5466,8 +5587,8 @@
         "unknown": "状态未知"
       },
       "gitDiffFailed": "读取 Git diff 失败",
-      "loadingDiff": "读取 diff",
-      "noTextDiff": "没有可展示的文本 diff"
+      "loadingDiff": "读取差异",
+      "noTextDiff": "没有文字可显示差异"
     },
     "action": {
       "create": "新建",
@@ -5900,6 +6021,16 @@
     "moveToTitle": "将「{{name}}」移动到…",
     "rootFolder": "根目录",
     "remoteWritesDisabled": "远程写入已关闭。请在 设置 → 服务器 → 允许远程写入文件 中开启（在 server 主机上）。",
+    "externalRawSync": "资料快照外部镜像",
+    "externalRawSyncHint": "将 Hope 管理的资料文本快照复制到这个外部库。原始音频、视频和图片文件不会镜像。",
+    "externalRawSyncDisabled": "关闭",
+    "externalRawSyncRaw": "raw/",
+    "externalRawSyncSources": "sources/",
+    "externalRawSyncExistingHint": "现有快照只会在你手动同步时写入；之后的新导入会自动同步。",
+    "externalRawSyncNow": "立即同步",
+    "externalRawSyncPartial": "已同步 {{synced}} 个快照；{{failed}} 个失败。",
+    "externalRawSyncDone": "已同步 {{count}} 个资料快照",
+    "externalRawSyncFailed": "无法同步资料快照",
     "retrievalSettings": "检索设置",
     "reindexing": "重新索引中…",
     "reindexDone": "索引已重建",
@@ -5933,6 +6064,7 @@
       "runFailed": "维护运行失败",
       "applyFailed": "应用建议失败",
       "rejectFailed": "忽略建议失败",
+      "compileQueued": "已生成整理审阅，请到笔记建议面板查看 diff。",
       "kind": {
         "auto_link": "建链",
         "orphan_rescue": "救援",
@@ -5941,8 +6073,22 @@
         "knowledge_gap": "缺口",
         "auto_tag": "标签",
         "moc_upkeep": "MOC",
-        "memory_to_note": "记忆"
-      }
+        "memory_to_note": "记忆",
+        "source_compile": "整理",
+        "source_conflict": "冲突",
+        "open_questions_moc": "问题",
+        "for_agent_summary": "摘要"
+      },
+      "evidenceCoverage": "证据覆盖范围",
+      "evidenceCoverageDetail": "{{pct}}% · {{claimsWithEvidence}}/{{claims}} 声明 · {{notesWithEvidence}}/{{notes}} 注释",
+      "evidenceRebuildFailed": "无法重建证据索引",
+      "evidenceRebuilt": "重建 {{notes}} 票据、{{refs}} 参考文献、{{claims}} 声明的证据索引",
+      "missingEvidence": "证据缺失",
+      "missingRefs": "缺少裁判",
+      "needsReview": "需要审查",
+      "rebuildEvidenceTip": "重建派生证据索引",
+      "schemaIssues": "架构问题",
+      "staleRefs": "过时的参考文献"
     },
     "graph": {
       "toggle": "图谱视图",
@@ -5970,6 +6116,188 @@
     "allowExternalWritesHint": "外部库默认只读。开启后可让编辑器与 AI 工具写入绑定目录。后台自动维护始终不写入外部库。",
     "result": {
       "memory": "记忆"
+    },
+    "compile": {
+      "applied": "已应用建议",
+      "apply": "应用",
+      "applyFailed": "无法应用建议",
+      "cancel": "取消",
+      "cancelFailed": "无法取消运行",
+      "cancelled": "资料整理已取消",
+      "description": "AI 会从所选资料生成笔记修改建议；写入前你可以先审阅 diff。",
+      "empty": "选择一个建议进行审阅",
+      "emptyHint": "生成的建议会保留在这里，直到你应用或忽略。",
+      "failed": "资料整理失败",
+      "loadFailed": "无法加载资料整理记录",
+      "noProposals": "本次运行没有建议。",
+      "noRuns": "还没有资料整理记录。",
+      "proposals": "建议",
+      "proposalsLoadFailed": "无法加载建议",
+      "refresh": "刷新",
+      "reject": "忽略",
+      "rejectFailed": "无法忽略建议",
+      "rejected": "已忽略建议",
+      "runPending": "资料整理等待中",
+      "runSources": "{{count}} 个资料",
+      "running": "正在把资料整理成笔记…",
+      "runs": "运行",
+      "startFailed": "无法把资料整理成笔记",
+      "startSelected": "整理 {{count}} 个",
+      "started": "已生成 {{n}} 条笔记建议",
+      "title": "整理资料为笔记"
+    },
+    "sources": {
+      "archiveAttachment": "归档到知识空间",
+      "archiveAttachmentFailed": "附件归档失败",
+      "archivedAttachment": "已归档到知识资料",
+      "browser": "浏览器",
+      "browserAuto": "自动",
+      "browserPage": "整页",
+      "browserSelection": "选区",
+      "chooseFile": "选择文件",
+      "comparePrevious": "对比上一版",
+      "compileOne": "整理成笔记",
+      "compileSelected": "整理所选资料为笔记",
+      "compiled": "已整理",
+      "compiledClaims": "使用此资料的笔记结论",
+      "currentVersion": "当前",
+      "delete": "删除",
+      "deleteBody": "要从原始资料舱删除「{{name}}」吗？",
+      "deleteFailed": "无法删除资料",
+      "deleteTitle": "删除资料",
+      "deleted": "资料已删除",
+      "diffFailed": "无法加载资料差异",
+      "diffTruncated": "预览已截断",
+      "dismissSimilar": "忽略",
+      "downloadOriginal": "下载原件",
+      "empty": "还没有资料。",
+      "evidenceSources": "资料来源",
+      "externalRawPath": "外部快照",
+      "file": "文件",
+      "import": "导入资料",
+      "importAction": "导入",
+      "importDesc": "向这个知识空间加入原始资料。",
+      "importFailed": "无法导入资料",
+      "importHistory": "导入历史",
+      "importHistoryFailed": "无法打开导入历史",
+      "importRunDeduped": "已导入 {{imported}} 个，跳过 {{duplicate}} 个重复项",
+      "importRunPartial": "已导入 {{imported}} 个，跳过 {{duplicate}} 个重复项，失败 {{failed}} 个",
+      "importRunStarted": "已开始导入 {{count}} 个资料",
+      "imported": "资料已导入",
+      "importedCount": "已导入 {{count}} 个资料",
+      "keepSource": "保留「{{name}}」",
+      "loadTargetsFailed": "无法加载知识空间",
+      "loading": "正在加载…",
+      "loadingClaims": "正在加载证据索引…",
+      "loadingDiff": "正在加载差异…",
+      "mediaRetained": "已留存媒体",
+      "missingSource": "资料缺失",
+      "moreClaims": "还有 {{count}} 条结论",
+      "noCompiledClaims": "还没有笔记结论引用此资料。",
+      "noImportRuns": "还没有导入运行。",
+      "noKb": "选择一个空间以查看资料。",
+      "noKnowledgeBase": "没有可用的知识空间",
+      "noLocalDuplicates": "此空间中没有可删除的重复资料",
+      "noSimilarGroups": "没有相似资料分组。",
+      "open": "打开",
+      "openOriginal": "打开原件",
+      "otherKb": "其他空间 {{id}}",
+      "readFailed": "无法打开资料",
+      "reextract": "重新提取",
+      "reextractFailed": "无法重新提取资料",
+      "reextracted": "资料已重新提取",
+      "refresh": "刷新",
+      "refreshChanged": "资料已刷新到 v{{version}}",
+      "refreshFailed": "无法刷新资料",
+      "refreshSource": "刷新快照",
+      "refreshUnchanged": "资料已是最新",
+      "resolveSimilarConfirm": "保留「{{name}}」并从此空间删除 {{count}} 个重复资料吗？",
+      "retainedMedia": "已留存媒体",
+      "retryFailed": "无法重试失败导入",
+      "retryFailedAction": "重试失败项",
+      "selectImportRun": "选择一次导入运行。",
+      "selectKnowledgeBase": "选择知识空间",
+      "similarCount": "{{count}} 个相似分组",
+      "similarDismissFailed": "无法隐藏相似建议",
+      "similarDismissed": "已隐藏相似建议",
+      "similarGroups": "相似资料",
+      "similarResolveFailed": "无法处理重复资料",
+      "similarResolved": "已删除 {{count}} 个重复资料",
+      "sourceDiff": "资料差异",
+      "staleSource": "整理后资料已变更",
+      "supersededSource": "有更新的资料版本",
+      "text": "文本",
+      "textPlaceholder": "粘贴资料文本…",
+      "thumbnailOnly": "仅缩略图",
+      "title": "资料",
+      "titlePlaceholder": "标题",
+      "uncompiled": "未整理",
+      "url": "URL",
+      "urlKindAudio": "音频转录",
+      "urlKindImage": "图片 OCR",
+      "urlKindPage": "网页",
+      "urlKindVideo": "视频转录",
+      "versionHistory": "版本历史",
+      "versionHistoryDesc": "{{count}} 个已归档快照。当前：{{current}}",
+      "versionsFailed": "无法加载资料版本",
+      "itemStatus": {
+        "duplicate": "重复",
+        "failed": "失败",
+        "imported": "已导入",
+        "pending": "等待中",
+        "running": "运行中"
+      },
+      "kind": {
+        "audioTranscript": "音频转录",
+        "browserSnapshot": "浏览器",
+        "docx": "DOCX",
+        "imageOcr": "图片 OCR",
+        "markdown": "Markdown",
+        "pdf": "PDF",
+        "text": "文本",
+        "urlSnapshot": "URL",
+        "videoTranscript": "视频转录"
+      },
+      "runStatus": {
+        "completed": "已完成",
+        "completedWithErrors": "完成但有错误",
+        "failed": "失败",
+        "running": "运行中"
+      },
+      "similarKind": {
+        "exactDuplicate": "完全重复",
+        "similar": "相似"
+      },
+      "similarScope": {
+        "crossKb": "跨空间",
+        "sameKb": "此空间"
+      }
+    },
+    "queryFile": {
+      "action": "文件",
+      "applied": "提交至知识空间",
+      "apply": "申请",
+      "applyFailed": "无法申请备案",
+      "description": "在写作之前创建一个审查差异。",
+      "empty": "选择这个答案应该落在哪里。",
+      "generateFailed": "无法创建归档提案",
+      "reject": "拒绝",
+      "rejected": "归档被放弃",
+      "rejectFailed": "无法放弃归档",
+      "review": "评论",
+      "title": "归档答案",
+      "titlePlaceholder": "标题",
+      "mode": {
+        "createNote": "新建笔记",
+        "updateCurrentNote": "更新当前笔记",
+        "appendToMoc": "加入 MOC",
+        "openQuestions": "开放问题"
+      },
+      "defaultTitle": "归档对话",
+      "currentNotePlaceholder": "当前笔记路径",
+      "openQuestionsPlaceholder": "带开放问题的笔记",
+      "mocPlaceholder": "MOCs/Conversation Filings.md",
+      "createNotePlaceholder": "Filed Conversations/example.md"
     }
   },
   "backgroundJobs": {
@@ -5995,6 +6323,26 @@
       "interrupted": "已中断",
       "timed_out": "已超时",
       "cancelled": "已取消"
+    },
+    "errorOutput": "错误",
+    "liveOutput": "实时输出",
+    "outputFile": "完整结果",
+    "resultPreview": "结果预览"
+  },
+  "browser": {
+    "panelTitle": "浏览器"
+  },
+  "error": {
+    "appCrash": "出了点问题",
+    "retry": "再试一次",
+    "unknown": "发生意外错误"
+  },
+  "localModels": {
+    "actions": {
+      "download": "下载"
     }
+  },
+  "macControl": {
+    "panelTitle": "苹果电脑控制"
   }
 }

@@ -8,17 +8,24 @@
  * only sees `Enter` when slash is closed.
  *
  * The `@` popper is the unified entry point (design: `@` = files + knowledge
- * notes + built-in skills). It shows three sections — working dir **files**,
- * reachable knowledge **notes**, and curated **skills** (office trio + browser
- * + mac control) — over a single flattened keyboard cursor. Files insert
- * `@path`; notes insert `[[name]]`; skills insert `@skill:<name>`. The backend
- * resolves notes and skills at send time (`knowledge::inject` /
- * `skills::mention`); only files become attachments client-side.
+ * notes + built-in skills + sub-agent mentions). It shows four sections —
+ * working dir **files**, reachable knowledge **notes**, curated **skills**
+ * (office trio + browser + mac control), and configured **Agents** — over a single
+ * flattened keyboard cursor. Files insert `@path`; notes insert `[[name]]`;
+ * agents and skills insert stable markdown-link tokens. The backend resolves
+ * notes / agent delegation hints / skills at send time; only files become
+ * attachments client-side.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { getTransport } from "@/lib/transport-provider"
+import type { AgentSummaryForSidebar } from "@/types/chat"
+import {
+  agentMatchesQuery,
+  agentQueryFromToken,
+  formatAgentInsertion,
+} from "../agent-mention/agentTokens"
 import { detectActiveMention, formatMentionInsertion } from "./mentionTokens"
 import { entryFromDir, entryFromMatch, joinAbs, type MentionEntry, type MentionMode } from "./types"
 import { formatNoteInsertion, relPathToken } from "../note-mention/noteTokens"
@@ -34,6 +41,12 @@ import type { ComposerInputHandle } from "../input/composerInputHandle"
 
 const SEARCH_DEBOUNCE_MS = 180
 const MAX_NOTE_ROWS = 50
+const MAX_AGENT_ROWS = 30
+
+function isAgentQueryToken(token: string | undefined): boolean {
+  const t = (token ?? "").trim().toLowerCase()
+  return t.startsWith("agent:") || t.startsWith("subagent:")
+}
 
 interface ActiveMention {
   anchor: number
@@ -61,7 +74,11 @@ export interface UseFileMentionReturn {
   skillEntries: MentionableSkill[]
   /** Whether the skill section is enabled (drives its header/empty state). */
   skillCapable: boolean
-  /** Flat cursor over `[...entries, ...noteEntries, ...skillEntries]`. */
+  /** Agent section rows (already filtered by the `@` token). */
+  agentEntries: AgentSummaryForSidebar[]
+  /** Whether the agent section is enabled. */
+  agentCapable: boolean
+  /** Flat cursor over `[...entries, ...noteEntries, ...skillEntries, ...agentEntries]`. */
   selectedIndex: number
   mode: MentionMode
   /** Absolute path of the directory currently being listed (list mode). */
@@ -81,6 +98,8 @@ export interface UseFileMentionReturn {
   applyNote: (note: ReferenceableNote) => void
   /** Pick a built-in skill from the `@` menu — inserts `@skill:<name>`. */
   applySkill: (skill: MentionableSkill) => void
+  /** Pick an Agent from the `@` menu — inserts `[@Agent](#agent:<id>)`. */
+  applyAgent: (agent: AgentSummaryForSidebar) => void
   /** Remove a mention by its raw `@...` substring (chip X-button click). */
   removeMention: (raw: string) => void
   /** Re-evaluate the caret context after `onSelect` / `onClick` / paste. */
@@ -95,6 +114,8 @@ export function useFileMention(
   workingDir: string | null,
   noteCtx?: MentionNoteContext,
   skillEnabled = false,
+  agentMentionAgents: AgentSummaryForSidebar[] = [],
+  currentAgentId?: string,
 ): UseFileMentionReturn {
   const { t } = useTranslation()
   const [mode, setMode] = useState<MentionMode>("list")
@@ -123,6 +144,8 @@ export function useFileMention(
   noteCtxRef.current = noteCtx
   const skillEnabledRef = useRef(skillEnabled)
   skillEnabledRef.current = skillEnabled
+  const agentMentionAgentsRef = useRef(agentMentionAgents)
+  agentMentionAgentsRef.current = agentMentionAgents
 
   const sessionId = noteCtx?.sessionId ?? null
   const projectId = noteCtx?.projectId ?? null
@@ -158,7 +181,8 @@ export function useFileMention(
     const ctx = noteCtxRef.current
     const canNote = !!ctx && (ctx.sessionId != null || ctx.draftKbAttachments.length > 0)
     const canSkill = skillEnabledRef.current
-    if (!canFile && !canNote && !canSkill) {
+    const canAgent = agentMentionAgentsRef.current.length > 0
+    if (!canFile && !canNote && !canSkill && !canAgent) {
       setActive((prev) => (prev ? null : prev))
       return
     }
@@ -186,10 +210,17 @@ export function useFileMention(
   }, [input])
 
   // ── File section: list / search the working dir. Suppressed for an explicit
-  // `@skill:` query (the user is clearly after a skill, not a file). ──
+  // `@skill:` / `@agent:` query (the user is clearly after another section). ──
   useEffect(() => {
     const tokenIsSkill = active?.token.trim().toLowerCase().startsWith("skill:") ?? false
-    if (!active || !workingDir || active.token.trim().length === 0 || tokenIsSkill) {
+    const tokenIsAgent = isAgentQueryToken(active?.token)
+    if (
+      !active ||
+      !workingDir ||
+      active.token.trim().length === 0 ||
+      tokenIsSkill ||
+      tokenIsAgent
+    ) {
       requestSeqRef.current++
       setEntries([])
       setLoading(false)
@@ -314,9 +345,10 @@ export function useFileMention(
   // file + note sections so the menu doesn't show an empty "Files" header or
   // notes whose text merely contains "skill:".
   const tokenIsSkillQuery = (active?.token ?? "").trim().toLowerCase().startsWith("skill:")
+  const tokenIsAgentQuery = isAgentQueryToken(active?.token)
 
   const noteEntries = useMemo(() => {
-    if (!noteCapable || tokenIsSkillQuery) return []
+    if (!noteCapable || tokenIsSkillQuery || tokenIsAgentQuery) return []
     const q = active?.token.trim().toLowerCase() ?? ""
     const matched = q
       ? allNotes.filter(
@@ -324,18 +356,33 @@ export function useFileMention(
         )
       : allNotes
     return matched.slice(0, MAX_NOTE_ROWS)
-  }, [allNotes, active, noteCapable, tokenIsSkillQuery])
+  }, [allNotes, active, noteCapable, tokenIsAgentQuery, tokenIsSkillQuery])
+
+  const agentEntries = useMemo(() => {
+    if (agentMentionAgents.length === 0 || tokenIsSkillQuery) return []
+    const q = agentQueryFromToken(active?.token ?? "")
+    return agentMentionAgents
+      .filter((agent) => agent.id !== currentAgentId)
+      .filter((agent) => agentMatchesQuery(agent, q))
+      .slice(0, MAX_AGENT_ROWS)
+  }, [active, agentMentionAgents, currentAgentId, tokenIsSkillQuery])
 
   const skillEntries = useMemo(() => {
-    if (!skillEnabled) return []
+    if (!skillEnabled || tokenIsAgentQuery) return []
     const q = skillQueryFromToken(active?.token ?? "")
     return allSkills.filter((s) => skillMatchesQuery(s.name, q))
-  }, [allSkills, active, skillEnabled])
+  }, [allSkills, active, skillEnabled, tokenIsAgentQuery])
 
-  const total = entries.length + noteEntries.length + skillEntries.length
-  const hasFileQuery = (active?.token.trim().length ?? 0) > 0 && !tokenIsSkillQuery
+  const total = entries.length + noteEntries.length + skillEntries.length + agentEntries.length
+  const hasFileQuery =
+    (active?.token.trim().length ?? 0) > 0 && !tokenIsSkillQuery && !tokenIsAgentQuery
   const fileSectionVisible = !!workingDir && hasFileQuery
-  const emptyMenuVisible = fileSectionVisible || !!error || notesLoading || skillEntries.length > 0
+  const emptyMenuVisible =
+    fileSectionVisible ||
+    !!error ||
+    notesLoading ||
+    agentEntries.length > 0 ||
+    skillEntries.length > 0
 
   // Reset the cursor to the top when the query changes (fresh result set).
   useEffect(() => {
@@ -422,6 +469,26 @@ export function useFileMention(
     [active, setInput, inputHandleRef, reset, t],
   )
 
+  const applyAgent = useCallback(
+    (agent: AgentSummaryForSidebar) => {
+      if (!active) return
+      const insertion = formatAgentInsertion(agent.id, agent.name || agent.id) + " "
+      const before = inputRef.current.slice(0, active.anchor)
+      const after = inputRef.current.slice(active.caret)
+      const newCaret = (before + insertion).length
+      setInput(before + insertion + after)
+      requestAnimationFrame(() => {
+        const inputHandle = inputHandleRef.current
+        if (inputHandle) {
+          inputHandle.focus()
+          inputHandle.setSelectionRange(newCaret, newCaret)
+        }
+      })
+      reset()
+    },
+    [active, setInput, inputHandleRef, reset],
+  )
+
   const applyAtIndex = useCallback(
     (i: number) => {
       if (i < entries.length) {
@@ -429,12 +496,24 @@ export function useFileMention(
       } else if (i < entries.length + noteEntries.length) {
         const note = noteEntries[i - entries.length]
         if (note) applyNote(note)
-      } else {
+      } else if (i < entries.length + noteEntries.length + skillEntries.length) {
         const skill = skillEntries[i - entries.length - noteEntries.length]
         if (skill) applySkill(skill)
+      } else {
+        const agent = agentEntries[i - entries.length - noteEntries.length - skillEntries.length]
+        if (agent) applyAgent(agent)
       }
     },
-    [entries, noteEntries, skillEntries, applyEntry, applyNote, applySkill],
+    [
+      entries,
+      noteEntries,
+      agentEntries,
+      skillEntries,
+      applyEntry,
+      applyNote,
+      applyAgent,
+      applySkill,
+    ],
   )
 
   const removeMention = useCallback(
@@ -509,6 +588,8 @@ export function useFileMention(
     noteCapable,
     skillEntries,
     skillCapable: skillEnabled,
+    agentEntries,
+    agentCapable: agentMentionAgents.length > 0,
     selectedIndex,
     mode,
     dirPath,
@@ -521,6 +602,7 @@ export function useFileMention(
     applyEntry,
     applyNote,
     applySkill,
+    applyAgent,
     removeMention,
     recheckTrigger,
     setSelectedIndex,

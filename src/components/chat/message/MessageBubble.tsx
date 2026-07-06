@@ -1023,7 +1023,7 @@ function MessageBubbleInner({
                   <span>{t("chat.goalMode.messageBadge", "目标")}</span>
                 </div>
               )}
-              <UserAttachments attachments={msg.attachments} />
+              <UserAttachments attachments={msg.attachments} sessionId={sessionId} />
               <UserMessageContent
                 content={msg.content}
                 renderMode={contentRenderMode}
