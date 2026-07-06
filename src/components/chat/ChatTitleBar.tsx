@@ -292,16 +292,7 @@ export default function ChatTitleBar({
       : workflowRunningCount > 0
         ? "bg-blue-500 text-white"
         : "bg-muted-foreground text-background"
-  const workflowEntryLabel =
-    workflowAttentionCount > 0
-      ? t("workspace.openCodingPanelAttention", "Open Workflow workspace · {{count}} need attention", {
-          count: workflowAttentionCount,
-        })
-      : workflowActiveCount > 0
-        ? t("workspace.openCodingPanelActive", "Open Workflow workspace · {{count}} active", {
-            count: workflowActiveCount,
-          })
-        : t("workspace.openCodingPanel", "Open Workflow workspace")
+  const workspaceEntryLabel = t("workspace.openPanel", "Open workspace")
   const hasRightPanelControls =
     !!onToggleFilesPanel ||
     !!onToggleWorkspacePanel ||
@@ -347,19 +338,19 @@ export default function ChatTitleBar({
         </IconTip>
       )}
       {onToggleWorkspacePanel && (
-        <IconTip label={workflowEntryLabel}>
+        <IconTip label={workspaceEntryLabel}>
           <button
             type="button"
             className={cn(
               "relative flex h-7 max-w-[112px] items-center justify-center gap-1.5 rounded-md px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground",
               workspacePanelOpen && "bg-primary/10 text-primary ring-1 ring-primary/25",
             )}
-            aria-label={workflowEntryLabel}
+            aria-label={workspaceEntryLabel}
             aria-pressed={workspacePanelOpen}
             onClick={onToggleWorkspacePanel}
           >
             <LayoutDashboard className="h-4 w-4 shrink-0" />
-            <span className="truncate">{t("workspace.codingEntry", "Workflow")}</span>
+            <span className="truncate">{t("workspace.panelTitle", "Workspace")}</span>
             {workflowBadgeCount > 0 ? (
               <span
                 className={cn(
