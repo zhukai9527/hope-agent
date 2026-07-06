@@ -437,6 +437,15 @@ function loopSchedule(patch: Partial<LoopSchedule> = {}): LoopSchedule {
     maxRuntimeSecs: null,
     tokenBudget: null,
     costBudgetMicros: null,
+    progressState: "weak_progress",
+    progressSummary: "created a derived workflow run",
+    noProgressStreak: 0,
+    failureStreak: 0,
+    maxNoProgressRuns: 3,
+    maxFailures: 3,
+    backoffSecs: 300,
+    nextRunAt: "2026-01-01T00:10:00Z",
+    cronStatus: "active",
     approvalPolicySnapshot: {},
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:04:00Z",
@@ -462,6 +471,10 @@ function loopSnapshot(patch: Partial<LoopSnapshot> = {}): LoopSnapshot {
         triggerReason: "interval trigger",
         resultSummary: "workflow launched",
         error: null,
+        progressState: "weak_progress",
+        progressDelta: { workflowRunId: "wf-loop" },
+        noProgressReason: null,
+        schedulingDecision: "continue",
         trace: {
           workflowRunId: "wf-loop",
           templateId: "research-brief",
@@ -3449,6 +3462,64 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("成功")).toBeTruthy()
     expect(screen.getByText("research-brief@1.0.0")).toBeTruthy()
     expect(screen.getByText("workflow launched")).toBeTruthy()
+  })
+
+  it("supports Loop Center view more run-now and policy editing", async () => {
+    const schedules = Array.from({ length: 6 }, (_, index) =>
+      loopSchedule({
+        id: `loop-${index + 1}`,
+        cronJobId: `cron-loop-${index + 1}`,
+        prompt: `Loop prompt ${index + 1}`,
+        updatedAt: `2026-01-01T00:0${index}:00Z`,
+      }),
+    )
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve(schedules)
+      if (name === "get_loop_schedule") {
+        const schedule = schedules.find((item) => item.id === args?.loopId) ?? schedules[0]
+        return Promise.resolve(loopSnapshot({ schedule }))
+      }
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? {})
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    fireEvent.click(await screen.findByRole("button", { name: /Loop/ }))
+    expect(await screen.findByText("Loop prompt 6")).toBeTruthy()
+    expect(screen.queryByText("Loop prompt 1")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: /查看更多 Loop/ }))
+    expect(await screen.findByText("Loop prompt 1")).toBeTruthy()
+
+    fireEvent.click(screen.getAllByRole("button", { name: "立即运行" })[0])
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("run_loop_schedule_now", {
+        loopId: "loop-6",
+      })
+    })
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑策略" })[0])
+    fireEvent.change(screen.getByLabelText("无进展上限"), { target: { value: "4" } })
+    fireEvent.change(screen.getByLabelText("失败上限"), { target: { value: "5" } })
+    fireEvent.change(screen.getByLabelText("降频间隔"), { target: { value: "10m" } })
+    fireEvent.click(screen.getByRole("button", { name: "保存" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("update_loop_schedule_policy", {
+        loopId: "loop-6",
+        maxRuns: null,
+        maxRuntimeSecs: null,
+        tokenBudget: null,
+        maxNoProgressRuns: 4,
+        maxFailures: 5,
+        backoffSecs: 600,
+      })
+    })
   })
 
   it("shows an actionable workflow empty state before any workflow run exists", async () => {

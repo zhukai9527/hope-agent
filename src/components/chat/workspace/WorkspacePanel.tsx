@@ -220,6 +220,7 @@ import {
   type LoopSnapshot,
   type LoopSchedule,
   type LoopSchedulesState,
+  type LoopProgressState,
   type LoopRunState,
   type LoopState,
   type LoopTriggerKind,
@@ -12534,6 +12535,21 @@ function loopStateTone(state: LoopState): StatusTone {
   }
 }
 
+function loopGroupLabel(t: ReturnType<typeof useTranslation>["t"], state: LoopState): string {
+  switch (state) {
+    case "blocked":
+      return t("workspace.loop.groupBlocked", "需要处理")
+    case "active":
+      return t("workspace.loop.groupActive", "运行中")
+    case "paused":
+      return t("workspace.loop.groupPaused", "已暂停")
+    case "completed":
+      return t("workspace.loop.groupCompleted", "已完成")
+    case "cancelled":
+      return t("workspace.loop.groupCancelled", "已停止")
+  }
+}
+
 function loopRunStateLabel(
   t: ReturnType<typeof useTranslation>["t"],
   state: LoopRunState,
@@ -12571,6 +12587,45 @@ function loopRunStateTone(state: LoopRunState): StatusTone {
       return "info"
     case "empty":
     case "skipped":
+      return "muted"
+  }
+}
+
+function loopProgressLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  state?: LoopProgressState | null,
+): string | null {
+  switch (state) {
+    case "progressed":
+      return t("workspace.loop.progressed", "有进展")
+    case "weak_progress":
+      return t("workspace.loop.weakProgress", "弱进展")
+    case "no_progress":
+      return t("workspace.loop.noProgress", "无进展")
+    case "blocked":
+      return t("workspace.loop.progressBlocked", "阻塞")
+    case "failed":
+      return t("workspace.loop.progressFailed", "失败")
+    case "awaiting_approval":
+      return t("workspace.loop.awaitingApproval", "等待后续")
+    default:
+      return null
+  }
+}
+
+function loopProgressTone(state?: LoopProgressState | null): StatusTone {
+  switch (state) {
+    case "progressed":
+      return "good"
+    case "weak_progress":
+    case "awaiting_approval":
+      return "info"
+    case "no_progress":
+      return "warn"
+    case "blocked":
+    case "failed":
+      return "danger"
+    default:
       return "muted"
   }
 }
@@ -12622,6 +12677,61 @@ function parseOptionalPositiveInt(input: string): number | null {
   if (!trimmed) return null
   const value = Number(trimmed)
   return Number.isInteger(value) && value > 0 ? value : null
+}
+
+function loopNextRunLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  loop: LoopSchedule,
+): string | null {
+  if (loop.state !== "active") return null
+  if (!loop.nextRunAt) return t("workspace.loop.nextUnknown", "下次待定")
+  return t("workspace.loop.nextRun", "下次 {{time}}", {
+    time: formatMessageTime(loop.nextRunAt),
+  })
+}
+
+function loopGuardSummary(t: ReturnType<typeof useTranslation>["t"], loop: LoopSchedule): string {
+  const noProgress = `${loop.noProgressStreak}/${loop.maxNoProgressRuns ?? "∞"}`
+  const failures = `${loop.failureStreak}/${loop.maxFailures ?? "∞"}`
+  const backoff = loop.backoffSecs ? formatLoopDuration(loop.backoffSecs) : "off"
+  return t(
+    "workspace.loop.guardSummary",
+    "无进展 {{noProgress}} · 失败 {{failures}} · backoff {{backoff}}",
+    { noProgress, failures, backoff },
+  )
+}
+
+function loopSchedulingDecisionLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  decision?: string | null,
+): string | null {
+  if (!decision) return null
+  if (decision.startsWith("backoff_")) {
+    const secs = Number(decision.slice("backoff_".length).replace(/s$/, ""))
+    return Number.isFinite(secs)
+      ? t("workspace.loop.backingOff", "已降频 {{duration}}", {
+          duration: formatLoopDuration(secs),
+        })
+      : t("workspace.loop.backingOffPlain", "已降频")
+  }
+  switch (decision) {
+    case "continue":
+      return t("workspace.loop.decisionContinue", "继续")
+    case "awaiting_follow_up_turn":
+      return t("workspace.loop.decisionAwaiting", "等待后续回合")
+    case "blocked_no_progress_limit":
+      return t("workspace.loop.decisionBlockedNoProgress", "无进展达到上限")
+    case "blocked_failure_limit":
+      return t("workspace.loop.decisionBlockedFailure", "失败达到上限")
+    case "completed_condition_satisfied":
+      return t("workspace.loop.decisionConditionMet", "条件已满足")
+    case "completed_max_runs":
+      return t("workspace.loop.decisionMaxRuns", "达到最大次数")
+    case "completed_max_runtime":
+      return t("workspace.loop.decisionMaxRuntime", "达到最长运行时间")
+    default:
+      return decision.replaceAll("_", " ")
+  }
 }
 
 interface WorkflowFocusTarget {
@@ -12697,6 +12807,8 @@ function LoopRunHistory({
         const workflowRunId = loopRunTraceString(run, "workflowRunId")
         const template = loopRunTemplateLabel(run)
         const summary = run.error || run.resultSummary
+        const progressLabel = loopProgressLabel(t, run.progressState)
+        const decisionLabel = loopSchedulingDecisionLabel(t, run.schedulingDecision)
         return (
           <div
             key={run.id}
@@ -12711,6 +12823,12 @@ function LoopRunHistory({
                 tone={loopRunStateTone(run.state)}
                 loading={run.state === "running" || run.state === "queued"}
               />
+              {progressLabel ? (
+                <StatusPill
+                  label={progressLabel}
+                  tone={loopProgressTone(run.progressState)}
+                />
+              ) : null}
               <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
                 {formatMessageTime(run.finishedAt ?? run.startedAt)}
               </span>
@@ -12741,6 +12859,20 @@ function LoopRunHistory({
                   <span className="min-w-0 truncate">
                     {t("workspace.loop.template", "模板")}{" "}
                     <span className="font-mono">{template}</span>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {decisionLabel || run.noProgressReason ? (
+              <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+                {decisionLabel ? (
+                  <span>
+                    {t("workspace.loop.decision", "调度")} {decisionLabel}
+                  </span>
+                ) : null}
+                {run.noProgressReason ? (
+                  <span className="min-w-0 truncate text-muted-foreground">
+                    {run.noProgressReason}
                   </span>
                 ) : null}
               </div>
@@ -12804,6 +12936,18 @@ function LoopSchedulesSection({
   const [draftMaxRuns, setDraftMaxRuns] = useState("")
   const [draftMaxRuntime, setDraftMaxRuntime] = useState("")
   const [draftTokens, setDraftTokens] = useState("")
+  const [draftMaxNoProgress, setDraftMaxNoProgress] = useState("3")
+  const [draftMaxFailures, setDraftMaxFailures] = useState("3")
+  const [draftBackoff, setDraftBackoff] = useState("5m")
+  const [showAllLoops, setShowAllLoops] = useState(false)
+  const [policyLoopId, setPolicyLoopId] = useState<string | null>(null)
+  const [policyMaxRuns, setPolicyMaxRuns] = useState("")
+  const [policyMaxRuntime, setPolicyMaxRuntime] = useState("")
+  const [policyTokens, setPolicyTokens] = useState("")
+  const [policyMaxNoProgress, setPolicyMaxNoProgress] = useState("")
+  const [policyMaxFailures, setPolicyMaxFailures] = useState("")
+  const [policyBackoff, setPolicyBackoff] = useState("")
+  const [policySaving, setPolicySaving] = useState(false)
   const [detailLoopId, setDetailLoopId] = useState<string | null>(null)
   const [detailSnapshot, setDetailSnapshot] = useState<LoopSnapshot | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -12834,6 +12978,22 @@ function LoopSchedulesSection({
     }
     return byLoop
   }, [workflowRuns])
+  const sortedSchedules = useMemo(() => {
+    const rank: Record<LoopState, number> = {
+      blocked: 0,
+      active: 1,
+      paused: 2,
+      completed: 3,
+      cancelled: 4,
+    }
+    return [...schedules].sort((a, b) => {
+      const rankDiff = rank[a.state] - rank[b.state]
+      if (rankDiff !== 0) return rankDiff
+      return (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0)
+    })
+  }, [schedules])
+  const visibleSchedules = showAllLoops ? sortedSchedules : sortedSchedules.slice(0, 5)
+  const hiddenLoopCount = Math.max(0, sortedSchedules.length - visibleSchedules.length)
 
   useEffect(() => {
     if (!canUseWorkflowLoop && draftExecutionStrategy === "workflow") {
@@ -12925,6 +13085,110 @@ function LoopSchedulesSection({
     [detailLoopId, loadLoopDetail, refresh],
   )
 
+  const runLoopNow = useCallback(
+    async (loop: LoopSchedule) => {
+      setActionId(`${loop.id}:run-now`)
+      try {
+        await getTransport().call("run_loop_schedule_now", { loopId: loop.id })
+        toast.success(t("workspace.loop.runNowStarted", "Loop 已开始立即运行"))
+        refresh()
+        if (detailLoopId === loop.id) {
+          loadLoopDetail(loop.id)
+        }
+      } catch (e) {
+        logger.error("ui", "LoopSchedulesSection::runNow", "Loop run-now failed", e)
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setActionId(null)
+      }
+    },
+    [detailLoopId, loadLoopDetail, refresh, t],
+  )
+
+  const openPolicyEditor = useCallback((loop: LoopSchedule) => {
+    setPolicyLoopId((current) => (current === loop.id ? null : loop.id))
+    setPolicyMaxRuns(loop.maxRuns ? String(loop.maxRuns) : "")
+    setPolicyMaxRuntime(loop.maxRuntimeSecs ? formatLoopDuration(loop.maxRuntimeSecs) : "")
+    setPolicyTokens(loop.tokenBudget ? String(loop.tokenBudget) : "")
+    setPolicyMaxNoProgress(loop.maxNoProgressRuns ? String(loop.maxNoProgressRuns) : "3")
+    setPolicyMaxFailures(loop.maxFailures ? String(loop.maxFailures) : "3")
+    setPolicyBackoff(loop.backoffSecs ? formatLoopDuration(loop.backoffSecs) : "5m")
+  }, [])
+
+  const savePolicy = useCallback(
+    async (loop: LoopSchedule) => {
+      const maxRuns = parseOptionalPositiveInt(policyMaxRuns)
+      if (policyMaxRuns.trim() && !maxRuns) {
+        toast.error(t("workspace.loop.maxRunsInvalid", "最大次数必须是正整数"))
+        return
+      }
+      const maxRuntimeSecs = policyMaxRuntime.trim()
+        ? parseLoopDurationSecs(policyMaxRuntime)
+        : null
+      if (policyMaxRuntime.trim() && !maxRuntimeSecs) {
+        toast.error(t("workspace.loop.maxRuntimeInvalid", "请输入有效最长运行时间，例如 2h"))
+        return
+      }
+      const tokenBudget = parseOptionalPositiveInt(policyTokens)
+      if (policyTokens.trim() && !tokenBudget) {
+        toast.error(t("workspace.loop.tokensInvalid", "Token 预算必须是正整数"))
+        return
+      }
+      const maxNoProgressRuns = parseOptionalPositiveInt(policyMaxNoProgress)
+      if (policyMaxNoProgress.trim() && !maxNoProgressRuns) {
+        toast.error(t("workspace.loop.maxNoProgressInvalid", "无进展上限必须是正整数"))
+        return
+      }
+      const maxFailures = parseOptionalPositiveInt(policyMaxFailures)
+      if (policyMaxFailures.trim() && !maxFailures) {
+        toast.error(t("workspace.loop.maxFailuresInvalid", "失败上限必须是正整数"))
+        return
+      }
+      const backoffSecs = policyBackoff.trim() ? parseLoopDurationSecs(policyBackoff) : null
+      if (policyBackoff.trim() && !backoffSecs) {
+        toast.error(t("workspace.loop.backoffInvalid", "请输入有效降频间隔，例如 5m"))
+        return
+      }
+      setPolicySaving(true)
+      setActionId(`${loop.id}:policy`)
+      try {
+        await getTransport().call("update_loop_schedule_policy", {
+          loopId: loop.id,
+          maxRuns,
+          maxRuntimeSecs,
+          tokenBudget,
+          maxNoProgressRuns,
+          maxFailures,
+          backoffSecs,
+        })
+        toast.success(t("workspace.loop.policySaved", "Loop 策略已更新"))
+        setPolicyLoopId(null)
+        refresh()
+        if (detailLoopId === loop.id) {
+          loadLoopDetail(loop.id)
+        }
+      } catch (e) {
+        logger.error("ui", "LoopSchedulesSection::policy", "Loop policy update failed", e)
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setPolicySaving(false)
+        setActionId(null)
+      }
+    },
+    [
+      detailLoopId,
+      loadLoopDetail,
+      policyBackoff,
+      policyMaxFailures,
+      policyMaxNoProgress,
+      policyMaxRuns,
+      policyMaxRuntime,
+      policyTokens,
+      refresh,
+      t,
+    ],
+  )
+
   const createLoop = useCallback(async () => {
     if (!sessionId) {
       toast.error(t("workspace.loop.sessionRequired", "先选择一个会话"))
@@ -12971,6 +13235,21 @@ function LoopSchedulesSection({
       toast.error(t("workspace.loop.tokensInvalid", "Token 预算必须是正整数"))
       return
     }
+    const maxNoProgressRuns = parseOptionalPositiveInt(draftMaxNoProgress)
+    if (draftMaxNoProgress.trim() && !maxNoProgressRuns) {
+      toast.error(t("workspace.loop.maxNoProgressInvalid", "无进展上限必须是正整数"))
+      return
+    }
+    const maxFailures = parseOptionalPositiveInt(draftMaxFailures)
+    if (draftMaxFailures.trim() && !maxFailures) {
+      toast.error(t("workspace.loop.maxFailuresInvalid", "失败上限必须是正整数"))
+      return
+    }
+    const backoffSecs = draftBackoff.trim() ? parseLoopDurationSecs(draftBackoff) : null
+    if (draftBackoff.trim() && !backoffSecs) {
+      toast.error(t("workspace.loop.backoffInvalid", "请输入有效降频间隔，例如 5m"))
+      return
+    }
     const defaultConditionPrompt = t(
       "workspace.loop.defaultConditionPrompt",
       "Continue until this condition is true: {{condition}}. Check the condition first, stop when it is satisfied, otherwise take the next useful step.",
@@ -12990,6 +13269,9 @@ function LoopSchedulesSection({
         maxRuns,
         maxRuntimeSecs,
         tokenBudget,
+        maxNoProgressRuns,
+        maxFailures,
+        backoffSecs,
       })
       toast.success(t("workspace.loop.created", "Loop 已创建"))
       setDraftPrompt("")
@@ -13011,6 +13293,9 @@ function LoopSchedulesSection({
     draftGoalCriterionId,
     draftInterval,
     draftKind,
+    draftBackoff,
+    draftMaxFailures,
+    draftMaxNoProgress,
     draftMaxRuns,
     draftMaxRuntime,
     draftPrompt,
@@ -13198,6 +13483,29 @@ function LoopSchedulesSection({
                 aria-label={t("workspace.loop.tokensLabel", "Token 预算")}
               />
             </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Input
+                value={draftMaxNoProgress}
+                onChange={(e) => setDraftMaxNoProgress(e.target.value)}
+                placeholder={t("workspace.loop.maxNoProgressPlaceholder", "no progress")}
+                className="h-8 text-xs"
+                aria-label={t("workspace.loop.maxNoProgressLabel", "无进展上限")}
+              />
+              <Input
+                value={draftMaxFailures}
+                onChange={(e) => setDraftMaxFailures(e.target.value)}
+                placeholder={t("workspace.loop.maxFailuresPlaceholder", "failures")}
+                className="h-8 text-xs"
+                aria-label={t("workspace.loop.maxFailuresLabel", "失败上限")}
+              />
+              <Input
+                value={draftBackoff}
+                onChange={(e) => setDraftBackoff(e.target.value)}
+                placeholder={t("workspace.loop.backoffPlaceholder", "backoff")}
+                className="h-8 text-xs"
+                aria-label={t("workspace.loop.backoffLabel", "降频间隔")}
+              />
+            </div>
             <div className="flex justify-end">
               <Button
                 type="button"
@@ -13231,23 +13539,37 @@ function LoopSchedulesSection({
         </EmptyHint>
       ) : (
         <div className="space-y-2">
-          {schedules.slice(0, 5).map((loop) => {
+          {visibleSchedules.map((loop, index) => {
             const isBusy = actionId?.startsWith(`${loop.id}:`)
             const derivedWorkflowRuns = workflowRunsByLoop.get(loop.id) ?? []
             const latestWorkflowRun = derivedWorkflowRuns[0]
             const detailOpen = detailLoopId === loop.id
+            const policyOpen = policyLoopId === loop.id
+            const progressLabel = loopProgressLabel(t, loop.progressState)
+            const nextRunLabel = loopNextRunLabel(t, loop)
+            const showGroup =
+              index === 0 || visibleSchedules[index - 1]?.state !== loop.state
             return (
-              <div
-                key={loop.id}
-                className="rounded-md border border-border/70 bg-background/70 px-2.5 py-2"
-              >
-                <div className="flex items-start gap-2">
+              <div key={loop.id} className="space-y-1">
+                {showGroup ? (
+                  <div className="px-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {loopGroupLabel(t, loop.state)}
+                  </div>
+                ) : null}
+                <div className="rounded-md border border-border/70 bg-background/70 px-2.5 py-2">
+                  <div className="flex items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <StatusPill
                         label={loopStateLabel(t, loop.state)}
                         tone={loopStateTone(loop.state)}
                       />
+                      {progressLabel ? (
+                        <StatusPill
+                          label={progressLabel}
+                          tone={loopProgressTone(loop.progressState)}
+                        />
+                      ) : null}
                       {loop.executionStrategy === "workflow" ? (
                         <StatusPill
                           label={t("workspace.loop.strategyWorkflowShort", "Workflow")}
@@ -13269,14 +13591,26 @@ function LoopSchedulesSection({
                       <span>
                         {t("workspace.loop.runs", "运行")} {loop.runCount}/{loop.maxRuns ?? "∞"}
                       </span>
+                      {nextRunLabel ? <span>{nextRunLabel}</span> : null}
                       {loop.maxRuntimeSecs ? (
                         <span>
                           {t("workspace.loop.maxRuntime", "最长")}{" "}
                           {formatLoopDuration(loop.maxRuntimeSecs)}
                         </span>
                       ) : null}
+                      {loop.tokenBudget ? (
+                        <span>
+                          {t("workspace.loop.tokenBudget", "Token")} {loop.tokenBudget}
+                        </span>
+                      ) : null}
+                      <span>{loopGuardSummary(t, loop)}</span>
                       <span>{formatMessageTime(loop.updatedAt)}</span>
                     </div>
+                    {loop.progressSummary ? (
+                      <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
+                        {loop.progressSummary}
+                      </p>
+                    ) : null}
                     {loop.blockedReason ? (
                       <p className="mt-1 text-[10px] text-destructive">{loop.blockedReason}</p>
                     ) : null}
@@ -13335,6 +13669,34 @@ function LoopSchedulesSection({
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
+                    {!isLoopTerminal(loop.state) ? (
+                      <IconTip label={t("workspace.loop.runNow", "立即运行")}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={isBusy}
+                          aria-label={t("workspace.loop.runNow", "立即运行")}
+                          onClick={() => void runLoopNow(loop)}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                    ) : null}
+                    {!isLoopTerminal(loop.state) ? (
+                      <IconTip label={t("workspace.loop.editPolicy", "编辑策略")}>
+                        <Button
+                          variant={policyOpen ? "secondary" : "ghost"}
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={isBusy}
+                          aria-label={t("workspace.loop.editPolicy", "编辑策略")}
+                          onClick={() => openPolicyEditor(loop)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                    ) : null}
                     <IconTip label={t("workspace.loop.history", "运行记录")}>
                       <Button
                         variant={detailOpen ? "secondary" : "ghost"}
@@ -13390,6 +13752,85 @@ function LoopSchedulesSection({
                     ) : null}
                   </div>
                 </div>
+                {policyOpen ? (
+                  <div className="mt-2 rounded-md border border-border/60 bg-secondary/15 p-2">
+                    <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                      <Gauge className="h-3 w-3" />
+                      {t("workspace.loop.policyTitle", "运行策略")}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Input
+                        value={policyMaxRuns}
+                        onChange={(e) => setPolicyMaxRuns(e.target.value)}
+                        placeholder={t("workspace.loop.maxRunsPlaceholder", "max runs")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.maxRunsLabel", "最大次数")}
+                      />
+                      <Input
+                        value={policyMaxRuntime}
+                        onChange={(e) => setPolicyMaxRuntime(e.target.value)}
+                        placeholder={t("workspace.loop.maxRuntimePlaceholder", "max runtime")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.maxRuntimeLabel", "最长运行时间")}
+                      />
+                      <Input
+                        value={policyTokens}
+                        onChange={(e) => setPolicyTokens(e.target.value)}
+                        placeholder={t("workspace.loop.tokensPlaceholder", "tokens")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.tokensLabel", "Token 预算")}
+                      />
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      <Input
+                        value={policyMaxNoProgress}
+                        onChange={(e) => setPolicyMaxNoProgress(e.target.value)}
+                        placeholder={t("workspace.loop.maxNoProgressPlaceholder", "no progress")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.maxNoProgressLabel", "无进展上限")}
+                      />
+                      <Input
+                        value={policyMaxFailures}
+                        onChange={(e) => setPolicyMaxFailures(e.target.value)}
+                        placeholder={t("workspace.loop.maxFailuresPlaceholder", "failures")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.maxFailuresLabel", "失败上限")}
+                      />
+                      <Input
+                        value={policyBackoff}
+                        onChange={(e) => setPolicyBackoff(e.target.value)}
+                        placeholder={t("workspace.loop.backoffPlaceholder", "backoff")}
+                        className="h-8 text-xs"
+                        aria-label={t("workspace.loop.backoffLabel", "降频间隔")}
+                      />
+                    </div>
+                    <div className="mt-2 flex justify-end gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => setPolicyLoopId(null)}
+                      >
+                        {t("common.cancel", "取消")}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-[11px]"
+                        disabled={policySaving}
+                        onClick={() => void savePolicy(loop)}
+                      >
+                        {policySaving ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5" />
+                        )}
+                        {t("common.save", "保存")}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 {detailOpen ? (
                   <LoopRunHistory
                     snapshot={detailSnapshot}
@@ -13399,14 +13840,33 @@ function LoopSchedulesSection({
                   />
                 ) : null}
               </div>
+              </div>
             )
           })}
-          {schedules.length > 5 ? (
-            <p className="px-1 text-[10px] text-muted-foreground">
-              {t("workspace.loop.more", "还有 {{count}} 个 loop，可用 /loop status 查看", {
-                count: schedules.length - 5,
+          {hiddenLoopCount > 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-full gap-1 text-[11px] text-muted-foreground"
+              onClick={() => setShowAllLoops(true)}
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              {t("workspace.loop.viewMore", "查看更多 Loop（{{count}}）", {
+                count: hiddenLoopCount,
               })}
-            </p>
+            </Button>
+          ) : showAllLoops && sortedSchedules.length > 5 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-full gap-1 text-[11px] text-muted-foreground"
+              onClick={() => setShowAllLoops(false)}
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              {t("workspace.loop.viewLess", "收起 Loop")}
+            </Button>
           ) : null}
         </div>
       )}

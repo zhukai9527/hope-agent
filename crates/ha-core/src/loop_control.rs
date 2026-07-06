@@ -12,10 +12,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::cron::{CronDB, CronPayload, CronSchedule, NewCronJob};
+use crate::goal::GoalState;
 use crate::session::{MessageRole, SessionDB};
 
 const LOOP_TRACE_MAX_BYTES: usize = 64 * 1024;
 const DEFAULT_UNTIL_INTERVAL_SECS: i64 = 300;
+const DEFAULT_LOOP_MAX_NO_PROGRESS_RUNS: i64 = 3;
+const DEFAULT_LOOP_MAX_FAILURES: i64 = 3;
+const DEFAULT_LOOP_BACKOFF_SECS: i64 = 300;
+const MAX_LOOP_BACKOFF_SECS: i64 = 24 * 60 * 60;
+const STRONG_PROGRESS_RELATIONS: &[&str] = &[
+    "workflow_completed",
+    "validation_passed",
+    "validation_completed",
+    "review_passed",
+    "domain_quality_passed",
+    "task_completed",
+    "diff_snapshot",
+    "file_changed",
+    "artifact_created",
+    "artifact_reviewed",
+    "source_cited",
+    "claim_checked",
+    "data_quality_checked",
+    "user_decision",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +90,42 @@ pub enum LoopRunState {
     Failed,
     Cancelled,
     Skipped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopProgressState {
+    Progressed,
+    WeakProgress,
+    NoProgress,
+    Blocked,
+    Failed,
+    AwaitingApproval,
+}
+
+impl LoopProgressState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Progressed => "progressed",
+            Self::WeakProgress => "weak_progress",
+            Self::NoProgress => "no_progress",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+            Self::AwaitingApproval => "awaiting_approval",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "progressed" => Some(Self::Progressed),
+            "weak_progress" => Some(Self::WeakProgress),
+            "no_progress" => Some(Self::NoProgress),
+            "blocked" => Some(Self::Blocked),
+            "failed" => Some(Self::Failed),
+            "awaiting_approval" => Some(Self::AwaitingApproval),
+            _ => None,
+        }
+    }
 }
 
 impl LoopRunState {
@@ -190,6 +247,22 @@ pub struct LoopSchedule {
     pub token_budget: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_budget_micros: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_state: Option<LoopProgressState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_summary: Option<String>,
+    pub no_progress_streak: i64,
+    pub failure_streak: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_no_progress_runs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_failures: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_secs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron_status: Option<String>,
     pub approval_policy_snapshot: Value,
     pub created_at: String,
     pub updated_at: String,
@@ -215,6 +288,14 @@ pub struct LoopRun {
     pub result_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_state: Option<LoopProgressState>,
+    #[serde(default)]
+    pub progress_delta: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_progress_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduling_decision: Option<String>,
     pub trace: Value,
     pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,7 +334,31 @@ pub struct CreateLoopScheduleInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_budget_micros: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_no_progress_runs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_failures: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_secs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLoopSchedulePolicyInput {
+    pub loop_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runtime_secs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_no_progress_runs: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_failures: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_secs: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -301,6 +406,23 @@ pub enum LoopRunDecision {
 pub struct LoopAfterRunAction {
     pub loop_id: Option<String>,
     pub pause_cron_job: bool,
+    pub backoff_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct LoopProgressEvaluation {
+    state: LoopProgressState,
+    summary: Option<String>,
+    delta: Value,
+    no_progress_reason: Option<String>,
+    scheduling_decision: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct GoalEvidenceDelta {
+    total_count: usize,
+    strong_count: usize,
+    items: Vec<Value>,
 }
 
 pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
@@ -324,6 +446,13 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             max_runtime_secs INTEGER,
             token_budget INTEGER,
             cost_budget_micros INTEGER,
+            progress_state TEXT,
+            progress_summary TEXT,
+            no_progress_streak INTEGER NOT NULL DEFAULT 0,
+            failure_streak INTEGER NOT NULL DEFAULT 0,
+            max_no_progress_runs INTEGER NOT NULL DEFAULT 3,
+            max_failures INTEGER NOT NULL DEFAULT 3,
+            backoff_secs INTEGER NOT NULL DEFAULT 300,
             approval_policy_snapshot_json TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -344,6 +473,10 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             trigger_reason TEXT NOT NULL,
             result_summary TEXT,
             error TEXT,
+            progress_state TEXT,
+            progress_delta_json TEXT NOT NULL DEFAULT '{}',
+            no_progress_reason TEXT,
+            scheduling_decision TEXT,
             trace_json TEXT NOT NULL DEFAULT '{}',
             started_at TEXT NOT NULL,
             finished_at TEXT,
@@ -387,6 +520,61 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         "goal_revision",
         "ALTER TABLE loop_schedules ADD COLUMN goal_revision INTEGER;",
     )?;
+    ensure_loop_column(
+        conn,
+        "progress_state",
+        "ALTER TABLE loop_schedules ADD COLUMN progress_state TEXT;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "progress_summary",
+        "ALTER TABLE loop_schedules ADD COLUMN progress_summary TEXT;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "no_progress_streak",
+        "ALTER TABLE loop_schedules ADD COLUMN no_progress_streak INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "failure_streak",
+        "ALTER TABLE loop_schedules ADD COLUMN failure_streak INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "max_no_progress_runs",
+        "ALTER TABLE loop_schedules ADD COLUMN max_no_progress_runs INTEGER NOT NULL DEFAULT 3;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "max_failures",
+        "ALTER TABLE loop_schedules ADD COLUMN max_failures INTEGER NOT NULL DEFAULT 3;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "backoff_secs",
+        "ALTER TABLE loop_schedules ADD COLUMN backoff_secs INTEGER NOT NULL DEFAULT 300;",
+    )?;
+    ensure_loop_run_column(
+        conn,
+        "progress_state",
+        "ALTER TABLE loop_runs ADD COLUMN progress_state TEXT;",
+    )?;
+    ensure_loop_run_column(
+        conn,
+        "progress_delta_json",
+        "ALTER TABLE loop_runs ADD COLUMN progress_delta_json TEXT NOT NULL DEFAULT '{}';",
+    )?;
+    ensure_loop_run_column(
+        conn,
+        "no_progress_reason",
+        "ALTER TABLE loop_runs ADD COLUMN no_progress_reason TEXT;",
+    )?;
+    ensure_loop_run_column(
+        conn,
+        "scheduling_decision",
+        "ALTER TABLE loop_runs ADD COLUMN scheduling_decision TEXT;",
+    )?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_loop_schedules_goal_criterion
             ON loop_schedules(goal_id, goal_criterion_id, updated_at DESC);",
@@ -396,6 +584,15 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
 
 fn ensure_loop_column(conn: &Connection, column: &str, alter_sql: &str) -> Result<()> {
     let query = format!("SELECT {column} FROM loop_schedules LIMIT 1");
+    if conn.prepare(&query).is_ok() {
+        return Ok(());
+    }
+    conn.execute(alter_sql, [])?;
+    Ok(())
+}
+
+fn ensure_loop_run_column(conn: &Connection, column: &str, alter_sql: &str) -> Result<()> {
+    let query = format!("SELECT {column} FROM loop_runs LIMIT 1");
     if conn.prepare(&query).is_ok() {
         return Ok(());
     }
@@ -461,10 +658,21 @@ impl SessionDB {
         let schedule = cron_schedule_from_loop(&input)?;
         let trigger_spec = normalized_trigger_spec(input.trigger_kind, &input.trigger_spec)?;
         let trigger_spec_json = stable_json(&trigger_spec)?;
+        let max_no_progress_runs = normalize_positive(input.max_no_progress_runs)
+            .unwrap_or(DEFAULT_LOOP_MAX_NO_PROGRESS_RUNS);
+        let max_failures =
+            normalize_positive(input.max_failures).unwrap_or(DEFAULT_LOOP_MAX_FAILURES);
+        let backoff_secs =
+            normalize_positive(input.backoff_secs).unwrap_or(DEFAULT_LOOP_BACKOFF_SECS);
         let approval_policy_snapshot = json!({
             "permission": "inherits_session",
             "scheduler": "cron",
             "executionStrategy": input.execution_strategy,
+            "progressGuard": {
+                "maxNoProgressRuns": max_no_progress_runs,
+                "maxFailures": max_failures,
+                "backoffSecs": backoff_secs,
+            },
             "unattended": "permission_engine_fail_closed_or_policy",
         });
         let approval_policy_snapshot_json = stable_json(&approval_policy_snapshot)?;
@@ -485,7 +693,7 @@ impl SessionDB {
                 agent_id: Some(agent_id),
                 goal_id: goal_id.clone(),
             },
-            max_failures: Some(5),
+            max_failures: Some(max_failures.max(1) as u32),
             notify_on_complete: Some(false),
             delivery_targets: Some(Vec::new()),
             prefix_delivery_with_name: Some(false),
@@ -501,8 +709,9 @@ impl SessionDB {
                     id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
                     goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json, execution_strategy,
                     state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
+                    max_no_progress_runs, max_failures, backoff_secs,
                     approval_policy_snapshot_json, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15, ?16, ?17, ?18, ?19, ?19)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22)",
                 params![
                     id,
                     input.session_id,
@@ -525,6 +734,9 @@ impl SessionDB {
                     normalize_positive(input.max_runtime_secs),
                     normalize_positive(input.token_budget),
                     normalize_positive(input.cost_budget_micros),
+                    max_no_progress_runs,
+                    max_failures,
+                    backoff_secs.min(MAX_LOOP_BACKOFF_SECS),
                     approval_policy_snapshot_json,
                     now,
                 ],
@@ -535,9 +747,10 @@ impl SessionDB {
             return Err(err.into());
         }
 
-        let schedule = self
+        let mut schedule = self
             .get_loop_schedule(&id)?
             .ok_or_else(|| anyhow!("loop schedule {} was not persisted", id))?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
         if let Some(goal_id) = schedule.goal_id.as_deref() {
             let _ = self.link_goal_target(
                 goal_id,
@@ -564,6 +777,8 @@ impl SessionDB {
             "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
                     goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
+                    progress_state, progress_summary, no_progress_streak, failure_streak,
+                    max_no_progress_runs, max_failures, backoff_secs,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules WHERE id = ?1",
                 params![loop_id],
@@ -582,6 +797,8 @@ impl SessionDB {
             "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
                     goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
+                    progress_state, progress_summary, no_progress_streak, failure_streak,
+                    max_no_progress_runs, max_failures, backoff_secs,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules
              WHERE session_id = ?1
@@ -592,6 +809,19 @@ impl SessionDB {
         collect_rows(rows)
     }
 
+    pub fn list_loop_schedules_for_session_with_cron(
+        &self,
+        cron_db: &CronDB,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<LoopSchedule>> {
+        let mut schedules = self.list_loop_schedules_for_session(session_id, limit)?;
+        for schedule in &mut schedules {
+            hydrate_loop_schedule_from_cron(cron_db, schedule)?;
+        }
+        Ok(schedules)
+    }
+
     pub fn loop_snapshot(&self, loop_id: &str, run_limit: usize) -> Result<Option<LoopSnapshot>> {
         let Some(schedule) = self.get_loop_schedule(loop_id)? else {
             return Ok(None);
@@ -600,11 +830,25 @@ impl SessionDB {
         Ok(Some(LoopSnapshot { schedule, runs }))
     }
 
+    pub fn loop_snapshot_with_cron(
+        &self,
+        cron_db: &CronDB,
+        loop_id: &str,
+        run_limit: usize,
+    ) -> Result<Option<LoopSnapshot>> {
+        let Some(mut snapshot) = self.loop_snapshot(loop_id, run_limit)? else {
+            return Ok(None);
+        };
+        hydrate_loop_schedule_from_cron(cron_db, &mut snapshot.schedule)?;
+        Ok(Some(snapshot))
+    }
+
     pub fn list_loop_runs(&self, loop_id: &str, limit: usize) -> Result<Vec<LoopRun>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut stmt = conn.prepare(
             "SELECT id, loop_id, cron_job_id, cron_run_log_id, session_id, seq, state,
-                    trigger_reason, result_summary, error, trace_json, started_at, finished_at
+                    trigger_reason, result_summary, error, progress_state, progress_delta_json,
+                    no_progress_reason, scheduling_decision, trace_json, started_at, finished_at
              FROM loop_runs
              WHERE loop_id = ?1
              ORDER BY seq DESC
@@ -615,8 +859,9 @@ impl SessionDB {
     }
 
     pub fn pause_loop_schedule(&self, cron_db: &CronDB, loop_id: &str) -> Result<LoopSchedule> {
-        let schedule = self.transition_loop_schedule(loop_id, LoopState::Paused, None)?;
+        let mut schedule = self.transition_loop_schedule(loop_id, LoopState::Paused, None)?;
         cron_db.toggle_job(&schedule.cron_job_id, false)?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
         Ok(schedule)
     }
 
@@ -631,14 +876,80 @@ impl SessionDB {
                 current.state.as_str()
             ));
         }
-        let schedule = self.transition_loop_schedule(loop_id, LoopState::Active, None)?;
+        let mut schedule = self.transition_loop_schedule(loop_id, LoopState::Active, None)?;
         cron_db.toggle_job(&schedule.cron_job_id, true)?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
+        Ok(schedule)
+    }
+
+    pub fn update_loop_schedule_policy(
+        &self,
+        cron_db: &CronDB,
+        input: UpdateLoopSchedulePolicyInput,
+    ) -> Result<LoopSchedule> {
+        let current = self
+            .get_loop_schedule(&input.loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {}", input.loop_id))?;
+        if current.state.is_terminal() {
+            return Err(anyhow!(
+                "loop schedule {} is {}; terminal loops cannot be edited",
+                current.id,
+                current.state.as_str()
+            ));
+        }
+        let max_no_progress_runs = normalize_positive(input.max_no_progress_runs)
+            .unwrap_or(DEFAULT_LOOP_MAX_NO_PROGRESS_RUNS);
+        let max_failures =
+            normalize_positive(input.max_failures).unwrap_or(DEFAULT_LOOP_MAX_FAILURES);
+        let backoff_secs = normalize_positive(input.backoff_secs)
+            .unwrap_or(DEFAULT_LOOP_BACKOFF_SECS)
+            .min(MAX_LOOP_BACKOFF_SECS);
+        let now = now_rfc3339();
+        {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "UPDATE loop_schedules
+                 SET max_runs = ?2,
+                     max_runtime_secs = ?3,
+                     token_budget = ?4,
+                     max_no_progress_runs = ?5,
+                     max_failures = ?6,
+                     backoff_secs = ?7,
+                     blocked_reason = CASE WHEN state = 'blocked' THEN NULL ELSE blocked_reason END,
+                     no_progress_streak = CASE WHEN state = 'blocked' THEN 0 ELSE no_progress_streak END,
+                     failure_streak = CASE WHEN state = 'blocked' THEN 0 ELSE failure_streak END,
+                     updated_at = ?8
+                 WHERE id = ?1",
+                params![
+                    input.loop_id,
+                    normalize_positive(input.max_runs),
+                    normalize_positive(input.max_runtime_secs),
+                    normalize_positive(input.token_budget),
+                    max_no_progress_runs,
+                    max_failures,
+                    backoff_secs,
+                    now,
+                ],
+            )?;
+        }
+        if let Some(mut job) = cron_db.get_job(&current.cron_job_id)? {
+            job.max_failures = max_failures.max(1) as u32;
+            job.job_timeout_secs =
+                normalize_positive(input.max_runtime_secs).map(|v| v.max(30) as u64);
+            cron_db.update_job(&job)?;
+        }
+        let mut schedule = self
+            .get_loop_schedule(&current.id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {}", current.id))?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
+        emit_loop_event("loop:changed", &schedule);
         Ok(schedule)
     }
 
     pub fn stop_loop_schedule(&self, cron_db: &CronDB, loop_id: &str) -> Result<LoopSchedule> {
-        let schedule = self.transition_loop_schedule(loop_id, LoopState::Cancelled, None)?;
+        let mut schedule = self.transition_loop_schedule(loop_id, LoopState::Cancelled, None)?;
         cron_db.toggle_job(&schedule.cron_job_id, false)?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
         Ok(schedule)
     }
 
@@ -698,6 +1009,80 @@ impl SessionDB {
             }
         }
         if let Some(goal_id) = schedule.goal_id.as_deref() {
+            let goal = self
+                .get_goal(goal_id)?
+                .ok_or_else(|| anyhow!("goal not found: {goal_id}"))?;
+            match goal.state {
+                GoalState::Completed => {
+                    self.complete_loop_due_to_limit(&schedule, "goal_completed")?;
+                    return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                        loop_id: Some(schedule.id),
+                        reason: "goal already completed".to_string(),
+                        pause_cron_job: true,
+                    }));
+                }
+                GoalState::Failed | GoalState::Cancelled => {
+                    let reason = format!("goal is {}", goal.state.as_str());
+                    self.block_loop_schedule(&schedule, &reason)?;
+                    return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                        loop_id: Some(schedule.id),
+                        reason,
+                        pause_cron_job: true,
+                    }));
+                }
+                GoalState::Paused => {
+                    let reason = "goal is paused".to_string();
+                    self.block_loop_schedule(&schedule, &reason)?;
+                    return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                        loop_id: Some(schedule.id),
+                        reason,
+                        pause_cron_job: true,
+                    }));
+                }
+                GoalState::Active | GoalState::Evaluating | GoalState::Blocked => {}
+            }
+            if let Some(criterion_id) = schedule.goal_criterion_id.as_deref() {
+                let current_binding = self
+                    .resolve_goal_criterion_binding(goal_id, Some(criterion_id))
+                    .map_err(|err| anyhow!("goal criterion needs rebind: {err}"));
+                let binding = match current_binding {
+                    Ok(Some(binding)) => binding,
+                    Ok(None) => {
+                        let reason =
+                            "goal criterion needs rebind: criterion is missing".to_string();
+                        self.block_loop_schedule(&schedule, &reason)?;
+                        return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                            loop_id: Some(schedule.id),
+                            reason,
+                            pause_cron_job: true,
+                        }));
+                    }
+                    Err(err) => {
+                        let reason = err.to_string();
+                        self.block_loop_schedule(&schedule, &reason)?;
+                        return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                            loop_id: Some(schedule.id),
+                            reason,
+                            pause_cron_job: true,
+                        }));
+                    }
+                };
+                let stale = schedule.goal_revision != Some(binding.goal_revision)
+                    || schedule.goal_criterion_text.as_deref() != Some(binding.text.as_str())
+                    || schedule.goal_criterion_kind.as_deref() != Some(binding.kind.as_str());
+                if stale {
+                    let reason = format!(
+                        "goal criterion needs rebind: schedule revision {:?}, current revision {}",
+                        schedule.goal_revision, binding.goal_revision
+                    );
+                    self.block_loop_schedule(&schedule, &reason)?;
+                    return Ok(LoopRunDecision::Reject(LoopRunRejection {
+                        loop_id: Some(schedule.id),
+                        reason,
+                        pause_cron_job: true,
+                    }));
+                }
+            }
             if let Err(err) = self.ensure_goal_budget_allows_new_workflow(goal_id) {
                 self.block_loop_schedule(&schedule, &format!("goal budget exhausted: {err}"))?;
                 return Ok(LoopRunDecision::Reject(LoopRunRejection {
@@ -801,18 +1186,34 @@ impl SessionDB {
             return Ok(LoopAfterRunAction {
                 loop_id: None,
                 pause_cron_job: false,
+                backoff_secs: None,
             });
         };
         let run_id = match loop_run_id {
             Some(id) => Some(id.to_string()),
             None => self.latest_running_loop_run_id(&schedule.id)?,
         };
+        let started_at = match run_id.as_deref() {
+            Some(run_id) => self
+                .loop_run_started_at(run_id)?
+                .unwrap_or_else(|| schedule.updated_at.clone()),
+            None => schedule.updated_at.clone(),
+        };
+        let progress = self.evaluate_loop_progress(
+            &schedule,
+            run_id.as_deref(),
+            &started_at,
+            state,
+            result_summary,
+            error,
+            extra_trace.as_ref(),
+        )?;
         if let Some(run_id) = run_id.as_deref() {
             let mut trace_patch = json!({
                 "cronRunLogId": cron_run_log_id,
                 "finishedAt": finished_at,
             });
-            if let Some(extra) = extra_trace {
+            if let Some(extra) = extra_trace.as_ref() {
                 if let (Some(base), Some(extra)) = (trace_patch.as_object_mut(), extra.as_object())
                 {
                     for (key, value) in extra {
@@ -826,6 +1227,10 @@ impl SessionDB {
                 state,
                 result_summary,
                 error,
+                Some(progress.state),
+                progress.delta.clone(),
+                progress.no_progress_reason.as_deref(),
+                progress.scheduling_decision.as_deref(),
                 trace_patch,
                 finished_at,
             )?;
@@ -839,6 +1244,10 @@ impl SessionDB {
         let mut pause = false;
         let mut next_state = schedule.state;
         let mut blocked_reason = None;
+        let mut next_no_progress_streak = schedule.no_progress_streak;
+        let mut next_failure_streak = schedule.failure_streak;
+        let mut backoff_secs = None;
+        let mut scheduling_decision = progress.scheduling_decision.clone();
         if schedule.state == LoopState::Active && counted_run {
             if state == LoopRunState::Succeeded
                 && schedule.trigger_kind == LoopTriggerKind::Condition
@@ -846,24 +1255,111 @@ impl SessionDB {
             {
                 next_state = LoopState::Completed;
                 pause = true;
+                scheduling_decision = Some("completed_condition_satisfied".to_string());
             }
             if let Some(max_runs) = schedule.max_runs {
                 if next_count >= max_runs {
                     next_state = LoopState::Completed;
                     pause = true;
+                    scheduling_decision = Some("completed_max_runs".to_string());
                 }
             }
             if let Some(max_runtime) = schedule.max_runtime_secs {
                 if loop_elapsed_secs(&schedule.created_at)? >= max_runtime {
                     next_state = LoopState::Completed;
                     pause = true;
+                    scheduling_decision = Some("completed_max_runtime".to_string());
                 }
             }
-            if state == LoopRunState::Failed {
-                blocked_reason = error.map(str::to_string);
+            if !next_state.is_terminal() {
+                match progress.state {
+                    LoopProgressState::Progressed | LoopProgressState::WeakProgress => {
+                        next_no_progress_streak = 0;
+                        next_failure_streak = 0;
+                        scheduling_decision.get_or_insert_with(|| "continue".to_string());
+                    }
+                    LoopProgressState::AwaitingApproval => {
+                        next_failure_streak = 0;
+                        scheduling_decision
+                            .get_or_insert_with(|| "awaiting_follow_up_turn".to_string());
+                    }
+                    LoopProgressState::NoProgress => {
+                        next_no_progress_streak += 1;
+                        next_failure_streak = 0;
+                        let max_no_progress = schedule
+                            .max_no_progress_runs
+                            .unwrap_or(DEFAULT_LOOP_MAX_NO_PROGRESS_RUNS);
+                        if max_no_progress > 0 && next_no_progress_streak >= max_no_progress {
+                            next_state = LoopState::Blocked;
+                            pause = true;
+                            blocked_reason =
+                                Some(progress.no_progress_reason.clone().unwrap_or_else(|| {
+                                    "loop made no durable progress".to_string()
+                                }));
+                            scheduling_decision = Some("blocked_no_progress_limit".to_string());
+                        } else if let Some(delay) =
+                            loop_backoff_delay(schedule.backoff_secs, next_no_progress_streak)
+                        {
+                            backoff_secs = Some(delay);
+                            scheduling_decision = Some(format!("backoff_{delay}s"));
+                        } else {
+                            scheduling_decision = Some("continue".to_string());
+                        }
+                    }
+                    LoopProgressState::Failed => {
+                        next_failure_streak += 1;
+                        let max_failures =
+                            schedule.max_failures.unwrap_or(DEFAULT_LOOP_MAX_FAILURES);
+                        if max_failures > 0 && next_failure_streak >= max_failures {
+                            next_state = LoopState::Blocked;
+                            pause = true;
+                            blocked_reason = Some(
+                                error
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| "loop failed repeatedly".to_string()),
+                            );
+                            scheduling_decision = Some("blocked_failure_limit".to_string());
+                        } else if let Some(delay) =
+                            loop_backoff_delay(schedule.backoff_secs, next_failure_streak)
+                        {
+                            backoff_secs = Some(delay);
+                            scheduling_decision = Some(format!("backoff_{delay}s"));
+                        } else {
+                            scheduling_decision = Some("continue".to_string());
+                        }
+                    }
+                    LoopProgressState::Blocked => {
+                        next_state = LoopState::Blocked;
+                        pause = true;
+                        blocked_reason = Some(
+                            error
+                                .map(str::to_string)
+                                .or_else(|| progress.no_progress_reason.clone())
+                                .unwrap_or_else(|| "loop is blocked".to_string()),
+                        );
+                        scheduling_decision = Some("blocked".to_string());
+                    }
+                }
             }
         }
-        self.bump_loop_after_run(&schedule.id, next_count, next_state, blocked_reason)?;
+        if let Some(run_id) = run_id.as_deref() {
+            if scheduling_decision.as_deref() != progress.scheduling_decision.as_deref() {
+                self.update_loop_run_scheduling_decision(run_id, scheduling_decision.as_deref())?;
+            }
+        }
+        self.bump_loop_after_run(
+            &schedule.id,
+            next_count,
+            next_state,
+            blocked_reason,
+            Some(progress.state),
+            progress.summary,
+            next_no_progress_streak,
+            next_failure_streak,
+        )?;
+        if let Some(updated) = self.get_loop_schedule(&schedule.id)? {
+            emit_loop_event("loop:changed", &updated);
+        }
         if let Some(goal_id) = schedule.goal_id.as_deref() {
             let _ = self.link_goal_target(
                 goal_id,
@@ -883,6 +1379,7 @@ impl SessionDB {
         Ok(LoopAfterRunAction {
             loop_id: Some(schedule.id),
             pause_cron_job: pause || next_state.is_terminal(),
+            backoff_secs,
         })
     }
 
@@ -1054,6 +1551,8 @@ impl SessionDB {
             "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
                     goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
+                    progress_state, progress_summary, no_progress_streak, failure_streak,
+                    max_no_progress_runs, max_failures, backoff_secs,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules WHERE cron_job_id = ?1",
                 params![cron_job_id],
@@ -1075,7 +1574,9 @@ impl SessionDB {
                 "UPDATE loop_schedules
                  SET state = ?2, updated_at = ?3,
                      completed_at = CASE WHEN ?4 != 0 THEN ?3 ELSE completed_at END,
-                     blocked_reason = ?5
+                     blocked_reason = ?5,
+                     no_progress_streak = CASE WHEN ?2 = 'active' THEN 0 ELSE no_progress_streak END,
+                     failure_streak = CASE WHEN ?2 = 'active' THEN 0 ELSE failure_streak END
                  WHERE id = ?1",
                 params![
                     loop_id,
@@ -1114,12 +1615,27 @@ impl SessionDB {
             "cronJobId": schedule.cron_job_id,
             "skipped": true,
         });
+        let completed_skip = matches!(
+            reason,
+            "goal_completed" | "max_runs_reached" | "max_runtime_reached"
+        );
+        let progress_state = if completed_skip {
+            LoopProgressState::Progressed
+        } else {
+            LoopProgressState::Blocked
+        };
+        let scheduling_decision = if completed_skip {
+            "completed"
+        } else {
+            "blocked"
+        };
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.execute(
             "INSERT INTO loop_runs (
                 id, loop_id, cron_job_id, session_id, seq, state, trigger_reason,
-                error, trace_json, started_at, finished_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                error, progress_state, progress_delta_json, no_progress_reason,
+                scheduling_decision, trace_json, started_at, finished_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
             params![
                 run_id,
                 schedule.id,
@@ -1129,6 +1645,10 @@ impl SessionDB {
                 LoopRunState::Skipped.as_str(),
                 reason,
                 reason,
+                progress_state.as_str(),
+                stable_json(&json!({ "reason": reason }))?,
+                if completed_skip { None } else { Some(reason) },
+                scheduling_decision,
                 stable_json(&trace)?,
                 now,
             ],
@@ -1143,6 +1663,10 @@ impl SessionDB {
         state: LoopRunState,
         result_summary: Option<&str>,
         error: Option<&str>,
+        progress_state: Option<LoopProgressState>,
+        progress_delta: Value,
+        no_progress_reason: Option<&str>,
+        scheduling_decision: Option<&str>,
         trace_patch: Value,
         finished_at: &str,
     ) -> Result<()> {
@@ -1172,8 +1696,12 @@ impl SessionDB {
                  cron_run_log_id = COALESCE(?3, cron_run_log_id),
                  result_summary = ?4,
                  error = ?5,
-                 trace_json = ?6,
-                 finished_at = ?7
+                 progress_state = ?6,
+                 progress_delta_json = ?7,
+                 no_progress_reason = ?8,
+                 scheduling_decision = ?9,
+                 trace_json = ?10,
+                 finished_at = ?11
              WHERE id = ?1",
             params![
                 run_id,
@@ -1181,6 +1709,10 @@ impl SessionDB {
                 cron_run_log_id,
                 result_summary,
                 error,
+                progress_state.map(|state| state.as_str()),
+                bounded_json(&progress_delta)?,
+                no_progress_reason,
+                scheduling_decision,
                 trace_json,
                 finished_at,
             ],
@@ -1194,6 +1726,10 @@ impl SessionDB {
         run_count: i64,
         state: LoopState,
         blocked_reason: Option<String>,
+        progress_state: Option<LoopProgressState>,
+        progress_summary: Option<String>,
+        no_progress_streak: i64,
+        failure_streak: i64,
     ) -> Result<()> {
         let now = now_rfc3339();
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
@@ -1202,19 +1738,242 @@ impl SessionDB {
              SET run_count = ?2,
                  state = ?3,
                  blocked_reason = COALESCE(?4, blocked_reason),
-                 completed_at = CASE WHEN ?5 != 0 THEN COALESCE(completed_at, ?6) ELSE completed_at END,
-                 updated_at = ?6
+                 progress_state = ?5,
+                 progress_summary = ?6,
+                 no_progress_streak = ?7,
+                 failure_streak = ?8,
+                 completed_at = CASE WHEN ?9 != 0 THEN COALESCE(completed_at, ?10) ELSE completed_at END,
+                 updated_at = ?10
              WHERE id = ?1",
             params![
                 loop_id,
                 run_count,
                 state.as_str(),
                 blocked_reason,
+                progress_state.map(|state| state.as_str()),
+                progress_summary,
+                no_progress_streak.max(0),
+                failure_streak.max(0),
                 if state.is_terminal() { 1i64 } else { 0i64 },
                 now,
             ],
         )?;
         Ok(())
+    }
+
+    fn update_loop_run_scheduling_decision(
+        &self,
+        run_id: &str,
+        scheduling_decision: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE loop_runs SET scheduling_decision = ?2 WHERE id = ?1",
+            params![run_id, scheduling_decision],
+        )?;
+        Ok(())
+    }
+
+    fn loop_run_started_at(&self, run_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        Ok(conn
+            .query_row(
+                "SELECT started_at FROM loop_runs WHERE id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    fn evaluate_loop_progress(
+        &self,
+        schedule: &LoopSchedule,
+        run_id: Option<&str>,
+        started_at: &str,
+        run_state: LoopRunState,
+        result_summary: Option<&str>,
+        error: Option<&str>,
+        extra_trace: Option<&Value>,
+    ) -> Result<LoopProgressEvaluation> {
+        let mut delta = json!({
+            "runState": run_state,
+            "startedAt": started_at,
+        });
+        if let Some(trace) = extra_trace {
+            if let Some(workflow_run_id) = json_string(trace, "workflowRunId") {
+                delta["workflowRunId"] = json!(workflow_run_id);
+            }
+        }
+
+        let state_from_run = match run_state {
+            LoopRunState::Failed | LoopRunState::Cancelled => Some(LoopProgressState::Failed),
+            LoopRunState::Skipped => Some(LoopProgressState::Blocked),
+            LoopRunState::Queued | LoopRunState::Injected | LoopRunState::Running => {
+                Some(LoopProgressState::AwaitingApproval)
+            }
+            LoopRunState::Empty => Some(LoopProgressState::NoProgress),
+            LoopRunState::Succeeded => None,
+        };
+        if let Some(state) = state_from_run {
+            let no_progress_reason = match state {
+                LoopProgressState::NoProgress => Some("loop run produced no output".to_string()),
+                LoopProgressState::Blocked => error.map(str::to_string),
+                _ => None,
+            };
+            return Ok(LoopProgressEvaluation {
+                state,
+                summary: progress_summary_for_state(state, result_summary, error),
+                delta,
+                no_progress_reason,
+                scheduling_decision: match state {
+                    LoopProgressState::AwaitingApproval => {
+                        Some("awaiting_follow_up_turn".to_string())
+                    }
+                    _ => None,
+                },
+            });
+        }
+
+        if schedule.trigger_kind == LoopTriggerKind::Condition
+            && condition_satisfied_marker(result_summary)
+        {
+            delta["conditionSatisfied"] = json!(true);
+            return Ok(LoopProgressEvaluation {
+                state: LoopProgressState::Progressed,
+                summary: Some(
+                    result_summary
+                        .map(|summary| truncate_utf8(summary, 240).to_string())
+                        .unwrap_or_else(|| "condition satisfied".to_string()),
+                ),
+                delta,
+                no_progress_reason: None,
+                scheduling_decision: Some("completed_condition_satisfied".to_string()),
+            });
+        }
+
+        let workflow_trace_id = extra_trace.and_then(|trace| json_string(trace, "workflowRunId"));
+        if let Some(goal_id) = schedule.goal_id.as_deref() {
+            let evidence = self.goal_evidence_delta_since(goal_id, started_at, run_id)?;
+            delta["goalEvidence"] = json!({
+                "total": evidence.total_count,
+                "strong": evidence.strong_count,
+                "items": evidence.items,
+            });
+            if evidence.strong_count > 0 {
+                return Ok(LoopProgressEvaluation {
+                    state: LoopProgressState::Progressed,
+                    summary: Some(format!(
+                        "recorded {} durable Goal evidence item(s)",
+                        evidence.strong_count
+                    )),
+                    delta,
+                    no_progress_reason: None,
+                    scheduling_decision: Some("continue".to_string()),
+                });
+            }
+            if evidence.total_count > 0 || workflow_trace_id.is_some() {
+                return Ok(LoopProgressEvaluation {
+                    state: LoopProgressState::WeakProgress,
+                    summary: Some(if evidence.total_count > 0 {
+                        format!(
+                            "recorded {} weak Goal evidence item(s)",
+                            evidence.total_count
+                        )
+                    } else {
+                        "created a derived workflow run".to_string()
+                    }),
+                    delta,
+                    no_progress_reason: None,
+                    scheduling_decision: Some("continue".to_string()),
+                });
+            }
+            return Ok(LoopProgressEvaluation {
+                state: LoopProgressState::NoProgress,
+                summary: result_summary.map(|summary| truncate_utf8(summary, 240).to_string()),
+                delta,
+                no_progress_reason: Some(
+                    "no new durable Goal evidence was recorded during this loop run".to_string(),
+                ),
+                scheduling_decision: None,
+            });
+        }
+
+        if workflow_trace_id.is_some()
+            || result_summary
+                .map(|summary| !summary.trim().is_empty())
+                .unwrap_or(false)
+        {
+            Ok(LoopProgressEvaluation {
+                state: LoopProgressState::WeakProgress,
+                summary: Some(
+                    result_summary
+                        .map(|summary| truncate_utf8(summary, 240).to_string())
+                        .unwrap_or_else(|| "loop run produced output".to_string()),
+                ),
+                delta,
+                no_progress_reason: None,
+                scheduling_decision: Some("continue".to_string()),
+            })
+        } else {
+            Ok(LoopProgressEvaluation {
+                state: LoopProgressState::NoProgress,
+                summary: None,
+                delta,
+                no_progress_reason: Some("loop run produced no durable signal".to_string()),
+                scheduling_decision: None,
+            })
+        }
+    }
+
+    fn goal_evidence_delta_since(
+        &self,
+        goal_id: &str,
+        started_at: &str,
+        loop_run_id: Option<&str>,
+    ) -> Result<GoalEvidenceDelta> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT target_type, target_id, relation, metadata_json, created_at
+             FROM goal_links
+             WHERE goal_id = ?1 AND created_at >= ?2
+             ORDER BY created_at ASC, id ASC
+             LIMIT 50",
+        )?;
+        let mut rows = stmt.query(params![goal_id, started_at])?;
+        let mut total_count = 0usize;
+        let mut strong_count = 0usize;
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            let target_type: String = row.get(0)?;
+            let target_id: String = row.get(1)?;
+            let relation: String = row.get(2)?;
+            let metadata_json: String = row.get(3)?;
+            let created_at: String = row.get(4)?;
+            if target_type == "loop_run" && loop_run_id == Some(target_id.as_str()) {
+                continue;
+            }
+            if relation == "loop_triggered" {
+                continue;
+            }
+            total_count += 1;
+            let strong = is_strong_progress_relation(&relation);
+            if strong {
+                strong_count += 1;
+            }
+            items.push(json!({
+                "targetType": target_type,
+                "targetId": target_id,
+                "relation": relation,
+                "createdAt": created_at,
+                "strong": strong,
+                "metadata": serde_json::from_str::<Value>(&metadata_json).unwrap_or_else(|_| json!({})),
+            }));
+        }
+        Ok(GoalEvidenceDelta {
+            total_count,
+            strong_count,
+            items,
+        })
     }
 
     fn latest_running_loop_run_id(&self, loop_id: &str) -> Result<Option<String>> {
@@ -1352,7 +2111,8 @@ fn row_to_loop_schedule(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopSchedul
     let trigger_spec_json: String = row.get(10)?;
     let execution_strategy: String = row.get(11)?;
     let state: String = row.get(12)?;
-    let policy_json: String = row.get(18)?;
+    let progress_state: Option<String> = row.get(18)?;
+    let policy_json: String = row.get(25)?;
     Ok(LoopSchedule {
         id: row.get(0)?,
         session_id: row.get(1)?,
@@ -1373,11 +2133,22 @@ fn row_to_loop_schedule(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopSchedul
         max_runtime_secs: row.get(15)?,
         token_budget: row.get(16)?,
         cost_budget_micros: row.get(17)?,
+        progress_state: progress_state
+            .as_deref()
+            .and_then(LoopProgressState::from_str),
+        progress_summary: row.get(19)?,
+        no_progress_streak: row.get(20)?,
+        failure_streak: row.get(21)?,
+        max_no_progress_runs: row.get(22)?,
+        max_failures: row.get(23)?,
+        backoff_secs: row.get(24)?,
+        next_run_at: None,
+        cron_status: None,
         approval_policy_snapshot: serde_json::from_str(&policy_json).unwrap_or_else(|_| json!({})),
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
-        completed_at: row.get(21)?,
-        blocked_reason: row.get(22)?,
+        created_at: row.get(26)?,
+        updated_at: row.get(27)?,
+        completed_at: row.get(28)?,
+        blocked_reason: row.get(29)?,
     })
 }
 
@@ -1393,7 +2164,9 @@ fn loop_schedule_goal_criterion_metadata(schedule: &LoopSchedule) -> Option<Valu
 
 fn row_to_loop_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopRun> {
     let state: String = row.get(6)?;
-    let trace_json: String = row.get(10)?;
+    let progress_state: Option<String> = row.get(10)?;
+    let progress_delta_json: String = row.get(11)?;
+    let trace_json: String = row.get(14)?;
     Ok(LoopRun {
         id: row.get(0)?,
         loop_id: row.get(1)?,
@@ -1405,9 +2178,15 @@ fn row_to_loop_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopRun> {
         trigger_reason: row.get(7)?,
         result_summary: row.get(8)?,
         error: row.get(9)?,
+        progress_state: progress_state
+            .as_deref()
+            .and_then(LoopProgressState::from_str),
+        progress_delta: serde_json::from_str(&progress_delta_json).unwrap_or_else(|_| json!({})),
+        no_progress_reason: row.get(12)?,
+        scheduling_decision: row.get(13)?,
         trace: serde_json::from_str(&trace_json).unwrap_or_else(|_| json!({})),
-        started_at: row.get(11)?,
-        finished_at: row.get(12)?,
+        started_at: row.get(15)?,
+        finished_at: row.get(16)?,
     })
 }
 
@@ -1423,6 +2202,54 @@ fn collect_rows<T>(
 
 fn normalize_positive(value: Option<i64>) -> Option<i64> {
     value.filter(|v| *v > 0)
+}
+
+fn loop_backoff_delay(base: Option<i64>, streak: i64) -> Option<i64> {
+    let base = base.unwrap_or(DEFAULT_LOOP_BACKOFF_SECS);
+    if base <= 0 || streak <= 0 {
+        return None;
+    }
+    Some(base.saturating_mul(streak).min(MAX_LOOP_BACKOFF_SECS))
+}
+
+fn hydrate_loop_schedule_from_cron(cron_db: &CronDB, schedule: &mut LoopSchedule) -> Result<()> {
+    if let Some(job) = cron_db.get_job(&schedule.cron_job_id)? {
+        schedule.next_run_at = job.next_run_at;
+        schedule.cron_status = Some(job.status.as_str().to_string());
+    }
+    Ok(())
+}
+
+fn is_strong_progress_relation(relation: &str) -> bool {
+    STRONG_PROGRESS_RELATIONS.contains(&relation)
+}
+
+fn progress_summary_for_state(
+    state: LoopProgressState,
+    result_summary: Option<&str>,
+    error: Option<&str>,
+) -> Option<String> {
+    match state {
+        LoopProgressState::Failed | LoopProgressState::Blocked => error
+            .or(result_summary)
+            .map(|summary| truncate_utf8(summary, 240).to_string()),
+        LoopProgressState::AwaitingApproval => {
+            Some("loop trigger is queued for a follow-up turn".to_string())
+        }
+        LoopProgressState::NoProgress
+        | LoopProgressState::Progressed
+        | LoopProgressState::WeakProgress => {
+            result_summary.map(|summary| truncate_utf8(summary, 240).to_string())
+        }
+    }
+}
+
+fn json_string<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -1594,7 +2421,7 @@ fn emit_loop_event(event: &str, schedule: &LoopSchedule) {
 mod tests {
     use super::*;
     use crate::domain_eval::{DomainOperationalGateInput, DomainSoakReportInput};
-    use crate::goal::CreateGoalInput;
+    use crate::goal::{CreateGoalInput, UpdateGoalInput};
     use crate::session::NewMessage;
     use crate::workflow::WorkflowRunState;
 
@@ -1680,6 +2507,9 @@ mod tests {
             max_runtime_secs: None,
             token_budget: None,
             cost_budget_micros: None,
+            max_no_progress_runs: None,
+            max_failures: None,
+            backoff_secs: None,
             agent_id: None,
         };
         assert!(cron_schedule_from_loop(&input).is_err());
@@ -1704,6 +2534,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: Some(1),
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -1730,6 +2563,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: Some(10),
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -1777,6 +2613,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -1843,6 +2682,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -1884,6 +2726,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -1979,6 +2824,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -2089,6 +2937,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )
@@ -2120,5 +2971,356 @@ mod tests {
             .expect("schedule exists");
         assert_eq!(updated.state, LoopState::Completed);
         assert_eq!(updated.run_count, 1);
+    }
+
+    #[test]
+    fn no_progress_backoff_then_blocks_after_threshold() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: Some(2),
+                    max_failures: Some(3),
+                    backoff_secs: Some(60),
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+
+        let first = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare first")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected first admission, got {other:?}"),
+        };
+        let first_action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&first.run_id),
+                None,
+                LoopRunState::Succeeded,
+                None,
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish first");
+        assert_eq!(first_action.backoff_secs, Some(60));
+        let after_first = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load first")
+            .expect("schedule");
+        assert_eq!(after_first.state, LoopState::Active);
+        assert_eq!(
+            after_first.progress_state,
+            Some(LoopProgressState::NoProgress)
+        );
+        assert_eq!(after_first.no_progress_streak, 1);
+
+        let second = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare second")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected second admission, got {other:?}"),
+        };
+        let second_action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&second.run_id),
+                None,
+                LoopRunState::Succeeded,
+                None,
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish second");
+        assert!(second_action.pause_cron_job);
+        let after_second = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load second")
+            .expect("schedule");
+        assert_eq!(after_second.state, LoopState::Blocked);
+        assert_eq!(after_second.no_progress_streak, 2);
+        assert!(
+            after_second
+                .blocked_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("no new durable Goal evidence")
+                || after_second
+                    .blocked_reason
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("no durable signal")
+        );
+    }
+
+    #[test]
+    fn durable_goal_evidence_resets_no_progress_streak() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let goal = session_db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Finish the artifact".to_string(),
+                completion_criteria: "A reviewed artifact exists".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: None,
+                    prompt: "make progress".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: Some(2),
+                    max_failures: Some(3),
+                    backoff_secs: Some(60),
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        let started_at = now_rfc3339();
+        let admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &started_at)
+            .expect("prepare")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+        session_db
+            .link_goal_target(
+                &goal.goal.id,
+                "file",
+                "/tmp/artifact.md",
+                "file_changed",
+                json!({ "source": "test" }),
+            )
+            .expect("link evidence");
+        session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&admission.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("updated artifact"),
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish");
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load")
+            .expect("schedule");
+        assert_eq!(updated.progress_state, Some(LoopProgressState::Progressed));
+        assert_eq!(updated.no_progress_streak, 0);
+        let runs = session_db.list_loop_runs(&schedule.id, 10).expect("runs");
+        assert_eq!(runs[0].progress_state, Some(LoopProgressState::Progressed));
+        assert_eq!(runs[0].progress_delta["goalEvidence"]["strong"], json!(1));
+    }
+
+    #[test]
+    fn goal_completed_stops_bound_loop_before_next_trigger() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let goal = session_db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Ship".to_string(),
+                completion_criteria: "Done".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: None,
+                    prompt: "continue".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        session_db
+            .transition_goal(&goal.goal.id, GoalState::Completed, Some("done"))
+            .expect("complete goal");
+        let decision = session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare");
+        assert!(matches!(decision, LoopRunDecision::Reject(_)));
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load")
+            .expect("schedule");
+        assert_eq!(updated.state, LoopState::Completed);
+    }
+
+    #[test]
+    fn criteria_revision_change_blocks_loop_until_rebind() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let goal = session_db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Prepare release".to_string(),
+                completion_criteria: "[required] Smoke test passes".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: Some("criterion-1".to_string()),
+                    prompt: "check release".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        session_db
+            .update_goal(UpdateGoalInput {
+                goal_id: goal.goal.id.clone(),
+                objective: None,
+                completion_criteria: Some("[required] Manual QA passes".to_string()),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+            })
+            .expect("update goal");
+        let decision = session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare");
+        assert!(matches!(decision, LoopRunDecision::Reject(_)));
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load")
+            .expect("schedule");
+        assert_eq!(updated.state, LoopState::Blocked);
+        assert!(updated
+            .blocked_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("needs rebind"));
+    }
+
+    #[test]
+    fn loop_policy_update_persists_budget_and_cron_guard() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        let updated = session_db
+            .update_loop_schedule_policy(
+                &cron_db,
+                UpdateLoopSchedulePolicyInput {
+                    loop_id: schedule.id.clone(),
+                    max_runs: Some(4),
+                    max_runtime_secs: Some(120),
+                    token_budget: Some(10_000),
+                    max_no_progress_runs: Some(5),
+                    max_failures: Some(6),
+                    backoff_secs: Some(900),
+                },
+            )
+            .expect("update policy");
+        assert_eq!(updated.max_runs, Some(4));
+        assert_eq!(updated.max_runtime_secs, Some(120));
+        assert_eq!(updated.token_budget, Some(10_000));
+        assert_eq!(updated.max_no_progress_runs, Some(5));
+        assert_eq!(updated.max_failures, Some(6));
+        assert_eq!(updated.backoff_secs, Some(900));
+        assert!(updated.next_run_at.is_some());
+        let cron_job = cron_db
+            .get_job(&schedule.cron_job_id)
+            .expect("load cron")
+            .expect("cron job");
+        assert_eq!(cron_job.max_failures, 6);
+        assert_eq!(cron_job.job_timeout_secs, Some(120));
     }
 }

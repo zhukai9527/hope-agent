@@ -815,6 +815,8 @@ pub fn run() {
             commands::loop_control::list_loop_schedules,
             commands::loop_control::get_loop_schedule,
             commands::loop_control::create_loop_schedule,
+            commands::loop_control::update_loop_schedule_policy,
+            commands::loop_control::run_loop_schedule_now,
             commands::loop_control::pause_loop_schedule,
             commands::loop_control::resume_loop_schedule,
             commands::loop_control::stop_loop_schedule,

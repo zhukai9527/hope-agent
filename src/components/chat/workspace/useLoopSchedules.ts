@@ -14,6 +14,13 @@ export type LoopRunState =
   | "skipped"
 export type LoopTriggerKind = "interval" | "cron" | "condition" | "event"
 export type LoopExecutionStrategy = "continue" | "workflow"
+export type LoopProgressState =
+  | "progressed"
+  | "weak_progress"
+  | "no_progress"
+  | "blocked"
+  | "failed"
+  | "awaiting_approval"
 
 export interface LoopSchedule {
   id: string
@@ -34,6 +41,15 @@ export interface LoopSchedule {
   maxRuntimeSecs?: number | null
   tokenBudget?: number | null
   costBudgetMicros?: number | null
+  progressState?: LoopProgressState | null
+  progressSummary?: string | null
+  noProgressStreak: number
+  failureStreak: number
+  maxNoProgressRuns?: number | null
+  maxFailures?: number | null
+  backoffSecs?: number | null
+  nextRunAt?: string | null
+  cronStatus?: string | null
   approvalPolicySnapshot: unknown
   createdAt: string
   updatedAt: string
@@ -52,6 +68,10 @@ export interface LoopRun {
   triggerReason: string
   resultSummary?: string | null
   error?: string | null
+  progressState?: LoopProgressState | null
+  progressDelta?: unknown
+  noProgressReason?: string | null
+  schedulingDecision?: string | null
   trace: unknown
   startedAt: string
   finishedAt?: string | null

@@ -4,7 +4,7 @@
 >
 > 日期：2026-07-05
 >
-> 状态：后续增强 roadmap。本文记录 Loop v2 设计与阶段计划；不归档，后续会接着实现。落地实现完成前，不进入 `docs/architecture/`。
+> 状态：Loop v2 核心已落地。本文继续作为后续增强 roadmap 保留；当前实现细节以 [`docs/architecture/loop.md`](../architecture/loop.md) 为准。
 
 ## 1. 背景
 
@@ -30,7 +30,25 @@ v1 Loop 已具备：
 - Workspace inline Loop 区块。
 - Loop run trace 和 WorkflowRun 派生索引。
 
-但 v1 Loop 还偏“能触发”。Loop v2 要解决的是“长期持续推进是否可靠、不过度、可解释、可停止”。
+Loop v2 已完成从“能触发”到“可靠、不过度、可解释、可停止”的核心升级；后续继续增强 event trigger、外部系统触发和更复杂的模板化 loop 图。
+
+## 当前落地摘要（2026-07-06）
+
+已落地：
+
+- Loop Center v2：blocked / active / paused / completed / cancelled 排序分组、查看更多、run history、next run、progress state、guard streak、budget、blocked reason、pause/resume/stop/run now/edit policy。
+- Criteria Binding v2：创建时绑定 Goal criteria；触发前检查 Goal state、criteria revision/text/kind，Goal completed 自动完成 Loop，criteria stale 自动 blocked。
+- Progress Guard：每次 run 记录 `progress_state`、`progress_delta_json`、`no_progress_reason`、`scheduling_decision`；基于 durable Goal evidence delta，不以 LLM 自评为唯一依据。
+- Backoff / blocked：连续 `no_progress` 或 `failed` 会按 `backoff_secs` 降频，达到 `max_no_progress_runs` / `max_failures` 后 blocked 并暂停 Cron。
+- Policy edit / run-now：owner API 和 GUI 支持 `run_loop_schedule_now`、`update_loop_schedule_policy`，并同步 Cron job 的 `max_failures` / `job_timeout_secs`。
+- Workflow strategy 可观察性：Loop row 聚合 `origin=loop:<id>` 的 Workflow run，Loop run history 显示 `workflowRunId` / template version，GUI 可跳转 Workflow detail。
+- 验证：`cargo test -p ha-core loop_control --locked` 中 18 个相关测试通过；WorkspacePanel Loop Vitest 覆盖 view-more、run-now、policy edit、history。
+
+后续池：
+
+- Event-triggered Loop 仍未开放；`trigger_kind=event` 保留但创建时拒绝，等待内部 EventBus adapter / 去重 / debounce。
+- `until --workflow` 仍未开放；等待 Workflow terminal event 能可靠反写 condition result。
+- `cost_budget_micros` 仍保守拒绝；等待 provider cost ledger。
 
 ## 2. 产品目标
 
@@ -247,7 +265,7 @@ Loop run 产生或更新 Task 时：
 
 ## 10. 阶段计划
 
-### L2.1 Loop Center v2
+### L2.1 Loop Center v2（已完成）
 
 目标：解决用户看不全、管不住 Loop 的问题。
 
@@ -265,14 +283,14 @@ Loop run 产生或更新 Task 时：
 - 超过 5 个 Loop 时不再依赖 `/loop status`。
 - 用户能从一行 Loop 看懂它为什么存在。
 
-### L2.2 Criteria Binding（部分已由 Goal v2 落地）
+### L2.2 Criteria Binding（已完成核心）
 
 目标：让 Loop 明确推进哪条 Goal criteria。
 
 工作项：
 
 - 已落地：GUI create loop 支持 `goalCriterionId`；Goal Detail 中按 criteria 显示相关 Loop；workflow strategy 派生 run 继承 criteria。
-- 待做：Loop Detail 更完整显示 bound criteria、criteria 修改后 Loop 进入 needs rebind / blocked。
+- 已落地：触发前检查 Goal state 与 criteria revision/text/kind；Goal completed 自动完成 Loop；criteria 修改后 Loop blocked，要求用户重新确认或编辑策略。
 
 验收：
 
@@ -280,7 +298,7 @@ Loop run 产生或更新 Task 时：
 - Goal completed 后相关 Loop 自动停止。
 - 被删除 criteria 的 Loop 不会继续悄悄跑。
 
-### L2.3 Progress Guard
+### L2.3 Progress Guard（已完成核心）
 
 目标：防止 Loop 空转。
 
@@ -288,7 +306,7 @@ Loop run 产生或更新 Task 时：
 
 - 每次 run 计算 evidence delta。
 - 记录 progress_state、no_progress_streak、failure_streak。
-- 支持 backoff / blocked / ask user。
+- 支持 backoff / blocked；ask user 作为后续增强池，不作为当前自动触发路径，避免无人值守确认死锁。
 - GUI 显示 no-progress reason。
 
 验收：
@@ -297,7 +315,7 @@ Loop run 产生或更新 Task 时：
 - blocked reason 可见且可恢复。
 - Progress 判定有 deterministic tests，不只靠 LLM 文本。
 
-### L2.4 Trigger v2
+### L2.4 Trigger v2（后续池）
 
 目标：把持续推进从纯时间触发扩展到内部事件触发。
 
@@ -314,7 +332,7 @@ Loop run 产生或更新 Task 时：
 - task blocked 可触发 reminder / workflow。
 - 同一事件不会重复创建多个 run。
 
-### L2.5 Workflow Strategy 可观察性
+### L2.5 Workflow Strategy 可观察性（已完成核心）
 
 目标：让 Loop 触发的 Workflow 不再像黑盒。
 
@@ -331,12 +349,12 @@ Loop run 产生或更新 Task 时：
 - Workflow failed/blocked 不会被 Loop 误显示为成功。
 - Soak / operational gate 能读取 Loop -> Workflow 的完整链路。
 
-### L2.6 Loop v2 验证
+### L2.6 Loop v2 验证（已完成核心）
 
 测试与样本：
 
-- Rust deterministic tests：criteria binding、progress guard、backoff、event dedup、goal completed stop。
-- GUI Vitest：Loop Center、view more、run detail、pause/resume/stop/run now。
+- Rust deterministic tests：criteria stale blocked、progress guard、backoff、goal completed stop、durable evidence reset、policy edit sync。
+- GUI Vitest：Loop Center、view more、run detail、run now、edit policy、workflow trace context。
 - Source-level UX audit：用户不用 slash command 管理 Loop。
 - Soak fixture：长时间 interval + no-progress backoff + budget stop。
 - Domain fixture：coding CI、research refresh、writing polish。

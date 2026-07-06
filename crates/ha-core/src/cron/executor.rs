@@ -987,7 +987,11 @@ async fn execute_session_loop_payload(
         .unwrap_or(crate::loop_control::LoopAfterRunAction {
             loop_id: Some(admission.loop_id.clone()),
             pause_cron_job: false,
+            backoff_secs: None,
         });
+    if let Some(delay) = action.backoff_secs {
+        let _ = cron_db.delay_next_run(&job.id, delay);
+    }
     if action.pause_cron_job {
         let _ = cron_db.toggle_job(&job.id, false);
     }

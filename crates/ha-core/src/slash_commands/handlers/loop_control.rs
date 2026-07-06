@@ -68,6 +68,9 @@ fn create_every_loop(
                 max_runtime_secs: opts.max_runtime_secs,
                 token_budget: opts.token_budget,
                 cost_budget_micros: opts.cost_budget_micros,
+                max_no_progress_runs: None,
+                max_failures: None,
+                backoff_secs: None,
                 agent_id: None,
             },
         )
@@ -115,6 +118,9 @@ fn create_until_loop(
                 max_runtime_secs: opts.max_runtime_secs,
                 token_budget: opts.token_budget,
                 cost_budget_micros: opts.cost_budget_micros,
+                max_no_progress_runs: None,
+                max_failures: None,
+                backoff_secs: None,
                 agent_id: None,
             },
         )
@@ -574,6 +580,9 @@ mod tests {
                     max_runtime_secs: None,
                     token_budget: None,
                     cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
                     agent_id: None,
                 },
             )

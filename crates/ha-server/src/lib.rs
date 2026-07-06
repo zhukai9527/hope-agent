@@ -1335,6 +1335,14 @@ fn build_router_with_cors(
             "/loops/{id}/stop",
             post(routes::loop_control::stop_loop_schedule),
         )
+        .route(
+            "/loops/{id}/run-now",
+            post(routes::loop_control::run_loop_schedule_now),
+        )
+        .route(
+            "/loops/{id}/policy",
+            patch(routes::loop_control::update_loop_schedule_policy),
+        )
         .route("/plan/{sid}/content", get(routes::plan::get_plan_content))
         .route("/plan/{sid}/content", put(routes::plan::save_plan_content))
         .route(

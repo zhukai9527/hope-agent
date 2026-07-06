@@ -2,9 +2,10 @@ use axum::extract::Path;
 use axum::Json;
 use ha_core::loop_control::{
     CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopSnapshot, LoopTriggerKind,
+    UpdateLoopSchedulePolicyInput,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::AppError;
 use crate::routes::helpers::{cron_db, session_db};
@@ -13,14 +14,18 @@ pub async fn list_loop_schedules(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<LoopSchedule>>, AppError> {
     Ok(Json(
-        session_db()?.list_loop_schedules_for_session(&session_id, 100)?,
+        session_db()?.list_loop_schedules_for_session_with_cron(cron_db()?, &session_id, 100)?,
     ))
 }
 
 pub async fn get_loop_schedule(
     Path(loop_id): Path<String>,
 ) -> Result<Json<Option<LoopSnapshot>>, AppError> {
-    Ok(Json(session_db()?.loop_snapshot(&loop_id, 100)?))
+    Ok(Json(session_db()?.loop_snapshot_with_cron(
+        cron_db()?,
+        &loop_id,
+        100,
+    )?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +49,12 @@ pub struct CreateLoopScheduleBody {
     pub token_budget: Option<i64>,
     #[serde(default)]
     pub cost_budget_micros: Option<i64>,
+    #[serde(default)]
+    pub max_no_progress_runs: Option<i64>,
+    #[serde(default)]
+    pub max_failures: Option<i64>,
+    #[serde(default)]
+    pub backoff_secs: Option<i64>,
     #[serde(default)]
     pub agent_id: Option<String>,
 }
@@ -78,11 +89,79 @@ pub async fn create_loop_schedule(
                 max_runtime_secs: body.max_runtime_secs,
                 token_budget: body.token_budget,
                 cost_budget_micros: body.cost_budget_micros,
+                max_no_progress_runs: body.max_no_progress_runs,
+                max_failures: body.max_failures,
+                backoff_secs: body.backoff_secs,
                 agent_id: body.agent_id,
             },
         )
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLoopPolicyBody {
+    #[serde(default)]
+    pub max_runs: Option<i64>,
+    #[serde(default)]
+    pub max_runtime_secs: Option<i64>,
+    #[serde(default)]
+    pub token_budget: Option<i64>,
+    #[serde(default)]
+    pub max_no_progress_runs: Option<i64>,
+    #[serde(default)]
+    pub max_failures: Option<i64>,
+    #[serde(default)]
+    pub backoff_secs: Option<i64>,
+}
+
+pub async fn update_loop_schedule_policy(
+    Path(loop_id): Path<String>,
+    Json(body): Json<UpdateLoopPolicyBody>,
+) -> Result<Json<LoopSchedule>, AppError> {
+    session_db()?
+        .update_loop_schedule_policy(
+            cron_db()?,
+            UpdateLoopSchedulePolicyInput {
+                loop_id,
+                max_runs: body.max_runs,
+                max_runtime_secs: body.max_runtime_secs,
+                token_budget: body.token_budget,
+                max_no_progress_runs: body.max_no_progress_runs,
+                max_failures: body.max_failures,
+                backoff_secs: body.backoff_secs,
+            },
+        )
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn run_loop_schedule_now(Path(loop_id): Path<String>) -> Result<Json<Value>, AppError> {
+    if !ha_core::runtime_lock::is_primary() {
+        return Err(AppError::bad_request(
+            "run-now is unavailable on this instance: scheduled jobs only run on the primary",
+        ));
+    }
+    let schedule = session_db()?
+        .get_loop_schedule(&loop_id)?
+        .ok_or_else(|| AppError::not_found("Loop schedule not found"))?;
+    if schedule.state.is_terminal() {
+        return Err(AppError::bad_request(format!(
+            "loop schedule {} is {}",
+            schedule.id,
+            schedule.state.as_str()
+        )));
+    }
+    let job = cron_db()?
+        .get_job(&schedule.cron_job_id)?
+        .ok_or_else(|| AppError::not_found("Cron job not found"))?;
+    let cdb = cron_db()?.clone();
+    let sdb = session_db()?.clone();
+    tokio::spawn(async move {
+        ha_core::cron::execute_job_public(&cdb, &sdb, &job).await;
+    });
+    Ok(Json(json!({ "scheduled": true })))
 }
 
 pub async fn pause_loop_schedule(
