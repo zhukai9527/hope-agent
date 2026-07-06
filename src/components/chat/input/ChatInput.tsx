@@ -934,6 +934,17 @@ export default function ChatInput({
         className={cn(
           "relative min-w-0 overflow-visible rounded-input-dock border border-border-soft bg-surface-floating shadow-input-dock",
           hero && "shadow-floating",
+          incognitoEnabled &&
+            [
+              "[--color-surface-floating:hsl(220_13%_13%)]",
+              "[--color-surface-subtle:hsl(220_13%_18%)]",
+              "[--color-secondary:hsl(220_13%_20%)]",
+              "[--color-foreground:hsl(0_0%_96%)]",
+              "[--color-muted-foreground:hsl(215_14%_70%)]",
+              "[--color-border:hsl(220_13%_24%)]",
+              "[--color-border-soft:hsl(220_13%_24%)]",
+              "shadow-[0_18px_52px_hsl(220_18%_10%/0.24)]",
+            ],
         )}
       >
         {/* Slash Command Menu */}

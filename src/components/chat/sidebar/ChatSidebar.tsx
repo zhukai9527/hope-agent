@@ -86,7 +86,7 @@ export default function ChatSidebar({
 }: ChatSidebarProps) {
   const { t } = useTranslation()
   const [agentsExpanded, setAgentsExpandedState] = useState(() =>
-    readStoredBoolean(AGENTS_EXPANDED_STORAGE_KEY, true),
+    readStoredBoolean(AGENTS_EXPANDED_STORAGE_KEY, false),
   )
   const [projectsExpanded, setProjectsExpandedState] = useState(() =>
     readStoredBoolean(PROJECTS_EXPANDED_STORAGE_KEY, true),

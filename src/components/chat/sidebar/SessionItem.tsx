@@ -249,7 +249,7 @@ export default function SessionItem({
               {session.incognito && (
                 <IconTip label={t("chat.incognito")}>
                   <span className={INCOGNITO_BADGE_ICON_CLASSES}>
-                    <Ghost className="w-2.5 h-2.5" />
+                    <Ghost className="w-2.5 h-2.5" strokeWidth={1.75} />
                   </span>
                 </IconTip>
               )}

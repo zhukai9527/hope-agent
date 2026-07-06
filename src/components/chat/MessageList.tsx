@@ -589,7 +589,7 @@ function CompletedTurnCollapseSummary({
         type="button"
         aria-expanded={row.expanded}
         onClick={() => onToggle(row.key)}
-        className="group flex h-9 w-full cursor-pointer items-center gap-1.5 border-b border-border/50 px-0 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="group flex h-9 w-full cursor-pointer items-center gap-1.5 border-b border-border/50 px-0 text-left text-sm font-medium text-muted-foreground/75 transition-colors hover:text-muted-foreground"
       >
         <span className="truncate">{label}</span>
         <ChevronRight
