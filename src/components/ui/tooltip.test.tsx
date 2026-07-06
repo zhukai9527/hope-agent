@@ -2,11 +2,15 @@
 
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
-import { IconTip } from "./tooltip"
+import { IconTip, TooltipProvider } from "./tooltip"
+
+function renderWithTooltipProvider(ui: React.ReactNode) {
+  return render(<TooltipProvider>{ui}</TooltipProvider>)
+}
 
 describe("IconTip", () => {
   it("adds tooltip metadata to the original element without changing its role", () => {
-    render(
+    renderWithTooltipProvider(
       <IconTip label="Open workspace" side="right">
         <button type="button">Workspace</button>
       </IconTip>,
@@ -20,7 +24,7 @@ describe("IconTip", () => {
   })
 
   it("does not overwrite an explicit title", () => {
-    render(
+    renderWithTooltipProvider(
       <IconTip label="Generated tooltip">
         <button type="button" title="Explicit title">
           Action

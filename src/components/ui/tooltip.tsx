@@ -60,17 +60,28 @@ function IconTip({
       "data-ha-tip-side"?: typeof side
     }
     const child = children as React.ReactElement<TipChildProps>
-    return React.cloneElement(child, {
+    const trigger = React.cloneElement(child, {
       ...tipProps,
       className: cn(child.props.className, "ha-icon-tip"),
       title: child.props.title ?? text,
     })
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+        <TooltipContent side={side}>{text}</TooltipContent>
+      </Tooltip>
+    )
   }
 
   return (
-    <span className="ha-icon-tip" {...tipProps}>
-      {children}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="ha-icon-tip" {...tipProps}>
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side={side}>{text}</TooltipContent>
+    </Tooltip>
   )
 }
 

@@ -167,62 +167,6 @@
   }
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .ha-icon-tip[data-ha-tip]::after {
-    content: attr(data-ha-tip);
-    position: absolute;
-    z-index: 80;
-    width: max-content;
-    max-width: min(20rem, calc(100vw - 1rem));
-    border: 1px solid color-mix(in srgb, var(--color-border) 65%, transparent);
-    border-radius: 0.375rem;
-    background: var(--color-popover);
-    color: var(--color-popover-foreground);
-    box-shadow: var(--shadow-floating);
-    padding: 0.25rem 0.625rem;
-    font-size: 0.75rem;
-    line-height: 1rem;
-    white-space: normal;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition:
-      opacity 120ms ease,
-      visibility 120ms ease;
-  }
-
-  .ha-icon-tip[data-ha-tip-side="top"]::after {
-    left: 50%;
-    bottom: calc(100% + 0.375rem);
-    transform: translateX(-50%);
-  }
-
-  .ha-icon-tip[data-ha-tip-side="bottom"]::after {
-    left: 50%;
-    top: calc(100% + 0.375rem);
-    transform: translateX(-50%);
-  }
-
-  .ha-icon-tip[data-ha-tip-side="left"]::after {
-    right: calc(100% + 0.375rem);
-    top: 50%;
-    transform: translateY(-50%);
-  }
-
-  .ha-icon-tip[data-ha-tip-side="right"]::after {
-    left: calc(100% + 0.375rem);
-    top: 50%;
-    transform: translateY(-50%);
-  }
-
-  .ha-icon-tip[data-ha-tip]:hover::after,
-  .ha-icon-tip[data-ha-tip]:focus-visible::after,
-  .ha-icon-tip[data-ha-tip]:focus-within::after {
-    opacity: 1;
-    visibility: visible;
-  }
-}
-
 @media (max-height: 800px) {
   .icon-sidebar-settings-shortcuts,
   .icon-sidebar-settings-shortcuts-trailing-divider,
