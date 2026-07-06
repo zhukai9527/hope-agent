@@ -282,6 +282,8 @@ interface WorkspacePanelProps {
   onOpenBackgroundJobs?: () => void
   /** 打开子 agent 实时会话弹层，不切换当前主会话。 */
   onViewSubagentSession?: (sessionId: string) => void
+  /** 从输入框或其它全局入口请求打开「持续推进」创建器。 */
+  openLoopCreateRequest?: number
   /** 草稿态新对话里创建 workflow 前,由 ChatScreen 物化一个真实会话并切过去。 */
   onEnsureSession?: () => Promise<string | null>
   onClose: () => void
@@ -307,6 +309,7 @@ function WorkspaceSection({
   meta,
   defaultExpanded = true,
   expandSignal,
+  autoExpandWhen,
 }: {
   title: string
   count?: number
@@ -315,9 +318,11 @@ function WorkspaceSection({
   meta?: ReactNode
   defaultExpanded?: boolean
   expandSignal?: number
+  autoExpandWhen?: boolean
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const lastExpandSignalRef = useRef(expandSignal ?? 0)
+  const lastAutoExpandWhenRef = useRef(Boolean(autoExpandWhen))
 
   useEffect(() => {
     const nextSignal = expandSignal ?? 0
@@ -325,6 +330,14 @@ function WorkspaceSection({
     lastExpandSignalRef.current = nextSignal
     setExpanded(true)
   }, [expandSignal])
+
+  useEffect(() => {
+    const nextAutoExpand = Boolean(autoExpandWhen)
+    if (nextAutoExpand && !lastAutoExpandWhenRef.current) {
+      setExpanded(true)
+    }
+    lastAutoExpandWhenRef.current = nextAutoExpand
+  }, [autoExpandWhen])
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border/80 bg-surface-floating shadow-sm">
@@ -2895,6 +2908,7 @@ function domainWorkbenchOverallTone(args: {
   evidenceCount: number
   sourceCount: number
   draftCount: number
+  controlRecords?: number
   blockingReviewFindings: number
   failedVerification: number
   domainFailed: number
@@ -2906,18 +2920,36 @@ function domainWorkbenchOverallTone(args: {
   soakStatus?: string | null
 }): StatusTone {
   if (args.incognito) return "muted"
+  const hasObservedWork =
+    args.evidenceCount > 0 ||
+    (args.controlRecords ?? 0) > 0 ||
+    args.blockingReviewFindings > 0 ||
+    args.failedVerification > 0 ||
+    args.domainFailed > 0 ||
+    args.domainNeedsUser > 0
+  const hasHardFailedGate =
+    args.exportStatus === "failed" ||
+    args.connectorStatus === "failed" ||
+    args.connectorE2EStatus === "failed"
+  const hasRuntimeFailedGate =
+    args.operationalStatus === "failed" ||
+    args.soakStatus === "failed"
+  const hasObservedGate =
+    Boolean(args.exportStatus) ||
+    Boolean(args.connectorStatus) ||
+    Boolean(args.connectorE2EStatus) ||
+    Boolean(args.operationalStatus) ||
+    Boolean(args.soakStatus)
   if (
     args.blockingReviewFindings > 0 ||
     args.failedVerification > 0 ||
     args.domainFailed > 0 ||
-    args.exportStatus === "failed" ||
-    args.connectorStatus === "failed" ||
-    args.connectorE2EStatus === "failed" ||
-    args.operationalStatus === "failed" ||
-    args.soakStatus === "failed"
+    hasHardFailedGate ||
+    (hasObservedWork && hasRuntimeFailedGate)
   ) {
     return "danger"
   }
+  if (!hasObservedWork) return hasObservedGate ? "info" : "muted"
   if (
     args.domainNeedsUser > 0 ||
     args.evidenceCount === 0 ||
@@ -2942,6 +2974,7 @@ function domainWorkbenchOverallLabel(
   if (loading) return t("workspace.domainWorkbench.loading", "同步中")
   if (tone === "danger") return t("workspace.domainWorkbench.blocked", "需处理")
   if (tone === "warn") return t("workspace.domainWorkbench.needsEvidence", "待补证据")
+  if (tone === "info") return t("workspace.domainWorkbench.observing", "观察中")
   if (tone === "good") return t("workspace.domainWorkbench.ready", "闭环健康")
   return t("workspace.domainWorkbench.idle", "待开始")
 }
@@ -3262,6 +3295,12 @@ function domainAcceptanceCoverageSummary(
   const requiredSampleDays = Math.max(1, soakSummary?.requiredSampleDays ?? 1)
   const hasRequiredSampleDays = sampleDays >= requiredSampleDays
   const budgetExhaustedEvents = Math.max(0, soakSummary?.workflowBudgetExhaustedEvents ?? 0)
+  const hasAcceptanceSample =
+    controlRecords > 0 ||
+    args.evidence.length > 0 ||
+    drainedRuns > 0 ||
+    connectorE2eEvidence > 0 ||
+    latestActivityAgeSecs != null
   const outputTokenBudgetLabel =
     soakSummary?.maxWorkflowOutputTokensSpent != null
       ? soakSummary.maxWorkflowOutputTokenBudget != null &&
@@ -3282,11 +3321,12 @@ function domainAcceptanceCoverageSummary(
       connectorVerificationEvidence > 0,
   )
   const hasFailedGate =
-    args.operationalGate?.status === "failed" ||
-    args.soakReport?.status === "failed" ||
-    args.exportGuard?.status === "failed" ||
-    args.connectorGuard?.status === "failed" ||
-    args.connectorE2eGate?.status === "failed"
+    hasAcceptanceSample &&
+    (args.operationalGate?.status === "failed" ||
+      args.soakReport?.status === "failed" ||
+      args.exportGuard?.status === "failed" ||
+      args.connectorGuard?.status === "failed" ||
+      args.connectorE2eGate?.status === "failed")
   const observedGateStatuses = [
     args.exportGuard?.status,
     args.connectorGuard?.status,
@@ -3297,19 +3337,19 @@ function domainAcceptanceCoverageSummary(
   const allObservedGatesPassed =
     observedGateStatuses.length > 0 && observedGateStatuses.every((status) => status === "passed")
   const failedGateLabels = [
-    args.exportGuard?.status === "failed"
+    hasAcceptanceSample && args.exportGuard?.status === "failed"
       ? t("workspace.domainWorkbench.acceptanceGateExport", "交付守门")
       : null,
-    args.connectorGuard?.status === "failed"
+    hasAcceptanceSample && args.connectorGuard?.status === "failed"
       ? t("workspace.domainWorkbench.acceptanceGateConnector", "外部动作守门")
       : null,
-    args.connectorE2eGate?.status === "failed"
+    hasAcceptanceSample && args.connectorE2eGate?.status === "failed"
       ? t("workspace.domainWorkbench.acceptanceGateConnectorE2E", "连接器 E2E")
       : null,
-    args.operationalGate?.status === "failed"
+    hasAcceptanceSample && args.operationalGate?.status === "failed"
       ? t("workspace.domainWorkbench.acceptanceGateOperational", "运行稳定性")
       : null,
-    args.soakReport?.status === "failed"
+    hasAcceptanceSample && args.soakReport?.status === "failed"
       ? t("workspace.domainWorkbench.acceptanceGateSoak", "长跑审计")
       : null,
   ].filter(Boolean)
@@ -3322,21 +3362,21 @@ function domainAcceptanceCoverageSummary(
     gaps.push({ key, message, severity })
   }
 
-  if (domains.size === 0) {
+  if (hasAcceptanceSample && domains.size === 0) {
     pushGap(
       "domain",
       t("workspace.domainWorkbench.acceptanceGapDomain", "还没有真实领域样本。"),
       "warn",
     )
   }
-  if (args.evidence.length === 0) {
+  if (hasAcceptanceSample && args.evidence.length === 0) {
     pushGap(
       "evidence",
       t("workspace.domainWorkbench.acceptanceGapEvidence", "缺少来源、草稿、复核或用户决策证据。"),
       "warn",
     )
   }
-  if (drainedRuns === 0) {
+  if (hasAcceptanceSample && drainedRuns === 0) {
     pushGap(
       "drain",
       t(
@@ -3356,7 +3396,7 @@ function domainAcceptanceCoverageSummary(
       args.connectorE2eGate?.status === "failed" ? "danger" : "warn",
     )
   }
-  if (criticalIncidents > 0 || warningIncidents > 0) {
+  if (hasAcceptanceSample && (criticalIncidents > 0 || warningIncidents > 0)) {
     pushGap(
       "incidents",
       t("workspace.domainWorkbench.acceptanceGapIncidents", "长跑审计仍有事故需要收口。"),
@@ -3393,7 +3433,7 @@ function domainAcceptanceCoverageSummary(
       "warn",
     )
   }
-  if (budgetExhaustedEvents > 0) {
+  if (hasAcceptanceSample && budgetExhaustedEvents > 0) {
     pushGap(
       "budget",
       t(
@@ -3438,7 +3478,7 @@ function domainAcceptanceCoverageSummary(
             })
           : t("workspace.domainWorkbench.acceptanceReqDomainMissing", "还没有真实领域"),
       passed: domains.size > 0,
-      tone: domains.size > 0 ? "good" : "warn",
+      tone: domains.size > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
     },
     {
       key: "evidence",
@@ -3450,7 +3490,7 @@ function domainAcceptanceCoverageSummary(
             })
           : t("workspace.domainWorkbench.acceptanceReqEvidenceMissing", "缺来源/草稿/决策证据"),
       passed: args.evidence.length > 0,
-      tone: args.evidence.length > 0 ? "good" : "warn",
+      tone: args.evidence.length > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
     },
     {
       key: "drain",
@@ -3462,7 +3502,7 @@ function domainAcceptanceCoverageSummary(
             })
           : t("workspace.domainWorkbench.acceptanceReqDrainMissing", "缺 Workflow / Loop / Campaign"),
       passed: drainedRuns > 0,
-      tone: drainedRuns > 0 ? "good" : "warn",
+      tone: drainedRuns > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
     },
     {
       key: "freshness",
@@ -3503,7 +3543,7 @@ function domainAcceptanceCoverageSummary(
                 { days: sampleDays, required: requiredSampleDays },
               ),
       passed: controlRecords > 0 && hasRequiredSampleDays,
-      tone: controlRecords === 0 ? "warn" : hasRequiredSampleDays ? "good" : "warn",
+      tone: controlRecords === 0 ? "muted" : hasRequiredSampleDays ? "good" : "warn",
     },
     {
       key: "budget",
@@ -3530,7 +3570,7 @@ function domainAcceptanceCoverageSummary(
               : t("workspace.domainWorkbench.acceptanceReqBudgetOk", "未观察到预算耗尽")
             : t("workspace.domainWorkbench.acceptanceReqBudgetNoSample", "先补控制面记录"),
       passed: budgetHealthy,
-      tone: budgetExhaustedEvents > 0 ? "danger" : controlRecords > 0 ? "good" : "warn",
+      tone: budgetExhaustedEvents > 0 ? "danger" : controlRecords > 0 ? "good" : "muted",
     },
     {
       key: "incidents",
@@ -3549,9 +3589,11 @@ function domainAcceptanceCoverageSummary(
       tone:
         criticalIncidents > 0
           ? "danger"
-          : warningIncidents > 0 || controlRecords === 0
+          : warningIncidents > 0
             ? "warn"
-            : "good",
+            : controlRecords > 0
+              ? "good"
+              : "muted",
     },
     {
       key: "gates",
@@ -3564,7 +3606,13 @@ function domainAcceptanceCoverageSummary(
           ? t("workspace.domainWorkbench.acceptanceReqGatesOk", "已观察守门均通过")
           : t("workspace.domainWorkbench.acceptanceReqGatesPending", "缺少守门通过样本"),
       passed: allObservedGatesPassed,
-      tone: hasFailedGate ? "danger" : allObservedGatesPassed ? "good" : "warn",
+      tone: hasFailedGate
+        ? "danger"
+        : allObservedGatesPassed
+          ? "good"
+          : observedGateStatuses.length > 0
+            ? "info"
+            : "muted",
     },
   ]
   if (connectorE2eHasScope) {
@@ -3599,7 +3647,7 @@ function domainAcceptanceCoverageSummary(
             )
           : t("workspace.domainWorkbench.acceptanceLaneWorkflowMissing", "缺已完成 Workflow"),
       passed: completedWorkflowRuns > 0,
-      tone: completedWorkflowRuns > 0 ? "good" : "warn",
+      tone: completedWorkflowRuns > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
       action: t(
         "workspace.domainWorkbench.acceptanceLaneWorkflowAction",
         "跑一个领域 Workflow 并等待排空，再刷新运行稳定性和长跑审计。",
@@ -3635,7 +3683,7 @@ function domainAcceptanceCoverageSummary(
             })
           : t("workspace.domainWorkbench.acceptanceLaneLoopMissing", "缺成功 Loop tick"),
       passed: succeededLoopRuns > 0,
-      tone: succeededLoopRuns > 0 ? "good" : "warn",
+      tone: succeededLoopRuns > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
       action: t(
         "workspace.domainWorkbench.acceptanceLaneLoopAction",
         "创建一个短间隔领域 Loop，确认至少一次 tick 成功并关联 Workflow run。",
@@ -3672,7 +3720,7 @@ function domainAcceptanceCoverageSummary(
             )
           : t("workspace.domainWorkbench.acceptanceLaneCampaignMissing", "缺通过的 Campaign item"),
       passed: passedCampaignItems > 0,
-      tone: passedCampaignItems > 0 ? "good" : "warn",
+      tone: passedCampaignItems > 0 ? "good" : hasAcceptanceSample ? "warn" : "muted",
       action: t(
         "workspace.domainWorkbench.acceptanceLaneCampaignAction",
         "跑一个 deterministic 或真实 agent campaign item，确认可取消、可 retry、可复核。",
@@ -3790,6 +3838,8 @@ function domainAcceptanceCoverageSummary(
 
   const tone: StatusTone = hasFailedGate || criticalIncidents > 0
     ? "danger"
+    : !hasAcceptanceSample
+      ? "muted"
     : gaps.length > 0
       ? "warn"
       : controlRecords > 0
@@ -3837,6 +3887,8 @@ function domainAcceptanceRequirementStatusLabel(
 ): string {
   if (requirement.passed) return t("workspace.domainWorkbench.acceptanceReqPassed", "通过")
   if (requirement.tone === "danger") return t("workspace.domainWorkbench.acceptanceReqBlocked", "阻塞")
+  if (requirement.tone === "muted") return t("workspace.domainWorkbench.acceptanceReqSampling", "待采样")
+  if (requirement.tone === "info") return t("workspace.domainWorkbench.acceptanceLaneOptional", "待扩展")
   return t("workspace.domainWorkbench.acceptanceReqMissing", "待补")
 }
 
@@ -3846,6 +3898,7 @@ function domainAcceptanceSampleLaneStatusLabel(
 ): string {
   if (lane.passed) return t("workspace.domainWorkbench.acceptanceReqPassed", "通过")
   if (lane.tone === "danger") return t("workspace.domainWorkbench.acceptanceReqBlocked", "阻塞")
+  if (lane.tone === "muted") return t("workspace.domainWorkbench.acceptanceReqSampling", "待采样")
   if (lane.tone === "info") return t("workspace.domainWorkbench.acceptanceLaneOptional", "待扩展")
   return t("workspace.domainWorkbench.acceptanceReqMissing", "待补")
 }
@@ -5128,11 +5181,20 @@ function DomainTaskWorkbenchSection({
     verificationRunsState.running ||
     domainQualityRunsState.running
   const disabled = !sessionId || incognito
+  const acceptanceSummary = domainAcceptanceCoverageSummary(t, {
+    evidence,
+    exportGuard,
+    connectorGuard,
+    connectorE2eGate,
+    operationalGate,
+    soakReport,
+  })
   const tone = domainWorkbenchOverallTone({
     incognito,
     evidenceCount,
     sourceCount,
     draftCount,
+    controlRecords: acceptanceSummary.controlRecords,
     blockingReviewFindings,
     failedVerification,
     domainFailed,
@@ -5158,15 +5220,7 @@ function DomainTaskWorkbenchSection({
     operationalGate,
     soakReport,
   })
-  const canCreateStepTasks = !disabled && (tone === "warn" || tone === "danger")
-  const acceptanceSummary = domainAcceptanceCoverageSummary(t, {
-    evidence,
-    exportGuard,
-    connectorGuard,
-    connectorE2eGate,
-    operationalGate,
-    soakReport,
-  })
+  const canCreateStepTasks = !disabled && tone !== "good"
   const acceptanceReviewContext: DomainAcceptanceReviewContext = {
     evidence,
     exportGuard,
@@ -5193,6 +5247,7 @@ function DomainTaskWorkbenchSection({
     (soakReport?.incidents?.length ?? 0)
 
   const focusSignal = focusRequest?.nonce ?? 0
+  const shouldAutoExpand = !incognito && (tone !== "muted" || Boolean(error))
   const [creatingStepTaskKey, setCreatingStepTaskKey] = useState<string | null>(null)
   const [creatingAcceptanceGapTaskKey, setCreatingAcceptanceGapTaskKey] = useState<string | null>(
     null,
@@ -5415,6 +5470,7 @@ function DomainTaskWorkbenchSection({
       count={count}
       icon={Layers}
       expandSignal={focusSignal}
+      autoExpandWhen={shouldAutoExpand}
       meta={
         <StatusPill
           label={domainWorkbenchOverallLabel(t, tone, loading)}
@@ -5422,7 +5478,7 @@ function DomainTaskWorkbenchSection({
           loading={loading}
         />
       }
-      defaultExpanded={tone !== "muted" || Boolean(error)}
+      defaultExpanded={!incognito}
     >
       <div className="space-y-2">
         <div className="grid grid-cols-3 gap-1.5">
@@ -11280,6 +11336,7 @@ function readinessStatusTone(args: {
   executionMode: ExecutionMode
   workflowProblems: number
   loopProblems: number
+  controlRecords?: number
   exportStatus?: string | null
   connectorStatus?: string | null
   connectorE2EStatus?: string | null
@@ -11287,19 +11344,28 @@ function readinessStatusTone(args: {
   soakStatus?: string | null
 }): StatusTone {
   if (args.incognito) return "muted"
+  const hasObservedRuns =
+    args.workflowProblems > 0 || args.loopProblems > 0 || (args.controlRecords ?? 0) > 0
+  const hasHardFailedGate =
+    args.exportStatus === "failed" ||
+    args.connectorStatus === "failed" ||
+    args.connectorE2EStatus === "failed"
+  const hasRuntimeFailedGate =
+    args.operationalStatus === "failed" ||
+    args.soakStatus === "failed"
   if (
     args.workflowProblems > 0 ||
     args.loopProblems > 0 ||
-    args.exportStatus === "failed" ||
-    args.connectorStatus === "failed" ||
-    args.connectorE2EStatus === "failed" ||
-    args.operationalStatus === "failed" ||
-    args.soakStatus === "failed"
+    hasHardFailedGate ||
+    (hasObservedRuns && hasRuntimeFailedGate)
   ) {
     return "danger"
   }
   if (!args.activeGoal || args.workflowMode === "off" || args.executionMode === "off") {
     return "warn"
+  }
+  if (hasRuntimeFailedGate && !hasObservedRuns) {
+    return "info"
   }
   if (
     args.exportStatus === "insufficient_data" ||
@@ -11373,7 +11439,12 @@ function autonomousReadinessNextSteps(
     steps.push(t("workspace.autonomousReadiness.nextProblems", "处理失败或阻塞的 Workflow / Loop。"))
   }
   if (args.activeGoal?.workflowTemplateId && args.workflowLoopCount === 0) {
-    steps.push(t("workspace.autonomousReadiness.nextWorkflowLoop", "可创建工作流 Loop，让目标按周期持续推进。"))
+    steps.push(
+      t(
+        "workspace.autonomousReadiness.nextWorkflowLoop",
+        "可创建按工作流执行的持续推进，让目标按周期自动推进。",
+      ),
+    )
   } else if (args.activeGoal && !args.activeGoal.workflowTemplateId) {
     steps.push(t("workspace.autonomousReadiness.nextTemplate", "为目标绑定领域模板后，可启用工作流 Loop。"))
   }
@@ -11483,6 +11554,22 @@ function AutonomousReadinessCard({
     (schedule) => schedule.executionStrategy === "workflow",
   ).length
   const loopProblems = problemLoops.length
+  const soakControlRecords =
+    domainWorkbenchState.soakReport?.summary.totalRecords ??
+    ((domainWorkbenchState.soakReport?.summary.workflowRuns ?? 0) +
+      (domainWorkbenchState.soakReport?.summary.loopRuns ?? 0) +
+      (domainWorkbenchState.soakReport?.summary.campaignItems ?? 0))
+  const operationalControlRecords =
+    (domainWorkbenchState.operationalGate?.summary.workflowRuns ?? 0) +
+    (domainWorkbenchState.operationalGate?.summary.loopRuns ?? 0) +
+    (domainWorkbenchState.operationalGate?.summary.campaignItems ?? 0)
+  const readinessControlRecords = Math.max(
+    soakControlRecords,
+    operationalControlRecords,
+    domainWorkbenchState.evidence.length,
+  )
+  const hasReadinessSamples =
+    readinessControlRecords > 0 || workflowProblems > 0 || loopProblems > 0
   const loading =
     workflowModeLoading ||
     executionModeLoading ||
@@ -11500,6 +11587,7 @@ function AutonomousReadinessCard({
     executionMode,
     workflowProblems,
     loopProblems,
+    controlRecords: readinessControlRecords,
     exportStatus: domainWorkbenchState.exportGuard?.status,
     connectorStatus: domainWorkbenchState.connectorGuard?.status,
     connectorE2EStatus: domainWorkbenchState.connectorE2eGate?.status,
@@ -11531,7 +11619,17 @@ function AutonomousReadinessCard({
     domainWorkbenchState.soakReport?.status,
   ]
   const guardAttentionCount = guardStatuses.filter(readinessGuardStatusNeedsAttention).length
-  const failedGuardCount = guardStatuses.filter(readinessGuardStatusFailed).length
+  const hardFailedGuardCount = [
+    domainWorkbenchState.exportGuard?.status,
+    domainWorkbenchState.connectorGuard?.status,
+    domainWorkbenchState.connectorE2eGate?.status,
+  ].filter(readinessGuardStatusFailed).length
+  const runtimeFailedGuardCount = [
+    domainWorkbenchState.operationalGate?.status,
+    domainWorkbenchState.soakReport?.status,
+  ].filter(readinessGuardStatusFailed).length
+  const failedGuardCount =
+    hardFailedGuardCount + (hasReadinessSamples ? runtimeFailedGuardCount : 0)
   const runProblemCount = workflowProblems + loopProblems
   const runHealthReady = runProblemCount === 0 && guardAttentionCount === 0
   const runHealthWarning = failedGuardCount > 0
@@ -11563,7 +11661,7 @@ function AutonomousReadinessCard({
   if (!incognito && problemLoop && onOpenLoopProblem) {
     quickActions.push({
       key: "loop-problem",
-      label: t("workspace.autonomousReadiness.actionViewLoop", "查看 Loop"),
+      label: t("workspace.autonomousReadiness.actionViewLoop", "查看持续推进"),
       icon: Radio,
       onClick: () => onOpenLoopProblem(problemLoop.id),
     })
@@ -11677,7 +11775,7 @@ function AutonomousReadinessCard({
   ) {
     quickActions.push({
       key: "workflow-loop",
-      label: t("workspace.autonomousReadiness.actionCreateLoop", "新建 Loop"),
+      label: t("workspace.autonomousReadiness.actionCreateLoop", "新建持续推进"),
       icon: Radio,
       disabled: !canCreateLoop,
       onClick: onOpenLoopCreate,
@@ -12634,14 +12732,25 @@ function isLoopTerminal(state: LoopState): boolean {
   return state === "completed" || state === "cancelled"
 }
 
-function loopTriggerSummary(kind: LoopTriggerKind, spec: Record<string, unknown>): string {
+function loopTriggerSummary(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: LoopTriggerKind,
+  spec: Record<string, unknown>,
+): string {
   if (kind === "interval") {
     const secs = typeof spec.intervalSecs === "number" ? spec.intervalSecs : null
-    return secs ? `every ${formatLoopDuration(secs)}` : "interval"
+    return secs
+      ? t("workspace.loop.triggerEvery", "每 {{duration}}", {
+          duration: formatLoopDuration(secs),
+        })
+      : t("workspace.loop.triggerInterval", "定期推进")
   }
   if (kind === "condition") {
-    const condition = typeof spec.condition === "string" ? spec.condition : "condition"
-    return `until ${condition.length > 48 ? `${condition.slice(0, 48)}...` : condition}`
+    const condition = typeof spec.condition === "string" ? spec.condition : ""
+    const label = condition.length > 48 ? `${condition.slice(0, 48)}...` : condition
+    return label
+      ? t("workspace.loop.triggerUntil", "直到 {{condition}}", { condition: label })
+      : t("workspace.loop.triggerUntilPlain", "直到条件满足")
   }
   if (kind === "event") {
     const eventName = typeof spec.eventName === "string" ? spec.eventName : "event"
@@ -12657,10 +12766,88 @@ function loopTriggerSummary(kind: LoopTriggerKind, spec: Record<string, unknown>
           : typeof filters.taskStatus === "string"
             ? filters.taskStatus
             : null
-    return state ? `${eventName} · ${state}` : eventName
+    const eventLabel =
+      eventName === "workflow:updated"
+        ? t("workspace.loop.eventWorkflow", "工作流状态")
+        : eventName === "goal:updated"
+          ? t("workspace.loop.eventGoal", "目标状态")
+          : eventName === "task_updated"
+            ? t("workspace.loop.eventTask", "任务状态")
+            : eventName
+    return state ? `${eventLabel} · ${state}` : eventLabel
   }
-  if (kind === "cron") return "cron"
-  return "event"
+  if (kind === "cron") return t("workspace.loop.triggerCron", "Cron")
+  return t("workspace.loop.triggerEvent", "事件触发")
+}
+
+function loopExecutionStrategyLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  strategy: LoopExecutionStrategy,
+): string {
+  return strategy === "workflow"
+    ? t("workspace.loop.strategyWorkflowShort", "工作流")
+    : t("workspace.loop.strategyContinueShort", "会话")
+}
+
+function loopScheduleStory(
+  t: ReturnType<typeof useTranslation>["t"],
+  loop: LoopSchedule,
+  nextRunLabel: string | null,
+  latestWorkflowRun?: WorkflowRun | null,
+): string {
+  if (loop.state === "blocked") {
+    return loop.blockedReason
+      ? t("workspace.loop.storyBlockedReason", "已阻塞：{{reason}}", {
+          reason: loop.blockedReason,
+        })
+      : t("workspace.loop.storyBlocked", "已阻塞，需要处理后再恢复。")
+  }
+  if (loop.state === "paused") {
+    return t("workspace.loop.storyPaused", "已暂停，恢复后会继续按策略触发。")
+  }
+  if (loop.state === "completed") {
+    return t("workspace.loop.storyCompleted", "已完成，历史记录仍可复盘。")
+  }
+  if (loop.state === "cancelled") {
+    return t("workspace.loop.storyCancelled", "已停止，不会再触发。")
+  }
+  const progressLabel = loopProgressLabel(t, loop.progressState)
+  if (loop.executionStrategy === "workflow" && latestWorkflowRun) {
+    return t(
+      "workspace.loop.storyWorkflow",
+      "已运行 {{count}} 次，最近一次创建了工作流 {{state}}。",
+      {
+        count: loop.runCount,
+        state: workflowRunStateLabel(t, latestWorkflowRun.state),
+      },
+    )
+  }
+  if (nextRunLabel) {
+    return progressLabel
+      ? t("workspace.loop.storyNextWithProgress", "{{next}}，已运行 {{count}} 次，最近{{progress}}。", {
+          next: nextRunLabel,
+          count: loop.runCount,
+          progress: progressLabel,
+        })
+      : t("workspace.loop.storyNext", "{{next}}，已运行 {{count}} 次。", {
+          next: nextRunLabel,
+          count: loop.runCount,
+        })
+  }
+  return t("workspace.loop.storyActive", "正在等待下一次触发，已运行 {{count}} 次。", {
+    count: loop.runCount,
+  })
+}
+
+function loopGuardStory(t: ReturnType<typeof useTranslation>["t"], loop: LoopSchedule): string {
+  const noProgress = `${loop.noProgressStreak}/${loop.maxNoProgressRuns ?? "∞"}`
+  const failures = `${loop.failureStreak}/${loop.maxFailures ?? "∞"}`
+  const backoff = loop.backoffSecs ? formatLoopDuration(loop.backoffSecs) : "off"
+  return t(
+    "workspace.loop.guardStory",
+    "连续无进展 {{noProgress}}，失败 {{failures}}，降频 {{backoff}}",
+    { noProgress, failures, backoff },
+  )
 }
 
 function formatLoopDuration(secs: number): string {
@@ -12725,17 +12912,6 @@ function loopNextRunLabel(
   return t("workspace.loop.nextRun", "下次 {{time}}", {
     time: formatMessageTime(loop.nextRunAt),
   })
-}
-
-function loopGuardSummary(t: ReturnType<typeof useTranslation>["t"], loop: LoopSchedule): string {
-  const noProgress = `${loop.noProgressStreak}/${loop.maxNoProgressRuns ?? "∞"}`
-  const failures = `${loop.failureStreak}/${loop.maxFailures ?? "∞"}`
-  const backoff = loop.backoffSecs ? formatLoopDuration(loop.backoffSecs) : "off"
-  return t(
-    "workspace.loop.guardSummary",
-    "无进展 {{noProgress}} · 失败 {{failures}} · backoff {{backoff}}",
-    { noProgress, failures, backoff },
-  )
 }
 
 function loopSchedulingDecisionLabel(
@@ -12815,7 +12991,7 @@ function LoopRunHistory({
     return (
       <div className="mt-2 flex items-center gap-2 rounded-md bg-secondary/20 px-2 py-2 text-[11px] text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        {t("workspace.loop.historyLoading", "加载 Loop 运行记录")}
+        {t("workspace.loop.historyLoading", "加载持续推进记录")}
       </div>
     )
   }
@@ -12931,6 +13107,15 @@ function LoopRunHistory({
   )
 }
 
+type LoopDraftKind = "interval" | "condition" | "event"
+type LoopTemplateKey = "ci" | "report" | "task" | "summary" | "external"
+
+interface LoopTemplateOption {
+  key: LoopTemplateKey
+  label: string
+  icon: LucideIcon
+}
+
 function LoopSchedulesSection({
   sessionId,
   incognito,
@@ -12963,7 +13148,7 @@ function LoopSchedulesSection({
   const [actionId, setActionId] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createSaving, setCreateSaving] = useState(false)
-  const [draftKind, setDraftKind] = useState<"interval" | "condition" | "event">("interval")
+  const [draftKind, setDraftKind] = useState<LoopDraftKind>("interval")
   const [draftExecutionStrategy, setDraftExecutionStrategy] =
     useState<LoopExecutionStrategy>("continue")
   const [draftInterval, setDraftInterval] = useState("10m")
@@ -12979,6 +13164,7 @@ function LoopSchedulesSection({
   const [draftMaxNoProgress, setDraftMaxNoProgress] = useState("3")
   const [draftMaxFailures, setDraftMaxFailures] = useState("3")
   const [draftBackoff, setDraftBackoff] = useState("5m")
+  const [draftAdvancedOpen, setDraftAdvancedOpen] = useState(false)
   const [showAllLoops, setShowAllLoops] = useState(false)
   const [policyLoopId, setPolicyLoopId] = useState<string | null>(null)
   const [policyMaxRuns, setPolicyMaxRuns] = useState("")
@@ -12999,6 +13185,36 @@ function LoopSchedulesSection({
   const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
   const canUseWorkflowLoop =
     draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
+  const loopTemplates = useMemo<LoopTemplateOption[]>(
+    () => [
+      {
+        key: "ci",
+        label: t("workspace.loop.templateCi", "检查 CI"),
+        icon: GitBranch,
+      },
+      {
+        key: "report",
+        label: t("workspace.loop.templateReport", "刷新报告"),
+        icon: BookText,
+      },
+      {
+        key: "task",
+        label: t("workspace.loop.templateTask", "任务后续"),
+        icon: ClipboardCheck,
+      },
+      {
+        key: "summary",
+        label: t("workspace.loop.templateSummary", "进展总结"),
+        icon: CalendarClock,
+      },
+      {
+        key: "external",
+        label: t("workspace.loop.templateExternal", "外部状态"),
+        icon: Globe,
+      },
+    ],
+    [t],
+  )
   const workflowRunsByLoop = useMemo(() => {
     const byLoop = new Map<string, WorkflowRun[]>()
     for (const run of workflowRuns) {
@@ -13061,11 +13277,90 @@ function LoopSchedulesSection({
     lastCreateRequestRef.current = nextRequest
     if (!sessionId || incognito) return
     setCreateOpen(true)
+    setDraftAdvancedOpen(false)
     setDraftKind("interval")
     if (activeGoal?.workflowTemplateId) {
       setDraftExecutionStrategy("workflow")
     }
   }, [activeGoal?.workflowTemplateId, createRequest, incognito, sessionId])
+
+  const applyLoopTemplate = useCallback(
+    (template: LoopTemplateKey) => {
+      setCreateOpen(true)
+      setDraftAdvancedOpen(false)
+      setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
+      setDraftMaxRuns("")
+      setDraftMaxRuntime("")
+      setDraftTokens("")
+      setDraftMaxNoProgress("3")
+      setDraftMaxFailures("3")
+      setDraftBackoff("5m")
+      switch (template) {
+        case "ci":
+          setDraftKind("interval")
+          setDraftInterval("10m")
+          setDraftCondition("")
+          setDraftExecutionStrategy("continue")
+          setDraftPrompt(
+            t(
+              "workspace.loop.templateCiPrompt",
+              "检查 CI 状态；如果仍失败，定位下一个失败项并继续修复。通过后总结结果。",
+            ),
+          )
+          break
+        case "report":
+          setDraftKind("interval")
+          setDraftInterval("30m")
+          setDraftCondition("")
+          setDraftExecutionStrategy(activeGoal?.workflowTemplateId ? "workflow" : "continue")
+          setDraftPrompt(
+            t(
+              "workspace.loop.templateReportPrompt",
+              "刷新研究或报告：补充来源、更新草稿、记录复核证据，并说明下一步。",
+            ),
+          )
+          break
+        case "task":
+          setDraftKind("event")
+          setDraftEventName("task_updated")
+          setDraftEventState("completed")
+          setDraftEventDebounce("30s")
+          setDraftExecutionStrategy("continue")
+          setDraftPrompt(
+            t(
+              "workspace.loop.templateTaskPrompt",
+              "相关任务完成后，读取最新状态并推进下一步；如果仍缺信息，创建清晰待办。",
+            ),
+          )
+          break
+        case "summary":
+          setDraftKind("interval")
+          setDraftInterval("1d")
+          setDraftCondition("")
+          setDraftExecutionStrategy("continue")
+          setDraftPrompt(
+            t(
+              "workspace.loop.templateSummaryPrompt",
+              "总结当前目标进展、阻塞、已完成证据和下一步。",
+            ),
+          )
+          break
+        case "external":
+          setDraftKind("interval")
+          setDraftInterval("15m")
+          setDraftCondition("")
+          setDraftExecutionStrategy("continue")
+          setDraftPrompt(
+            t(
+              "workspace.loop.templateExternalPrompt",
+              "检查外部状态变化；只记录可验证结果，如需外部写操作必须等待明确审批。",
+            ),
+          )
+          break
+      }
+    },
+    [activeGoal?.workflowTemplateId, t],
+  )
 
   const loadLoopDetail = useCallback((loopId: string) => {
     const req = ++detailReqRef.current
@@ -13137,7 +13432,7 @@ function LoopSchedulesSection({
       setActionId(`${loop.id}:run-now`)
       try {
         await getTransport().call("run_loop_schedule_now", { loopId: loop.id })
-        toast.success(t("workspace.loop.runNowStarted", "Loop 已开始立即运行"))
+        toast.success(t("workspace.loop.runNowStarted", "持续推进已开始立即运行"))
         refresh()
         if (detailLoopId === loop.id) {
           loadLoopDetail(loop.id)
@@ -13336,7 +13631,7 @@ function LoopSchedulesSection({
         maxFailures,
         backoffSecs,
       })
-      toast.success(t("workspace.loop.created", "Loop 已创建"))
+      toast.success(t("workspace.loop.created", "持续推进已创建"))
       setDraftPrompt("")
       setDraftCondition("")
       setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
@@ -13376,14 +13671,14 @@ function LoopSchedulesSection({
 
   return (
     <WorkspaceSection
-      title={t("workspace.loop.title", "Loop")}
+      title={t("workspace.loop.title", "持续推进")}
       count={schedules.length}
       icon={Radio}
       expandSignal={(createRequest ?? 0) + (inspectRequest?.nonce ?? 0)}
       meta={
         activeCount > 0 ? (
           <StatusPill
-            label={t("workspace.loop.activeCount", "{{count}} active", { count: activeCount })}
+            label={t("workspace.loop.activeCount", "{{count}} 进行中", { count: activeCount })}
             tone="info"
           />
         ) : undefined
@@ -13394,8 +13689,8 @@ function LoopSchedulesSection({
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 text-[11px] text-muted-foreground">
             {activeGoal
-              ? t("workspace.loop.boundGoal", "绑定当前 Goal")
-              : t("workspace.loop.promptMode", "按 prompt 重复触发")}
+              ? t("workspace.loop.boundGoal", "绑定当前目标")
+              : t("workspace.loop.promptMode", "按提示词持续推进")}
           </div>
           <Button
             type="button"
@@ -13406,11 +13701,31 @@ function LoopSchedulesSection({
             onClick={() => setCreateOpen((v) => !v)}
           >
             <Plus className="h-3.5 w-3.5" />
-            {createOpen ? t("workspace.loop.closeCreate", "收起") : t("workspace.loop.new", "新建")}
+            {createOpen
+              ? t("workspace.loop.closeCreate", "收起")
+              : t("workspace.loop.new", "新建持续推进")}
           </Button>
         </div>
         {createOpen ? (
           <div className="space-y-2 rounded-md border border-border/70 bg-background/70 p-2">
+            <div className="grid grid-cols-2 gap-1 sm:grid-cols-5">
+              {loopTemplates.map((template) => {
+                const TemplateIcon = template.icon
+                return (
+                  <Button
+                    key={template.key}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 min-w-0 justify-start gap-1.5 px-2 text-[11px]"
+                    onClick={() => applyLoopTemplate(template.key)}
+                  >
+                    <TemplateIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{template.label}</span>
+                  </Button>
+                )
+              })}
+            </div>
             <div className="grid grid-cols-3 gap-1 rounded-md bg-secondary/40 p-1">
               {(["interval", "condition", "event"] as const).map((kind) => (
                 <Button
@@ -13422,77 +13737,15 @@ function LoopSchedulesSection({
                   onClick={() => setDraftKind(kind)}
                 >
                   {kind === "interval"
-                    ? t("workspace.loop.kindInterval", "Every")
+                    ? t("workspace.loop.kindInterval", "定期推进")
                     : kind === "condition"
-                      ? t("workspace.loop.kindCondition", "Until")
-                      : t("workspace.loop.kindEvent", "Event")}
+                      ? t("workspace.loop.kindCondition", "直到条件满足")
+                      : t("workspace.loop.kindEvent", "事件后继续")}
                 </Button>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-1 rounded-md bg-secondary/40 p-1">
-              {(["continue", "workflow"] as const).map((strategy) => {
-                const disabled = strategy === "workflow" && !canUseWorkflowLoop
-                return (
-                  <Button
-                    key={strategy}
-                    type="button"
-                    variant={draftExecutionStrategy === strategy ? "secondary" : "ghost"}
-                    size="sm"
-                    className="h-7 text-[11px]"
-                    disabled={disabled}
-                    onClick={() => setDraftExecutionStrategy(strategy)}
-                  >
-                    {strategy === "workflow"
-                      ? t("workspace.loop.strategyWorkflow", "创建工作流")
-                      : t("workspace.loop.strategyContinue", "继续会话")}
-                  </Button>
-                )
-              })}
-            </div>
-            {draftExecutionStrategy === "workflow" && activeGoal?.workflowTemplateId ? (
-              <div className="rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-[11px] text-muted-foreground">
-                {t(
-                  "workspace.loop.strategyWorkflowHint",
-                  "每次触发都会按当前 Goal 的领域模板创建可观察 Workflow run。",
-                )}{" "}
-                <span className="font-medium text-foreground/80">
-                  {activeGoal.workflowTemplateVersion
-                    ? `${activeGoal.workflowTemplateId}@${activeGoal.workflowTemplateVersion}`
-                    : activeGoal.workflowTemplateId}
-                </span>
-              </div>
-            ) : !canUseWorkflowLoop ? (
-              <div className="rounded-md bg-secondary/25 px-2 py-1.5 text-[11px] text-muted-foreground">
-                {t(
-                  "workspace.loop.strategyWorkflowDisabled",
-                  "选择带任务领域模板的 active Goal 后，可让 Loop 直接创建 Workflow run。",
-                )}
-              </div>
-            ) : null}
-            {activeGoal && activeGoalCriteria.length > 0 ? (
-              <div className="space-y-1">
-                <div className="text-[10px] font-medium text-muted-foreground">
-                  {t("workspace.goal.boundCriterion", "推进标准")}
-                </div>
-                <Select value={draftGoalCriterionId} onValueChange={setDraftGoalCriterionId}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={GOAL_CRITERION_NONE_VALUE}>
-                      {t("workspace.goal.wholeGoal", "整个目标")}
-                    </SelectItem>
-                    {activeGoalCriteria.map((criterion) => (
-                      <SelectItem key={criterion.id} value={criterion.id}>
-                        {goalCriterionOptionLabel(criterion)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            <div className="grid grid-cols-2 gap-2">
-              {draftKind === "event" ? (
+            {draftKind === "event" ? (
+              <div className="grid grid-cols-3 gap-2">
                 <Select
                   value={draftEventName}
                   onValueChange={(value) => setDraftEventName(value as LoopEventName)}
@@ -13502,44 +13755,16 @@ function LoopSchedulesSection({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="workflow:updated">
-                      {t("workspace.loop.eventWorkflow", "Workflow 状态")}
+                      {t("workspace.loop.eventWorkflow", "工作流状态")}
                     </SelectItem>
                     <SelectItem value="goal:updated">
-                      {t("workspace.loop.eventGoal", "Goal 状态")}
+                      {t("workspace.loop.eventGoal", "目标状态")}
                     </SelectItem>
                     <SelectItem value="task_updated">
-                      {t("workspace.loop.eventTask", "Task 状态")}
+                      {t("workspace.loop.eventTask", "任务状态")}
                     </SelectItem>
                   </SelectContent>
                 </Select>
-              ) : (
-                <Input
-                  value={draftInterval}
-                  onChange={(e) => setDraftInterval(e.target.value)}
-                  placeholder="10m"
-                  className="h-8 text-xs"
-                  aria-label={t("workspace.loop.interval", "间隔")}
-                />
-              )}
-              <Input
-                value={draftMaxRuns}
-                onChange={(e) => setDraftMaxRuns(e.target.value)}
-                placeholder={t("workspace.loop.maxRunsPlaceholder", "max runs")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.maxRunsLabel", "最大次数")}
-              />
-            </div>
-            {draftKind === "condition" ? (
-              <Input
-                value={draftCondition}
-                onChange={(e) => setDraftCondition(e.target.value)}
-                placeholder={t("workspace.loop.conditionPlaceholder", "CI is green")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.condition", "停止条件")}
-              />
-            ) : null}
-            {draftKind === "event" ? (
-              <div className="grid grid-cols-2 gap-2">
                 <Select value={draftEventState} onValueChange={setDraftEventState}>
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue />
@@ -13560,6 +13785,23 @@ function LoopSchedulesSection({
                   aria-label={t("workspace.loop.eventDebounce", "事件去重窗口")}
                 />
               </div>
+            ) : (
+              <Input
+                value={draftInterval}
+                onChange={(e) => setDraftInterval(e.target.value)}
+                placeholder="10m"
+                className="h-8 text-xs"
+                aria-label={t("workspace.loop.interval", "触发间隔")}
+              />
+            )}
+            {draftKind === "condition" ? (
+              <Input
+                value={draftCondition}
+                onChange={(e) => setDraftCondition(e.target.value)}
+                placeholder={t("workspace.loop.conditionPlaceholder", "CI is green")}
+                className="h-8 text-xs"
+                aria-label={t("workspace.loop.condition", "停止条件")}
+              />
             ) : null}
             <Textarea
               value={draftPrompt}
@@ -13571,54 +13813,113 @@ function LoopSchedulesSection({
                       "每次触发要做什么；留空则只检查条件并推进下一步",
                     )
                   : activeGoal
-                    ? t("workspace.loop.promptGoalPlaceholder", "留空则继续当前 active goal")
-                    : t(
-                        "workspace.loop.promptPlaceholder",
-                        "check CI and continue fixing if failing",
-                      )
+                    ? t("workspace.loop.promptGoalPlaceholder", "留空则继续当前目标")
+                    : t("workspace.loop.promptPlaceholder", "检查状态并推进下一步")
               }
               className="min-h-[64px] resize-none text-xs"
-              aria-label={t("workspace.loop.prompt", "Prompt")}
+              aria-label={t("workspace.loop.prompt", "每次推进内容")}
             />
-            <div className="grid grid-cols-2 gap-2">
-              <Input
-                value={draftMaxRuntime}
-                onChange={(e) => setDraftMaxRuntime(e.target.value)}
-                placeholder={t("workspace.loop.maxRuntimePlaceholder", "max runtime")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.maxRuntimeLabel", "最长运行时间")}
-              />
-              <Input
-                value={draftTokens}
-                onChange={(e) => setDraftTokens(e.target.value)}
-                placeholder={t("workspace.loop.tokensPlaceholder", "tokens")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.tokensLabel", "Token 预算")}
-              />
+            <div className="grid grid-cols-2 gap-1 rounded-md bg-secondary/40 p-1">
+              {(["continue", "workflow"] as const).map((strategy) => {
+                const disabled = strategy === "workflow" && !canUseWorkflowLoop
+                return (
+                  <Button
+                    key={strategy}
+                    type="button"
+                    variant={draftExecutionStrategy === strategy ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 text-[11px]"
+                    disabled={disabled}
+                    onClick={() => setDraftExecutionStrategy(strategy)}
+                  >
+                    {strategy === "workflow"
+                      ? t("workspace.loop.strategyWorkflow", "按工作流执行")
+                      : t("workspace.loop.strategyContinue", "继续当前对话")}
+                  </Button>
+                )
+              })}
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <Input
-                value={draftMaxNoProgress}
-                onChange={(e) => setDraftMaxNoProgress(e.target.value)}
-                placeholder={t("workspace.loop.maxNoProgressPlaceholder", "no progress")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.maxNoProgressLabel", "无进展上限")}
-              />
-              <Input
-                value={draftMaxFailures}
-                onChange={(e) => setDraftMaxFailures(e.target.value)}
-                placeholder={t("workspace.loop.maxFailuresPlaceholder", "failures")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.maxFailuresLabel", "失败上限")}
-              />
-              <Input
-                value={draftBackoff}
-                onChange={(e) => setDraftBackoff(e.target.value)}
-                placeholder={t("workspace.loop.backoffPlaceholder", "backoff")}
-                className="h-8 text-xs"
-                aria-label={t("workspace.loop.backoffLabel", "降频间隔")}
-              />
-            </div>
+            {activeGoal && activeGoalCriteria.length > 0 ? (
+              <Select value={draftGoalCriterionId} onValueChange={setDraftGoalCriterionId}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={GOAL_CRITERION_NONE_VALUE}>
+                    {t("workspace.goal.wholeGoal", "整个目标")}
+                  </SelectItem>
+                  {activeGoalCriteria.map((criterion) => (
+                    <SelectItem key={criterion.id} value={criterion.id}>
+                      {goalCriterionOptionLabel(criterion)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 w-full justify-between px-2 text-[11px] text-muted-foreground"
+              onClick={() => setDraftAdvancedOpen((value) => !value)}
+            >
+              <span>{t("workspace.loop.advancedProtection", "高级保护")}</span>
+              {draftAdvancedOpen ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <AnimatedCollapse open={draftAdvancedOpen}>
+              <div className="space-y-2 rounded-md bg-secondary/15 p-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <Input
+                    value={draftMaxRuns}
+                    onChange={(e) => setDraftMaxRuns(e.target.value)}
+                    placeholder={t("workspace.loop.maxRunsPlaceholder", "max runs")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.maxRunsLabel", "最大次数")}
+                  />
+                  <Input
+                    value={draftMaxRuntime}
+                    onChange={(e) => setDraftMaxRuntime(e.target.value)}
+                    placeholder={t("workspace.loop.maxRuntimePlaceholder", "max runtime")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.maxRuntimeLabel", "最长运行时间")}
+                  />
+                  <Input
+                    value={draftTokens}
+                    onChange={(e) => setDraftTokens(e.target.value)}
+                    placeholder={t("workspace.loop.tokensPlaceholder", "tokens")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.tokensLabel", "Token 预算")}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <Input
+                    value={draftMaxNoProgress}
+                    onChange={(e) => setDraftMaxNoProgress(e.target.value)}
+                    placeholder={t("workspace.loop.maxNoProgressPlaceholder", "no progress")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.maxNoProgressLabel", "无进展上限")}
+                  />
+                  <Input
+                    value={draftMaxFailures}
+                    onChange={(e) => setDraftMaxFailures(e.target.value)}
+                    placeholder={t("workspace.loop.maxFailuresPlaceholder", "failures")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.maxFailuresLabel", "失败上限")}
+                  />
+                  <Input
+                    value={draftBackoff}
+                    onChange={(e) => setDraftBackoff(e.target.value)}
+                    placeholder={t("workspace.loop.backoffPlaceholder", "backoff")}
+                    className="h-8 text-xs"
+                    aria-label={t("workspace.loop.backoffLabel", "降频间隔")}
+                  />
+                </div>
+              </div>
+            </AnimatedCollapse>
             <div className="flex justify-end">
               <Button
                 type="button"
@@ -13632,7 +13933,7 @@ function LoopSchedulesSection({
                 ) : (
                   <Radio className="h-3.5 w-3.5" />
                 )}
-                {t("workspace.loop.create", "创建 Loop")}
+                {t("workspace.loop.create", "创建持续推进")}
               </Button>
             </div>
           </div>
@@ -13647,8 +13948,8 @@ function LoopSchedulesSection({
       ) : schedules.length === 0 ? (
         <EmptyHint>
           {incognito
-            ? t("workspace.loop.incognitoEmpty", "无痕会话不保存 loop")
-            : t("workspace.loop.empty", "暂无 loop")}
+            ? t("workspace.loop.incognitoEmpty", "无痕会话不保存持续推进")
+            : t("workspace.loop.empty", "暂无持续推进")}
         </EmptyHint>
       ) : (
         <div className="space-y-2">
@@ -13660,6 +13961,7 @@ function LoopSchedulesSection({
             const policyOpen = policyLoopId === loop.id
             const progressLabel = loopProgressLabel(t, loop.progressState)
             const nextRunLabel = loopNextRunLabel(t, loop)
+            const story = loopScheduleStory(t, loop, nextRunLabel, latestWorkflowRun)
             const showGroup =
               index === 0 || visibleSchedules[index - 1]?.state !== loop.state
             return (
@@ -13685,7 +13987,7 @@ function LoopSchedulesSection({
                       ) : null}
                       {loop.executionStrategy === "workflow" ? (
                         <StatusPill
-                          label={t("workspace.loop.strategyWorkflowShort", "Workflow")}
+                          label={loopExecutionStrategyLabel(t, loop.executionStrategy)}
                           tone="info"
                         />
                       ) : null}
@@ -13696,15 +13998,13 @@ function LoopSchedulesSection({
                         />
                       ) : null}
                       <span className="truncate text-xs font-medium text-foreground">
-                        {loopTriggerSummary(loop.triggerKind, loop.triggerSpec)}
+                        {loopTriggerSummary(t, loop.triggerKind, loop.triggerSpec)}
                       </span>
                     </div>
+                    <p className="mt-1 line-clamp-2 text-xs text-foreground/80">{story}</p>
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{loop.prompt}</p>
                     <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
-                      <span>
-                        {t("workspace.loop.runs", "运行")} {loop.runCount}/{loop.maxRuns ?? "∞"}
-                      </span>
-                      {nextRunLabel ? <span>{nextRunLabel}</span> : null}
+                      <span>{loopGuardStory(t, loop)}</span>
                       {loop.maxRuntimeSecs ? (
                         <span>
                           {t("workspace.loop.maxRuntime", "最长")}{" "}
@@ -13716,7 +14016,6 @@ function LoopSchedulesSection({
                           {t("workspace.loop.tokenBudget", "Token")} {loop.tokenBudget}
                         </span>
                       ) : null}
-                      <span>{loopGuardSummary(t, loop)}</span>
                       <span>{formatMessageTime(loop.updatedAt)}</span>
                     </div>
                     {loop.progressSummary ? (
@@ -13965,7 +14264,7 @@ function LoopSchedulesSection({
               onClick={() => setShowAllLoops(true)}
             >
               <ChevronDown className="h-3.5 w-3.5" />
-              {t("workspace.loop.viewMore", "查看更多 Loop（{{count}}）", {
+              {t("workspace.loop.viewMore", "查看更多持续推进（{{count}}）", {
                 count: hiddenLoopCount,
               })}
             </Button>
@@ -13978,7 +14277,7 @@ function LoopSchedulesSection({
               onClick={() => setShowAllLoops(false)}
             >
               <ChevronUp className="h-3.5 w-3.5" />
-              {t("workspace.loop.viewLess", "收起 Loop")}
+              {t("workspace.loop.viewLess", "收起持续推进")}
             </Button>
           ) : null}
         </div>
@@ -20060,6 +20359,7 @@ export default function WorkspacePanel({
   onBackgroundJobExpandedChange,
   onOpenBackgroundJobs,
   onViewSubagentSession,
+  openLoopCreateRequest = 0,
   onEnsureSession,
   onClose,
 }: WorkspacePanelProps) {
@@ -20082,6 +20382,8 @@ export default function WorkspacePanel({
     loopId: string
     nonce: number
   } | null>(null)
+  const loopSectionRef = useRef<HTMLDivElement | null>(null)
+  const lastExternalLoopCreateRequestRef = useRef(0)
   const reviewRunsState = useReviewRuns(sessionId, { incognito, turnActive })
   const verificationRunsState = useVerificationRuns(sessionId, { incognito, turnActive })
   const domainQualityRunsState = useDomainQualityRuns(sessionId, { incognito, turnActive })
@@ -20093,6 +20395,18 @@ export default function WorkspacePanel({
   } | null>(null)
   const workflowSectionRef = useRef<HTMLDivElement | null>(null)
   const [workflowFocusTarget, setWorkflowFocusTarget] = useState<WorkflowFocusTarget | null>(null)
+  const openLoopCreate = useCallback(() => {
+    setLoopCreateRequest((value) => value + 1)
+    window.setTimeout(() => {
+      loopSectionRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })
+    }, 0)
+  }, [])
+  useEffect(() => {
+    if (openLoopCreateRequest === lastExternalLoopCreateRequestRef.current) return
+    lastExternalLoopCreateRequestRef.current = openLoopCreateRequest
+    if (openLoopCreateRequest <= 0) return
+    openLoopCreate()
+  }, [openLoopCreate, openLoopCreateRequest])
   const focusDomainWorkbench = useCallback(
     (target: "export" | "connector" | "connector-e2e" | "operational" | "soak") => {
       setDomainWorkbenchFocusRequest((current) => ({
@@ -20257,7 +20571,7 @@ export default function WorkspacePanel({
             workingDir={effectiveWorkingDir}
             onEnsureSession={onEnsureSession}
             onViewSubagentSession={onViewSubagentSession}
-            onOpenLoopCreate={() => setLoopCreateRequest((value) => value + 1)}
+            onOpenLoopCreate={openLoopCreate}
             onOpenLoopProblem={(loopId) =>
               setLoopInspectRequest((current) => ({
                 loopId,
@@ -20273,18 +20587,20 @@ export default function WorkspacePanel({
           />
         </div>
 
-        {/* Loop — Phase 2.9 真正的定时/重复/条件触发控制面。 */}
-        <LoopSchedulesSection
-          sessionId={sessionId}
-          incognito={incognito}
-          turnActive={turnActive}
-          workflowRuns={sharedWorkflowRunsState.runs}
-          onSelectWorkflowRun={focusWorkflowRun}
-          loopSchedulesState={loopSchedulesState}
-          goalState={goalState}
-          createRequest={loopCreateRequest}
-          inspectRequest={loopInspectRequest}
-        />
+        {/* 持续推进 — 定时 / 条件 / 事件触发的长期任务控制面。 */}
+        <div ref={loopSectionRef}>
+          <LoopSchedulesSection
+            sessionId={sessionId}
+            incognito={incognito}
+            turnActive={turnActive}
+            workflowRuns={sharedWorkflowRunsState.runs}
+            onSelectWorkflowRun={focusWorkflowRun}
+            loopSchedulesState={loopSchedulesState}
+            goalState={goalState}
+            createRequest={loopCreateRequest}
+            inspectRequest={loopInspectRequest}
+          />
+        </div>
 
         {/* 后台任务 — R4 复用独立面板的任务行能力,工作台内保留紧凑展示。 */}
         <BackgroundJobsSection

@@ -30,6 +30,7 @@ import {
   PauseCircle,
   PlayCircle,
   CheckCircle2,
+  Radio,
 } from "lucide-react"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import type {
@@ -227,6 +228,8 @@ interface ChatInputProps {
   executionState?: ChatTurnStatus | null
   /** 打开右侧工作台面板（状态条点击）。 */
   onOpenWorkspace?: () => void
+  /** 打开工作台并展开「持续推进」创建器。 */
+  onOpenLoopCreate?: () => void
   /** True when the right-side workspace panel is expanded and showing task detail. */
   workspacePanelVisible?: boolean
   /** Larger centered presentation for a brand-new empty conversation. */
@@ -405,6 +408,7 @@ export default function ChatInput({
   taskProgressSnapshot,
   executionState,
   onOpenWorkspace,
+  onOpenLoopCreate,
   workspacePanelVisible = false,
   hero = false,
   contextUsage,
@@ -1401,6 +1405,22 @@ export default function ChatInput({
           >
             <Target className="h-4 w-4 shrink-0" />
             <span className="truncate">{goalToggleLabel}</span>
+          </button>
+          <button
+            type="button"
+            className={overflowMenuItemClass}
+            disabled={incognitoEnabled}
+            onClick={() => {
+              setShowOverflowMenu(false)
+              if (onOpenLoopCreate) {
+                onOpenLoopCreate()
+              } else {
+                onOpenWorkspace?.()
+              }
+            }}
+          >
+            <Radio className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{t("chat.loopMode.label", "持续推进")}</span>
           </button>
           <div className="rounded-md border border-border/50 bg-background/35 p-1">
             <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium text-muted-foreground">

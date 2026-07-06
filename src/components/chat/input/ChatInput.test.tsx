@@ -565,8 +565,9 @@ describe("ChatInput", () => {
       const workflowButton = await screen.findByRole("button", {
         name: "工作流模式",
       })
+      fireEvent.pointerDown(workflowButton, { button: 0, ctrlKey: false, pointerType: "mouse" })
       fireEvent.click(workflowButton)
-      fireEvent.click(await screen.findByRole("button", { name: /自动/ }))
+      fireEvent.click((await screen.findByText("自动")).closest("button")!)
 
       await waitFor(() => {
         expect(onEnsureSession).toHaveBeenCalledTimes(1)
@@ -575,7 +576,7 @@ describe("ChatInput", () => {
           mode: "on",
         })
       })
-      expect(await screen.findByText("chat.workflowMode.on")).toBeTruthy()
+      expect(await screen.findByText("chat.workflowMode.activeOnDetail")).toBeTruthy()
     } finally {
       rectSpy.mockRestore()
     }

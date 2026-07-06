@@ -230,7 +230,13 @@ async function clickTextButton(text: string) {
 async function clickSectionHeader(title: string) {
   const buttons = await screen.findAllByRole("button", { name: new RegExp(title) })
   const header = buttons.find((button) => button.hasAttribute("aria-expanded"))
+  if (header?.getAttribute("aria-expanded") === "true") return
   fireEvent.click(header ?? buttons[0])
+}
+
+function clickLastNamedButton(name: string) {
+  const buttons = screen.getAllByRole("button", { name })
+  fireEvent.click(buttons[buttons.length - 1])
 }
 
 async function flushContextRetrievalDebounce() {
@@ -918,6 +924,80 @@ function domainSoakReport(patch: Partial<DomainSoakReport> = {}): DomainSoakRepo
     markdown: "Workflow failed",
     operationalGate,
     ...patch,
+  }
+}
+
+function emptyDomainOperationalGateReport(): DomainOperationalGateReport {
+  const base = domainOperationalGateReport()
+  return {
+    ...base,
+    status: "failed",
+    domain: "",
+    summary: {
+      ...base.summary,
+      workflowRuns: 0,
+      completedWorkflowRuns: 0,
+      failedWorkflowRuns: 0,
+      activeWorkflowRuns: 0,
+      loopSchedules: 0,
+      loopRuns: 0,
+      succeededLoopRuns: 0,
+      campaigns: 0,
+      campaignItems: 0,
+      latestActivityAt: null,
+      maxActiveWorkAgeSecs: null,
+    },
+    checks: [
+      {
+        name: "no_samples",
+        status: "failed",
+        severity: "warning",
+        expected: "at least one workflow, loop, or campaign sample",
+        actual: "0",
+        detail: "No workflow-mode samples have been recorded yet.",
+      },
+    ],
+    blockers: [],
+    recommendedNextSteps: ["Run a workflow sample."],
+  }
+}
+
+function emptyDomainSoakReport(): DomainSoakReport {
+  const base = domainSoakReport()
+  return {
+    ...base,
+    status: "failed",
+    domain: "",
+    summary: {
+      ...base.summary,
+      workflowRuns: 0,
+      completedWorkflowRuns: 0,
+      failedWorkflowRuns: 0,
+      workflowBudgetUsageEvents: 0,
+      workflowBudgetExhaustedEvents: 0,
+      maxWorkflowOutputTokensSpent: null,
+      maxWorkflowOutputTokenBudget: null,
+      latestActivityAt: null,
+      latestActivityAgeSecs: null,
+      sampleDays: 0,
+      requiredSampleDays: 1,
+      loopRuns: 0,
+      succeededLoopRuns: 0,
+      campaignItems: 0,
+      passedCampaignItems: 0,
+      connectorE2eEvidence: 0,
+      connectorExecutionEvidence: 0,
+      connectorVerificationEvidence: 0,
+      incidents: 0,
+      criticalIncidents: 0,
+      warningIncidents: 0,
+      totalRecords: 0,
+    },
+    incidents: [],
+    timeline: [],
+    recommendedNextSteps: ["Run a workflow sample."],
+    markdown: "No samples yet",
+    operationalGate: emptyDomainOperationalGateReport(),
   }
 }
 
@@ -2226,9 +2306,9 @@ describe("WorkspacePanel workflow section", () => {
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "新建 Loop" }))
-    expect(await screen.findByRole("button", { name: "创建 Loop" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "创建工作流" })).toBeTruthy()
+    fireEvent.click(screen.getAllByRole("button", { name: "新建持续推进" })[0])
+    expect(await screen.findByRole("button", { name: "创建持续推进" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "按工作流执行" })).toBeTruthy()
   })
 
   it("opens failed workflow and blocked loop details from readiness actions", async () => {
@@ -2287,12 +2367,42 @@ describe("WorkspacePanel workflow section", () => {
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "查看 Loop" }))
+    fireEvent.click(screen.getByRole("button", { name: "查看持续推进" }))
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith("get_loop_schedule", {
         loopId: "loop-blocked",
       })
     })
+  })
+
+  it("keeps empty workflow acceptance neutral before any samples exist", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "evaluate_domain_operational_gate")
+        return Promise.resolve(emptyDomainOperationalGateReport())
+      if (name === "generate_domain_soak_report")
+        return Promise.resolve(emptyDomainSoakReport())
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickSectionHeader("通用任务工作台")
+    expect(await screen.findByText("真实样本验收")).toBeTruthy()
+    expect(screen.getByText("未采样")).toBeTruthy()
+    expect(screen.getAllByText("待采样").length).toBeGreaterThan(0)
+    expect(screen.queryByText("样本有事故")).toBeNull()
+    expect(screen.queryByText("阻塞样本")).toBeNull()
+    expect(screen.queryByText("不可验收")).toBeNull()
+    expect(screen.queryByText("需处理")).toBeNull()
   })
 
   it("opens operational and soak evidence from readiness actions", async () => {
@@ -2321,6 +2431,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
+    await clickSectionHeader("通用任务工作台")
     expect(screen.getByText("真实样本验收")).toBeTruthy()
     expect(screen.getByText("验收快照")).toBeTruthy()
     const visibleAcceptanceSnapshotId = screen.getByText(/acc-[0-9a-f]{8}/).textContent ?? ""
@@ -3427,7 +3538,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     expect(await screen.findByText("domain:research")).toBeTruthy()
-    fireEvent.click(screen.getByRole("button", { name: /Loop/ }))
+    await clickSectionHeader("持续推进")
     fireEvent.click(screen.getByRole("button", { name: "查看工作流" }))
 
     await waitFor(() => {
@@ -3451,7 +3562,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: /Loop/ }))
+    await clickSectionHeader("持续推进")
     expect(await screen.findByText("Update the report")).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "运行记录" }))
 
@@ -3465,7 +3576,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("workflow launched")).toBeTruthy()
   })
 
-  it("supports Loop Center view more run-now and policy editing", async () => {
+  it("supports the persistent progress center view more run-now and policy editing", async () => {
     const schedules = Array.from({ length: 6 }, (_, index) =>
       loopSchedule({
         id: `loop-${index + 1}`,
@@ -3491,10 +3602,10 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: /Loop/ }))
+    await clickSectionHeader("持续推进")
     expect(await screen.findByText("Loop prompt 6")).toBeTruthy()
     expect(screen.queryByText("Loop prompt 1")).toBeNull()
-    fireEvent.click(screen.getByRole("button", { name: /查看更多 Loop/ }))
+    fireEvent.click(screen.getByRole("button", { name: /查看更多持续推进/ }))
     expect(await screen.findByText("Loop prompt 1")).toBeTruthy()
 
     fireEvent.click(screen.getAllByRole("button", { name: "立即运行" })[0])
@@ -3523,7 +3634,7 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
-  it("creates event-triggered loops from the Loop Center", async () => {
+  it("creates event-triggered loops from the persistent progress center", async () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
       if (name === "list_workflow_runs") return Promise.resolve([])
@@ -3539,10 +3650,10 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: /Loop/ }))
-    fireEvent.click(screen.getByRole("button", { name: "新建" }))
-    fireEvent.click(await screen.findByRole("button", { name: "Event" }))
-    fireEvent.click(screen.getByRole("button", { name: "创建 Loop" }))
+    await clickSectionHeader("持续推进")
+    clickLastNamedButton("新建持续推进")
+    fireEvent.click(await screen.findByRole("button", { name: "事件后继续" }))
+    fireEvent.click(screen.getByRole("button", { name: "创建持续推进" }))
 
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith("create_loop_schedule", {
@@ -3554,6 +3665,72 @@ describe("WorkspacePanel workflow section", () => {
           filters: { workflowState: "completed" },
           debounceSecs: 30,
         },
+        executionStrategy: "continue",
+        goalId: "goal-auto",
+        goalCriterionId: undefined,
+        maxRuns: null,
+        maxRuntimeSecs: null,
+        tokenBudget: null,
+        maxNoProgressRuns: 3,
+        maxFailures: 3,
+        backoffSecs: 300,
+      })
+    })
+  })
+
+  it("opens persistent progress creation from the composer request", async () => {
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "get_active_goal") return Promise.resolve(null)
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(
+      {
+        workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+        git: null,
+      },
+      { openLoopCreateRequest: 1 },
+    )
+
+    expect(await screen.findByRole("button", { name: "创建持续推进" })).toBeTruthy()
+    expect(screen.getByText("按提示词持续推进")).toBeTruthy()
+  })
+
+  it("creates loop schedules from persistent progress templates", async () => {
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      if (name === "create_loop_schedule") return Promise.resolve(args ?? {})
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickSectionHeader("持续推进")
+    clickLastNamedButton("新建持续推进")
+    fireEvent.click(await screen.findByRole("button", { name: "检查 CI" }))
+    expect((screen.getByLabelText("每次推进内容") as HTMLTextAreaElement).value).toBe(
+      "检查 CI 状态；如果仍失败，定位下一个失败项并继续修复。通过后总结结果。",
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "创建持续推进" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_loop_schedule", {
+        sessionId: "s1",
+        prompt: "检查 CI 状态；如果仍失败，定位下一个失败项并继续修复。通过后总结结果。",
+        triggerKind: "interval",
+        triggerSpec: { intervalSecs: 600 },
         executionStrategy: "continue",
         goalId: "goal-auto",
         goalCriterionId: undefined,

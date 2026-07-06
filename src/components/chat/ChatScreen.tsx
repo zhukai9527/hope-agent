@@ -583,6 +583,7 @@ export default function ChatScreen({
   // Workspace 面板：聚合任务进度 / 碰到的文件 / 引用来源。首次有内容时自动
   // 展开一次，用户关闭后本会话不再自动弹（dismissedRef 跟踪，仿 browser 面板）。
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false)
+  const [workspaceLoopCreateRequest, setWorkspaceLoopCreateRequest] = useState(0)
   const workspacePanelDismissedRef = useRef(false)
   const preserveWorkspaceOnSessionSwitchRef = useRef(false)
 
@@ -2395,6 +2396,11 @@ export default function ChatScreen({
     showRightPanelByUser("workspace")
   }, [showRightPanelByUser])
 
+  const openLoopCreateFromComposer = useCallback(() => {
+    openWorkspacePanel()
+    setWorkspaceLoopCreateRequest((value) => value + 1)
+  }, [openWorkspacePanel])
+
   const openBackgroundJobsPanel = useCallback(
     (opts?: { activate?: boolean }) => {
       backgroundJobsPanelDismissedRef.current = false
@@ -3137,6 +3143,7 @@ export default function ChatScreen({
                       onEvaluateGoal={() => runGoalControlAction("evaluate_goal")}
                       taskProgressSnapshot={taskProgressSnapshot}
                       onOpenWorkspace={openWorkspacePanel}
+                      onOpenLoopCreate={openLoopCreateFromComposer}
                       workspacePanelVisible={workspacePanelVisibleInRightPanel}
                       executionState={
                         session.currentSessionId
@@ -3335,6 +3342,7 @@ export default function ChatScreen({
                 onBackgroundJobExpandedChange={handleBackgroundJobExpandedChange}
                 onOpenBackgroundJobs={openBackgroundJobsPanel}
                 onViewSubagentSession={setSubagentPreviewSessionId}
+                openLoopCreateRequest={workspaceLoopCreateRequest}
                 onEnsureSession={ensureWorkflowSession}
                 onClose={() => {
                   workspacePanelDismissedRef.current = true
