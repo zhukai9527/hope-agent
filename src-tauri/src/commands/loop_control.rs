@@ -35,6 +35,7 @@ pub async fn create_loop_schedule(
     execution_strategy: Option<String>,
     prompt: Option<String>,
     goal_id: Option<String>,
+    goal_criterion_id: Option<String>,
     max_runs: Option<i64>,
     max_runtime_secs: Option<i64>,
     token_budget: Option<i64>,
@@ -59,6 +60,7 @@ pub async fn create_loop_schedule(
             CreateLoopScheduleInput {
                 session_id,
                 goal_id,
+                goal_criterion_id,
                 prompt: prompt.unwrap_or_default(),
                 trigger_kind: kind,
                 trigger_spec,

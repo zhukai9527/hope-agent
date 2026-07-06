@@ -4,6 +4,8 @@
 //! workflow/task execution. It lives in `sessions.db` so it shares the same
 //! lifecycle as sessions, workflow runs, and tasks.
 
+use std::collections::HashSet;
+
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -93,6 +95,29 @@ impl GoalState {
     }
 }
 
+fn goal_is_sealed_terminal(
+    state: GoalState,
+    closure_decision: Option<GoalClosureDecision>,
+) -> bool {
+    matches!(state, GoalState::Failed | GoalState::Cancelled)
+        || (state == GoalState::Completed && closure_decision.is_some())
+}
+
+fn goal_accepts_new_evidence(goal: &Goal) -> bool {
+    !goal_is_sealed_terminal(goal.state, goal.closure_decision)
+}
+
+fn goal_can_owner_transition(
+    previous: GoalState,
+    next: GoalState,
+    closure_decision: Option<GoalClosureDecision>,
+) -> bool {
+    previous.can_transition_to(next)
+        || (previous == GoalState::Completed
+            && closure_decision.is_none()
+            && matches!(next, GoalState::Evaluating | GoalState::Cancelled))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Goal {
@@ -100,6 +125,7 @@ pub struct Goal {
     pub session_id: String,
     pub objective: String,
     pub completion_criteria: String,
+    pub revision: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,6 +153,14 @@ pub struct Goal {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
     pub last_evaluator_result: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closure_decision: Option<GoalClosureDecision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closure_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<String>,
+    #[serde(default)]
+    pub follow_up_items: Vec<GoalFollowUpItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,16 +204,112 @@ impl GoalCriterionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalCriterionKind {
+    Required,
+    Optional,
+    FollowUp,
+}
+
+impl Default for GoalCriterionKind {
+    fn default() -> Self {
+        Self::Required
+    }
+}
+
+impl GoalCriterionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+            Self::FollowUp => "follow_up",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "required" => Some(Self::Required),
+            "optional" => Some(Self::Optional),
+            "follow_up" | "followup" => Some(Self::FollowUp),
+            _ => None,
+        }
+    }
+
+    fn is_required(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalCriterionItem {
+    pub id: String,
+    pub text: String,
+    pub kind: GoalCriterionKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalCriterionBinding {
+    pub id: String,
+    pub text: String,
+    pub kind: GoalCriterionKind,
+    pub goal_revision: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoalCriterionAudit {
     pub id: String,
     pub text: String,
+    #[serde(default)]
+    pub kind: GoalCriterionKind,
     pub status: GoalCriterionStatus,
     #[serde(default)]
     pub evidence_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalClosureDecision {
+    AcceptedV1,
+    NeedsStrictEvidence,
+    Cancelled,
+    Superseded,
+}
+
+impl GoalClosureDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AcceptedV1 => "accepted_v1",
+            Self::NeedsStrictEvidence => "needs_strict_evidence",
+            Self::Cancelled => "cancelled",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "accepted_v1" | "accept_v1" | "accepted" => Some(Self::AcceptedV1),
+            "needs_strict_evidence" | "strict" => Some(Self::NeedsStrictEvidence),
+            "cancelled" | "canceled" | "cancel" => Some(Self::Cancelled),
+            "superseded" | "supersede" => Some(Self::Superseded),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalFollowUpItem {
+    pub id: String,
+    pub text: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +377,10 @@ pub struct GoalSnapshot {
     pub links: Vec<GoalLink>,
     pub events: Vec<GoalEvent>,
     #[serde(default)]
+    pub audit_stale: bool,
+    #[serde(default)]
+    pub criteria_items: Vec<GoalCriterionItem>,
+    #[serde(default)]
     pub criteria: Vec<GoalCriterionAudit>,
     #[serde(default)]
     pub evidence: Vec<GoalEvidenceItem>,
@@ -301,6 +435,26 @@ pub struct UpdateGoalInput {
     pub workflow_task_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseGoalInput {
+    pub goal_id: String,
+    pub decision: GoalClosureDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub follow_up_items: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendGoalFollowUpInput {
+    pub goal_id: String,
+    pub items: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
 pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS goals (
@@ -308,6 +462,7 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             session_id TEXT NOT NULL,
             objective TEXT NOT NULL,
             completion_criteria TEXT NOT NULL DEFAULT '',
+            revision INTEGER NOT NULL DEFAULT 1,
             domain TEXT,
             workflow_template_id TEXT,
             workflow_template_version TEXT,
@@ -324,6 +479,10 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             final_evidence_json TEXT NOT NULL DEFAULT '{}',
             blocked_reason TEXT,
             last_evaluator_result_json TEXT NOT NULL DEFAULT '{}',
+            closure_decision TEXT,
+            closure_reason TEXT,
+            closed_at TEXT,
+            follow_up_json TEXT NOT NULL DEFAULT '[]',
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
 
@@ -357,10 +516,18 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             WHERE state IN ('active','paused','evaluating','blocked');
         CREATE INDEX IF NOT EXISTS idx_goal_events_goal_seq
             ON goal_events(goal_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_goal_events_goal_kind_seq
+            ON goal_events(goal_id, kind, seq);
         CREATE INDEX IF NOT EXISTS idx_goal_links_goal
             ON goal_links(goal_id);
         CREATE INDEX IF NOT EXISTS idx_goal_links_target
             ON goal_links(target_type, target_id);",
+    )?;
+    ensure_goal_column(
+        conn,
+        "goals",
+        "revision",
+        "ALTER TABLE goals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;",
     )?;
     ensure_goal_column(
         conn,
@@ -385,6 +552,30 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         "goals",
         "workflow_task_type",
         "ALTER TABLE goals ADD COLUMN workflow_task_type TEXT;",
+    )?;
+    ensure_goal_column(
+        conn,
+        "goals",
+        "closure_decision",
+        "ALTER TABLE goals ADD COLUMN closure_decision TEXT;",
+    )?;
+    ensure_goal_column(
+        conn,
+        "goals",
+        "closure_reason",
+        "ALTER TABLE goals ADD COLUMN closure_reason TEXT;",
+    )?;
+    ensure_goal_column(
+        conn,
+        "goals",
+        "closed_at",
+        "ALTER TABLE goals ADD COLUMN closed_at TEXT;",
+    )?;
+    ensure_goal_column(
+        conn,
+        "goals",
+        "follow_up_json",
+        "ALTER TABLE goals ADD COLUMN follow_up_json TEXT NOT NULL DEFAULT '[]';",
     )?;
     Ok(())
 }
@@ -481,7 +672,11 @@ impl SessionDB {
         let existing: Option<String> = conn
             .query_row(
                 "SELECT id FROM goals
-                 WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                 WHERE session_id = ?1
+                   AND (
+                        state IN ('active','paused','evaluating','blocked')
+                        OR (state = 'completed' AND closure_decision IS NULL)
+                   )
                  LIMIT 1",
                 params![input.session_id],
                 |row| row.get(0),
@@ -527,6 +722,8 @@ impl SessionDB {
             json!({
                 "objective": objective,
                 "completionCriteria": criteria,
+                "revision": snapshot.goal.revision,
+                "criteriaItems": snapshot.criteria_items,
                 "domain": snapshot.goal.domain,
                 "workflowTemplateId": snapshot.goal.workflow_template_id,
                 "workflowTemplateVersion": snapshot.goal.workflow_template_version,
@@ -555,11 +752,19 @@ impl SessionDB {
         }
 
         let now = now_rfc3339();
-        let (previous_objective, previous_criteria, previous_domain, previous_state) = {
+        let (
+            previous_objective,
+            previous_criteria,
+            previous_domain,
+            previous_state,
+            previous_revision,
+        ) = {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
             let current: Option<(
                 String,
                 String,
+                i64,
+                Option<String>,
                 Option<String>,
                 Option<String>,
                 Option<String>,
@@ -567,8 +772,8 @@ impl SessionDB {
                 String,
             )> = conn
                 .query_row(
-                    "SELECT objective, completion_criteria, domain, workflow_template_id,
-                            workflow_template_version, workflow_task_type, state
+                    "SELECT objective, completion_criteria, revision, domain, workflow_template_id,
+                            workflow_template_version, workflow_task_type, closure_decision, state
                      FROM goals WHERE id = ?1",
                     params![input.goal_id],
                     |row| {
@@ -580,6 +785,8 @@ impl SessionDB {
                             row.get(4)?,
                             row.get(5)?,
                             row.get(6)?,
+                            row.get(7)?,
+                            row.get(8)?,
                         ))
                     },
                 )
@@ -587,16 +794,22 @@ impl SessionDB {
             let (
                 previous_objective,
                 previous_criteria,
+                previous_revision,
                 previous_domain,
                 previous_template_id,
                 previous_template_version,
                 previous_task_type,
+                previous_closure_decision,
                 state,
             ) = current.ok_or_else(|| anyhow!("goal {} not found", input.goal_id))?;
             let previous_state = parse_goal_state(&state)?;
-            if previous_state.is_terminal() {
+            let previous_closure_decision =
+                parse_goal_closure_decision_sql(previous_closure_decision)?;
+            if goal_is_sealed_terminal(previous_state, previous_closure_decision) {
                 return Err(anyhow!("goal {} is terminal", input.goal_id));
             }
+            let previous_pending_closure =
+                previous_state == GoalState::Completed && previous_closure_decision.is_none();
             let next_objective = objective.unwrap_or(previous_objective.trim());
             let next_criteria = completion_criteria.unwrap_or(previous_criteria.trim());
             drop(conn);
@@ -628,6 +841,7 @@ impl SessionDB {
             }
             let next_state = match previous_state {
                 GoalState::Blocked | GoalState::Evaluating => GoalState::Active,
+                GoalState::Completed if previous_pending_closure => GoalState::Active,
                 other => other,
             };
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
@@ -640,11 +854,15 @@ impl SessionDB {
                         workflow_template_version = ?5,
                         workflow_task_type = ?6,
                         state = ?7,
+                        revision = revision + 1,
                         updated_at = ?8,
                         final_summary = NULL,
                         final_evidence_json = '{}',
                         blocked_reason = NULL,
-                        last_evaluator_result_json = '{}'
+                        last_evaluator_result_json = '{}',
+                        closure_decision = NULL,
+                        closure_reason = NULL,
+                        closed_at = NULL
                  WHERE id = ?9",
                 params![
                     objective,
@@ -668,6 +886,7 @@ impl SessionDB {
                     "workflowTaskType": previous_task_type,
                 }),
                 previous_state,
+                previous_revision,
             )
         };
 
@@ -681,6 +900,7 @@ impl SessionDB {
                 "previous": {
                     "objective": previous_objective,
                     "completionCriteria": previous_criteria,
+                    "revision": previous_revision,
                     "domain": previous_domain.get("domain").cloned().unwrap_or(Value::Null),
                     "workflowTemplateId": previous_domain.get("workflowTemplateId").cloned().unwrap_or(Value::Null),
                     "workflowTemplateVersion": previous_domain.get("workflowTemplateVersion").cloned().unwrap_or(Value::Null),
@@ -690,6 +910,8 @@ impl SessionDB {
                 "next": {
                     "objective": snapshot.goal.objective,
                     "completionCriteria": snapshot.goal.completion_criteria,
+                    "revision": snapshot.goal.revision,
+                    "criteriaItems": snapshot.criteria_items,
                     "domain": snapshot.goal.domain,
                     "workflowTemplateId": snapshot.goal.workflow_template_id,
                     "workflowTemplateVersion": snapshot.goal.workflow_template_version,
@@ -706,11 +928,13 @@ impl SessionDB {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.query_row(
             "SELECT id, session_id, objective, completion_criteria,
+                    revision,
                     domain, workflow_template_id, workflow_template_version, workflow_task_type,
                     state, mode_snapshot,
                     budget_token_limit, budget_time_limit_secs, budget_turn_limit,
                     created_at, updated_at, completed_at, final_summary, final_evidence_json,
-                    blocked_reason, last_evaluator_result_json
+                    blocked_reason, last_evaluator_result_json,
+                    closure_decision, closure_reason, closed_at, follow_up_json
              FROM goals WHERE id = ?1",
             params![goal_id],
             row_to_goal,
@@ -724,7 +948,11 @@ impl SessionDB {
         let goal_id: Option<String> = conn
             .query_row(
                 "SELECT id FROM goals
-                 WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                 WHERE session_id = ?1
+                   AND (
+                        state IN ('active','paused','evaluating','blocked')
+                        OR (state = 'completed' AND closure_decision IS NULL)
+                   )
                  ORDER BY updated_at DESC
                  LIMIT 1",
                 params![session_id],
@@ -761,7 +989,11 @@ impl SessionDB {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.query_row(
             "SELECT id FROM goals
-             WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+             WHERE session_id = ?1
+               AND (
+                    state IN ('active','paused','evaluating','blocked')
+                    OR (state = 'completed' AND closure_decision IS NULL)
+               )
              ORDER BY updated_at DESC
              LIMIT 1",
             params![session_id],
@@ -769,6 +1001,40 @@ impl SessionDB {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    pub fn resolve_goal_criterion_binding(
+        &self,
+        goal_id: &str,
+        criterion_id: Option<&str>,
+    ) -> Result<Option<GoalCriterionBinding>> {
+        let Some(criterion_id) = criterion_id
+            .map(str::trim)
+            .filter(|criterion_id| !criterion_id.is_empty())
+        else {
+            return Ok(None);
+        };
+        let goal = self
+            .get_goal(goal_id)?
+            .ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
+        let criteria = parse_goal_criteria_items(&goal.completion_criteria);
+        let item = criteria
+            .into_iter()
+            .find(|item| item.id == criterion_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "goal criterion {} not found on goal {} revision {}",
+                    criterion_id,
+                    goal_id,
+                    goal.revision
+                )
+            })?;
+        Ok(Some(GoalCriterionBinding {
+            id: item.id,
+            text: item.text,
+            kind: item.kind,
+            goal_revision: goal.revision,
+        }))
     }
 
     pub fn goal_snapshot(&self, goal_id: &str, event_limit: usize) -> Result<Option<GoalSnapshot>> {
@@ -781,10 +1047,15 @@ impl SessionDB {
         let tasks = self.list_tasks(&goal.session_id).unwrap_or_default();
         let evidence = build_goal_evidence_items(&links, &tasks);
         let budget = self.build_goal_budget_snapshot(&goal)?;
+        let latest_goal_linked_event = self.latest_goal_linked_event_marker(goal_id)?;
+        let audit_stale = goal_final_audit_stale(&goal, &latest_goal_linked_event);
+        let criteria_items = parse_goal_criteria_items(&goal.completion_criteria);
         let mut snapshot = GoalSnapshot {
             goal,
             links,
             events,
+            audit_stale,
+            criteria_items,
             criteria: Vec::new(),
             evidence,
             timeline: Vec::new(),
@@ -930,7 +1201,12 @@ impl SessionDB {
     }
 
     pub fn clear_goal(&self, goal_id: &str) -> Result<GoalSnapshot> {
-        self.transition_goal(goal_id, GoalState::Cancelled, Some("clear_requested"))
+        self.close_goal(CloseGoalInput {
+            goal_id: goal_id.to_string(),
+            decision: GoalClosureDecision::Cancelled,
+            reason: Some("clear_requested".to_string()),
+            follow_up_items: Vec::new(),
+        })
     }
 
     pub fn evaluate_goal(&self, goal_id: &str) -> Result<GoalSnapshot> {
@@ -938,7 +1214,7 @@ impl SessionDB {
         let snapshot = self
             .goal_snapshot(goal_id, 200)?
             .ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
-        let audit = self.build_goal_audit(&snapshot)?;
+        let mut audit = self.build_goal_audit(&snapshot)?;
         let completed = audit
             .get("status")
             .and_then(|v| v.as_str())
@@ -969,6 +1245,7 @@ impl SessionDB {
             )
         };
         let now = now_rfc3339();
+        audit["evaluatedAt"] = json!(now);
         let evidence_json = stable_json(&audit)?;
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.execute(
@@ -999,6 +1276,298 @@ impl SessionDB {
         Ok(next_snapshot)
     }
 
+    pub fn close_goal(&self, input: CloseGoalInput) -> Result<GoalSnapshot> {
+        let now = now_rfc3339();
+        let reason = input.reason.as_deref().map(str::trim).and_then(non_empty);
+        let (previous_state, next_state, appended_follow_ups) = {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let current: Option<(String, String, String, String, i64, Option<String>)> = conn
+                .query_row(
+                    "SELECT session_id, state, follow_up_json, final_evidence_json, revision, closure_decision
+                     FROM goals WHERE id = ?1",
+                    params![input.goal_id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let (
+                session_id,
+                state,
+                follow_up_json,
+                final_evidence_json,
+                revision,
+                closure_decision,
+            ) = current.ok_or_else(|| anyhow!("goal {} not found", input.goal_id))?;
+            let previous_state = parse_goal_state(&state)?;
+            let previous_closure_decision = parse_goal_closure_decision_sql(closure_decision)?;
+            if goal_is_sealed_terminal(previous_state, previous_closure_decision) {
+                return Err(anyhow!("goal {} is already closed", input.goal_id));
+            }
+            let mut final_evidence = json_from_sql(&final_evidence_json)?;
+            if input.decision == GoalClosureDecision::AcceptedV1 {
+                let final_status = final_evidence.get("status").and_then(Value::as_str);
+                let final_revision = final_evidence.get("goalRevision").and_then(Value::as_i64);
+                if final_status != Some("completed") || final_revision != Some(revision) {
+                    return Err(anyhow!(
+                        "cannot accept goal closure before the current final audit is completed"
+                    ));
+                }
+                if let Some(baseline_seq) = goal_audit_linked_event_seq(&final_evidence) {
+                    let stale_goal_link: Option<i64> = conn
+                        .query_row(
+                            "SELECT seq FROM goal_events
+                             WHERE goal_id = ?1
+                               AND kind = 'goal_linked'
+                               AND seq > ?2
+                             ORDER BY seq DESC
+                             LIMIT 1",
+                            params![input.goal_id.as_str(), baseline_seq],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if stale_goal_link.is_some() {
+                        return Err(anyhow!(
+                            "cannot accept goal closure because newer goal evidence exists; re-run final audit first"
+                        ));
+                    }
+                } else if let Some(evaluated_at) = goal_audit_evaluated_at(&final_evidence) {
+                    let stale_goal_link: Option<String> = conn
+                        .query_row(
+                            "SELECT created_at FROM goal_events
+                             WHERE goal_id = ?1
+                               AND kind = 'goal_linked'
+                               AND created_at > ?2
+                             ORDER BY created_at DESC
+                             LIMIT 1",
+                            params![input.goal_id.as_str(), evaluated_at],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    if stale_goal_link.is_some() {
+                        return Err(anyhow!(
+                            "cannot accept goal closure because newer goal evidence exists; re-run final audit first"
+                        ));
+                    }
+                }
+            }
+            let next_state = match input.decision {
+                GoalClosureDecision::AcceptedV1 => GoalState::Completed,
+                GoalClosureDecision::NeedsStrictEvidence => GoalState::Blocked,
+                GoalClosureDecision::Cancelled | GoalClosureDecision::Superseded => {
+                    GoalState::Cancelled
+                }
+            };
+            if next_state.is_open() {
+                let other_open: Option<String> = conn
+                    .query_row(
+                        "SELECT id FROM goals
+                         WHERE session_id = ?1
+                           AND id != ?2
+                           AND state IN ('active','paused','evaluating','blocked')
+                         LIMIT 1",
+                        params![session_id, input.goal_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(other_open) = other_open {
+                    return Err(anyhow!(
+                        "cannot reopen goal {}; session already has open goal {}",
+                        input.goal_id,
+                        other_open
+                    ));
+                }
+            }
+
+            let mut follow_up_items: Vec<GoalFollowUpItem> = json_vec_from_sql(&follow_up_json)?;
+            let mut appended_follow_ups = Vec::new();
+            let mut seen_follow_up_texts: HashSet<String> = follow_up_items
+                .iter()
+                .map(|item| normalize_follow_up_text_key(&item.text))
+                .collect();
+            for text in input
+                .follow_up_items
+                .iter()
+                .map(|item| item.trim())
+                .filter(|item| !item.is_empty())
+            {
+                if !seen_follow_up_texts.insert(normalize_follow_up_text_key(text)) {
+                    continue;
+                }
+                let item = GoalFollowUpItem {
+                    id: format!("followup_{}", uuid::Uuid::new_v4().simple()),
+                    text: text.to_string(),
+                    created_at: now.clone(),
+                    source: Some("closure".to_string()),
+                };
+                appended_follow_ups.push(item.clone());
+                follow_up_items.push(item);
+            }
+            let follow_up_json = serde_json::to_string(&follow_up_items)?;
+            if !final_evidence.is_object() {
+                final_evidence = json!({});
+            }
+            let blocked_reason = if input.decision == GoalClosureDecision::NeedsStrictEvidence {
+                Some(reason.unwrap_or("goal_needs_strict_evidence"))
+            } else {
+                None
+            };
+            final_evidence["closure"] = json!({
+                "decision": input.decision.as_str(),
+                "reason": reason,
+                "closedAt": if input.decision == GoalClosureDecision::NeedsStrictEvidence {
+                    None
+                } else {
+                    Some(now.as_str())
+                },
+                "requiresUserAcceptance": input.decision != GoalClosureDecision::AcceptedV1,
+            });
+            final_evidence["goalRevision"] = json!(revision);
+            let final_evidence_json = stable_json(&final_evidence)?;
+            conn.execute(
+                "UPDATE goals
+                    SET state = ?1,
+                        closure_decision = ?2,
+                        closure_reason = ?3,
+                        closed_at = CASE WHEN ?2 = 'needs_strict_evidence' THEN NULL ELSE ?4 END,
+                        completed_at = CASE WHEN ?1 IN ('completed','failed','cancelled') THEN ?4 ELSE NULL END,
+                        blocked_reason = ?5,
+                        follow_up_json = ?6,
+                        final_evidence_json = ?7,
+                        last_evaluator_result_json = ?7,
+                        updated_at = ?4
+                 WHERE id = ?8",
+                params![
+                    next_state.as_str(),
+                    input.decision.as_str(),
+                    reason,
+                    now,
+                    blocked_reason,
+                    follow_up_json,
+                    final_evidence_json,
+                    input.goal_id
+                ],
+            )?;
+            (previous_state, next_state, appended_follow_ups)
+        };
+
+        let snapshot = self
+            .goal_snapshot(&input.goal_id, 200)?
+            .ok_or_else(|| anyhow!("goal {} not found after close", input.goal_id))?;
+        let _ = self.append_goal_event(
+            &input.goal_id,
+            "goal_closure_decided",
+            json!({
+                "from": previous_state.as_str(),
+                "to": next_state.as_str(),
+                "decision": input.decision.as_str(),
+                "reason": reason,
+                "revision": snapshot.goal.revision,
+                "followUpItems": appended_follow_ups,
+            }),
+        )?;
+        emit_goal("goal:updated", &snapshot.goal);
+        Ok(snapshot)
+    }
+
+    pub fn append_goal_follow_up(&self, input: AppendGoalFollowUpInput) -> Result<GoalSnapshot> {
+        let now = now_rfc3339();
+        let source = input
+            .source
+            .as_deref()
+            .map(str::trim)
+            .and_then(non_empty)
+            .unwrap_or("owner")
+            .to_string();
+        let requested_items: Vec<String> = input
+            .items
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect();
+        if requested_items.is_empty() {
+            return Err(anyhow!("goal follow-up item must not be empty"));
+        }
+
+        let appended_follow_ups = {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let current: Option<(String, String, Option<String>)> = conn
+                .query_row(
+                    "SELECT state, follow_up_json, closure_decision
+                     FROM goals WHERE id = ?1",
+                    params![input.goal_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+            let (state, follow_up_json, closure_decision) =
+                current.ok_or_else(|| anyhow!("goal {} not found", input.goal_id))?;
+            let state = parse_goal_state(&state)?;
+            let closure_decision = parse_goal_closure_decision_sql(closure_decision)?;
+            if goal_is_sealed_terminal(state, closure_decision) {
+                return Err(anyhow!("goal {} is already closed", input.goal_id));
+            }
+
+            let mut follow_up_items: Vec<GoalFollowUpItem> = json_vec_from_sql(&follow_up_json)?;
+            let mut appended_follow_ups = Vec::new();
+            let mut seen_follow_up_texts: HashSet<String> = follow_up_items
+                .iter()
+                .map(|item| normalize_follow_up_text_key(&item.text))
+                .collect();
+            for text in requested_items {
+                if !seen_follow_up_texts.insert(normalize_follow_up_text_key(&text)) {
+                    continue;
+                }
+                let item = GoalFollowUpItem {
+                    id: format!("followup_{}", uuid::Uuid::new_v4().simple()),
+                    text,
+                    created_at: now.clone(),
+                    source: Some(source.clone()),
+                };
+                appended_follow_ups.push(item.clone());
+                follow_up_items.push(item);
+            }
+            if !appended_follow_ups.is_empty() {
+                let follow_up_json = serde_json::to_string(&follow_up_items)?;
+                conn.execute(
+                    "UPDATE goals
+                        SET follow_up_json = ?1,
+                            updated_at = ?2
+                     WHERE id = ?3",
+                    params![follow_up_json, now, input.goal_id],
+                )?;
+            }
+            appended_follow_ups
+        };
+
+        if appended_follow_ups.is_empty() {
+            return self
+                .goal_snapshot(&input.goal_id, 200)?
+                .ok_or_else(|| anyhow!("goal {} not found", input.goal_id));
+        }
+
+        let _ = self.append_goal_event(
+            &input.goal_id,
+            "goal_follow_up_added",
+            json!({
+                "items": appended_follow_ups,
+                "source": source,
+            }),
+        )?;
+        let snapshot = self
+            .goal_snapshot(&input.goal_id, 200)?
+            .ok_or_else(|| anyhow!("goal {} not found", input.goal_id))?;
+        emit_goal("goal:updated", &snapshot.goal);
+        Ok(snapshot)
+    }
+
     pub fn transition_goal(
         &self,
         goal_id: &str,
@@ -1008,16 +1577,18 @@ impl SessionDB {
         let now = now_rfc3339();
         let previous = {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
-            let current: Option<String> = conn
+            let current: Option<(String, Option<String>)> = conn
                 .query_row(
-                    "SELECT state FROM goals WHERE id = ?1",
+                    "SELECT state, closure_decision FROM goals WHERE id = ?1",
                     params![goal_id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?;
-            let current = current.ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
-            let previous = parse_goal_state(&current)?;
-            if !previous.can_transition_to(next) {
+            let (state, closure_decision) =
+                current.ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
+            let previous = parse_goal_state(&state)?;
+            let closure_decision = parse_goal_closure_decision_sql(closure_decision)?;
+            if !goal_can_owner_transition(previous, next, closure_decision) {
                 return Err(anyhow!(
                     "invalid goal transition {} -> {}",
                     previous.as_str(),
@@ -1062,7 +1633,7 @@ impl SessionDB {
         let goal = self
             .get_goal(goal_id)?
             .ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
-        if goal.state.is_terminal() {
+        if !goal_accepts_new_evidence(&goal) {
             return Err(anyhow!("goal {} is terminal", goal_id));
         }
         let now = now_rfc3339();
@@ -1472,6 +2043,27 @@ impl SessionDB {
         Ok(events)
     }
 
+    fn latest_goal_linked_event_marker(&self, goal_id: &str) -> Result<GoalLinkedEventMarker> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let marker: Option<GoalLinkedEventMarker> = conn
+            .query_row(
+                "SELECT seq, created_at
+                 FROM goal_events
+                 WHERE goal_id = ?1 AND kind = 'goal_linked'
+                 ORDER BY seq DESC
+                 LIMIT 1",
+                params![goal_id],
+                |row| {
+                    Ok(GoalLinkedEventMarker {
+                        seq: row.get(0)?,
+                        created_at: Some(row.get(1)?),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(marker.unwrap_or_default())
+    }
+
     pub fn list_goal_links(&self, goal_id: &str) -> Result<Vec<GoalLink>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut stmt = conn.prepare(
@@ -1545,22 +2137,179 @@ impl SessionDB {
     }
 
     fn build_goal_audit(&self, snapshot: &GoalSnapshot) -> Result<Value> {
-        Ok(build_goal_rule_audit(snapshot))
+        let mut audit = build_goal_rule_audit(snapshot);
+        audit["goalLinkedEventSeq"] =
+            json!(self.latest_goal_linked_event_marker(&snapshot.goal.id)?.seq);
+        Ok(audit)
     }
 }
 
+fn normalize_follow_up_text_key(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 fn split_criteria(raw: &str) -> Vec<String> {
-    raw.lines()
-        .flat_map(|line| line.split(';'))
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('-')
-                .trim_start_matches('*')
-                .trim()
-                .to_string()
-        })
-        .filter(|line| !line.is_empty())
+    parse_goal_criteria_items(raw)
+        .into_iter()
+        .map(|item| item.text)
         .collect()
+}
+
+fn parse_goal_criteria_items(raw: &str) -> Vec<GoalCriterionItem> {
+    let mut items = Vec::new();
+    let mut section_kind = GoalCriterionKind::Required;
+    for raw_part in raw.lines().flat_map(|line| line.split(';')) {
+        let mut text = clean_goal_criterion_text(raw_part);
+        if text.is_empty() {
+            continue;
+        }
+        let mut kind = section_kind;
+        if let Some((parsed_kind, rest)) = parse_goal_criterion_kind_prefix(&text) {
+            let rest = clean_goal_criterion_text(rest);
+            if rest.is_empty() {
+                section_kind = parsed_kind;
+                continue;
+            }
+            text = rest;
+            kind = parsed_kind;
+        }
+        items.push(GoalCriterionItem {
+            id: format!("criterion-{}", items.len() + 1),
+            text,
+            kind,
+        });
+    }
+    items
+}
+
+fn clean_goal_criterion_text(raw: &str) -> String {
+    let mut text = raw.trim();
+    loop {
+        let next = text
+            .trim_start_matches('-')
+            .trim_start_matches('*')
+            .trim_start_matches('\u{2022}')
+            .trim();
+        if next == text {
+            break;
+        }
+        text = next;
+    }
+    for checkbox in ["[ ]", "[x]", "[X]", "\u{2610}", "\u{2611}"] {
+        if let Some(rest) = text.strip_prefix(checkbox) {
+            text = rest.trim();
+            break;
+        }
+    }
+    let numbered = text
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if !numbered.is_empty() {
+        let rest = &text[numbered.len()..];
+        if let Some(stripped) = rest
+            .strip_prefix('.')
+            .or_else(|| rest.strip_prefix('\u{3001}'))
+            .or_else(|| rest.strip_prefix(')'))
+        {
+            text = stripped.trim();
+        }
+    }
+    text.to_string()
+}
+
+fn parse_goal_criterion_kind_prefix(text: &str) -> Option<(GoalCriterionKind, &str)> {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            let label = normalize_goal_kind_label(&rest[..end]);
+            if let Some(kind) = goal_kind_from_label(&label) {
+                return Some((kind, &rest[end + 1..]));
+            }
+        }
+    }
+    for separator in [":", "\u{ff1a}"] {
+        if let Some((label, rest)) = trimmed.split_once(separator) {
+            let normalized = normalize_goal_kind_label(label);
+            if let Some(kind) = goal_kind_from_label(&normalized) {
+                return Some((kind, rest));
+            }
+        }
+    }
+    None
+}
+
+fn normalize_goal_kind_label(label: &str) -> String {
+    label.trim().to_lowercase().replace([' ', '-'], "_")
+}
+
+fn goal_kind_from_label(label: &str) -> Option<GoalCriterionKind> {
+    match label {
+        "required" | "require" | "must" | "must_have" | "\u{5fc5}\u{987b}" | "\u{5fc5}\u{9700}"
+        | "\u{5fc5}\u{8981}" => Some(GoalCriterionKind::Required),
+        "optional" | "nice_to_have" | "\u{53ef}\u{9009}" | "\u{53ef}\u{6709}" => {
+            Some(GoalCriterionKind::Optional)
+        }
+        "follow_up"
+        | "followup"
+        | "later"
+        | "backlog"
+        | "\u{540e}\u{7eed}"
+        | "\u{540e}\u{7eed}\u{9879}"
+        | "\u{589e}\u{5f3a}" => Some(GoalCriterionKind::FollowUp),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct GoalLinkedEventMarker {
+    seq: i64,
+    created_at: Option<String>,
+}
+
+fn goal_final_audit_stale(goal: &Goal, latest_goal_linked_event: &GoalLinkedEventMarker) -> bool {
+    if goal.final_summary.is_none() && goal.final_evidence == json!({}) {
+        return false;
+    }
+    if goal
+        .final_evidence
+        .get("goalRevision")
+        .and_then(Value::as_i64)
+        != Some(goal.revision)
+    {
+        return true;
+    }
+    if let Some(baseline_seq) = goal_audit_linked_event_seq(&goal.final_evidence) {
+        return latest_goal_linked_event.seq > baseline_seq;
+    }
+    goal_audit_evaluated_at(&goal.final_evidence).is_some_and(|evaluated_at| {
+        latest_goal_linked_event
+            .created_at
+            .as_deref()
+            .is_some_and(|created_at| created_at > evaluated_at)
+    })
+}
+
+fn goal_audit_evaluated_at(final_evidence: &Value) -> Option<&str> {
+    final_evidence.get("evaluatedAt").and_then(Value::as_str)
+}
+
+fn goal_audit_linked_event_seq(final_evidence: &Value) -> Option<i64> {
+    final_evidence
+        .get("goalLinkedEventSeq")
+        .and_then(Value::as_i64)
+}
+
+fn latest_goal_linked_event_seq(events: &[GoalEvent]) -> i64 {
+    events
+        .iter()
+        .filter(|event| event.kind == "goal_linked")
+        .map(|event| event.seq)
+        .max()
+        .unwrap_or(0)
 }
 
 fn build_goal_rule_audit(snapshot: &GoalSnapshot) -> Value {
@@ -1569,6 +2318,8 @@ fn build_goal_rule_audit(snapshot: &GoalSnapshot) -> Value {
     let active_blockers = active_blocking_evidence(&snapshot.evidence);
     let mut achieved = Vec::new();
     let mut missing = Vec::new();
+    let mut optional_missing = Vec::new();
+    let mut follow_up_items = Vec::new();
     let mut blockers = Vec::new();
     let mut next_evidence_needed = Vec::new();
 
@@ -1710,49 +2461,99 @@ fn build_goal_rule_audit(snapshot: &GoalSnapshot) -> Value {
         match criterion.status {
             GoalCriterionStatus::Satisfied => {
                 achieved.push(format!(
-                    "Criterion has supporting evidence: {}",
+                    "{} criterion has supporting evidence: {}",
+                    criterion.kind.as_str(),
                     criterion.text
                 ));
             }
             GoalCriterionStatus::Missing => {
-                missing.push(format!(
-                    "Criterion lacks sufficient evidence: {}",
-                    criterion.text
-                ));
-                next_evidence_needed.push(json!({
-                    "kind": "criterion",
-                    "criterionId": &criterion.id,
-                    "criterion": &criterion.text,
-                    "reason": &criterion.reason,
-                }));
+                if criterion.kind.is_required() {
+                    missing.push(format!(
+                        "Required criterion lacks sufficient evidence: {}",
+                        criterion.text
+                    ));
+                    next_evidence_needed.push(json!({
+                        "kind": "criterion",
+                        "criterionId": &criterion.id,
+                        "criterionKind": criterion.kind.as_str(),
+                        "criterion": &criterion.text,
+                        "reason": &criterion.reason,
+                    }));
+                } else if criterion.kind == GoalCriterionKind::Optional {
+                    optional_missing.push(format!(
+                        "Optional criterion lacks sufficient evidence: {}",
+                        criterion.text
+                    ));
+                } else {
+                    follow_up_items.push(json!({
+                        "id": &criterion.id,
+                        "text": &criterion.text,
+                        "source": "criterion",
+                        "reason": &criterion.reason,
+                    }));
+                }
             }
             GoalCriterionStatus::Blocked => {
-                blockers.push(format!(
-                    "Criterion is blocked: {}",
-                    criterion
-                        .reason
-                        .as_deref()
-                        .unwrap_or(criterion.text.as_str())
-                ));
+                if criterion.kind.is_required() {
+                    blockers.push(format!(
+                        "Required criterion is blocked: {}",
+                        criterion
+                            .reason
+                            .as_deref()
+                            .unwrap_or(criterion.text.as_str())
+                    ));
+                    next_evidence_needed.push(json!({
+                        "kind": "criterion",
+                        "criterionId": &criterion.id,
+                        "criterionKind": criterion.kind.as_str(),
+                        "criterion": &criterion.text,
+                        "reason": &criterion.reason,
+                    }));
+                } else if criterion.kind == GoalCriterionKind::Optional {
+                    optional_missing.push(format!(
+                        "Optional criterion is blocked: {}",
+                        criterion
+                            .reason
+                            .as_deref()
+                            .unwrap_or(criterion.text.as_str())
+                    ));
+                } else {
+                    follow_up_items.push(json!({
+                        "id": &criterion.id,
+                        "text": &criterion.text,
+                        "source": "criterion",
+                        "reason": &criterion.reason,
+                    }));
+                }
             }
         }
+    }
+
+    for item in &snapshot.goal.follow_up_items {
+        follow_up_items.push(json!(item));
     }
 
     achieved.sort();
     achieved.dedup();
     missing.sort();
     missing.dedup();
+    optional_missing.sort();
+    optional_missing.dedup();
     blockers.sort();
     blockers.dedup();
     dedup_json_items(&mut next_evidence_needed);
+    dedup_json_items(&mut follow_up_items);
+
+    let required_criteria_passed = snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.kind.is_required())
+        .all(|criterion| criterion.status == GoalCriterionStatus::Satisfied);
 
     let status = if blockers.is_empty()
         && missing.is_empty()
         && has_strong_positive
-        && snapshot
-            .criteria
-            .iter()
-            .all(|criterion| criterion.status == GoalCriterionStatus::Satisfied)
+        && required_criteria_passed
     {
         "completed"
     } else {
@@ -1787,18 +2588,31 @@ fn build_goal_rule_audit(snapshot: &GoalSnapshot) -> Value {
         "summary": summary,
         "blockedReason": blocked_reason,
         "objective": &snapshot.goal.objective,
+        "goalRevision": snapshot.goal.revision,
+        "goalLinkedEventSeq": latest_goal_linked_event_seq(&snapshot.events),
+        "auditStale": false,
         "criteria": criteria,
+        "criteriaItems": &snapshot.criteria_items,
         "criteriaStatus": &snapshot.criteria,
         "achieved": achieved,
         "missing": missing,
+        "optionalMissing": optional_missing,
         "blockers": blockers,
         "evidence": evidence,
         "nextEvidenceNeeded": next_evidence_needed,
+        "followUpItems": follow_up_items,
+        "closure": {
+            "decision": snapshot.goal.closure_decision.map(|decision| decision.as_str()),
+            "reason": snapshot.goal.closure_reason.as_deref(),
+            "closedAt": snapshot.goal.closed_at.as_deref(),
+            "requiresUserAcceptance": snapshot.goal.closure_decision != Some(GoalClosureDecision::AcceptedV1),
+        },
         "budget": &snapshot.budget,
         "ruleGate": {
-            "status": if blockers.is_empty() && missing.is_empty() { "passed" } else { "blocked" },
+            "status": if blockers.is_empty() && missing.is_empty() && required_criteria_passed { "passed" } else { "blocked" },
             "hardBlockers": active_blockers.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
             "strongEvidence": snapshot.evidence.iter().filter(|item| goal_evidence_is_strong_positive(item)).map(|item| item.id.clone()).collect::<Vec<_>>(),
+            "requiredCriteriaPassed": required_criteria_passed,
             "llmAuditor": {
                 "status": "skipped",
                 "reason": "Phase 2.8 uses deterministic rule gate only; future optional LLM auditor may add rationale after hard blockers pass."
@@ -1858,19 +2672,28 @@ fn build_goal_evidence_items(links: &[GoalLink], tasks: &[Task]) -> Vec<GoalEvid
 }
 
 fn build_goal_criteria_audit(snapshot: &GoalSnapshot) -> Vec<GoalCriterionAudit> {
-    let criteria = split_criteria(&snapshot.goal.completion_criteria);
     let effective_blockers = active_blocking_evidence(&snapshot.evidence);
 
-    criteria
-        .into_iter()
-        .enumerate()
-        .map(|(index, text)| {
-            if !effective_blockers.is_empty() {
+    snapshot
+        .criteria_items
+        .iter()
+        .map(|item| {
+            let criterion_blockers = effective_blockers
+                .iter()
+                .copied()
+                .filter(|evidence| {
+                    evidence_goal_criterion_id(evidence)
+                        .map(|bound_id| bound_id == item.id)
+                        .unwrap_or(true)
+                })
+                .collect::<Vec<_>>();
+            if !criterion_blockers.is_empty() {
                 GoalCriterionAudit {
-                    id: format!("criterion-{}", index + 1),
-                    text,
+                    id: item.id.clone(),
+                    text: item.text.clone(),
+                    kind: item.kind,
                     status: GoalCriterionStatus::Blocked,
-                    evidence_ids: effective_blockers
+                    evidence_ids: criterion_blockers
                         .iter()
                         .take(8)
                         .map(|item| item.id.clone())
@@ -1880,12 +2703,14 @@ fn build_goal_criteria_audit(snapshot: &GoalSnapshot) -> Vec<GoalCriterionAudit>
                     ),
                 }
             } else {
-                let supporting = supporting_evidence_for_criterion(&text, &snapshot.evidence);
+                let supporting =
+                    supporting_evidence_for_criterion(&item.id, &item.text, &snapshot.evidence);
                 let has_strong = supporting.iter().any(|item| goal_evidence_is_strong_positive(item));
                 if has_strong {
                     GoalCriterionAudit {
-                        id: format!("criterion-{}", index + 1),
-                        text,
+                        id: item.id.clone(),
+                        text: item.text.clone(),
+                        kind: item.kind,
                         status: GoalCriterionStatus::Satisfied,
                         evidence_ids: supporting
                             .iter()
@@ -1899,8 +2724,9 @@ fn build_goal_criteria_audit(snapshot: &GoalSnapshot) -> Vec<GoalCriterionAudit>
                     }
                 } else if !supporting.is_empty() {
                     GoalCriterionAudit {
-                        id: format!("criterion-{}", index + 1),
-                        text,
+                        id: item.id.clone(),
+                        text: item.text.clone(),
+                        kind: item.kind,
                         status: GoalCriterionStatus::Missing,
                         evidence_ids: supporting
                             .iter()
@@ -1914,8 +2740,9 @@ fn build_goal_criteria_audit(snapshot: &GoalSnapshot) -> Vec<GoalCriterionAudit>
                     }
                 } else {
                     GoalCriterionAudit {
-                        id: format!("criterion-{}", index + 1),
-                        text,
+                        id: item.id.clone(),
+                        text: item.text.clone(),
+                        kind: item.kind,
                         status: GoalCriterionStatus::Missing,
                         evidence_ids: Vec::new(),
                         reason: Some("No supporting evidence has been linked yet.".to_string()),
@@ -1927,16 +2754,31 @@ fn build_goal_criteria_audit(snapshot: &GoalSnapshot) -> Vec<GoalCriterionAudit>
 }
 
 fn supporting_evidence_for_criterion<'a>(
+    criterion_id: &str,
     criterion: &str,
     evidence: &'a [GoalEvidenceItem],
 ) -> Vec<&'a GoalEvidenceItem> {
     let mut out = Vec::new();
     for item in evidence {
+        if let Some(bound_id) = evidence_goal_criterion_id(item) {
+            if bound_id == criterion_id {
+                out.push(item);
+            }
+            continue;
+        }
         if goal_evidence_is_strong_positive(item) || evidence_matches_criterion(item, criterion) {
             out.push(item);
         }
     }
     out
+}
+
+fn evidence_goal_criterion_id(item: &GoalEvidenceItem) -> Option<&str> {
+    item.metadata
+        .get("goalCriterion")
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .or_else(|| item.metadata.get("goalCriterionId").and_then(Value::as_str))
 }
 
 fn evidence_matches_criterion(item: &GoalEvidenceItem, criterion: &str) -> bool {
@@ -2552,6 +3394,7 @@ fn goal_event_title(kind: &str) -> &'static str {
         "goal_state_changed" => "Goal state changed",
         "goal_linked" => "Goal evidence linked",
         "goal_evaluated" => "Goal evaluated",
+        "goal_closure_decided" => "Goal closure decided",
         _ => "Goal event",
     }
 }
@@ -2617,30 +3460,37 @@ fn ensure_goal_column(conn: &Connection, table: &str, column: &str, alter_sql: &
 }
 
 fn row_to_goal(row: &rusqlite::Row<'_>) -> rusqlite::Result<Goal> {
-    let state: String = row.get(8)?;
-    let final_evidence_json: String = row.get(17)?;
-    let evaluator_json: String = row.get(19)?;
+    let state: String = row.get(9)?;
+    let final_evidence_json: String = row.get(18)?;
+    let evaluator_json: String = row.get(20)?;
+    let closure_decision_raw: Option<String> = row.get(21)?;
+    let follow_up_json: String = row.get(24)?;
     Ok(Goal {
         id: row.get(0)?,
         session_id: row.get(1)?,
         objective: row.get(2)?,
         completion_criteria: row.get(3)?,
-        domain: row.get(4)?,
-        workflow_template_id: row.get(5)?,
-        workflow_template_version: row.get(6)?,
-        workflow_task_type: row.get(7)?,
+        revision: row.get(4)?,
+        domain: row.get(5)?,
+        workflow_template_id: row.get(6)?,
+        workflow_template_version: row.get(7)?,
+        workflow_task_type: row.get(8)?,
         state: parse_goal_state_sql(&state)?,
-        mode_snapshot: row.get(9)?,
-        budget_token_limit: row.get(10)?,
-        budget_time_limit_secs: row.get(11)?,
-        budget_turn_limit: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
-        completed_at: row.get(15)?,
-        final_summary: row.get(16)?,
+        mode_snapshot: row.get(10)?,
+        budget_token_limit: row.get(11)?,
+        budget_time_limit_secs: row.get(12)?,
+        budget_turn_limit: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        completed_at: row.get(16)?,
+        final_summary: row.get(17)?,
         final_evidence: json_from_sql(&final_evidence_json)?,
-        blocked_reason: row.get(18)?,
+        blocked_reason: row.get(19)?,
         last_evaluator_result: json_from_sql(&evaluator_json)?,
+        closure_decision: parse_goal_closure_decision_sql(closure_decision_raw)?,
+        closure_reason: row.get(22)?,
+        closed_at: row.get(23)?,
+        follow_up_items: json_vec_from_sql(&follow_up_json)?,
     })
 }
 
@@ -2693,7 +3543,32 @@ fn parse_goal_state_sql(value: &str) -> rusqlite::Result<GoalState> {
     })
 }
 
+fn parse_goal_closure_decision_sql(
+    value: Option<String>,
+) -> rusqlite::Result<Option<GoalClosureDecision>> {
+    value
+        .map(|raw| {
+            GoalClosureDecision::from_str(&raw).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    format!("unknown goal closure decision: {raw}").into(),
+                )
+            })
+        })
+        .transpose()
+}
+
 fn json_from_sql(value: &str) -> rusqlite::Result<Value> {
+    serde_json::from_str(value).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, err.into())
+    })
+}
+
+fn json_vec_from_sql<T>(value: &str) -> rusqlite::Result<Vec<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
     serde_json::from_str(value).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, err.into())
     })
@@ -2759,6 +3634,7 @@ mod tests {
             parent_run_id: None,
             origin: None,
             goal_id,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow")
@@ -2904,6 +3780,99 @@ mod tests {
     }
 
     #[test]
+    fn parses_structured_goal_criteria_kinds() {
+        let items = parse_goal_criteria_items(
+            "[required] ship durable closure\n[optional] polish copy\n[follow-up] add exports",
+        );
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].kind, GoalCriterionKind::Required);
+        assert_eq!(items[0].text, "ship durable closure");
+        assert_eq!(items[1].kind, GoalCriterionKind::Optional);
+        assert_eq!(items[1].text, "polish copy");
+        assert_eq!(items[2].kind, GoalCriterionKind::FollowUp);
+        assert_eq!(items[2].text, "add exports");
+    }
+
+    #[test]
+    fn inline_goal_criterion_kind_does_not_leak_to_next_item() {
+        let items = parse_goal_criteria_items(
+            "[required] ship durable closure\n[optional] polish copy\ncapture final evidence",
+        );
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].kind, GoalCriterionKind::Required);
+        assert_eq!(items[1].kind, GoalCriterionKind::Optional);
+        assert_eq!(items[2].kind, GoalCriterionKind::Required);
+
+        let grouped = parse_goal_criteria_items(
+            "[optional]\npolish copy\nadjust labels\n[required]\nfinal audit passes",
+        );
+        assert_eq!(grouped.len(), 3);
+        assert_eq!(grouped[0].kind, GoalCriterionKind::Optional);
+        assert_eq!(grouped[1].kind, GoalCriterionKind::Optional);
+        assert_eq!(grouped[2].kind, GoalCriterionKind::Required);
+    }
+
+    #[test]
+    fn parses_goal_criteria_prefix_variants_for_gui_preview_parity() {
+        let items = parse_goal_criteria_items(
+            "\u{5fc5}\u{987b}\u{ff1a} \u{2610} \u{8dd1}\u{5b8c}\u{9488}\u{5bf9}\u{6027}\u{68c0}\u{67e5}\n\
+             1) optional: polish UX copy\n\
+             * [follow-up] migrate notes to roadmap",
+        );
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].kind, GoalCriterionKind::Required);
+        assert_eq!(
+            items[0].text,
+            "\u{8dd1}\u{5b8c}\u{9488}\u{5bf9}\u{6027}\u{68c0}\u{67e5}"
+        );
+        assert_eq!(items[1].kind, GoalCriterionKind::Optional);
+        assert_eq!(items[1].text, "polish UX copy");
+        assert_eq!(items[2].kind, GoalCriterionKind::FollowUp);
+        assert_eq!(items[2].text, "migrate notes to roadmap");
+    }
+
+    #[test]
+    fn updating_goal_bumps_revision_and_clears_closure() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let strict = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::NeedsStrictEvidence,
+                reason: Some("needs real smoke".to_string()),
+                follow_up_items: vec!["manual GUI profile".to_string()],
+            })
+            .expect("mark strict evidence needed");
+        assert_eq!(
+            strict.goal.closure_decision,
+            Some(GoalClosureDecision::NeedsStrictEvidence)
+        );
+
+        let updated = db
+            .update_goal(UpdateGoalInput {
+                goal_id: goal.goal.id.clone(),
+                objective: Some("Ship goal v2 control center".to_string()),
+                completion_criteria: Some("[required] closure packet exists".to_string()),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+            })
+            .expect("update goal");
+        assert_eq!(updated.goal.revision, goal.goal.revision + 1);
+        assert!(updated.goal.closure_decision.is_none());
+        assert!(updated.goal.closure_reason.is_none());
+        assert!(updated.goal.closed_at.is_none());
+        assert!(updated.goal.final_summary.is_none());
+        assert_eq!(
+            updated.criteria.first().map(|criterion| criterion.kind),
+            Some(GoalCriterionKind::Required)
+        );
+    }
+
+    #[test]
     fn review_finding_blocks_goal_only_when_open_and_actionable() {
         let mut item = GoalEvidenceItem {
             id: "review:revf_1".to_string(),
@@ -2953,6 +3922,108 @@ mod tests {
     }
 
     #[test]
+    fn workflow_creation_links_specific_goal_criterion() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Ship goal v2".to_string(),
+                completion_criteria: "[required] write docs\n[required] pass tests".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+
+        let run = db
+            .create_workflow_run(CreateWorkflowRunInput {
+                session_id: session.id.clone(),
+                kind: "coding.workflow".to_string(),
+                execution_mode: "guarded".to_string(),
+                script_source: "export default async function main(workflow) {}".to_string(),
+                budget: json!({ "max_script_secs": 30, "max_ops": 8 }),
+                parent_run_id: None,
+                origin: None,
+                goal_id: Some(goal.goal.id.clone()),
+                goal_criterion_id: Some("criterion-2".to_string()),
+                worktree_id: None,
+            })
+            .expect("create workflow");
+        assert_eq!(run.goal_criterion_id.as_deref(), Some("criterion-2"));
+        assert_eq!(run.goal_criterion_text.as_deref(), Some("pass tests"));
+        assert_eq!(run.goal_criterion_kind.as_deref(), Some("required"));
+        assert_eq!(run.goal_revision, Some(goal.goal.revision));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start workflow");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete workflow");
+        let snapshot = db
+            .goal_snapshot(&goal.goal.id, 100)
+            .expect("goal snapshot")
+            .expect("goal exists");
+        let criterion_1 = snapshot
+            .criteria
+            .iter()
+            .find(|criterion| criterion.id == "criterion-1")
+            .expect("criterion 1");
+        let criterion_2 = snapshot
+            .criteria
+            .iter()
+            .find(|criterion| criterion.id == "criterion-2")
+            .expect("criterion 2");
+        assert_eq!(criterion_1.status, GoalCriterionStatus::Missing);
+        assert_eq!(criterion_2.status, GoalCriterionStatus::Satisfied);
+        assert!(snapshot.links.iter().any(|link| {
+            link.target_type == "workflow_run"
+                && link.target_id == run.id
+                && link.relation == "workflow_completed"
+                && link.metadata["goalCriterion"]["id"] == json!("criterion-2")
+        }));
+    }
+
+    #[test]
+    fn workflow_creation_rejects_invalid_goal_criterion() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Ship goal v2".to_string(),
+                completion_criteria: "[required] write docs".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+
+        let err = db
+            .create_workflow_run(CreateWorkflowRunInput {
+                session_id: session.id,
+                kind: "coding.workflow".to_string(),
+                execution_mode: "guarded".to_string(),
+                script_source: "export default async function main(workflow) {}".to_string(),
+                budget: json!({ "max_script_secs": 30, "max_ops": 8 }),
+                parent_run_id: None,
+                origin: None,
+                goal_id: Some(goal.goal.id),
+                goal_criterion_id: Some("criterion-99".to_string()),
+                worktree_id: None,
+            })
+            .expect_err("invalid criterion should fail closed");
+        assert!(err.to_string().contains("criterion-99"));
+    }
+
+    #[test]
     fn workflow_worktree_links_goal_evidence_and_handoff_refreshes_it() {
         let (dir, db) = temp_db();
         let session = db.create_session("ha-main").expect("create session");
@@ -2976,6 +4047,7 @@ mod tests {
                 parent_run_id: None,
                 origin: None,
                 goal_id: Some(goal.goal.id.clone()),
+                goal_criterion_id: None,
                 worktree_id: Some(worktree_id.to_string()),
             })
             .expect("create workflow with worktree");
@@ -3077,6 +4149,357 @@ mod tests {
                 && link.target_id == run.id
                 && link.relation == "workflow_completed"
         }));
+    }
+
+    #[test]
+    fn final_audit_uses_full_goal_link_seq_after_long_timeline() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run");
+
+        let latest_goal_linked_seq = db
+            .latest_goal_linked_event_marker(&goal.goal.id)
+            .expect("latest linked marker")
+            .seq;
+        assert!(latest_goal_linked_seq > 0);
+
+        for index in 0..250 {
+            db.append_goal_event(
+                &goal.goal.id,
+                "audit_noise",
+                json!({ "index": index, "note": "long timeline non-evidence event" }),
+            )
+            .expect("append noise event");
+        }
+
+        let evaluated = db.evaluate_goal(&goal.goal.id).expect("re-evaluate goal");
+        assert_eq!(evaluated.goal.state, GoalState::Completed);
+        assert_eq!(
+            evaluated
+                .goal
+                .final_evidence
+                .get("goalLinkedEventSeq")
+                .and_then(Value::as_i64),
+            Some(latest_goal_linked_seq)
+        );
+
+        let truncated = db
+            .goal_snapshot(&goal.goal.id, 1)
+            .expect("truncated snapshot")
+            .expect("goal exists");
+        assert!(!truncated.audit_stale);
+
+        db.close_goal(CloseGoalInput {
+            goal_id: goal.goal.id.clone(),
+            decision: GoalClosureDecision::AcceptedV1,
+            reason: Some("fresh audit after long timeline".to_string()),
+            follow_up_items: Vec::new(),
+        })
+        .expect("accept closure after long timeline audit");
+    }
+
+    #[test]
+    fn completed_goal_stays_visible_until_user_accepts_closure() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run");
+
+        let visible = db
+            .active_goal_for_session(&session.id)
+            .expect("active goal query")
+            .expect("completed unaccepted goal remains visible");
+        assert_eq!(visible.goal.state, GoalState::Completed);
+        assert!(visible.goal.closure_decision.is_none());
+
+        let closed = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::AcceptedV1,
+                reason: Some("accepted deterministic evidence".to_string()),
+                follow_up_items: vec![
+                    "manual screenshot smoke".to_string(),
+                    " manual   SCREENSHOT smoke ".to_string(),
+                    "roadmap export".to_string(),
+                ],
+            })
+            .expect("accept closure");
+        assert_eq!(
+            closed.goal.closure_decision,
+            Some(GoalClosureDecision::AcceptedV1)
+        );
+        assert_eq!(
+            closed
+                .goal
+                .final_evidence
+                .get("closure")
+                .and_then(|closure| closure.get("decision"))
+                .and_then(Value::as_str),
+            Some("accepted_v1")
+        );
+        assert_eq!(closed.goal.follow_up_items.len(), 2);
+        assert_eq!(
+            closed.goal.follow_up_items[0].text,
+            "manual screenshot smoke"
+        );
+        assert_eq!(closed.goal.follow_up_items[1].text, "roadmap export");
+        assert!(closed.goal.closed_at.is_some());
+        assert!(db
+            .active_goal_for_session(&session.id)
+            .expect("active goal after closure")
+            .is_none());
+    }
+
+    #[test]
+    fn accepted_closure_cannot_be_reopened_by_later_close_decision() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run");
+
+        db.close_goal(CloseGoalInput {
+            goal_id: goal.goal.id.clone(),
+            decision: GoalClosureDecision::AcceptedV1,
+            reason: Some("accepted deterministic evidence".to_string()),
+            follow_up_items: Vec::new(),
+        })
+        .expect("accept closure");
+
+        let err = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::NeedsStrictEvidence,
+                reason: Some("late strict request".to_string()),
+                follow_up_items: Vec::new(),
+            })
+            .expect_err("accepted closure is sealed");
+        assert!(err.to_string().contains("already closed"));
+
+        let closed = db
+            .goal_snapshot(&goal.goal.id, 200)
+            .expect("closed snapshot")
+            .expect("goal still exists");
+        assert_eq!(closed.goal.state, GoalState::Completed);
+        assert_eq!(
+            closed.goal.closure_decision,
+            Some(GoalClosureDecision::AcceptedV1)
+        );
+    }
+
+    #[test]
+    fn clear_goal_records_cancelled_closure_decision() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+
+        let cleared = db.clear_goal(&goal.goal.id).expect("clear goal");
+        assert_eq!(cleared.goal.state, GoalState::Cancelled);
+        assert_eq!(
+            cleared.goal.closure_decision,
+            Some(GoalClosureDecision::Cancelled)
+        );
+        assert_eq!(
+            cleared.goal.closure_reason.as_deref(),
+            Some("clear_requested")
+        );
+        assert!(cleared.goal.closed_at.is_some());
+        assert_eq!(
+            cleared
+                .goal
+                .final_evidence
+                .get("closure")
+                .and_then(|closure| closure.get("decision"))
+                .and_then(Value::as_str),
+            Some("cancelled")
+        );
+        assert!(db
+            .active_goal_for_session(&session.id)
+            .expect("active goal after clear")
+            .is_none());
+    }
+
+    #[test]
+    fn append_goal_follow_up_dedups_and_records_owner_event() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+
+        let updated = db
+            .append_goal_follow_up(AppendGoalFollowUpInput {
+                goal_id: goal.goal.id.clone(),
+                items: vec![
+                    "manual browser smoke".to_string(),
+                    " manual   browser SMOKE ".to_string(),
+                    "export roadmap card".to_string(),
+                ],
+                source: Some("composer".to_string()),
+            })
+            .expect("append follow-up");
+
+        assert_eq!(updated.goal.follow_up_items.len(), 2);
+        assert_eq!(updated.goal.follow_up_items[0].text, "manual browser smoke");
+        assert_eq!(
+            updated.goal.follow_up_items[0].source.as_deref(),
+            Some("composer")
+        );
+        assert_eq!(updated.goal.follow_up_items[1].text, "export roadmap card");
+        assert!(updated
+            .events
+            .iter()
+            .any(|event| event.kind == "goal_follow_up_added"));
+
+        db.clear_goal(&goal.goal.id).expect("clear goal");
+        let err = db
+            .append_goal_follow_up(AppendGoalFollowUpInput {
+                goal_id: goal.goal.id.clone(),
+                items: vec!["late follow-up".to_string()],
+                source: Some("composer".to_string()),
+            })
+            .expect_err("closed goal rejects follow-up append");
+        assert!(err.to_string().contains("already closed"));
+    }
+
+    #[test]
+    fn accept_closure_requires_completed_current_audit() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+
+        let err = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::AcceptedV1,
+                reason: Some("premature accept".to_string()),
+                follow_up_items: Vec::new(),
+            })
+            .expect_err("accepted closure requires final audit");
+        assert!(err.to_string().contains("current final audit"));
+    }
+
+    #[test]
+    fn completed_pending_closure_goal_auto_binds_new_workflow_and_stales_audit() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run");
+
+        let visible = db
+            .active_goal_for_session(&session.id)
+            .expect("active goal query")
+            .expect("completed unaccepted goal remains visible");
+        assert_eq!(visible.goal.state, GoalState::Completed);
+        assert!(!visible.audit_stale);
+
+        let follow_up_run = create_workflow(&db, &session.id, None);
+        assert_eq!(
+            follow_up_run.goal_id.as_deref(),
+            Some(goal.goal.id.as_str())
+        );
+        let stale = db
+            .goal_snapshot(&goal.goal.id, 200)
+            .expect("goal snapshot")
+            .expect("goal exists");
+        let baseline_seq = stale
+            .goal
+            .final_evidence
+            .get("goalLinkedEventSeq")
+            .and_then(Value::as_i64)
+            .expect("audit baseline seq");
+        assert!(latest_goal_linked_event_seq(&stale.events) > baseline_seq);
+        assert!(stale.audit_stale);
+
+        let err = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::AcceptedV1,
+                reason: Some("accept despite new workflow".to_string()),
+                follow_up_items: Vec::new(),
+            })
+            .expect_err("newer evidence should require re-audit");
+        assert!(err.to_string().contains("newer goal evidence"));
+
+        let updated = db
+            .update_goal(UpdateGoalInput {
+                goal_id: goal.goal.id.clone(),
+                objective: None,
+                completion_criteria: Some(
+                    "workflow completes with evidence\n[required] follow-up workflow is resolved"
+                        .to_string(),
+                ),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+            })
+            .expect("pending completed goal can be updated");
+        assert_eq!(updated.goal.state, GoalState::Active);
+        assert!(updated.goal.final_summary.is_none());
+        assert!(updated.goal.closure_decision.is_none());
+    }
+
+    #[test]
+    fn strict_closure_reopens_goal_as_blocked() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run");
+
+        let strict = db
+            .close_goal(CloseGoalInput {
+                goal_id: goal.goal.id.clone(),
+                decision: GoalClosureDecision::NeedsStrictEvidence,
+                reason: Some("real connector read-back required".to_string()),
+                follow_up_items: Vec::new(),
+            })
+            .expect("request strict evidence");
+        assert_eq!(strict.goal.state, GoalState::Blocked);
+        assert_eq!(
+            strict.goal.closure_decision,
+            Some(GoalClosureDecision::NeedsStrictEvidence)
+        );
+        assert_eq!(
+            strict
+                .goal
+                .final_evidence
+                .get("closure")
+                .and_then(|closure| closure.get("decision"))
+                .and_then(Value::as_str),
+            Some("needs_strict_evidence")
+        );
+        assert_eq!(
+            strict.goal.blocked_reason.as_deref(),
+            Some("real connector read-back required")
+        );
+        assert!(db
+            .active_goal_for_session(&session.id)
+            .expect("active strict goal")
+            .is_some());
     }
 
     #[test]
@@ -3569,6 +4992,7 @@ mod tests {
                 parent_run_id: None,
                 origin: None,
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .expect_err("exhausted goal budget should reject new workflow");

@@ -29,6 +29,10 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             parent_run_id TEXT,
             origin TEXT,
             goal_id TEXT,
+            goal_criterion_id TEXT,
+            goal_criterion_text TEXT,
+            goal_criterion_kind TEXT,
+            goal_revision INTEGER,
             worktree_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -97,6 +101,30 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_id TEXT;")?;
     }
     if conn
+        .prepare("SELECT goal_criterion_id FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_criterion_id TEXT;")?;
+    }
+    if conn
+        .prepare("SELECT goal_criterion_text FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_criterion_text TEXT;")?;
+    }
+    if conn
+        .prepare("SELECT goal_criterion_kind FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_criterion_kind TEXT;")?;
+    }
+    if conn
+        .prepare("SELECT goal_revision FROM workflow_runs LIMIT 1")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE workflow_runs ADD COLUMN goal_revision INTEGER;")?;
+    }
+    if conn
         .prepare("SELECT worktree_id FROM workflow_runs LIMIT 1")
         .is_err()
     {
@@ -109,6 +137,10 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_workflow_runs_goal
             ON workflow_runs(goal_id, updated_at DESC);",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_runs_goal_criterion
+            ON workflow_runs(goal_id, goal_criterion_id, updated_at DESC);",
     )?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_workflow_runs_worktree
@@ -173,7 +205,9 @@ impl SessionDB {
                     if goal_session_id != input.session_id {
                         return Err(anyhow!(
                             "goal {} belongs to session {}; expected {}",
-                            goal_id, goal_session_id, input.session_id
+                            goal_id,
+                            goal_session_id,
+                            input.session_id
                         ));
                     }
                     Some(goal_id.to_string())
@@ -181,13 +215,35 @@ impl SessionDB {
                 None => conn
                     .query_row(
                         "SELECT id FROM goals
-                         WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                         WHERE session_id = ?1
+                           AND (
+                                state IN ('active','paused','evaluating','blocked')
+                                OR (state = 'completed' AND closure_decision IS NULL)
+                           )
                          ORDER BY updated_at DESC
                          LIMIT 1",
                         params![input.session_id],
                         |row| row.get(0),
                     )
                     .optional()?,
+            }
+        };
+        let goal_criterion = match goal_id.as_deref() {
+            Some(goal_id) => {
+                self.resolve_goal_criterion_binding(goal_id, input.goal_criterion_id.as_deref())?
+            }
+            None => {
+                if input
+                    .goal_criterion_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    return Err(anyhow!(
+                        "goal criterion binding requires a workflow run bound to a Goal"
+                    ));
+                }
+                None
             }
         };
         if let Some(worktree_id) = input.worktree_id.as_deref() {
@@ -226,8 +282,9 @@ impl SessionDB {
                 "INSERT INTO workflow_runs (
                     id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, parent_run_id, origin, goal_id, worktree_id,
+                    goal_criterion_id, goal_criterion_text, goal_criterion_kind, goal_revision,
                     created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12, ?13, ?13)",
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
                 params![
                     id,
                     input.session_id,
@@ -241,6 +298,14 @@ impl SessionDB {
                     input.origin,
                     goal_id,
                     input.worktree_id,
+                    goal_criterion.as_ref().map(|criterion| criterion.id.as_str()),
+                    goal_criterion.as_ref().map(|criterion| criterion.text.as_str()),
+                    goal_criterion
+                        .as_ref()
+                        .map(|criterion| criterion.kind.as_str()),
+                    goal_criterion
+                        .as_ref()
+                        .map(|criterion| criterion.goal_revision),
                     now
                 ],
             )?;
@@ -282,6 +347,7 @@ impl SessionDB {
                 "parentRunId": run.parent_run_id,
                 "origin": run.origin,
                 "goalId": run.goal_id,
+                "goalCriterion": workflow_run_goal_criterion_metadata(&run),
                 "worktreeId": run.worktree_id,
             }),
         )?;
@@ -311,6 +377,7 @@ impl SessionDB {
                     "parentRunId": run.parent_run_id,
                     "origin": run.origin,
                     "worktreeId": run.worktree_id,
+                    "goalCriterion": workflow_run_goal_criterion_metadata(&run),
                 }),
             );
             if let Err(err) = self.link_goal_worktree_evidence_for_workflow_run(&run) {
@@ -333,7 +400,8 @@ impl SessionDB {
         conn.query_row(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, goal_id, worktree_id,
+                    parent_run_id, origin, goal_id, goal_criterion_id,
+                    goal_criterion_text, goal_criterion_kind, goal_revision, worktree_id,
                     created_at, updated_at, completed_at
              FROM workflow_runs WHERE id = ?1",
             params![run_id],
@@ -353,7 +421,8 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, goal_id, worktree_id,
+                    parent_run_id, origin, goal_id, goal_criterion_id,
+                    goal_criterion_text, goal_criterion_kind, goal_revision, worktree_id,
                     created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE session_id = ?1
@@ -449,6 +518,7 @@ impl SessionDB {
                         "completedAt": run.completed_at,
                         "reason": reason,
                         "worktreeId": run.worktree_id,
+                        "goalCriterion": workflow_run_goal_criterion_metadata(&run),
                     }),
                 );
                 if matches!(
@@ -639,7 +709,8 @@ impl SessionDB {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, kind, state, execution_mode, script_hash, script_source,
                     budget_json, cursor_seq, primary_owner, blocked_reason,
-                    parent_run_id, origin, goal_id, worktree_id,
+                    parent_run_id, origin, goal_id, goal_criterion_id,
+                    goal_criterion_text, goal_criterion_kind, goal_revision, worktree_id,
                     created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE state IN ('draft', 'running', 'recovering')
@@ -985,11 +1056,25 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
         parent_run_id: row.get(11)?,
         origin: row.get(12)?,
         goal_id: row.get(13)?,
-        worktree_id: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
-        completed_at: row.get(17)?,
+        goal_criterion_id: row.get(14)?,
+        goal_criterion_text: row.get(15)?,
+        goal_criterion_kind: row.get(16)?,
+        goal_revision: row.get(17)?,
+        worktree_id: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
+        completed_at: row.get(21)?,
     })
+}
+
+fn workflow_run_goal_criterion_metadata(run: &WorkflowRun) -> Option<Value> {
+    let id = run.goal_criterion_id.as_deref()?;
+    Some(json!({
+        "id": id,
+        "text": run.goal_criterion_text.as_deref(),
+        "kind": run.goal_criterion_kind.as_deref(),
+        "goalRevision": run.goal_revision,
+    }))
 }
 
 fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowOp> {

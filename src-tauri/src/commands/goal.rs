@@ -1,5 +1,8 @@
 use crate::commands::CmdError;
-use ha_core::goal::{CreateGoalInput, GoalSnapshot, UpdateGoalInput};
+use ha_core::goal::{
+    AppendGoalFollowUpInput, CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot,
+    UpdateGoalInput,
+};
 
 #[tauri::command]
 pub async fn get_active_goal(
@@ -120,5 +123,41 @@ pub async fn evaluate_goal(
     app_state
         .session_db
         .evaluate_goal(&goal_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn close_goal(
+    goal_id: String,
+    decision: GoalClosureDecision,
+    reason: Option<String>,
+    follow_up_items: Option<Vec<String>>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<GoalSnapshot, CmdError> {
+    app_state
+        .session_db
+        .close_goal(CloseGoalInput {
+            goal_id,
+            decision,
+            reason,
+            follow_up_items: follow_up_items.unwrap_or_default(),
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn append_goal_follow_up(
+    goal_id: String,
+    items: Vec<String>,
+    source: Option<String>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<GoalSnapshot, CmdError> {
+    app_state
+        .session_db
+        .append_goal_follow_up(AppendGoalFollowUpInput {
+            goal_id,
+            items,
+            source,
+        })
         .map_err(Into::into)
 }

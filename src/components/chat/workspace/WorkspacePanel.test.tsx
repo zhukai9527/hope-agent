@@ -1249,6 +1249,115 @@ function goalSnapshotWithWorkflowTemplate(): GoalSnapshot {
   }
 }
 
+function goalSnapshotWithClosurePacket(patch: Partial<GoalSnapshot> = {}): GoalSnapshot {
+  const snapshot = goalSnapshotWithWorkflowTemplate()
+  return {
+    ...snapshot,
+    goal: {
+      ...snapshot.goal,
+      revision: 3,
+      state: "completed",
+      completedAt: "2026-01-01T00:05:00Z",
+      finalSummary: "Goal completed with durable evidence.",
+      finalEvidence: {
+        status: "completed",
+        summary: "Goal completed with durable evidence.",
+        goalRevision: 3,
+        goalLinkedEventSeq: 7,
+        followUpItems: [{ id: "criterion-3", text: "manual screenshot smoke" }],
+      },
+      blockedReason: null,
+      closureDecision: null,
+      closureReason: null,
+      closedAt: null,
+      followUpItems: [],
+    },
+    links: [
+      {
+        id: 1,
+        goalId: "goal-auto",
+        targetType: "loop_schedule",
+        targetId: "loop-criteria",
+        relation: "loop_run",
+        metadata: {
+          goalCriterion: {
+            id: "criterion-1",
+            text: "Workflow evidence is reviewed",
+            kind: "required",
+            goalRevision: 3,
+          },
+        },
+        createdAt: "2026-01-01T00:04:00Z",
+      },
+    ],
+    auditStale: false,
+    criteriaItems: [
+      { id: "criterion-1", text: "Workflow evidence is reviewed", kind: "required" },
+      { id: "criterion-2", text: "Polish the final copy", kind: "optional" },
+      { id: "criterion-3", text: "manual screenshot smoke", kind: "follow_up" },
+    ],
+    criteria: [
+      {
+        id: "criterion-1",
+        text: "Workflow evidence is reviewed",
+        kind: "required",
+        status: "satisfied",
+        evidenceIds: ["workflow:wf-criteria"],
+        reason: "Workflow completed with evidence.",
+      },
+      {
+        id: "criterion-2",
+        text: "Polish the final copy",
+        kind: "optional",
+        status: "missing",
+        evidenceIds: [],
+        reason: "Optional evidence is missing.",
+      },
+      {
+        id: "criterion-3",
+        text: "manual screenshot smoke",
+        kind: "follow_up",
+        status: "missing",
+        evidenceIds: [],
+        reason: "Move to follow-up pool.",
+      },
+    ],
+    evidence: [
+      {
+        id: "workflow:wf-criteria",
+        sourceType: "workflow_run",
+        sourceId: "wf-criteria",
+        relation: "workflow_completed",
+        title: "Workflow completed",
+        summary: "Reviewed current evidence.",
+        metadata: {
+          goalCriterion: {
+            id: "criterion-1",
+            text: "Workflow evidence is reviewed",
+            kind: "required",
+            goalRevision: 3,
+          },
+        },
+        createdAt: "2026-01-01T00:05:00Z",
+      },
+    ],
+    workflowRuns: [
+      workflowRun({
+        id: "wf-criteria",
+        goalId: "goal-auto",
+        goalCriterionId: "criterion-1",
+        goalCriterionText: "Workflow evidence is reviewed",
+        goalCriterionKind: "required",
+        goalRevision: 3,
+        state: "completed",
+        completedAt: "2026-01-01T00:05:00Z",
+        updatedAt: "2026-01-01T00:05:00Z",
+      }),
+    ],
+    ...patch,
+  }
+}
+
 describe("WorkspacePanel goal section", () => {
   it("creates a goal with a selected domain workflow template", async () => {
     const template = domainWorkflowTemplate()
@@ -1317,7 +1426,7 @@ describe("WorkspacePanel goal section", () => {
     fireEvent.change(screen.getByPlaceholderText("例如：完整实现 Goal 模式，并通过针对性检查"), {
       target: { value: "调研新版浏览器自动化能力并整理风险" },
     })
-    fireEvent.change(screen.getByPlaceholderText("每行一个标准：功能完成、证据充分、风险可解释"), {
+    fireEvent.change(screen.getByPlaceholderText(/每行一个标准/), {
       target: { value: "引用、claim check、citation audit 都齐全" },
     })
     const domainSelect = (await screen.findAllByRole("combobox"))[0]
@@ -1393,6 +1502,114 @@ describe("WorkspacePanel goal section", () => {
     expect(screen.getByText("connector")).toBeTruthy()
     expect(screen.getByText("92%")).toBeTruthy()
     expect(screen.getByText("main/op#1(evidence.record)")).toBeTruthy()
+  })
+
+  it("shows closure packet criteria counts and accepts v1 with follow-up items", async () => {
+    const snapshot = goalSnapshotWithClosurePacket()
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    })
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(snapshot)
+      if (name === "list_workflow_runs") return Promise.resolve(snapshot.workflowRuns)
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "append_goal_follow_up") {
+        return Promise.resolve({
+          ...snapshot,
+          goal: {
+            ...snapshot.goal,
+            followUpItems: [
+              ...(snapshot.goal.followUpItems ?? []),
+              { id: "followup-extra", text: "schedule stakeholder review" },
+            ],
+          },
+        })
+      }
+      if (name === "close_goal") {
+        return Promise.resolve({
+          ...snapshot,
+          goal: {
+            ...snapshot.goal,
+            closureDecision: "accepted_v1",
+            closedAt: "2026-01-01T00:06:00Z",
+          },
+        })
+      }
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickTextButton("Keep the research brief fresh")
+
+    expect(screen.getByText("关闭取舍")).toBeTruthy()
+    expect(screen.getAllByText("Workflow evidence is reviewed").length).toBeGreaterThan(0)
+    expect(screen.getByText("Workflow 1")).toBeTruthy()
+    expect(screen.getByText("Loop 1")).toBeTruthy()
+    expect(screen.getByText("Evidence 1")).toBeTruthy()
+    expect(screen.getAllByText("manual screenshot smoke").length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "复制摘要" }))
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("# Goal Closure Packet"))
+    })
+
+    fireEvent.change(screen.getByPlaceholderText("新增后续项"), {
+      target: { value: "schedule stakeholder review" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "加入后续" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("append_goal_follow_up", {
+        goalId: "goal-auto",
+        items: ["schedule stakeholder review"],
+        source: "workspace",
+      })
+    })
+
+    const acceptButton = screen.getByRole("button", { name: "接受 v1 关闭" }) as HTMLButtonElement
+    expect(acceptButton.disabled).toBe(false)
+    fireEvent.click(acceptButton)
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("close_goal", {
+        goalId: "goal-auto",
+        decision: "accepted_v1",
+        reason: "用户接受当前证据与剩余风险",
+        followUpItems: ["manual screenshot smoke"],
+      })
+    })
+  })
+
+  it("keeps accepted closure disabled when the goal audit is stale", async () => {
+    const snapshot = goalSnapshotWithClosurePacket({ auditStale: true })
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(snapshot)
+      if (name === "list_workflow_runs") return Promise.resolve(snapshot.workflowRuns)
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickTextButton("Keep the research brief fresh")
+
+    expect(screen.getByText("目标或证据已变化，需要重新评估")).toBeTruthy()
+    expect((screen.getByRole("button", { name: "接受 v1 关闭" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
+    expect(transportMock.call).not.toHaveBeenCalledWith("close_goal", expect.anything())
   })
 })
 

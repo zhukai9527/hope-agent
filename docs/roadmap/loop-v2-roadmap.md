@@ -4,7 +4,7 @@
 >
 > 日期：2026-07-05
 >
-> 状态：后续增强 roadmap。本文记录 Loop v2 设计与阶段计划；落地实现完成前，不进入 `docs/architecture/`。
+> 状态：后续增强 roadmap。本文记录 Loop v2 设计与阶段计划；不归档，后续会接着实现。落地实现完成前，不进入 `docs/architecture/`。
 
 ## 1. 背景
 
@@ -137,7 +137,7 @@ Loop v2 优先扩展 v1 `loop_schedules` / `loop_runs`。
 
 | 能力 | 设计 |
 | --- | --- |
-| criteria binding | `goal_criteria_id?`，说明 Loop 推进哪条 criteria。 |
+| criteria binding | 已由 Goal v2 提前落地 `goal_criterion_id/text/kind/goal_revision`；Loop v2 继续补 criteria 修改后的 needs-rebind / blocked。 |
 | progress ledger | 每次 run 记录 `progress_state`: progressed / no_progress / blocked / failed / awaiting_approval。 |
 | no-progress streak | 连续无进展计数，用于 backoff 或 blocked。 |
 | failure policy | `max_failures`、`failure_backoff_secs`、`on_exhausted`: pause/block/ask_user。 |
@@ -265,16 +265,14 @@ Loop run 产生或更新 Task 时：
 - 超过 5 个 Loop 时不再依赖 `/loop status`。
 - 用户能从一行 Loop 看懂它为什么存在。
 
-### L2.2 Criteria Binding
+### L2.2 Criteria Binding（部分已由 Goal v2 落地）
 
 目标：让 Loop 明确推进哪条 Goal criteria。
 
 工作项：
 
-- create loop 支持 `goalCriteriaId`。
-- Goal Detail 中按 criteria 显示相关 Loop。
-- Loop Detail 显示 bound criteria 和状态。
-- criteria 修改后，Loop 进入 needs rebind / blocked。
+- 已落地：GUI create loop 支持 `goalCriterionId`；Goal Detail 中按 criteria 显示相关 Loop；workflow strategy 派生 run 继承 criteria。
+- 待做：Loop Detail 更完整显示 bound criteria、criteria 修改后 Loop 进入 needs rebind / blocked。
 
 验收：
 
@@ -353,7 +351,7 @@ Loop run 产生或更新 Task 时：
 
 ## 11. 与 Goal v2 的关系
 
-Loop v2 应在 Goal v2 后启动，或至少等 Goal v2 的 criteria model 稳定后再做 Criteria Binding。
+Loop v2 应在 Goal v2 criteria model 稳定后继续推进；基础 Criteria Binding 已由 Goal v2 提前落地，Loop v2 不重复定义 Goal 完成标准。
 
 依赖：
 
@@ -376,4 +374,3 @@ Loop v2 读取这些信息，但不拥有它们。Loop 只做持续触发、prog
 - Loop 模板市场。
 - 跨 session / 跨 project Loop。
 - 自然语言复杂计划器自动创建多 Loop 图。
-

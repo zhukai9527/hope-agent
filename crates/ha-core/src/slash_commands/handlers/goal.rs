@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
-use crate::goal::{CreateGoalInput, GoalSnapshot, GoalState, UpdateGoalInput};
+use crate::goal::{
+    CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot, GoalState, UpdateGoalInput,
+};
 use crate::session::SessionDB;
 use crate::slash_commands::types::{CommandAction, CommandResult};
+use serde_json::Value;
 
 pub fn handle_goal(
     session_db: &Arc<SessionDB>,
@@ -29,6 +32,8 @@ enum GoalCommand {
     Resume,
     Clear,
     Evaluate,
+    Accept,
+    Strict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +52,10 @@ fn parse_goal_request(trimmed: &str) -> GoalRequest<'_> {
         "resume" => GoalRequest::Transition(GoalCommand::Resume),
         "clear" | "cancel" => GoalRequest::Transition(GoalCommand::Clear),
         "evaluate" | "audit" => GoalRequest::Transition(GoalCommand::Evaluate),
+        "accept" | "close" | "done" => GoalRequest::Transition(GoalCommand::Accept),
+        "strict" | "needs-strict-evidence" | "needs_strict_evidence" => {
+            GoalRequest::Transition(GoalCommand::Strict)
+        }
         objective => GoalRequest::Upsert(objective),
     }
 }
@@ -113,9 +122,51 @@ fn transition_active_goal(
         GoalCommand::Resume => session_db.resume_goal(&snapshot.goal.id),
         GoalCommand::Clear => session_db.clear_goal(&snapshot.goal.id),
         GoalCommand::Evaluate => session_db.evaluate_goal(&snapshot.goal.id),
+        GoalCommand::Accept => session_db.close_goal(CloseGoalInput {
+            goal_id: snapshot.goal.id,
+            decision: GoalClosureDecision::AcceptedV1,
+            reason: Some("User accepted the current audit and remaining risk.".to_string()),
+            follow_up_items: final_audit_follow_up_texts(&snapshot.goal.final_evidence),
+        }),
+        GoalCommand::Strict => session_db.close_goal(CloseGoalInput {
+            goal_id: snapshot.goal.id,
+            decision: GoalClosureDecision::NeedsStrictEvidence,
+            reason: Some("User requested stricter evidence before closing the goal.".to_string()),
+            follow_up_items: Vec::new(),
+        }),
     }
     .map_err(|e| e.to_string())?;
     Ok(display_only(render_goal_snapshot(&next)))
+}
+
+fn final_audit_follow_up_texts(final_evidence: &Value) -> Vec<String> {
+    let Some(items) = final_evidence
+        .get("followUpItems")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut texts = Vec::new();
+    for item in items {
+        let text = item
+            .as_str()
+            .or_else(|| item.get("text").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+        let Some(text) = text else {
+            continue;
+        };
+        let key = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if seen.insert(key) {
+            texts.push(text.to_string());
+        }
+    }
+    texts
 }
 
 fn render_active_goal(session_db: &Arc<SessionDB>, sid: &str) -> Result<CommandResult, String> {
@@ -177,6 +228,10 @@ fn render_goal_snapshot(snapshot: &GoalSnapshot) -> String {
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("No final audit yet.");
+    let closure = goal
+        .closure_decision
+        .map(|decision| format!("\nClosure decision: `{}`", decision.as_str()))
+        .unwrap_or_else(|| "\nClosure decision: `pending_user_acceptance`".to_string());
     let blocked = goal
         .blocked_reason
         .as_deref()
@@ -184,12 +239,14 @@ fn render_goal_snapshot(snapshot: &GoalSnapshot) -> String {
         .unwrap_or_default();
 
     format!(
-        "## Goal `{}`\n\nState: **{}** · workflows: **{}** · tasks: **{}/{}**{}\n\n**Objective**\n{}\n\n**Completion criteria**\n{}\n\n**Final audit**\n{}\n\nUse `/goal evaluate` to run the conservative final audit, `/goal pause|resume|clear` to control it.",
+        "## Goal `{}`\n\nState: **{}** · revision: **{}** · workflows: **{}** · tasks: **{}/{}**{}{}\n\n**Objective**\n{}\n\n**Completion criteria**\n{}\n\n**Final audit**\n{}\n\nUse `/goal evaluate` to run the conservative final audit, `/goal accept` to accept v1 closure, `/goal strict` to require stricter evidence, `/goal pause|resume|clear` to control it.",
         short_id(&goal.id),
         state,
+        goal.revision,
         workflows,
         tasks_done,
         tasks_total,
+        closure,
         blocked,
         goal.objective,
         criteria,
@@ -219,6 +276,8 @@ fn goal_usage() -> String {
         "- `/goal pause`: pause the active goal",
         "- `/goal resume`: resume the active/blocked goal",
         "- `/goal evaluate`: run final audit from linked workflow/task/validation evidence",
+        "- `/goal accept`: accept the current audit and close the goal as v1",
+        "- `/goal strict`: keep the goal blocked until stricter evidence is produced",
         "- `/goal clear`: cancel the active goal",
         "",
         "Control words only act as commands when they are the whole argument; longer text is treated as the goal objective.",
@@ -240,6 +299,7 @@ fn short_id(id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn control_words_only_apply_as_exact_goal_commands() {
@@ -273,6 +333,27 @@ mod tests {
                 "status should render as objective".to_string(),
                 String::new()
             )
+        );
+    }
+
+    #[test]
+    fn slash_accept_extracts_final_audit_follow_ups() {
+        let audit = json!({
+            "followUpItems": [
+                { "text": "manual GUI smoke" },
+                "export roadmap note",
+                { "text": " manual   GUI smoke " },
+                { "text": "" },
+                { "id": "missing-text" }
+            ]
+        });
+
+        assert_eq!(
+            final_audit_follow_up_texts(&audit),
+            vec![
+                "manual GUI smoke".to_string(),
+                "export roadmap note".to_string()
+            ]
         );
     }
 }

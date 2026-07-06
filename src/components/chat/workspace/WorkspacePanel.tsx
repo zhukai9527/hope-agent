@@ -202,7 +202,10 @@ import {
   useGoal,
   type Goal,
   type GoalBudgetSnapshot,
+  type GoalClosureDecision,
   type GoalCriterionAudit,
+  type GoalCriterionItem,
+  type GoalCriterionKind,
   type GoalCriterionStatus,
   type GoalEvidenceItem,
   type GoalSnapshot,
@@ -221,6 +224,7 @@ import {
   type LoopState,
   type LoopTriggerKind,
 } from "./useLoopSchedules"
+import { parseGoalCriteriaDraft, type DraftGoalCriterionKind } from "./goalCriteriaDraft"
 import type { WorkspaceTaskExecutionState } from "./taskExecutionState"
 import { PANEL_SCROLL_FADE } from "../right-panel/panelFade"
 import {
@@ -10850,6 +10854,7 @@ const WORKFLOW_FOCUS_OP_PREVIEW = 4
 const DOMAIN_LEARNING_WINDOW_DAYS = 30
 const CODING_IMPROVEMENT_CHANGED_EVENT = "hope-agent:coding-improvement-changed"
 const GOAL_DOMAIN_FREE_VALUE = "__free_goal_domain__"
+const GOAL_CRITERION_NONE_VALUE = "__whole_goal__"
 
 function domainTemplateOptionValue(template: Pick<DomainWorkflowTemplate, "id" | "version">) {
   return `${template.id}@${template.version}`
@@ -11106,6 +11111,16 @@ function stringField(
 ): string | null {
   const value = record?.[key]
   return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function goalCriterionMetadataId(metadata: unknown): string | null {
+  const record = asRecord(metadata)
+  const nested = asRecord(record?.goalCriterion)
+  return stringField(nested, "id") ?? stringField(record, "goalCriterionId")
+}
+
+function goalCriterionOptionLabel(criterion: GoalCriterionItem): string {
+  return `${criterion.id} · ${criterion.text}`
 }
 
 function numberField(
@@ -12785,6 +12800,7 @@ function LoopSchedulesSection({
   const [draftInterval, setDraftInterval] = useState("10m")
   const [draftCondition, setDraftCondition] = useState("")
   const [draftPrompt, setDraftPrompt] = useState("")
+  const [draftGoalCriterionId, setDraftGoalCriterionId] = useState(GOAL_CRITERION_NONE_VALUE)
   const [draftMaxRuns, setDraftMaxRuns] = useState("")
   const [draftMaxRuntime, setDraftMaxRuntime] = useState("")
   const [draftTokens, setDraftTokens] = useState("")
@@ -12796,6 +12812,7 @@ function LoopSchedulesSection({
   const lastCreateRequestRef = useRef(createRequest ?? 0)
   const lastInspectRequestRef = useRef(inspectRequest?.nonce ?? 0)
   const activeGoal = goalState.snapshot?.goal ?? null
+  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
   const canUseWorkflowLoop =
     draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
   const workflowRunsByLoop = useMemo(() => {
@@ -12823,6 +12840,13 @@ function LoopSchedulesSection({
       setDraftExecutionStrategy("continue")
     }
   }, [canUseWorkflowLoop, draftExecutionStrategy])
+
+  useEffect(() => {
+    if (draftGoalCriterionId === GOAL_CRITERION_NONE_VALUE) return
+    if (!activeGoalCriteria.some((criterion) => criterion.id === draftGoalCriterionId)) {
+      setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
+    }
+  }, [activeGoalCriteria, draftGoalCriterionId])
 
   useEffect(() => {
     const nextRequest = createRequest ?? 0
@@ -12960,6 +12984,9 @@ function LoopSchedulesSection({
         triggerKind: draftKind,
         triggerSpec: draftKind === "condition" ? { condition, intervalSecs } : { intervalSecs },
         executionStrategy: draftExecutionStrategy,
+        goalId: activeGoal?.id ?? undefined,
+        goalCriterionId:
+          draftGoalCriterionId === GOAL_CRITERION_NONE_VALUE ? undefined : draftGoalCriterionId,
         maxRuns,
         maxRuntimeSecs,
         tokenBudget,
@@ -12967,6 +12994,7 @@ function LoopSchedulesSection({
       toast.success(t("workspace.loop.created", "Loop 已创建"))
       setDraftPrompt("")
       setDraftCondition("")
+      setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
       setCreateOpen(false)
       refresh()
     } catch (e) {
@@ -12980,12 +13008,14 @@ function LoopSchedulesSection({
     canUseWorkflowLoop,
     draftCondition,
     draftExecutionStrategy,
+    draftGoalCriterionId,
     draftInterval,
     draftKind,
     draftMaxRuns,
     draftMaxRuntime,
     draftPrompt,
     draftTokens,
+    activeGoal?.id,
     refresh,
     sessionId,
     t,
@@ -13084,6 +13114,28 @@ function LoopSchedulesSection({
                   "workspace.loop.strategyWorkflowDisabled",
                   "选择带任务领域模板的 active Goal 后，可让 Loop 直接创建 Workflow run。",
                 )}
+              </div>
+            ) : null}
+            {activeGoal && activeGoalCriteria.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-[10px] font-medium text-muted-foreground">
+                  {t("workspace.goal.boundCriterion", "推进标准")}
+                </div>
+                <Select value={draftGoalCriterionId} onValueChange={setDraftGoalCriterionId}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={GOAL_CRITERION_NONE_VALUE}>
+                      {t("workspace.goal.wholeGoal", "整个目标")}
+                    </SelectItem>
+                    {activeGoalCriteria.map((criterion) => (
+                      <SelectItem key={criterion.id} value={criterion.id}>
+                        {goalCriterionOptionLabel(criterion)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             ) : null}
             <div className="grid grid-cols-2 gap-2">
@@ -13199,6 +13251,12 @@ function LoopSchedulesSection({
                       {loop.executionStrategy === "workflow" ? (
                         <StatusPill
                           label={t("workspace.loop.strategyWorkflowShort", "Workflow")}
+                          tone="info"
+                        />
+                      ) : null}
+                      {loop.goalCriterionId ? (
+                        <StatusPill
+                          label={loop.goalCriterionText ?? loop.goalCriterionId}
                           tone="info"
                         />
                       ) : null}
@@ -13420,6 +13478,7 @@ function WorkflowRunsSection({
   const [draftObjective, setDraftObjective] = useState("")
   const [draftScript, setDraftScript] = useState(WORKFLOW_SCRIPT_TEMPLATE)
   const [draftOrigin, setDraftOrigin] = useState<WorkflowDraftOrigin | null>(null)
+  const [draftGoalCriterionId, setDraftGoalCriterionId] = useState(GOAL_CRITERION_NONE_VALUE)
   const [domainTemplates, setDomainTemplates] = useState<DomainWorkflowTemplate[]>([])
   const [domainTemplatesLoading, setDomainTemplatesLoading] = useState(false)
   const [domainTemplatesError, setDomainTemplatesError] = useState<string | null>(null)
@@ -13452,6 +13511,7 @@ function WorkflowRunsSection({
   const visibleRuns = showAllRuns ? runs : runs.slice(0, WORKFLOW_RUN_PREVIEW)
   const canMaterializeSession = Boolean(sessionId || onEnsureSession)
   const activeGoal = goalState.snapshot?.goal ?? null
+  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
   const selectedDomainTemplate = findDomainTemplateByValue(
     domainTemplates,
     selectedDomainTemplateId,
@@ -13475,6 +13535,13 @@ function WorkflowRunsSection({
       setDraftWorktreeMode(workingDir ? "new" : "session")
     }
   }, [draftOrigin?.type, draftWorktreeMode, draftWorktrees, runs, workingDir])
+
+  useEffect(() => {
+    if (draftGoalCriterionId === GOAL_CRITERION_NONE_VALUE) return
+    if (!activeGoalCriteria.some((criterion) => criterion.id === draftGoalCriterionId)) {
+      setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
+    }
+  }, [activeGoalCriteria, draftGoalCriterionId])
 
   const ensureWorkflowSession = useCallback(async () => {
     if (sessionId) return sessionId
@@ -13964,6 +14031,68 @@ function WorkflowRunsSection({
     [activeGoal, goalState, t],
   )
 
+  const closeActiveGoal = useCallback(
+    async (decision: GoalClosureDecision, reason?: string, followUpItems: string[] = []) => {
+      if (!activeGoal) return
+      const key = `close_goal:${decision}:${activeGoal.id}`
+      setGoalActionKey(key)
+      try {
+        const snapshot = await getTransport().call<GoalSnapshot>("close_goal", {
+          goalId: activeGoal.id,
+          decision,
+          reason,
+          followUpItems,
+        })
+        goalState.setSnapshot(decision === "accepted_v1" || decision === "cancelled" ? null : snapshot)
+        toast.success(
+          decision === "accepted_v1"
+            ? t("workspace.goal.closedAccepted", "Goal 已按当前证据关闭")
+            : t("workspace.goal.strictEvidenceRequested", "已要求补充严格证据"),
+        )
+        goalState.refresh()
+      } catch (e) {
+        logger.error("ui", "WorkflowRunsSection::closeGoal", "Failed to close goal", e)
+        toast.error(e instanceof Error ? e.message : String(e))
+      } finally {
+        setGoalActionKey(null)
+      }
+    },
+    [activeGoal, goalState, t],
+  )
+
+  const appendActiveGoalFollowUp = useCallback(
+    async (items: string[]) => {
+      if (!activeGoal) return false
+      const normalizedItems = items.map((item) => item.trim()).filter(Boolean)
+      if (normalizedItems.length === 0) return false
+      const key = `append_goal_follow_up:${activeGoal.id}`
+      setGoalActionKey(key)
+      try {
+        const snapshot = await getTransport().call<GoalSnapshot>("append_goal_follow_up", {
+          goalId: activeGoal.id,
+          items: normalizedItems,
+          source: "workspace",
+        })
+        goalState.setSnapshot(snapshot)
+        toast.success(t("workspace.goal.followUpAdded", "后续项已加入 Goal"))
+        goalState.refresh()
+        return true
+      } catch (e) {
+        logger.error(
+          "ui",
+          "WorkflowRunsSection::appendGoalFollowUp",
+          "Failed to append goal follow-up",
+          e,
+        )
+        toast.error(e instanceof Error ? e.message : String(e))
+        return false
+      } finally {
+        setGoalActionKey(null)
+      }
+    },
+    [activeGoal, goalState, t],
+  )
+
   const clearDraftPreview = useCallback(() => {
     previewReqRef.current += 1
     setDraftPreview(null)
@@ -14173,6 +14302,7 @@ ${repairPrompt}`
       })
       clearDomainDraft()
       setDraftWorktreeMode(run.worktreeId ?? "session")
+      setDraftGoalCriterionId(run.goalCriterionId ?? GOAL_CRITERION_NONE_VALUE)
       const script = buildGoalDrivenWorkflowScript(objective)
       setDraftScript(script)
       setDraftRunImmediately(Boolean(workingDir || run.worktreeId))
@@ -14278,6 +14408,10 @@ ${repairPrompt}`
         parentRunId: draftOrigin?.type === "repair" ? draftOrigin.runId : undefined,
         origin: draftOrigin?.type === "repair" ? "repair" : undefined,
         goalId: activeGoal?.id ?? undefined,
+        goalCriterionId:
+          activeGoal && draftGoalCriterionId !== GOAL_CRITERION_NONE_VALUE
+            ? draftGoalCriterionId
+            : undefined,
         runImmediately: runImmediatelyForCreate,
       }
       if (worktreeId) createArgs.worktreeId = worktreeId
@@ -14296,6 +14430,7 @@ ${repairPrompt}`
       )
       setCreateOpen(false)
       setDraftOrigin(null)
+      setDraftGoalCriterionId(GOAL_CRITERION_NONE_VALUE)
       clearDomainDraft()
       clearDraftPreview()
     } catch (e) {
@@ -14311,6 +14446,7 @@ ${repairPrompt}`
     draftMode,
     draftOrigin?.runId,
     draftOrigin?.type,
+    draftGoalCriterionId,
     draftPreview?.canCreate,
     draftRunImmediately,
     draftScript,
@@ -14531,6 +14667,10 @@ ${repairPrompt}`
               onClear={() => void runGoalAction("clear_goal")}
               onEvaluate={() => void runGoalAction("evaluate_goal")}
               onUpdate={updateActiveGoal}
+              onCloseGoal={(decision, reason, followUpItems) =>
+                void closeActiveGoal(decision, reason, followUpItems)
+              }
+              onAppendFollowUp={appendActiveGoalFollowUp}
             />
             <WorkflowCreateComposer
               open={createOpen}
@@ -14556,6 +14696,8 @@ ${repairPrompt}`
               script={draftScript}
               draftOrigin={draftOrigin}
               linkedGoal={activeGoal}
+              goalCriteria={activeGoalCriteria}
+              selectedGoalCriterionId={draftGoalCriterionId}
               domainTemplates={domainTemplates}
               domainTemplatesLoading={domainTemplatesLoading}
               domainTemplatesError={domainTemplatesError}
@@ -14585,6 +14727,7 @@ ${repairPrompt}`
                 clearDraftPreview()
               }}
               onClearDraftOrigin={() => setDraftOrigin(null)}
+              onGoalCriterionChange={setDraftGoalCriterionId}
               onReloadDomainTemplates={loadDomainWorkflowTemplates}
               onDomainTemplateChange={selectDomainTemplate}
               onDomainTaskTypeChange={selectDomainTaskType}
@@ -14637,6 +14780,14 @@ ${repairPrompt}`
                                 <span className="px-1 text-muted-foreground/50">·</span>
                                 <span className="text-muted-foreground">
                                   {t("workspace.workflow.worktreeBadge", "worktree")}
+                                </span>
+                              </>
+                            ) : null}
+                            {run.goalCriterionId ? (
+                              <>
+                                <span className="px-1 text-muted-foreground/50">·</span>
+                                <span className="text-muted-foreground">
+                                  {run.goalCriterionText ?? run.goalCriterionId}
                                 </span>
                               </>
                             ) : null}
@@ -14898,6 +15049,8 @@ function WorkflowCreateComposer({
   script,
   draftOrigin,
   linkedGoal,
+  goalCriteria,
+  selectedGoalCriterionId,
   domainTemplates,
   domainTemplatesLoading,
   domainTemplatesError,
@@ -14915,6 +15068,7 @@ function WorkflowCreateComposer({
   onObjectiveChange,
   onScriptChange,
   onClearDraftOrigin,
+  onGoalCriterionChange,
   onReloadDomainTemplates,
   onDomainTemplateChange,
   onDomainTaskTypeChange,
@@ -14939,6 +15093,8 @@ function WorkflowCreateComposer({
   script: string
   draftOrigin?: WorkflowDraftOrigin | null
   linkedGoal?: Goal | null
+  goalCriteria: GoalCriterionItem[]
+  selectedGoalCriterionId: string
   domainTemplates: DomainWorkflowTemplate[]
   domainTemplatesLoading?: boolean
   domainTemplatesError?: string | null
@@ -14956,6 +15112,7 @@ function WorkflowCreateComposer({
   onObjectiveChange: (objective: string) => void
   onScriptChange: (script: string) => void
   onClearDraftOrigin: () => void
+  onGoalCriterionChange: (criterionId: string) => void
   onReloadDomainTemplates: () => void
   onDomainTemplateChange: (templateId: string) => void
   onDomainTaskTypeChange: (taskType: string) => void
@@ -15062,6 +15219,33 @@ function WorkflowCreateComposer({
                       },
                     )}
               </div>
+            </div>
+          ) : null}
+
+          {linkedGoal && goalCriteria.length > 0 ? (
+            <div className="space-y-1.5 rounded-md border border-border/55 bg-secondary/15 p-2">
+              <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+                <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t("workspace.goal.boundCriterion", "推进标准")}
+                </span>
+                <span className="shrink-0 font-mono text-[10px]">r{linkedGoal.revision ?? 1}</span>
+              </div>
+              <Select value={selectedGoalCriterionId} onValueChange={onGoalCriterionChange}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={GOAL_CRITERION_NONE_VALUE}>
+                    {t("workspace.goal.wholeGoal", "整个目标")}
+                  </SelectItem>
+                  {goalCriteria.map((criterion) => (
+                    <SelectItem key={criterion.id} value={criterion.id}>
+                      {goalCriterionOptionLabel(criterion)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           ) : null}
 
@@ -15932,6 +16116,121 @@ function goalCriterionStatusTone(status: GoalCriterionStatus): StatusTone {
   }
 }
 
+function goalCriterionKindLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: GoalCriterionKind,
+): string {
+  switch (kind) {
+    case "required":
+      return t("workspace.goal.kindRequired", "必须")
+    case "optional":
+      return t("workspace.goal.kindOptional", "可选")
+    case "follow_up":
+      return t("workspace.goal.kindFollowUp", "后续")
+  }
+}
+
+function goalCriterionKindTone(kind: GoalCriterionKind): StatusTone {
+  switch (kind) {
+    case "required":
+      return "info"
+    case "optional":
+      return "muted"
+    case "follow_up":
+      return "warn"
+  }
+}
+
+function goalClosureDecisionLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  decision: GoalClosureDecision | null,
+): string {
+  switch (decision) {
+    case "accepted_v1":
+      return t("workspace.goal.closureAcceptedV1", "用户已接受当前证据关闭")
+    case "needs_strict_evidence":
+      return t("workspace.goal.closureNeedsStrict", "用户要求补充严格证据")
+    case "cancelled":
+      return t("workspace.goal.closureCancelled", "用户已取消目标")
+    case "superseded":
+      return t("workspace.goal.closureSuperseded", "目标已被新目标替代")
+    default:
+      return t("workspace.goal.closurePending", "等待用户确认关闭取舍")
+  }
+}
+
+function goalClosureReviewPacket(
+  snapshot: GoalSnapshot,
+  criteria: GoalCriterionAudit[],
+  evidence: GoalEvidenceItem[],
+): string {
+  const goal = snapshot.goal
+  const audit = asRecord(goal.finalEvidence)
+  const stringList = (key: string) =>
+    arrayField(audit, key).filter((item): item is string => typeof item === "string")
+  const followUps = [
+    ...(goal.followUpItems ?? []).map((item) => item.text),
+    ...recordArrayField(audit, "followUpItems")
+      .map((item) => stringField(item, "text"))
+      .filter((item): item is string => Boolean(item)),
+  ]
+  const lines = [
+    "# Goal Closure Packet",
+    "",
+    `- Goal: ${goal.objective}`,
+    `- State: ${goal.state}`,
+    `- Revision: r${goal.revision ?? 1}`,
+    `- Audit status: ${stringField(audit, "status") ?? "unknown"}`,
+    `- Audit stale: ${snapshot.auditStale ? "yes" : "no"}`,
+    `- Closure decision: ${goal.closureDecision ?? "pending"}`,
+  ]
+  const summary = goal.finalSummary ?? stringField(audit, "summary")
+  if (summary) lines.push(`- Summary: ${summary}`)
+  const blockedReason = goal.blockedReason ?? stringField(audit, "blockedReason")
+  if (blockedReason) lines.push(`- Blocked reason: ${blockedReason}`)
+  lines.push("", "## Criteria")
+  if (criteria.length === 0) {
+    lines.push("- none")
+  } else {
+    for (const item of criteria) {
+      lines.push(
+        `- [${item.status}] ${item.kind ?? "required"} ${item.id}: ${item.text}${
+          item.reason ? ` (${item.reason})` : ""
+        }`,
+      )
+    }
+  }
+  const achieved = stringList("achieved")
+  const missing = stringList("missing")
+  const blockers = stringList("blockers")
+  const nextEvidence = recordArrayField(audit, "nextEvidenceNeeded")
+    .map((item) => stringField(item, "summary") ?? stringField(item, "text") ?? stringField(item, "kind"))
+    .filter((item): item is string => Boolean(item))
+  const section = (title: string, items: string[]) => {
+    lines.push("", `## ${title}`)
+    if (items.length === 0) {
+      lines.push("- none")
+      return
+    }
+    for (const item of items) lines.push(`- ${item}`)
+  }
+  section("Achieved", achieved)
+  section("Missing", missing)
+  section("Blockers", blockers)
+  section("Next Evidence Needed", nextEvidence)
+  section("Follow-up Pool", followUps)
+  lines.push("", "## Recent Evidence")
+  const recentEvidence = evidence.slice(-8).reverse()
+  if (recentEvidence.length === 0) {
+    lines.push("- none")
+  } else {
+    for (const item of recentEvidence) {
+      lines.push(`- ${item.relation}: ${item.title}${item.summary ? ` — ${item.summary}` : ""}`)
+    }
+  }
+  return lines.join("\n")
+}
+
 function goalEvidenceTone(relation: string): StatusTone {
   if (
     relation.includes("failed") ||
@@ -16316,6 +16615,8 @@ function GoalControlStrip({
   onClear,
   onEvaluate,
   onUpdate,
+  onCloseGoal,
+  onAppendFollowUp,
 }: {
   snapshot: GoalSnapshot | null
   loading?: boolean
@@ -16348,6 +16649,12 @@ function GoalControlStrip({
     completionCriteria: string,
     domainSelection?: { template: DomainWorkflowTemplate | null; taskType: string },
   ) => Promise<boolean>
+  onCloseGoal: (
+    decision: GoalClosureDecision,
+    reason?: string,
+    followUpItems?: string[],
+  ) => void
+  onAppendFollowUp: (items: string[]) => Promise<boolean>
 }) {
   const { t } = useTranslation()
   const [detailOpen, setDetailOpen] = useState(false)
@@ -16518,10 +16825,11 @@ function GoalControlStrip({
                 onChange={(event) => onCriteriaChange(event.target.value)}
                 placeholder={t(
                   "workspace.goal.criteriaPlaceholder",
-                  "每行一个标准：功能完成、证据充分、风险可解释",
+                  "每行一个标准；可用 [required] / [optional] / [follow-up] 标记",
                 )}
                 className="min-h-16 resize-y text-xs"
               />
+              <GoalCriteriaDraftPreview criteriaText={criteria} />
             </div>
             <GoalDomainTemplatePicker
               templates={domainTemplates}
@@ -16651,6 +16959,7 @@ function GoalControlStrip({
                   onChange={(event) => setEditCriteria(event.target.value)}
                   className="min-h-14 resize-y text-xs"
                 />
+                <GoalCriteriaDraftPreview criteriaText={editCriteria} />
               </div>
               <GoalDomainTemplatePicker
                 templates={domainTemplates}
@@ -16743,6 +17052,9 @@ function GoalControlStrip({
             criteria={criteriaAudit}
             evidence={evidenceItems}
             timeline={timelineItems}
+            actionKey={actionKey}
+            onCloseGoal={onCloseGoal}
+            onAppendFollowUp={onAppendFollowUp}
           />
 
           <div className="grid grid-cols-4 gap-1.5">
@@ -16827,20 +17139,92 @@ function GoalControlStrip({
   )
 }
 
+function GoalCriteriaDraftPreview({ criteriaText }: { criteriaText: string }) {
+  const { t } = useTranslation()
+  const items = useMemo(() => parseGoalCriteriaDraft(criteriaText), [criteriaText])
+  if (items.length === 0) return null
+  const required = items.filter((item) => item.kind === "required").length
+  const optional = items.filter((item) => item.kind === "optional").length
+  const followUp = items.filter((item) => item.kind === "follow_up").length
+  return (
+    <div className="space-y-1 rounded-md border border-border/45 bg-background/45 p-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
+        <span className="shrink-0 font-medium text-foreground/75">
+          {t("workspace.goal.criteriaPreview", "标准预览")}
+        </span>
+        <StatusPill
+          label={t("workspace.goal.criteriaPreviewRequired", "必须 {{count}}", {
+            count: required,
+          })}
+          tone={required > 0 ? "warn" : "muted"}
+        />
+        <StatusPill
+          label={t("workspace.goal.criteriaPreviewOptional", "可选 {{count}}", {
+            count: optional,
+          })}
+          tone={optional > 0 ? "info" : "muted"}
+        />
+        <StatusPill
+          label={t("workspace.goal.criteriaPreviewFollowUp", "后续 {{count}}", {
+            count: followUp,
+          })}
+          tone={followUp > 0 ? "good" : "muted"}
+        />
+      </div>
+      <div className="space-y-0.5">
+        {items.slice(0, 4).map((item) => (
+          <div key={item.id} className="flex min-w-0 items-center gap-1 text-[10px]">
+            <StatusPill
+              label={goalDraftCriterionKindLabel(t, item.kind)}
+              tone={goalCriterionKindTone(item.kind)}
+            />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function goalDraftCriterionKindLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: DraftGoalCriterionKind,
+): string {
+  switch (kind) {
+    case "required":
+      return t("workspace.goal.criterionKindRequired", "必须")
+    case "optional":
+      return t("workspace.goal.criterionKindOptional", "可选")
+    case "follow_up":
+      return t("workspace.goal.criterionKindFollowUp", "后续")
+  }
+}
+
 function GoalDetailSection({
   open,
   snapshot,
   criteria,
   evidence,
   timeline,
+  actionKey,
+  onCloseGoal,
+  onAppendFollowUp,
 }: {
   open: boolean
   snapshot: GoalSnapshot
   criteria: GoalCriterionAudit[]
   evidence: GoalEvidenceItem[]
   timeline: GoalTimelineItem[]
+  actionKey?: string | null
+  onCloseGoal: (
+    decision: GoalClosureDecision,
+    reason?: string,
+    followUpItems?: string[],
+  ) => void
+  onAppendFollowUp: (items: string[]) => Promise<boolean>
 }) {
   const { t } = useTranslation()
+  const [followUpDraft, setFollowUpDraft] = useState("")
   const runs = snapshot.workflowRuns
   const tasks = snapshot.tasks
   const latestTimeline = timeline.slice(-8).reverse()
@@ -16849,12 +17233,188 @@ function GoalDetailSection({
   const domainEvidence = goalDomainEvidenceItems(evidence).slice(-6).reverse()
   const audit = asRecord(snapshot.goal.finalEvidence)
   const nextEvidence = recordArrayField(audit, "nextEvidenceNeeded").slice(0, 6)
+  const auditFollowUps = recordArrayField(audit, "followUpItems")
+  const followUpTexts = auditFollowUps
+    .map((item) => stringField(item, "text"))
+    .filter((text): text is string => Boolean(text))
+  const followUpItems = snapshot.goal.followUpItems ?? []
+  const closureDecision = snapshot.goal.closureDecision ?? null
+  const closeBusy = actionKey?.startsWith("close_goal")
+  const followUpBusy = actionKey?.startsWith("append_goal_follow_up")
+  const finalAuditCompleted = stringField(audit, "status") === "completed"
+  const canCloseGoal = snapshot.goal.state !== "evaluating" && snapshot.goal.state !== "cancelled"
+  const canAcceptGoal = canCloseGoal && finalAuditCompleted && !snapshot.auditStale
+  const requiredDone = criteria.filter(
+    (criterion) => (criterion.kind ?? "required") === "required" && criterion.status === "satisfied",
+  ).length
+  const requiredTotal = criteria.filter(
+    (criterion) => (criterion.kind ?? "required") === "required",
+  ).length
   const budget = snapshot.budget
+  const copyClosurePacket = async () => {
+    try {
+      await navigator.clipboard.writeText(goalClosureReviewPacket(snapshot, criteria, evidence))
+      toast.success(t("workspace.goal.closurePacketCopied", "关闭摘要已复制"))
+    } catch (e) {
+      logger.error("ui", "GoalDetailSection::copyClosurePacket", "Copy goal packet failed", e)
+      toast.error(t("workspace.goal.closurePacketCopyFailed", "复制失败"))
+    }
+  }
+  const addFollowUp = async () => {
+    const text = followUpDraft.trim()
+    if (!text || followUpBusy) return
+    const ok = await onAppendFollowUp([text])
+    if (ok) setFollowUpDraft("")
+  }
 
   return (
     <AnimatedCollapse open={open}>
       <div className="space-y-2 rounded-md border border-border/55 bg-background/45 p-2">
         {budget ? <GoalBudgetCard budget={budget} /> : null}
+
+        <GoalDetailBlock title={t("workspace.goal.detailClosure", "关闭取舍")} count={1}>
+          <div className="space-y-1.5">
+            <div className="grid grid-cols-3 gap-1 text-[10px]">
+              <GoalWorktreeMetric
+                label={t("workspace.goal.revision", "Revision")}
+                value={`r${snapshot.goal.revision ?? 1}`}
+              />
+              <GoalWorktreeMetric
+                label={t("workspace.goal.requiredProgress", "Required")}
+                value={`${requiredDone}/${requiredTotal}`}
+              />
+              <GoalWorktreeMetric
+                label={t("workspace.goal.followUps", "Follow-ups")}
+                value={`${followUpItems.length + auditFollowUps.length}`}
+              />
+            </div>
+            <div
+              className={cn(
+                "rounded-md border px-2 py-1.5 text-[11px]",
+                snapshot.auditStale
+                  ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : closureDecision === "accepted_v1"
+                    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : "border-border/55 bg-secondary/25 text-muted-foreground",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <ClipboardCheck className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {snapshot.auditStale
+                    ? t("workspace.goal.auditStale", "目标或证据已变化，需要重新评估")
+                    : goalClosureDecisionLabel(t, closureDecision)}
+                </span>
+                {snapshot.goal.closedAt ? (
+                  <span className="shrink-0 text-[10px] opacity-75">
+                    {formatMessageTime(snapshot.goal.closedAt)}
+                  </span>
+                ) : null}
+              </div>
+              {snapshot.goal.closureReason ? (
+                <div className="mt-0.5 truncate opacity-80">{snapshot.goal.closureReason}</div>
+              ) : null}
+            </div>
+            {followUpItems.length > 0 || followUpTexts.length > 0 ? (
+              <div className="space-y-1">
+                {[...followUpItems.map((item) => item.text), ...followUpTexts].slice(0, 4).map(
+                  (item, index) => (
+                    <div
+                      key={`${item}:${index}`}
+                      className="truncate rounded-md bg-secondary/25 px-2 py-1 text-[10px] text-muted-foreground"
+                    >
+                      {item}
+                    </div>
+                  ),
+                )}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-2 gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                onClick={() => void copyClosurePacket()}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                <span className="truncate">
+                  {t("workspace.goal.copyClosurePacket", "复制摘要")}
+                </span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                disabled={followUpBusy || !followUpDraft.trim()}
+                onClick={() => void addFollowUp()}
+              >
+                {followUpBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                <span className="truncate">{t("workspace.goal.addFollowUp", "加入后续")}</span>
+              </Button>
+            </div>
+            <Input
+              value={followUpDraft}
+              disabled={followUpBusy}
+              onChange={(event) => setFollowUpDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return
+                event.preventDefault()
+                void addFollowUp()
+              }}
+              className="h-8 text-xs"
+              placeholder={t("workspace.goal.followUpPlaceholder", "新增后续项")}
+            />
+            <div className="grid grid-cols-2 gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                disabled={!canAcceptGoal || closeBusy}
+                onClick={() =>
+                  onCloseGoal(
+                    "accepted_v1",
+                    t("workspace.goal.acceptedV1Reason", "用户接受当前证据与剩余风险"),
+                    followUpTexts,
+                  )
+                }
+              >
+                {actionKey?.startsWith("close_goal:accepted_v1") ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                <span className="truncate">{t("workspace.goal.acceptV1", "接受 v1 关闭")}</span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 min-w-0 gap-1.5 text-xs"
+                disabled={!canCloseGoal || closeBusy}
+                onClick={() =>
+                  onCloseGoal(
+                    "needs_strict_evidence",
+                    t("workspace.goal.needsStrictReason", "用户要求补充真实或更严格证据"),
+                  )
+                }
+              >
+                {actionKey?.startsWith("close_goal:needs_strict_evidence") ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                )}
+                <span className="truncate">{t("workspace.goal.needStrict", "要求严格证据")}</span>
+              </Button>
+            </div>
+          </div>
+        </GoalDetailBlock>
 
         {worktreeEvidence.length > 0 ? (
           <GoalDetailBlock
@@ -17013,8 +17573,39 @@ function GoalDetailSection({
                         {criterion.text}
                       </span>
                       <StatusPill
+                        label={goalCriterionKindLabel(t, criterion.kind ?? "required")}
+                        tone={goalCriterionKindTone(criterion.kind ?? "required")}
+                      />
+                      <StatusPill
                         label={goalCriterionStatusLabel(t, criterion.status)}
                         tone={goalCriterionStatusTone(criterion.status)}
+                      />
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                      <StatusPill
+                        label={t("workspace.goal.criterionWorkflowCount", "Workflow {{count}}", {
+                          count: runs.filter((run) => run.goalCriterionId === criterion.id).length,
+                        })}
+                        tone="muted"
+                      />
+                      <StatusPill
+                        label={t("workspace.goal.criterionLoopCount", "Loop {{count}}", {
+                          count: snapshot.links.filter(
+                            (link) =>
+                              (link.targetType === "loop_schedule" ||
+                                link.targetType === "loop_run") &&
+                              goalCriterionMetadataId(link.metadata) === criterion.id,
+                          ).length,
+                        })}
+                        tone="muted"
+                      />
+                      <StatusPill
+                        label={t("workspace.goal.criterionEvidenceCount", "Evidence {{count}}", {
+                          count: evidence.filter(
+                            (item) => goalCriterionMetadataId(item.metadata) === criterion.id,
+                          ).length,
+                        })}
+                        tone="muted"
                       />
                     </div>
                     {criterion.evidenceIds.length > 0 ? (
@@ -17070,6 +17661,9 @@ function GoalDetailSection({
                       <span className="min-w-0 flex-1 truncate text-[11px] text-foreground/90">
                         {item.title}
                       </span>
+                      {goalCriterionMetadataId(item.metadata) ? (
+                        <StatusPill label={goalCriterionMetadataId(item.metadata) ?? ""} tone="info" />
+                      ) : null}
                       <StatusPill label={item.relation} tone={goalEvidenceTone(item.relation)} />
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -17434,6 +18028,19 @@ function WorkflowRunOverview({
             <span className="shrink-0 font-mono">
               {compactCount(budget.spent)}/{compactCount(budget.limit)}
             </span>
+          </div>
+        ) : null}
+        {run.goalCriterionId ? (
+          <div className="rounded-md border border-primary/20 bg-primary/5 px-2 py-1.5 text-[11px] text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+                {run.goalCriterionText ?? run.goalCriterionId}
+              </span>
+              <span className="shrink-0 font-mono text-[10px]">
+                {run.goalRevision ? `r${run.goalRevision}` : run.goalCriterionId}
+              </span>
+            </div>
           </div>
         ) : null}
       </div>

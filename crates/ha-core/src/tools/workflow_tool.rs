@@ -25,6 +25,8 @@ struct WorkflowRunToolArgs {
     origin: Option<String>,
     #[serde(default, alias = "goal_id", alias = "goalId")]
     goal_id: Option<String>,
+    #[serde(default, alias = "goal_criterion_id", alias = "goalCriterionId")]
+    goal_criterion_id: Option<String>,
     #[serde(default, alias = "worktree_id", alias = "worktreeId")]
     worktree_id: Option<String>,
 }
@@ -100,6 +102,7 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
             .origin
             .or_else(|| Some("agent:workflow_run".to_string())),
         goal_id: input.goal_id,
+        goal_criterion_id: input.goal_criterion_id,
         worktree_id: input.worktree_id,
     })?;
 
@@ -145,6 +148,8 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
         "kind": run.kind,
         "executionMode": run.execution_mode,
         "workflowMode": workflow_mode.as_str(),
+        "goalId": run.goal_id,
+        "goalCriterionId": run.goal_criterion_id,
         "startRequested": start_now,
         "launchAccepted": launch_accepted,
         "requiresApproval": preview.requires_approval,

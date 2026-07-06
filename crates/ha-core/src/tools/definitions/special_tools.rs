@@ -264,6 +264,10 @@ pub fn get_workflow_run_tool() -> ToolDefinition {
                     "type": "string",
                     "description": "Optional goal id. Omit to let the runtime auto-bind the active goal for this session."
                 },
+                "goalCriterionId": {
+                    "type": "string",
+                    "description": "Optional active-goal completion criterion id, such as `criterion-1`, when the workflow is meant to advance a specific required/optional/follow-up criterion. It is validated against the bound goal revision."
+                },
                 "worktreeId": {
                     "type": "string",
                     "description": "Optional managed worktree id when the workflow is explicitly tied to an isolated worktree."

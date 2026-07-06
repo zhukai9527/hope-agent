@@ -569,14 +569,22 @@ fn build_active_goal_section(session_id: Option<&str>, incognito: bool) -> Optio
     let session_id = session_id?;
     let db = crate::get_session_db()?;
     let snapshot = db.active_goal_for_session(session_id).ok()??;
-    let goal = snapshot.goal;
+    Some(render_active_goal_section(&snapshot))
+}
+
+fn render_active_goal_section(snapshot: &crate::goal::GoalSnapshot) -> String {
+    let goal = &snapshot.goal;
     let mut lines = vec![
         "# Active Goal".to_string(),
         String::new(),
         "The user has set a durable goal for this session. Treat it as the current north star until the user changes, pauses, clears, or completes it.".to_string(),
         format!("- State: {}", goal.state.as_str()),
+        format!("- Revision: {}", goal.revision),
         format!("- Objective: {}", truncate(&goal.objective, 1200)),
     ];
+    if snapshot.audit_stale {
+        lines.push("- Latest audit: stale because the goal revision or linked evidence changed; do not rely on the old completion conclusion until a new evaluation runs.".to_string());
+    }
     if let Some(domain) = goal.domain.as_deref().filter(|s| !s.trim().is_empty()) {
         lines.push(format!("- Domain: {}", truncate(domain, 200)));
     }
@@ -612,6 +620,60 @@ fn build_active_goal_section(session_id: Option<&str>, incognito: bool) -> Optio
             truncate(&goal.completion_criteria, 1600)
         ));
     }
+    if !snapshot.criteria_items.is_empty() {
+        lines.push(
+            "- Criteria ids for traceability; when creating a workflow run for a specific criterion, pass the matching `goalCriterionId`:".to_string(),
+        );
+        for criterion in snapshot.criteria_items.iter().take(12) {
+            lines.push(format!(
+                "  - {} [{}]: {}",
+                criterion.id,
+                criterion.kind.as_str(),
+                truncate(&criterion.text, 240)
+            ));
+        }
+    }
+    let required_missing = snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| {
+            criterion.kind.as_str() == "required" && criterion.status.as_str() != "satisfied"
+        })
+        .map(|criterion| {
+            format!(
+                "{} ({})",
+                truncate(&criterion.text, 220),
+                criterion.status.as_str()
+            )
+        })
+        .take(8)
+        .collect::<Vec<_>>();
+    if !required_missing.is_empty() {
+        lines.push("- Required criteria still needing evidence:".to_string());
+        for criterion in required_missing {
+            lines.push(format!("  - {criterion}"));
+        }
+    }
+    let follow_ups = goal
+        .follow_up_items
+        .iter()
+        .map(|item| truncate(&item.text, 220))
+        .take(6)
+        .collect::<Vec<_>>();
+    if !follow_ups.is_empty() {
+        lines.push("- Follow-up pool, not current blockers:".to_string());
+        for item in follow_ups {
+            lines.push(format!("  - {item}"));
+        }
+    }
+    if let Some(decision) = goal.closure_decision {
+        lines.push(format!("- User closure decision: {}", decision.as_str()));
+        if decision.as_str() != "accepted_v1" {
+            lines.push("- Do not claim the goal is closed; continue only toward the requested evidence or ask the user before broadening scope.".to_string());
+        }
+    } else if goal.state.as_str() == "completed" {
+        lines.push("- Closure is not accepted by the user yet. Present the evidence and ask whether to accept v1 closure or require stricter evidence.".to_string());
+    }
     if let Some(reason) = goal
         .blocked_reason
         .as_deref()
@@ -629,7 +691,7 @@ fn build_active_goal_section(session_id: Option<&str>, incognito: bool) -> Optio
     lines.push(
         "When making progress, prefer actions that create concrete evidence toward the completion criteria. If the user updates the goal, follow the latest version.".to_string(),
     );
-    Some(lines.join("\n"))
+    lines.join("\n")
 }
 
 /// Build a system prompt using the legacy path (no AgentDefinition).
@@ -715,7 +777,12 @@ pub fn build_legacy(model: Option<&str>, provider: Option<&str>, incognito: bool
 mod memory_section_tests {
     use super::*;
     use crate::agent_config::{AgentConfig, AgentDefinition};
+    use crate::goal::{
+        Goal, GoalBudgetSnapshot, GoalClosureDecision, GoalCriterionAudit, GoalCriterionItem,
+        GoalCriterionKind, GoalCriterionStatus, GoalFollowUpItem, GoalSnapshot, GoalState,
+    };
     use crate::memory::{MemoryEntry, MemoryScope, MemoryType, SqliteSectionBudgets};
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn mk_definition() -> AgentDefinition {
@@ -750,6 +817,82 @@ mod memory_section_tests {
             attachment_path: None,
             attachment_mime: None,
         }
+    }
+
+    fn mk_goal_snapshot() -> GoalSnapshot {
+        GoalSnapshot {
+            goal: Goal {
+                id: "goal-1".to_string(),
+                session_id: "s1".to_string(),
+                objective: "Ship Goal v2 review".to_string(),
+                completion_criteria: "[required] status machine is stable".to_string(),
+                revision: 7,
+                domain: Some("coding".to_string()),
+                workflow_template_id: Some("goal-v2-review".to_string()),
+                workflow_template_version: Some("1".to_string()),
+                workflow_task_type: Some("review".to_string()),
+                state: GoalState::Blocked,
+                mode_snapshot: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:10:00Z".to_string(),
+                completed_at: None,
+                final_summary: Some("Old audit completed before new evidence".to_string()),
+                final_evidence: json!({}),
+                blocked_reason: Some("needs_strict_evidence".to_string()),
+                last_evaluator_result: json!({}),
+                closure_decision: Some(GoalClosureDecision::NeedsStrictEvidence),
+                closure_reason: Some("User asked for strict proof".to_string()),
+                closed_at: None,
+                follow_up_items: vec![GoalFollowUpItem {
+                    id: "followup-1".to_string(),
+                    text: "manual browser profile".to_string(),
+                    created_at: "2026-01-01T00:11:00Z".to_string(),
+                    source: Some("closure".to_string()),
+                }],
+            },
+            links: Vec::new(),
+            events: Vec::new(),
+            audit_stale: true,
+            criteria_items: vec![GoalCriterionItem {
+                id: "criterion-1".to_string(),
+                text: "status machine is stable".to_string(),
+                kind: GoalCriterionKind::Required,
+            }],
+            criteria: vec![GoalCriterionAudit {
+                id: "criterion-1".to_string(),
+                text: "status machine is stable".to_string(),
+                kind: GoalCriterionKind::Required,
+                status: GoalCriterionStatus::Blocked,
+                evidence_ids: Vec::new(),
+                reason: Some("accepted closure cannot reopen".to_string()),
+            }],
+            evidence: Vec::new(),
+            timeline: Vec::new(),
+            budget: GoalBudgetSnapshot::default(),
+            workflow_runs: Vec::new(),
+            tasks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn active_goal_section_exposes_goal_v2_control_state() {
+        let out = render_active_goal_section(&mk_goal_snapshot());
+
+        assert!(out.contains("# Active Goal"));
+        assert!(out.contains("- Revision: 7"));
+        assert!(out.contains("stale because the goal revision or linked evidence changed"));
+        assert!(out.contains("pass the matching `goalCriterionId`"));
+        assert!(out.contains("criterion-1 [required]: status machine is stable"));
+        assert!(out.contains("Required criteria still needing evidence"));
+        assert!(out.contains("status machine is stable (blocked)"));
+        assert!(out.contains("Follow-up pool, not current blockers"));
+        assert!(out.contains("manual browser profile"));
+        assert!(out.contains("User closure decision: needs_strict_evidence"));
+        assert!(out.contains("Do not claim the goal is closed"));
+        assert!(out.contains("Blocked reason: needs_strict_evidence"));
     }
 
     #[test]

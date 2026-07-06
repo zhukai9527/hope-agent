@@ -55,6 +55,7 @@ pub async fn create_workflow_run(
     parent_run_id: Option<String>,
     origin: Option<String>,
     goal_id: Option<String>,
+    goal_criterion_id: Option<String>,
     worktree_id: Option<String>,
     run_immediately: Option<bool>,
     app_state: tauri::State<'_, crate::AppState>,
@@ -83,6 +84,7 @@ pub async fn create_workflow_run(
             parent_run_id,
             origin,
             goal_id,
+            goal_criterion_id,
             worktree_id,
         })?;
     if run_now {

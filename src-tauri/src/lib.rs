@@ -809,6 +809,8 @@ pub fn run() {
             commands::goal::resume_goal,
             commands::goal::clear_goal,
             commands::goal::evaluate_goal,
+            commands::goal::close_goal,
+            commands::goal::append_goal_follow_up,
             // Loop schedules (Phase 2.9 real recurrence control plane)
             commands::loop_control::list_loop_schedules,
             commands::loop_control::get_loop_schedule,

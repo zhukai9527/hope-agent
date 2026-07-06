@@ -35,6 +35,8 @@ pub struct CreateLoopScheduleBody {
     #[serde(default)]
     pub goal_id: Option<String>,
     #[serde(default)]
+    pub goal_criterion_id: Option<String>,
+    #[serde(default)]
     pub max_runs: Option<i64>,
     #[serde(default)]
     pub max_runtime_secs: Option<i64>,
@@ -67,6 +69,7 @@ pub async fn create_loop_schedule(
             CreateLoopScheduleInput {
                 session_id,
                 goal_id: body.goal_id,
+                goal_criterion_id: body.goal_criterion_id,
                 prompt: body.prompt.unwrap_or_default(),
                 trigger_kind: kind,
                 trigger_spec: body.trigger_spec,

@@ -749,6 +749,7 @@ mod tests {
                 parent_run_id: None,
                 origin: None,
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .expect("create workflow run");
@@ -817,6 +818,7 @@ mod tests {
                 parent_run_id: None,
                 origin: None,
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .expect("create workflow run");

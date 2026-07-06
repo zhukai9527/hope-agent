@@ -52,7 +52,7 @@ Check status：
 | 字段 | 说明 |
 | --- | --- |
 | `sessionId` | 必填；incognito session 拒绝持久化。 |
-| `goalId` | 可选；不传时自动绑定当前 active/open Goal。 |
+| `goalId` | 可选；不传时自动绑定当前 active/open 或 pending closure Goal。 |
 | `domain` | 可选；不传时从 template、Goal 文本、domain evidence、artifact kind 推断。 |
 | `templateId` / `templateVersion` | 可选；指定 Domain Workflow template。省略 version 时按当前最新可用版本解析。 |
 | `profiles[]` | 可选；当前用于 stats / trace，默认包含 domain、`required_evidence`、`approval_gate`。 |

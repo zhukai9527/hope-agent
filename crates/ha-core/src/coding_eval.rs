@@ -1726,6 +1726,7 @@ pub async fn evaluate(db: Arc<SessionDB>, fixture: &CodingEvalFixture) -> Result
             parent_run_id: None,
             origin: Some("eval".to_string()),
             goal_id: goal_id.clone(),
+            goal_criterion_id: None,
             worktree_id: None,
         })?;
         artifacts.workflow = match workflow::run_workflow_script_async(db.clone(), &workflow_run.id)
@@ -4849,6 +4850,7 @@ fn seed_workflow(
         parent_run_id: None,
         origin: Some("eval".to_string()),
         goal_id: goal_id.map(ToOwned::to_owned),
+        goal_criterion_id: None,
         worktree_id: None,
     })?;
     db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("eval_seed"))?;

@@ -1312,6 +1312,11 @@ fn build_router_with_cors(
         .route("/goals/{id}/resume", post(routes::goal::resume_goal))
         .route("/goals/{id}/clear", post(routes::goal::clear_goal))
         .route("/goals/{id}/evaluate", post(routes::goal::evaluate_goal))
+        .route("/goals/{id}/close", post(routes::goal::close_goal))
+        .route(
+            "/goals/{id}/follow-ups",
+            post(routes::goal::append_goal_follow_up),
+        )
         .route(
             "/sessions/{sid}/loops",
             get(routes::loop_control::list_loop_schedules)

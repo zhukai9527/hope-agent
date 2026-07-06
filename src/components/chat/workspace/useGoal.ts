@@ -18,6 +18,7 @@ export interface Goal {
   sessionId: string
   objective: string
   completionCriteria: string
+  revision?: number
   domain?: string | null
   workflowTemplateId?: string | null
   workflowTemplateVersion?: string | null
@@ -34,6 +35,10 @@ export interface Goal {
   finalEvidence: unknown
   blockedReason?: string | null
   lastEvaluatorResult: unknown
+  closureDecision?: GoalClosureDecision | null
+  closureReason?: string | null
+  closedAt?: string | null
+  followUpItems?: GoalFollowUpItem[]
 }
 
 export interface GoalEvent {
@@ -56,13 +61,33 @@ export interface GoalLink {
 }
 
 export type GoalCriterionStatus = "satisfied" | "missing" | "blocked"
+export type GoalCriterionKind = "required" | "optional" | "follow_up"
+export type GoalClosureDecision =
+  | "accepted_v1"
+  | "needs_strict_evidence"
+  | "cancelled"
+  | "superseded"
+
+export interface GoalCriterionItem {
+  id: string
+  text: string
+  kind: GoalCriterionKind
+}
 
 export interface GoalCriterionAudit {
   id: string
   text: string
+  kind?: GoalCriterionKind
   status: GoalCriterionStatus
   evidenceIds: string[]
   reason?: string | null
+}
+
+export interface GoalFollowUpItem {
+  id: string
+  text: string
+  createdAt: string
+  source?: string | null
 }
 
 export interface GoalEvidenceItem {
@@ -108,6 +133,8 @@ export interface GoalSnapshot {
   goal: Goal
   links: GoalLink[]
   events: GoalEvent[]
+  auditStale?: boolean
+  criteriaItems?: GoalCriterionItem[]
   criteria?: GoalCriterionAudit[]
   evidence?: GoalEvidenceItem[]
   timeline?: GoalTimelineItem[]

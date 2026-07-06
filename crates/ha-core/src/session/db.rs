@@ -2942,7 +2942,11 @@ impl SessionDB {
             let open_goal: Option<String> = conn
                 .query_row(
                     "SELECT id FROM goals
-                     WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                     WHERE session_id = ?1
+                       AND (
+                            state IN ('active','paused','evaluating','blocked')
+                            OR (state = 'completed' AND closure_decision IS NULL)
+                       )
                      LIMIT 1",
                     params![session_id],
                     |row| row.get(0),
@@ -5500,6 +5504,7 @@ mod tests {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");

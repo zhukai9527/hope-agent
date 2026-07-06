@@ -167,6 +167,14 @@ pub struct LoopSchedule {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_criterion_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_criterion_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_criterion_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_revision: Option<i64>,
     pub cron_job_id: String,
     pub prompt: String,
     pub trigger_kind: LoopTriggerKind,
@@ -227,6 +235,8 @@ pub struct CreateLoopScheduleInput {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_criterion_id: Option<String>,
     #[serde(default)]
     pub prompt: String,
     pub trigger_kind: LoopTriggerKind,
@@ -257,6 +267,10 @@ pub struct LoopRunAdmission {
     pub execution_strategy: LoopExecutionStrategy,
     pub agent_id: String,
     pub goal_id: Option<String>,
+    pub goal_criterion_id: Option<String>,
+    pub goal_criterion_text: Option<String>,
+    pub goal_criterion_kind: Option<String>,
+    pub goal_revision: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +309,10 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
             goal_id TEXT,
+            goal_criterion_id TEXT,
+            goal_criterion_text TEXT,
+            goal_criterion_kind TEXT,
+            goal_revision INTEGER,
             cron_job_id TEXT NOT NULL UNIQUE,
             prompt TEXT NOT NULL,
             trigger_kind TEXT NOT NULL,
@@ -349,6 +367,30 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         "execution_strategy",
         "ALTER TABLE loop_schedules ADD COLUMN execution_strategy TEXT NOT NULL DEFAULT 'continue';",
     )?;
+    ensure_loop_column(
+        conn,
+        "goal_criterion_id",
+        "ALTER TABLE loop_schedules ADD COLUMN goal_criterion_id TEXT;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "goal_criterion_text",
+        "ALTER TABLE loop_schedules ADD COLUMN goal_criterion_text TEXT;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "goal_criterion_kind",
+        "ALTER TABLE loop_schedules ADD COLUMN goal_criterion_kind TEXT;",
+    )?;
+    ensure_loop_column(
+        conn,
+        "goal_revision",
+        "ALTER TABLE loop_schedules ADD COLUMN goal_revision INTEGER;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_loop_schedules_goal_criterion
+            ON loop_schedules(goal_id, goal_criterion_id, updated_at DESC);",
+    )?;
     Ok(())
 }
 
@@ -375,6 +417,24 @@ impl SessionDB {
         let now = now_rfc3339();
         let id = format!("loop_{}", uuid::Uuid::new_v4().simple());
         let (goal_id, agent_id, prompt) = self.resolve_loop_create_context(&input)?;
+        let goal_criterion = match goal_id.as_deref() {
+            Some(goal_id) => {
+                self.resolve_goal_criterion_binding(goal_id, input.goal_criterion_id.as_deref())?
+            }
+            None => {
+                if input
+                    .goal_criterion_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    return Err(anyhow!(
+                        "goal criterion binding requires a loop schedule bound to a Goal"
+                    ));
+                }
+                None
+            }
+        };
         if input.execution_strategy == LoopExecutionStrategy::Workflow {
             if input.trigger_kind != LoopTriggerKind::Interval {
                 return Err(anyhow!(
@@ -438,14 +498,23 @@ impl SessionDB {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
             conn.execute(
                 "INSERT INTO loop_schedules (
-                    id, session_id, goal_id, cron_job_id, prompt, trigger_kind, trigger_spec_json, execution_strategy,
+                    id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
+                    goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json, execution_strategy,
                     state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
                     approval_policy_snapshot_json, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13, ?14, ?15, ?15)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15, ?16, ?17, ?18, ?19, ?19)",
                 params![
                     id,
                     input.session_id,
                     goal_id,
+                    goal_criterion.as_ref().map(|criterion| criterion.id.as_str()),
+                    goal_criterion.as_ref().map(|criterion| criterion.text.as_str()),
+                    goal_criterion
+                        .as_ref()
+                        .map(|criterion| criterion.kind.as_str()),
+                    goal_criterion
+                        .as_ref()
+                        .map(|criterion| criterion.goal_revision),
                     cron_job.id,
                     prompt,
                     input.trigger_kind.as_str(),
@@ -480,6 +549,7 @@ impl SessionDB {
                     "triggerKind": schedule.trigger_kind,
                     "maxRuns": schedule.max_runs,
                     "maxRuntimeSecs": schedule.max_runtime_secs,
+                    "goalCriterion": loop_schedule_goal_criterion_metadata(&schedule),
                 }),
             );
         }
@@ -491,7 +561,8 @@ impl SessionDB {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(conn
             .query_row(
-            "SELECT id, session_id, goal_id, cron_job_id, prompt, trigger_kind, trigger_spec_json,
+            "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
+                    goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules WHERE id = ?1",
@@ -508,7 +579,8 @@ impl SessionDB {
     ) -> Result<Vec<LoopSchedule>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, goal_id, cron_job_id, prompt, trigger_kind, trigger_spec_json,
+            "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
+                    goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules
@@ -649,6 +721,7 @@ impl SessionDB {
             "executionStrategy": schedule.execution_strategy,
             "cronJobId": cron_job_id,
             "seq": seq,
+            "goalCriterion": loop_schedule_goal_criterion_metadata(&schedule),
         });
         {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
@@ -683,6 +756,10 @@ impl SessionDB {
                 .map(|m| m.agent_id)
                 .unwrap_or_else(|| "ha-main".to_string()),
             goal_id: schedule.goal_id,
+            goal_criterion_id: schedule.goal_criterion_id,
+            goal_criterion_text: schedule.goal_criterion_text,
+            goal_criterion_kind: schedule.goal_criterion_kind,
+            goal_revision: schedule.goal_revision,
         }))
     }
 
@@ -799,6 +876,7 @@ impl SessionDB {
                     "state": state,
                     "summary": result_summary,
                     "error": error,
+                    "goalCriterion": loop_schedule_goal_criterion_metadata(&schedule),
                 }),
             );
         }
@@ -865,6 +943,7 @@ impl SessionDB {
             parent_run_id: None,
             origin: Some(format!("loop:{}", admission.loop_id)),
             goal_id: Some(goal.id.clone()),
+            goal_criterion_id: admission.goal_criterion_id.clone(),
             worktree_id: None,
         })?;
         let _ = self.append_workflow_event(
@@ -877,6 +956,7 @@ impl SessionDB {
                 "triggerSpec": admission.trigger_spec,
                 "templateId": draft.template.id,
                 "templateVersion": draft.template.version,
+                "goalCriterionId": admission.goal_criterion_id.as_deref(),
             }),
         );
         Ok(LoopWorkflowLaunch {
@@ -933,7 +1013,11 @@ impl SessionDB {
             None => conn
                 .query_row(
                     "SELECT id FROM goals
-                     WHERE session_id = ?1 AND state IN ('active','paused','evaluating','blocked')
+                     WHERE session_id = ?1
+                       AND (
+                            state IN ('active','paused','evaluating','blocked')
+                            OR (state = 'completed' AND closure_decision IS NULL)
+                       )
                      ORDER BY updated_at DESC
                      LIMIT 1",
                     params![input.session_id],
@@ -967,7 +1051,8 @@ impl SessionDB {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(conn
             .query_row(
-            "SELECT id, session_id, goal_id, cron_job_id, prompt, trigger_kind, trigger_spec_json,
+            "SELECT id, session_id, goal_id, goal_criterion_id, goal_criterion_text,
+                    goal_criterion_kind, goal_revision, cron_job_id, prompt, trigger_kind, trigger_spec_json,
                     execution_strategy, state, max_runs, run_count, max_runtime_secs, token_budget, cost_budget_micros,
                     approval_policy_snapshot_json, created_at, updated_at, completed_at, blocked_reason
              FROM loop_schedules WHERE cron_job_id = ?1",
@@ -1263,33 +1348,47 @@ fn normalized_trigger_spec(kind: LoopTriggerKind, spec: &Value) -> Result<Value>
 }
 
 fn row_to_loop_schedule(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopSchedule> {
-    let trigger_kind: String = row.get(5)?;
-    let trigger_spec_json: String = row.get(6)?;
-    let execution_strategy: String = row.get(7)?;
-    let state: String = row.get(8)?;
-    let policy_json: String = row.get(14)?;
+    let trigger_kind: String = row.get(9)?;
+    let trigger_spec_json: String = row.get(10)?;
+    let execution_strategy: String = row.get(11)?;
+    let state: String = row.get(12)?;
+    let policy_json: String = row.get(18)?;
     Ok(LoopSchedule {
         id: row.get(0)?,
         session_id: row.get(1)?,
         goal_id: row.get(2)?,
-        cron_job_id: row.get(3)?,
-        prompt: row.get(4)?,
+        goal_criterion_id: row.get(3)?,
+        goal_criterion_text: row.get(4)?,
+        goal_criterion_kind: row.get(5)?,
+        goal_revision: row.get(6)?,
+        cron_job_id: row.get(7)?,
+        prompt: row.get(8)?,
         trigger_kind: LoopTriggerKind::from_str(&trigger_kind).unwrap_or(LoopTriggerKind::Interval),
         trigger_spec: serde_json::from_str(&trigger_spec_json).unwrap_or_else(|_| json!({})),
         execution_strategy: LoopExecutionStrategy::from_str(&execution_strategy)
             .unwrap_or(LoopExecutionStrategy::Continue),
         state: LoopState::from_str(&state).unwrap_or(LoopState::Blocked),
-        max_runs: row.get(9)?,
-        run_count: row.get(10)?,
-        max_runtime_secs: row.get(11)?,
-        token_budget: row.get(12)?,
-        cost_budget_micros: row.get(13)?,
+        max_runs: row.get(13)?,
+        run_count: row.get(14)?,
+        max_runtime_secs: row.get(15)?,
+        token_budget: row.get(16)?,
+        cost_budget_micros: row.get(17)?,
         approval_policy_snapshot: serde_json::from_str(&policy_json).unwrap_or_else(|_| json!({})),
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
-        completed_at: row.get(17)?,
-        blocked_reason: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
+        completed_at: row.get(21)?,
+        blocked_reason: row.get(22)?,
     })
+}
+
+fn loop_schedule_goal_criterion_metadata(schedule: &LoopSchedule) -> Option<Value> {
+    let id = schedule.goal_criterion_id.as_deref()?;
+    Some(json!({
+        "id": id,
+        "text": schedule.goal_criterion_text.as_deref(),
+        "kind": schedule.goal_criterion_kind.as_deref(),
+        "goalRevision": schedule.goal_revision,
+    }))
 }
 
 fn row_to_loop_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopRun> {
@@ -1398,12 +1497,31 @@ pub fn build_loop_trigger_message(
     loop_id: &str,
     run_id: &str,
     goal_id: Option<&str>,
+    goal_criterion_id: Option<&str>,
+    goal_criterion_text: Option<&str>,
     trigger_kind: LoopTriggerKind,
     trigger_spec: &Value,
     prompt: &str,
 ) -> String {
     let goal = goal_id
         .map(|id| format!("<goal_id>{}</goal_id>\n", escape_xml(id)))
+        .unwrap_or_default();
+    let goal_criterion = goal_criterion_id
+        .map(|id| {
+            let text = goal_criterion_text
+                .map(|text| {
+                    format!(
+                        "\n<goal_criterion_text>{}</goal_criterion_text>",
+                        escape_xml(text)
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "<goal_criterion_id>{}</goal_criterion_id>{}\n",
+                escape_xml(id),
+                text
+            )
+        })
         .unwrap_or_default();
     let condition = if trigger_kind == LoopTriggerKind::Condition {
         trigger_spec
@@ -1428,6 +1546,7 @@ pub fn build_loop_trigger_message(
          <run_id>{}</run_id>\n\
          {}\
          {}\
+         {}\
          A scheduled loop trigger has fired. Follow the recurring prompt below. \
          If the goal or condition is already complete, say so clearly and stop; \
          otherwise make the next useful step, preserve normal permissions, and \
@@ -1437,6 +1556,7 @@ pub fn build_loop_trigger_message(
         escape_xml(loop_id),
         escape_xml(run_id),
         goal,
+        goal_criterion,
         condition,
         escape_xml(prompt)
     )
@@ -1513,6 +1633,8 @@ mod tests {
             "loop<&",
             "run&",
             Some("goal>"),
+            Some("criterion-1"),
+            Some("finish <review> & ship"),
             LoopTriggerKind::Interval,
             &json!({ "intervalSecs": 60 }),
             "check <CI> & continue",
@@ -1520,6 +1642,10 @@ mod tests {
         assert!(msg.contains("<loop_id>loop&lt;&amp;</loop_id>"));
         assert!(msg.contains("<run_id>run&amp;</run_id>"));
         assert!(msg.contains("<goal_id>goal&gt;</goal_id>"));
+        assert!(msg.contains("<goal_criterion_id>criterion-1</goal_criterion_id>"));
+        assert!(msg.contains(
+            "<goal_criterion_text>finish &lt;review&gt; &amp; ship</goal_criterion_text>"
+        ));
         assert!(msg.contains("check &lt;CI&gt; &amp; continue"));
     }
 
@@ -1528,6 +1654,8 @@ mod tests {
         let msg = build_loop_trigger_message(
             "loop",
             "run",
+            None,
+            None,
             None,
             LoopTriggerKind::Condition,
             &json!({ "condition": "CI <green> & deployed" }),
@@ -1543,6 +1671,7 @@ mod tests {
         let input = CreateLoopScheduleInput {
             session_id: "s".into(),
             goal_id: None,
+            goal_criterion_id: None,
             prompt: "poll".into(),
             trigger_kind: LoopTriggerKind::Interval,
             trigger_spec: json!({ "intervalSecs": 0 }),
@@ -1566,6 +1695,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id,
                     goal_id: None,
+                    goal_criterion_id: None,
                     prompt: "poll".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1591,6 +1721,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: None,
+                    goal_criterion_id: None,
                     prompt: "poll".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1637,6 +1768,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: None,
+                    goal_criterion_id: None,
                     prompt: "poll".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1702,6 +1834,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id,
                     goal_id: None,
+                    goal_criterion_id: None,
                     prompt: "".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1725,7 +1858,8 @@ mod tests {
             .create_goal(CreateGoalInput {
                 session_id: session.id.clone(),
                 objective: "Refresh the weekly status memo".to_string(),
-                completion_criteria: "Draft is reviewed against stakeholders".to_string(),
+                completion_criteria: "[required] Draft is reviewed against stakeholders"
+                    .to_string(),
                 domain: None,
                 workflow_template_id: Some("writing-brief".to_string()),
                 workflow_template_version: None,
@@ -1741,6 +1875,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: Some("criterion-1".to_string()),
                     prompt: "Update the memo with the newest evidence".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1764,6 +1899,7 @@ mod tests {
             admission.execution_strategy,
             LoopExecutionStrategy::Workflow
         );
+        assert_eq!(admission.goal_criterion_id.as_deref(), Some("criterion-1"));
 
         let launch = session_db
             .create_loop_workflow_run(&admission)
@@ -1777,6 +1913,11 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, launch.run_id);
         assert_eq!(runs[0].goal_id.as_deref(), Some(goal.goal.id.as_str()));
+        assert_eq!(runs[0].goal_criterion_id.as_deref(), Some("criterion-1"));
+        assert_eq!(
+            runs[0].goal_criterion_text.as_deref(),
+            Some("Draft is reviewed against stakeholders")
+        );
         let expected_origin = format!("loop:{}", schedule.id);
         assert_eq!(runs[0].origin.as_deref(), Some(expected_origin.as_str()));
         let finished_at = now_rfc3339();
@@ -1829,6 +1970,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: None,
                     prompt: "Refresh the brief from the newest evidence".into(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 60 }),
@@ -1935,6 +2077,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: None,
+                    goal_criterion_id: None,
                     prompt: "poll".into(),
                     trigger_kind: LoopTriggerKind::Condition,
                     trigger_spec: json!({

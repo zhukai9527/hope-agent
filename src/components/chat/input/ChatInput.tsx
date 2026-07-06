@@ -1,4 +1,4 @@
-import { Fragment, useRef, useEffect, useCallback, useState } from "react"
+import { Fragment, useRef, useEffect, useCallback, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -86,8 +86,15 @@ import { contextUsageBarClass } from "../contextUsageColor"
 import type { AgentConfig } from "@/components/settings/types"
 import type { QuickPromptItem } from "@/types/quickPrompts"
 import type { GoalSnapshot } from "../workspace/useGoal"
+import { parseGoalCriteriaDraft, type DraftGoalCriterionKind } from "../workspace/goalCriteriaDraft"
 
 type WorkflowMode = "off" | "on" | "ultracode"
+export type GoalModeSubmitAction =
+  | "create_or_update"
+  | "replace"
+  | "append_required"
+  | "append_optional"
+  | "append_follow_up"
 
 const WORKFLOW_MODE_CHANGED_EVENT = "hope-agent:workflow-mode-changed"
 
@@ -205,7 +212,7 @@ interface ChatInputProps {
   // Goal mode
   goalSnapshot?: GoalSnapshot | null
   goalLoading?: boolean
-  onGoalModeSubmit?: (objective: string) => Promise<boolean>
+  onGoalModeSubmit?: (objective: string, action?: GoalModeSubmitAction) => Promise<boolean>
   onGoalUpdate?: (objective: string, completionCriteria: string) => Promise<boolean>
   onPauseGoal?: () => Promise<boolean>
   onResumeGoal?: () => Promise<boolean>
@@ -255,6 +262,59 @@ function ContextUsageBottomBar({ usage }: { usage: ContextUsageInfo }) {
       </TooltipContent>
     </Tooltip>
   )
+}
+
+function GoalCriteriaDraftPreview({ criteriaText }: { criteriaText: string }) {
+  const { t } = useTranslation()
+  const items = useMemo(() => parseGoalCriteriaDraft(criteriaText), [criteriaText])
+  if (items.length === 0) return null
+  const required = items.filter((item) => item.kind === "required").length
+  const optional = items.filter((item) => item.kind === "optional").length
+  const followUp = items.filter((item) => item.kind === "follow_up").length
+  return (
+    <div className="space-y-1 rounded-md border border-emerald-500/15 bg-emerald-500/5 p-1.5 text-[10px]">
+      <div className="flex min-w-0 flex-wrap items-center gap-1 text-emerald-800/80 dark:text-emerald-200/80">
+        <span className="shrink-0 font-medium">
+          {t("chat.goalMode.criteriaPreview", "标准预览")}
+        </span>
+        <span>
+          {t("chat.goalMode.criteriaRequiredCount", "必须 {{count}}", { count: required })}
+        </span>
+        <span className="opacity-45">/</span>
+        <span>
+          {t("chat.goalMode.criteriaOptionalCount", "可选 {{count}}", { count: optional })}
+        </span>
+        <span className="opacity-45">/</span>
+        <span>
+          {t("chat.goalMode.criteriaFollowUpCount", "后续 {{count}}", { count: followUp })}
+        </span>
+      </div>
+      <div className="space-y-0.5">
+        {items.slice(0, 3).map((item) => (
+          <div key={item.id} className="flex min-w-0 items-center gap-1">
+            <span className="shrink-0 rounded border border-emerald-500/20 px-1 text-emerald-700 dark:text-emerald-300">
+              {chatGoalDraftKindLabel(t, item.kind)}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function chatGoalDraftKindLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  kind: DraftGoalCriterionKind,
+): string {
+  switch (kind) {
+    case "required":
+      return t("chat.goalMode.criterionRequired", "必须")
+    case "optional":
+      return t("chat.goalMode.criterionOptional", "可选")
+    case "follow_up":
+      return t("chat.goalMode.criterionFollowUp", "后续")
+  }
 }
 
 export default function ChatInput({
@@ -336,6 +396,8 @@ export default function ChatInput({
   const [toolbarMinHeight, setToolbarMinHeight] = useState<number | null>(null)
   const [pendingExpanded, setPendingExpanded] = useState(false)
   const [goalComposerMode, setGoalComposerMode] = useState(false)
+  const [goalComposerAction, setGoalComposerAction] =
+    useState<GoalModeSubmitAction>("create_or_update")
   const [goalSubmitting, setGoalSubmitting] = useState(false)
   const [goalEditOpen, setGoalEditOpen] = useState(false)
   const [goalEditObjective, setGoalEditObjective] = useState("")
@@ -817,8 +879,10 @@ export default function ChatInput({
         return
       }
       if (!onGoalModeSubmit) return
+      const action = activeGoal ? goalComposerAction : undefined
       setGoalSubmitting(true)
-      void onGoalModeSubmit(objective)
+      const submit = action ? onGoalModeSubmit(objective, action) : onGoalModeSubmit(objective)
+      void submit
         .then((ok) => {
           if (!ok) return
           setComposerInput("")
@@ -830,9 +894,11 @@ export default function ChatInput({
     onSend()
   }, [
     goalComposerMode,
+    goalComposerAction,
     goalSubmitting,
     incognitoEnabled,
     input,
+    activeGoal,
     onGoalModeSubmit,
     onSend,
     resetHistoryBrowsing,
@@ -906,6 +972,18 @@ export default function ChatInput({
         return ""
     }
   })()
+  const activeGoalCriteria = goalSnapshot?.criteria ?? []
+  const activeGoalRequiredTotal = activeGoalCriteria.filter(
+    (criterion) => (criterion.kind ?? "required") === "required",
+  ).length
+  const activeGoalRequiredDone = activeGoalCriteria.filter(
+    (criterion) =>
+      (criterion.kind ?? "required") === "required" && criterion.status === "satisfied",
+  ).length
+  const activeGoalProgressLabel =
+    activeGoalRequiredTotal > 0
+      ? `${activeGoalRequiredDone}/${activeGoalRequiredTotal}`
+      : `r${activeGoal?.revision ?? 1}`
 
   const overflowMenuItemClass =
     "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-foreground/80 outline-none transition-all duration-150 hover:bg-secondary/60 hover:text-foreground focus-visible:bg-secondary/60 focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
@@ -926,7 +1004,11 @@ export default function ChatInput({
       toast.error(t("chat.goalMode.incognito", "无痕会话不持久化目标"))
       return
     }
-    setGoalComposerMode((value) => !value)
+    setGoalComposerMode((value) => {
+      const next = !value
+      if (next) setGoalComposerAction("create_or_update")
+      return next
+    })
   }
 
   const updateWorkflowMode = useCallback(
@@ -1465,6 +1547,9 @@ export default function ChatInput({
                 <span className="shrink-0 rounded-full border border-emerald-500/20 bg-background/45 px-2 py-0.5 text-[11px]">
                   {activeGoalStateLabel}
                 </span>
+                <span className="shrink-0 rounded-full border border-emerald-500/20 bg-background/45 px-2 py-0.5 text-[11px]">
+                  {activeGoalProgressLabel}
+                </span>
                 <IconTip label={t("chat.goalMode.edit", "编辑目标")}>
                   <button
                     type="button"
@@ -1547,8 +1632,12 @@ export default function ChatInput({
                     value={goalEditCriteria}
                     onChange={(event) => setGoalEditCriteria(event.target.value)}
                     className="min-h-16 w-full resize-y rounded-md border border-border/60 bg-background px-2 py-1.5 text-xs outline-none focus:border-emerald-500/50"
-                    placeholder={t("chat.goalMode.criteriaPlaceholder", "完成标准")}
+                    placeholder={t(
+                      "chat.goalMode.criteriaPlaceholder",
+                      "完成标准；可用 [required] / [optional] / [follow-up]",
+                    )}
                   />
+                  <GoalCriteriaDraftPreview criteriaText={goalEditCriteria} />
                   <div className="flex justify-end gap-1.5">
                     <Button
                       type="button"
@@ -1622,18 +1711,52 @@ export default function ChatInput({
 
         {/* Goal Mode Banner */}
         <AnimatedCollapse open={goalComposerMode}>
-          <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 animate-in fade-in slide-in-from-top-1 duration-200 dark:text-emerald-300">
-            <Target className="h-3.5 w-3.5 shrink-0" />
-            <span className="flex-1">
-              {t("chat.goalMode.restricted", "目标模式：发送后会创建当前会话的持续目标")}
-            </span>
-            <button
-              type="button"
-              onClick={() => setGoalComposerMode(false)}
-              className="transition-colors hover:text-emerald-900 dark:hover:text-emerald-100"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+          <div className="space-y-1.5 border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 animate-in fade-in slide-in-from-top-1 duration-200 dark:text-emerald-300">
+            <div className="flex items-center gap-2">
+              <Target className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">
+                {activeGoal
+                  ? t("chat.goalMode.activeRestricted", "目标模式：选择如何更新当前目标")
+                  : t("chat.goalMode.restricted", "目标模式：发送后会创建当前会话的持续目标")}
+              </span>
+              <button
+                type="button"
+                onClick={() => setGoalComposerMode(false)}
+                className="transition-colors hover:text-emerald-900 dark:hover:text-emerald-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {activeGoal ? (
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-5">
+                {(
+                  [
+                    [
+                      "create_or_update",
+                      t("chat.goalMode.actionUpdate", "更新目标"),
+                    ],
+                    ["replace", t("chat.goalMode.actionReplace", "替代目标")],
+                    ["append_required", t("chat.goalMode.actionRequired", "追加必须")],
+                    ["append_optional", t("chat.goalMode.actionOptional", "追加可选")],
+                    ["append_follow_up", t("chat.goalMode.actionFollowUp", "追加后续")],
+                  ] as const
+                ).map(([action, label]) => (
+                  <button
+                    key={action}
+                    type="button"
+                    className={cn(
+                      "h-7 min-w-0 rounded-md border px-2 text-[11px] transition-colors",
+                      goalComposerAction === action
+                        ? "border-emerald-500/45 bg-background text-emerald-800 dark:text-emerald-100"
+                        : "border-emerald-500/15 bg-background/35 text-emerald-700/75 hover:bg-background/70 dark:text-emerald-300/75",
+                    )}
+                    onClick={() => setGoalComposerAction(action)}
+                  >
+                    <span className="block truncate">{label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
         </AnimatedCollapse>
 

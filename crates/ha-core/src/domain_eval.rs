@@ -1727,6 +1727,7 @@ impl SessionDB {
                     parent_run_id: None,
                     origin: Some("domain_eval_fixture".to_string()),
                     goal_id: Some(goal.goal.id.clone()),
+                    goal_criterion_id: None,
                     worktree_id: None,
                 })?;
                 report.workflow_run_id = Some(run.id);
@@ -8505,6 +8506,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("operational-gate-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8546,6 +8548,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("operational-gate-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8605,6 +8608,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("operational-gate-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8661,6 +8665,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8812,6 +8817,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8857,6 +8863,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8916,6 +8923,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -8994,6 +9002,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -9060,6 +9069,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -9120,6 +9130,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -9231,6 +9242,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("soak-report-test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -9579,6 +9591,7 @@ mod tests {
             parent_run_id: None,
             origin: Some("test".to_string()),
             goal_id: Some(goal.goal.id.clone()),
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .unwrap();
@@ -9637,6 +9650,7 @@ mod tests {
             parent_run_id: None,
             origin: Some("test".to_string()),
             goal_id: Some(goal.goal.id.clone()),
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .unwrap();
@@ -9743,6 +9757,7 @@ mod tests {
             parent_run_id: None,
             origin: Some("test".to_string()),
             goal_id: Some(goal.goal.id.clone()),
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .unwrap();

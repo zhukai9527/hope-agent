@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import type { ActiveModel, AvailableModel, SessionMode } from "@/types/chat"
 import type { TaskProgressSnapshot } from "@/components/chat/tasks/taskProgress"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { GoalSnapshot } from "@/components/chat/workspace/useGoal"
 import ChatInput from "./ChatInput"
 import IncognitoToggle from "./IncognitoToggle"
 
@@ -151,6 +152,58 @@ const inProgressTaskSnapshot: TaskProgressSnapshot = {
   completed: 0,
   remaining: 1,
   inProgress: true,
+}
+
+const activeGoalSnapshot: GoalSnapshot = {
+  goal: {
+    id: "goal-1",
+    sessionId: "s1",
+    objective: "Complete Goal v2 review",
+    completionCriteria: "[required] code is reviewed\n[required] GUI path works",
+    revision: 4,
+    state: "active",
+    modeSnapshot: null,
+    budgetTokenLimit: null,
+    budgetTimeLimitSecs: null,
+    budgetTurnLimit: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:10:00Z",
+    completedAt: null,
+    finalSummary: null,
+    finalEvidence: {},
+    blockedReason: null,
+    lastEvaluatorResult: {},
+  },
+  links: [],
+  events: [],
+  auditStale: false,
+  criteriaItems: [
+    { id: "criterion-1", text: "code is reviewed", kind: "required" },
+    { id: "criterion-2", text: "GUI path works", kind: "required" },
+  ],
+  criteria: [
+    {
+      id: "criterion-1",
+      text: "code is reviewed",
+      kind: "required",
+      status: "satisfied",
+      evidenceIds: ["workflow:wf-1"],
+      reason: "Reviewed.",
+    },
+    {
+      id: "criterion-2",
+      text: "GUI path works",
+      kind: "required",
+      status: "missing",
+      evidenceIds: [],
+      reason: "Needs GUI evidence.",
+    },
+  ],
+  evidence: [],
+  timeline: [],
+  budget: undefined,
+  workflowRuns: [],
+  tasks: [],
 }
 
 function renderChatInput(overrides: Partial<Parameters<typeof ChatInput>[0]> = {}) {
@@ -363,6 +416,123 @@ describe("ChatInput", () => {
 
     expect(await screen.findByText("chat.workflowMode.on")).toBeTruthy()
     expect(screen.getByText("chat.workflowMode.activeOnDetail")).toBeTruthy()
+  })
+
+  test("submits the current draft through goal mode instead of normal send", async () => {
+    const onGoalModeSubmit = vi.fn(() => Promise.resolve(true))
+    const onInputChange = vi.fn()
+    const onSend = vi.fn()
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      () =>
+        ({
+          x: 0,
+          y: 0,
+          width: 1200,
+          height: 80,
+          top: 0,
+          left: 0,
+          right: 1200,
+          bottom: 80,
+          toJSON: () => ({}),
+        }) as DOMRect,
+    )
+
+    try {
+      renderChatInput({
+        input: "Complete Goal v2 review",
+        onGoalModeSubmit,
+        onInputChange,
+        onSend,
+      })
+
+      fireEvent.click(await screen.findByRole("button", { name: "chat.goalMode.enter" }))
+      expect(screen.getByText("chat.goalMode.restricted")).toBeTruthy()
+
+      fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
+
+      await waitFor(() => {
+        expect(onGoalModeSubmit).toHaveBeenCalledWith("Complete Goal v2 review")
+      })
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onInputChange).toHaveBeenCalledWith("")
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+
+  test("passes the selected active-goal action when goal mode appends follow-up", async () => {
+    const onGoalModeSubmit = vi.fn(() => Promise.resolve(true))
+    const onInputChange = vi.fn()
+    const rectSpy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      () =>
+        ({
+          x: 0,
+          y: 0,
+          width: 1200,
+          height: 80,
+          top: 0,
+          left: 0,
+          right: 1200,
+          bottom: 80,
+          toJSON: () => ({}),
+        }) as DOMRect,
+    )
+
+    try {
+      renderChatInput({
+        input: "Manual browser smoke",
+        goalSnapshot: activeGoalSnapshot,
+        onGoalModeSubmit,
+        onInputChange,
+      })
+
+      fireEvent.click(await screen.findByRole("button", { name: "chat.goalMode.enter" }))
+      expect(screen.getByText("chat.goalMode.activeRestricted")).toBeTruthy()
+
+      fireEvent.click(screen.getByRole("button", { name: "chat.goalMode.actionFollowUp" }))
+      fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
+
+      await waitFor(() => {
+        expect(onGoalModeSubmit).toHaveBeenCalledWith(
+          "Manual browser smoke",
+          "append_follow_up",
+        )
+      })
+      expect(onInputChange).toHaveBeenCalledWith("")
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+
+  test("shows the active goal strip with required criteria progress above the composer", () => {
+    renderChatInput({ goalSnapshot: activeGoalSnapshot })
+
+    expect(screen.getByText("chat.goalMode.activeGoal")).toBeTruthy()
+    expect(screen.getByText("Complete Goal v2 review")).toBeTruthy()
+    expect(screen.getByText("1/2")).toBeTruthy()
+  })
+
+  test("previews required optional and follow-up criteria while editing the active goal", () => {
+    renderChatInput({
+      goalSnapshot: {
+        ...activeGoalSnapshot,
+        goal: {
+          ...activeGoalSnapshot.goal,
+          completionCriteria:
+            "[required] code is reviewed\n[optional] polish copy\n[follow-up] browser smoke",
+        },
+      },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "chat.goalMode.edit" }))
+
+    expect(screen.getByText("chat.goalMode.criteriaPreview")).toBeTruthy()
+    expect(screen.getByText("chat.goalMode.criteriaRequiredCount")).toBeTruthy()
+    expect(screen.getByText("chat.goalMode.criteriaOptionalCount")).toBeTruthy()
+    expect(screen.getByText("chat.goalMode.criteriaFollowUpCount")).toBeTruthy()
+    expect(screen.getByText("code is reviewed")).toBeTruthy()
+    expect(screen.getByText("polish copy")).toBeTruthy()
+    expect(screen.getByText("browser smoke")).toBeTruthy()
   })
 
   test("materializes a draft session before enabling workflow mode from the composer", async () => {

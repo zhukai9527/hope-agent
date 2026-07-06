@@ -32,6 +32,10 @@ export interface WorkflowRun {
   parentRunId?: string | null
   origin?: string | null
   goalId?: string | null
+  goalCriterionId?: string | null
+  goalCriterionText?: string | null
+  goalCriterionKind?: string | null
+  goalRevision?: number | null
   worktreeId?: string | null
   createdAt: string
   updatedAt: string

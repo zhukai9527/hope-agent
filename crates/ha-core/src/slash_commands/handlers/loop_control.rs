@@ -59,6 +59,7 @@ fn create_every_loop(
             CreateLoopScheduleInput {
                 session_id: sid.to_string(),
                 goal_id: None,
+                goal_criterion_id: None,
                 prompt: prompt.to_string(),
                 trigger_kind: LoopTriggerKind::Interval,
                 trigger_spec: json!({ "intervalSecs": interval_secs }),
@@ -102,6 +103,7 @@ fn create_until_loop(
             CreateLoopScheduleInput {
                 session_id: sid.to_string(),
                 goal_id: None,
+                goal_criterion_id: None,
                 prompt: recurring_prompt,
                 trigger_kind: LoopTriggerKind::Condition,
                 trigger_spec: json!({
@@ -563,6 +565,7 @@ mod tests {
                 CreateLoopScheduleInput {
                     session_id: session.id.clone(),
                     goal_id: Some(goal.goal.id),
+                    goal_criterion_id: None,
                     prompt: "Refresh sources".to_string(),
                     trigger_kind: LoopTriggerKind::Interval,
                     trigger_spec: json!({ "intervalSecs": 600 }),

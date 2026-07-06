@@ -131,6 +131,17 @@ import { generateClientId } from "./chatScrollKeys"
 import type { Project, ProjectMeta } from "@/types/project"
 import type { KbDraftAttachment } from "@/types/knowledge"
 
+function appendGoalCriterionLine(
+  existingCriteria: string | null | undefined,
+  text: string,
+  kind: "required" | "optional",
+): string {
+  const prefix = kind === "optional" ? "[optional]" : "[required]"
+  const current = (existingCriteria ?? "").trim()
+  const nextLine = `${prefix} ${text.trim()}`
+  return current ? `${current}\n${nextLine}` : nextLine
+}
+
 /** A token to append to the chat composer on next render. `attachKbId` (set by the
  *  KnowledgeView "reference in chat" action) is auto-attached read-only so the
  *  `[[note]]` injection isn't dropped by `effective_kb_access` at send time. */
@@ -2075,7 +2086,7 @@ export default function ChatScreen({
   )
 
   const handleGoalModeSubmit = useCallback(
-    async (objective: string): Promise<boolean> => {
+    async (objective: string, action?: string): Promise<boolean> => {
       const trimmed = objective.trim()
       if (!trimmed) return false
       if (incognitoEnabled || draftIncognito) {
@@ -2084,6 +2095,61 @@ export default function ChatScreen({
       }
       const sid = await ensureWorkflowSession()
       if (!sid) return false
+      const activeGoal = chatGoal.snapshot?.goal ?? null
+      if (activeGoal && (action === "append_required" || action === "append_optional")) {
+        const nextCriteria = appendGoalCriterionLine(
+          activeGoal.completionCriteria,
+          trimmed,
+          action === "append_optional" ? "optional" : "required",
+        )
+        try {
+          const snapshot = await getTransport().call<GoalSnapshot>("update_goal", {
+            goalId: activeGoal.id,
+            objective: activeGoal.objective,
+            completionCriteria: nextCriteria,
+          })
+          chatGoal.setSnapshot(snapshot)
+          chatGoal.refresh()
+          toast.success(t("chat.goalMode.criteriaAdded", "完成标准已追加"))
+          return true
+        } catch (e) {
+          logger.error("ui", "ChatScreen::goalCriteriaAppend", "Failed to append criteria", e)
+          toast.error(e instanceof Error ? e.message : String(e))
+          return false
+        }
+      }
+      if (activeGoal && action === "append_follow_up") {
+        try {
+          const snapshot = await getTransport().call<GoalSnapshot>("append_goal_follow_up", {
+            goalId: activeGoal.id,
+            items: [trimmed],
+            source: "composer",
+          })
+          chatGoal.setSnapshot(snapshot)
+          chatGoal.refresh()
+          toast.success(t("chat.goalMode.followUpAdded", "后续项已加入目标"))
+          return true
+        } catch (e) {
+          logger.error("ui", "ChatScreen::goalFollowUpAppend", "Failed to append follow-up", e)
+          toast.error(e instanceof Error ? e.message : String(e))
+          return false
+        }
+      }
+      if (activeGoal && action === "replace") {
+        try {
+          await getTransport().call<GoalSnapshot>("close_goal", {
+            goalId: activeGoal.id,
+            decision: "superseded",
+            reason: t("chat.goalMode.supersededReason", "用户用目标模式创建了替代目标"),
+            followUpItems: [],
+          })
+          chatGoal.setSnapshot(null)
+        } catch (e) {
+          logger.error("ui", "ChatScreen::goalReplace", "Failed to supersede current goal", e)
+          toast.error(e instanceof Error ? e.message : String(e))
+          return false
+        }
+      }
       const commandText = `/goal ${trimmed}`
       try {
         const result = await getTransport().call<CommandResult>("execute_slash_command", {

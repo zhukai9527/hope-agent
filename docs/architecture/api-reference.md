@@ -581,7 +581,7 @@ Coding Improvement owner API 基于 durable Goal / Workflow / Review / Smart Ver
 | `get_workflow_mode` | `GET /api/sessions/{sessionId}/workflow-mode` | ✅ |
 | `set_workflow_mode` | `POST /api/sessions/{sessionId}/workflow-mode` | ✅ |
 
-Workflow Mode 是 session 级能力开关：开启后模型才会在后续回合看到 `workflow_run` 工具，并自行判断是否需要动态编排。Workflow owner API 管理 durable `workflow_runs`。`preview_workflow_script` 不落库，只返回 Script Gate + permission preview；`create_workflow_run` 会强制复用同一 preflight，Gate 不通过或 permission preview 有确定 deny 时拒绝创建，并可选接收 `worktreeId` 绑定 managed worktree，默认 kind 为 `general.workflow`。`create_workflow_run(runImmediately=true)` / `run_workflow_run` / `approve_workflow_run` / `resume_workflow_run` 都先要求当前进程是 primary launcher，再把启动请求交给 runtime；API 返回值只表示 launch accepted，不承诺同步进入 `running`，真实进度以后续 `workflow:*` 事件和 snapshot 为准。`cancel_workflow_run` 会先转 `cancelled`，再 best-effort 取消 workflow-owned async tool / validation / subagent children。完整技术契约见 [Workflow Mode、Workflow Run 与 Execution Mode](workflow.md)。
+Workflow Mode 是 session 级能力开关：开启后模型才会在后续回合看到 `workflow_run` 工具，并自行判断是否需要动态编排。Workflow owner API 管理 durable `workflow_runs`。`preview_workflow_script` 不落库，只返回 Script Gate + permission preview；`create_workflow_run` 会强制复用同一 preflight，Gate 不通过或 permission preview 有确定 deny 时拒绝创建，并可选接收 `worktreeId` 绑定 managed worktree、`goalCriterionId` 绑定 active Goal 的具体完成标准，默认 kind 为 `general.workflow`。`create_workflow_run(runImmediately=true)` / `run_workflow_run` / `approve_workflow_run` / `resume_workflow_run` 都先要求当前进程是 primary launcher，再把启动请求交给 runtime；API 返回值只表示 launch accepted，不承诺同步进入 `running`，真实进度以后续 `workflow:*` 事件和 snapshot 为准。`cancel_workflow_run` 会先转 `cancelled`，再 best-effort 取消 workflow-owned async tool / validation / subagent children。完整技术契约见 [Workflow Mode、Workflow Run 与 Execution Mode](workflow.md)。
 
 ### Goals
 
@@ -595,8 +595,10 @@ Workflow Mode 是 session 级能力开关：开启后模型才会在后续回合
 | `resume_goal` | `POST /api/goals/{goalId}/resume` | ✅ |
 | `clear_goal` | `POST /api/goals/{goalId}/clear` | ✅ |
 | `evaluate_goal` | `POST /api/goals/{goalId}/evaluate` | ✅ |
+| `close_goal` | `POST /api/goals/{goalId}/close` | ✅ |
+| `append_goal_follow_up` | `POST /api/goals/{goalId}/follow-ups` | ✅ |
 
-Goal owner API 管理 session-scoped 顶层目标。`create_goal` 会拒绝 incognito session，并保证同一 session 只有一个 open Goal；`update_goal` 更新 objective / completion criteria 后清空旧 final audit，并让 `blocked` / `evaluating` 回到 `active`；`evaluate_goal` 基于 linked workflow runs、tasks、validation/diff/file evidence 与 budget snapshot 生成 deterministic final audit。`create_workflow_run` 可接收可选 `goalId`，省略时自动绑定当前 open Goal；创建前会执行 Goal budget hard stop，workflow 终态和关键 op 会 best-effort 回写 Goal link 并触发 audit。完整契约见 [Goal 控制平面](goal.md)。
+Goal owner API 管理 session-scoped 顶层目标。`create_goal` 会拒绝 incognito session，并保证同一 session 只有一个 open Goal 或 pending closure Goal；`update_goal` 更新 objective / completion criteria 后清空旧 final audit，并让 `blocked` / `evaluating` / pending `completed` 回到 `active`；`append_goal_follow_up` 把非阻塞后续项写入 durable follow-up pool，规范化去重并拒绝 sealed 终态 Goal；`evaluate_goal` 基于 linked workflow runs、tasks、validation/diff/file evidence 与 budget snapshot 生成 deterministic final audit；`close_goal` 记录用户 closure decision（`accepted_v1` / `needs_strict_evidence` / `cancelled` / `superseded`），其中 `clear_goal` 走 `cancelled` closure 而不是只改 state。`create_workflow_run` 可接收可选 `goalId`，省略时自动绑定当前 open Goal 或 pending closure Goal；`create_workflow_run` / `create_loop_schedule` 可接收 `goalCriterionId`，后端校验 Goal revision 并把 criteria 快照写进 run/schedule/evidence metadata；创建前会执行 Goal budget hard stop，workflow 终态和关键 op 会 best-effort 回写 Goal link 并触发 audit。完整契约见 [Goal 控制平面](goal.md)。
 
 ### Domain Workflow
 
@@ -621,7 +623,7 @@ Domain Workflow owner API 是 Phase 7.1-7.2 的通用场景入口。`list_domain
 | `resume_loop_schedule` | `POST /api/loops/{loopId}/resume` | ✅ |
 | `stop_loop_schedule` | `POST /api/loops/{loopId}/stop` | ✅ |
 
-Loop owner API 管理 session-scoped recurring triggers。`create_loop_schedule` 会拒绝 incognito session，并要求绑定 open Goal 或提供明确 recurring prompt；可选 `executionStrategy` 默认为 `continue`，触发时通过 parent injection 回到原会话；设为 `workflow` 时仅支持 interval loop，且要求绑定 Goal 已选择 Domain Workflow template，Cron tick 会创建并启动 `origin=loop:<loop_id>` 的 durable WorkflowRun。Loop run 会写 `loop_runs` trace，绑定 Goal 时写 `loop_run` evidence；`pause/resume/stop` 同步暂停或恢复底层 Cron job。完整契约见 [Loop 控制平面](loop.md)。
+Loop owner API 管理 session-scoped recurring triggers。`create_loop_schedule` 会拒绝 incognito session，并要求绑定 open/pending closure Goal 或提供明确 recurring prompt；可选 `goalCriterionId` 会绑定当前 Goal 的具体完成标准；可选 `executionStrategy` 默认为 `continue`，触发时通过 parent injection 回到原会话；设为 `workflow` 时仅支持 interval loop，且要求绑定 Goal 已选择 Domain Workflow template，Cron tick 会创建并启动 `origin=loop:<loop_id>` 的 durable WorkflowRun，并继承 Loop 的 criteria 绑定。Loop run 会写 `loop_runs` trace，绑定 Goal 时写 `loop_run` evidence；`pause/resume/stop` 同步暂停或恢复底层 Cron job。完整契约见 [Loop 控制平面](loop.md)。
 
 `export_session_cmd` / `GET /api/sessions/{sessionId}/export` 是两端**形态不对称**的特例：Tauri 端走 IPC，由前端先弹原生 save dialog 拿到 `output_path` 再传进来，后端写盘后返回最终路径字符串；HTTP 端走 GET 直接返回二进制流（`Content-Type` + `Content-Disposition: attachment; filename*=UTF-8''<percent>`），浏览器用 `URL.createObjectURL` + `<a download>` 触发下载。两端共用 [`ha_core::session::export::export_session`](../../crates/ha-core/src/session/export.rs) 序列化器，Query 参数 `format ∈ {md,json,html}` / `includeThinking` / `includeTools` 与 Tauri 命令的字段一一对应。前端 Transport 抽象 [`exportSession`](../../src/lib/transport.ts) 是这一对端点的统一入口，调用方不需要分支。
 

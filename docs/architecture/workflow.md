@@ -98,7 +98,7 @@ Workflow 数据落在 `sessions.db`，跟随会话级联删除。
 | `blocked_reason` | `blocked` 终态原因。 |
 | `parent_run_id` | 修复 run 来源，外键到 `workflow_runs(id)`，删除父 run 时置空。 |
 | `origin` | run 来源，例如 `repair`。 |
-| `goal_id` | 可选 Goal 归属；不显式传时自动绑定当前 session 的 open Goal。 |
+| `goal_id` | 可选 Goal 归属；不显式传时自动绑定当前 session 的 open Goal 或 pending closure Goal。 |
 | `worktree_id` | 可选 Managed Worktree 归属；绑定后本 run 的工具、读取、校验、diff 默认在 worktree 路径执行。 |
 | `created_at` / `updated_at` / `completed_at` | 时间戳。 |
 
@@ -188,7 +188,7 @@ Workflow Mode 是 session 级持久开关，入口是输入框 `+` 菜单/工具
 - 执行层再次校验 session、incognito、DB、`workflow_mode`，所以即使旧 schema 或外部请求绕进来也 fail-closed。
 - `SessionDB` 还会拒绝把已开启 Workflow Mode 或已有 WorkflowRun 的普通会话切成 incognito。
 - 模型侧决策规则：请求包含多阶段依赖、宽搜索/比较、connector 或文件证据、长时间运行、独立验证、可恢复后台执行或可审计轨迹时，应自行调用 `workflow_run` 创建 run；tiny 对话、单个显然动作或已验证机械任务保持 inline。这个规则适用于 Research、Writing、Data Analysis、Meeting Prep、Inbox / Project Ops、Knowledge Curation、Coding 等通用场景。
-- 模型侧 `workflow_run` schema 只要求 canonical `script`，且不展示 `scriptSource` / `script_source` alias，避免脚本入口分裂；执行层仍兼容这些历史输入别名。其它可选元数据参数为 `kind`、`executionMode`、`budget`、`runImmediately`、`parentRunId`、`origin`、`goalId`、`worktreeId`，创建层会校验 parent/goal/worktree 均属于同一 session。
+- 模型侧 `workflow_run` schema 只要求 canonical `script`，且不展示 `scriptSource` / `script_source` alias，避免脚本入口分裂；执行层仍兼容这些历史输入别名。其它可选元数据参数为 `kind`、`executionMode`、`budget`、`runImmediately`、`parentRunId`、`origin`、`goalId`、`goalCriterionId`、`worktreeId`，创建层会校验 parent/goal/criteria/worktree 均属于同一 session / Goal revision。
 - `runImmediately` 默认 `true`：模型创建 run 后直接进入 preflight / approval / runtime；如果需要用户先看脚本，可显式创建 draft。
 - `executionMode` 未传时继承当前 session execution mode；若 session execution mode 是 `off`，run 默认使用 `guarded`，避免有 workflow 却没有基础 stop guard。
 - `executionMode=autonomous` 必须显式提供 runtime budget 和 output token budget。
@@ -457,9 +457,11 @@ EventBus：
 
 Goal 集成：
 
-- `create_workflow_run` 可接收 `goalId`；省略时自动绑定当前 open Goal。
+- `create_workflow_run` 可接收 `goalId`；省略时自动绑定当前 open Goal 或 pending closure Goal。
+- `create_workflow_run` 可接收 `goalCriterionId`；传入后校验它属于绑定 Goal 当前 revision，并把 `goal_criterion_id/text/kind/goal_revision` 写入 run。传了 criteria 但没有绑定 Goal 时 fail-closed。
 - 创建 run 前检查绑定 Goal 的 token/time/turn budget；已耗尽则拒绝新 run。
 - 创建 run 时写 `goal_links(relation='execution_run' | 'repair_run')`。
+- creation / terminal Goal link metadata 带 `goalCriterion`，Goal detail 可按 criteria 聚合 workflow runs 和 evidence。
 - run 进入 `completed` / `failed` / `blocked` 后 best-effort 触发 Goal final audit。
 - run 进入任一终态都会写 workflow terminal relation，供 Goal 证据链展示。
 - `workflow.validate` op 写 `validation_passed` / `validation_failed` evidence；`workflow.diff` op 写 `diff_snapshot` 和 `file_changed` evidence。
@@ -486,9 +488,9 @@ Workspace / Workflow Control Center 是主要用户面，不要求用户记 slas
 - Goal strip：创建 active Goal、可选 domain workflow template/task type、展示目标摘要/状态/领域模板/证据指标、手动 audit、暂停/恢复/清除。
 - Execution Mode 常驻控制。
 - 无 run 空态展示 execution mode / working dir，并提供创建入口。
-- 目标驱动草稿：生成可预检 `workflow.js`，脚本编辑放高级区。coding 只是可选领域模板之一。
+- 目标驱动草稿：生成可预检 `workflow.js`，脚本编辑放高级区；active Goal 有拆分 criteria 时可在「推进标准」选择器中绑定具体 `goalCriterionId`。coding 只是可选领域模板之一。
 - 领域模板草稿：创建器可直接选择 Research / Writing / Data Analysis / Meeting Prep / Knowledge Curation / Inbox / Project Ops 等 domain workflow template，调用 `preview_domain_workflow` 生成标准 `workflow.js`、证据要求、审批门、验证策略和预检结果，再走同一 `create_workflow_run` 链路。
-- Loop 自动工作流：Loop 创建区在 active Goal 已绑定领域模板时可选择“创建工作流”，后续每次 interval tick 都创建并启动一个 `origin=loop:<loop_id>` 的 WorkflowRun；Loop 列表会标记 `Workflow`，并把最近派生 run 的 kind/state/time 直接露出。点击“查看工作流”会选中对应 Workflow run detail，具体执行进度、审批、恢复、验证、agents 和取消仍在 Workflow 控制面处理。Workspace 顶层共享同一份 `useGoal`、`useWorkflowRuns` 与 `useLoopSchedules` state 给「自主推进就绪」、Goal strip、Workflow run list 和 Loop 区块，避免重复请求并保证 active Goal / Loop / Workflow 视图一致；readiness 卡片的“新建 Loop”只会展开 Loop 创建器并预选 workflow 策略，仍需用户确认创建。
+- Loop 自动工作流：Loop 创建区在 active Goal 已绑定领域模板时可选择“创建工作流”，并可选择要推进的 Goal criteria；后续每次 interval tick 都创建并启动一个 `origin=loop:<loop_id>` 的 WorkflowRun，派生 run 继承 Loop 的 `goalCriterionId`。Loop 列表会标记 `Workflow` 和 criteria，并把最近派生 run 的 kind/state/time 直接露出。点击“查看工作流”会选中对应 Workflow run detail，具体执行进度、审批、恢复、验证、agents 和取消仍在 Workflow 控制面处理。Workspace 顶层共享同一份 `useGoal`、`useWorkflowRuns` 与 `useLoopSchedules` state 给「自主推进就绪」、Goal strip、Workflow run list 和 Loop 区块，避免重复请求并保证 active Goal / Loop / Workflow 视图一致；readiness 卡片的“新建 Loop”只会展开 Loop 创建器并预选 workflow 策略，仍需用户确认创建。
 - 创建前展示 Script Gate 与 permission preview。
 - run list、历史展开、总览、当前焦点、下一步跳转。
 - Run overview 的“下一步”卡片覆盖 draft / awaiting approval / awaiting user / running / recovering / paused / blocked / failed / completed / cancelled 全状态：明确该看 Trace、Validation 还是 Agents，失败/阻塞时保留生成 repair draft、复制修复提示与「转任务」，完成后提示复核验证结果、产物和残余风险。

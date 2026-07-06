@@ -1,6 +1,9 @@
 use axum::extract::Path;
 use axum::Json;
-use ha_core::goal::{CreateGoalInput, GoalSnapshot, UpdateGoalInput};
+use ha_core::goal::{
+    AppendGoalFollowUpInput, CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot,
+    UpdateGoalInput,
+};
 use serde::Deserialize;
 
 use crate::error::AppError;
@@ -76,6 +79,24 @@ pub struct UpdateGoalBody {
     pub workflow_task_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseGoalBody {
+    pub decision: GoalClosureDecision,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub follow_up_items: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendGoalFollowUpBody {
+    pub items: Vec<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
 pub async fn update_goal(
     Path(goal_id): Path<String>,
     Json(body): Json<UpdateGoalBody>,
@@ -118,6 +139,35 @@ pub async fn clear_goal(Path(goal_id): Path<String>) -> Result<Json<GoalSnapshot
 pub async fn evaluate_goal(Path(goal_id): Path<String>) -> Result<Json<GoalSnapshot>, AppError> {
     session_db()?
         .evaluate_goal(&goal_id)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn close_goal(
+    Path(goal_id): Path<String>,
+    Json(body): Json<CloseGoalBody>,
+) -> Result<Json<GoalSnapshot>, AppError> {
+    session_db()?
+        .close_goal(CloseGoalInput {
+            goal_id,
+            decision: body.decision,
+            reason: body.reason,
+            follow_up_items: body.follow_up_items,
+        })
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+pub async fn append_goal_follow_up(
+    Path(goal_id): Path<String>,
+    Json(body): Json<AppendGoalFollowUpBody>,
+) -> Result<Json<GoalSnapshot>, AppError> {
+    session_db()?
+        .append_goal_follow_up(AppendGoalFollowUpInput {
+            goal_id,
+            items: body.items,
+            source: body.source,
+        })
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

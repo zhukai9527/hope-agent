@@ -377,6 +377,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   resume_goal:                     { method: "POST",   path: "/api/goals/{goalId}/resume" },
   clear_goal:                      { method: "POST",   path: "/api/goals/{goalId}/clear" },
   evaluate_goal:                   { method: "POST",   path: "/api/goals/{goalId}/evaluate" },
+  close_goal:                      { method: "POST",   path: "/api/goals/{goalId}/close" },
+  append_goal_follow_up:           { method: "POST",   path: "/api/goals/{goalId}/follow-ups" },
 
   // -- Loop schedules --
   list_loop_schedules:             { method: "GET",    path: "/api/sessions/{sessionId}/loops" },

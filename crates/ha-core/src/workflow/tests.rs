@@ -72,6 +72,7 @@ fn create_run(db: &SessionDB) -> (String, String) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -90,6 +91,7 @@ fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, Strin
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -323,6 +325,7 @@ fn workflow_run_rejects_incognito_sessions() {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect_err("incognito must be rejected");
@@ -371,6 +374,7 @@ fn create_workflow_run_links_empty_managed_worktree_reverse_binding() {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: Some(worktree_id.to_string()),
         })
         .expect("create workflow run");
@@ -437,6 +441,7 @@ export default async function main(workflow) {
             parent_run_id: Some(parent_run_id.clone()),
             origin: Some("repair".to_string()),
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create child workflow run");
@@ -1504,6 +1509,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -1594,6 +1600,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -1682,6 +1689,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: Some(goal.goal.id.clone()),
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -1810,6 +1818,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -1944,6 +1953,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: Some(goal.goal.id.clone()),
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2073,6 +2083,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2164,6 +2175,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2229,6 +2241,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2306,6 +2319,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2382,6 +2396,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2452,6 +2467,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -2505,6 +2521,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");
@@ -3033,6 +3050,7 @@ export default async function main(workflow) {
                 parent_run_id: None,
                 origin: None,
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .expect("create workflow run");
@@ -3178,6 +3196,7 @@ export default async function main(workflow) {{
                 parent_run_id: None,
                 origin: None,
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .expect("create workflow run");
@@ -3330,6 +3349,7 @@ export default async function main(workflow) {
             parent_run_id: None,
             origin: None,
             goal_id: None,
+            goal_criterion_id: None,
             worktree_id: None,
         })
         .expect("create workflow run");

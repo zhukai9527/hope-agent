@@ -12853,6 +12853,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();
@@ -12951,6 +12952,7 @@ mod tests {
                 parent_run_id: None,
                 origin: Some("test".to_string()),
                 goal_id: None,
+                goal_criterion_id: None,
                 worktree_id: None,
             })
             .unwrap();

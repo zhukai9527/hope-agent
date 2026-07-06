@@ -894,6 +894,8 @@ async fn execute_session_loop_payload(
                 &admission.loop_id,
                 &admission.run_id,
                 goal_id,
+                admission.goal_criterion_id.as_deref(),
+                admission.goal_criterion_text.as_deref(),
                 admission.trigger_kind,
                 &admission.trigger_spec,
                 prompt,

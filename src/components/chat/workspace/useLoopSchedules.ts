@@ -19,6 +19,10 @@ export interface LoopSchedule {
   id: string
   sessionId: string
   goalId?: string | null
+  goalCriterionId?: string | null
+  goalCriterionText?: string | null
+  goalCriterionKind?: string | null
+  goalRevision?: number | null
   cronJobId: string
   prompt: string
   triggerKind: LoopTriggerKind
