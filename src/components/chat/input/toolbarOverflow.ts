@@ -16,9 +16,10 @@ export const CHAT_INPUT_OVERFLOW_MENU_CLASS = "hidden"
 // panels can squeeze the chat column while the app window remains wide.
 //
 // Progressive collapse into the "+" menu as the toolbar narrows. Each tier is a
-// strict subset of the wider one (810 ⊃ 730 ⊃ 620 ⊃ 470), so a narrower width
-// always implies every wider collapse. The floor — "+" · model picker · send/
-// stop — is never collapsed, and send/stop never wraps onto its own row.
+// strict subset of the wider one (1040 ⊃ 970 ⊃ 660 ⊃ 510), so a narrower width
+// always implies every wider collapse. The floor — "+" · model picker ·
+// awareness icon (when enabled) · send/stop — is never collapsed, and send/stop
+// never wraps onto its own row.
 //
 // The breakpoints are the container (input-dock) width at which the control that
 // collapses at that tier would otherwise wrap. They are derived from a per-
@@ -27,20 +28,23 @@ export const CHAT_INPUT_OVERFLOW_MENU_CLASS = "hidden"
 // the `whitespace-nowrap` label controls. Widths in px, worst-case English
 // active labels, with the flex `gap-1` (4px) between items folded in:
 //
-//   tail (send col ~104 + grid gap 8 + px-2 16 + border/rounding ~6) ≈ 134
-//   "+" trigger 32 · add-actions row 108 (extra +76 over "+")
-//   ModelPicker ~160 · Permission ~131 · Sandbox ~146 · Knowledge ~36 · Plan ~66
+//   tail (voice/send col ~104 + grid gap 8 + px-2 16 + border/rounding ~6) ≈ 134
+//   "+" trigger 32 · ModelPicker ~160 · Awareness icon ~32
+//   Permission ~131 · Sandbox ~146
+//   Knowledge ~36 · Goal ~54 · Workflow menu ~142 · Plan ~66
+//   Add-actions row 108 (extra +76 over "+")
 //
 // Cumulative container width needed to keep each control inline (→ breakpoint):
-//   floor  ("+", model)                = 32+4+160        + 134 = 330
-//   + permission                       = …+4+131         + 134 = 465 → 470
-//   + sandbox                          = …+4+146         + 134 = 615 → 620
-//   + knowledge + plan                 = …+4+36 +4+66    + 134 = 725 → 730
-//   + add-actions expanded ("+"→3 btn) = …+76            + 134 = 800 → 810
+//   floor  ("+", model, awareness)                         ≈ 366
+//   + permission                                            ≈ 501 → 510
+//   + sandbox                                               ≈ 651 → 660
+//   + knowledge + goal + workflow + plan                    ≈ 949 → 970
+//   + add-actions expanded ("+" → 3 inline buttons)         ≈ 1025 → 1040
 //
-// So each successive gap (810−730=80 ≈ add-actions, 730−620=110 ≈ knowledge+plan,
-// 620−470=150 ≈ sandbox) is one control's width — the tiers are evenly earned.
-export const CHAT_INPUT_OVERFLOW_BREAKPOINT_PX = 810
-export const CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX = 730
-export const CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX = 620
-export const CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX = 470
+// The larger tight tier is deliberate: Goal + Workflow are semantic mode
+// controls with labels, not icon-only tools, so they move into "+" before the
+// toolbar gets close to wrapping.
+export const CHAT_INPUT_OVERFLOW_BREAKPOINT_PX = 1040
+export const CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX = 970
+export const CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX = 660
+export const CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX = 510

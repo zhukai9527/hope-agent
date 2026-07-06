@@ -1291,9 +1291,9 @@ export default function ChatInput({
     }
   }
 
-  // Add-style actions (working dir / attach / slash) always live here once the
-  // toolbar is compact. Knowledge + Plan only join the menu at the narrower
-  // `toolbarTight` tier — above it they stay inline.
+  // Add-style actions (working dir / attach / slash) live here once the toolbar
+  // is compact. Knowledge + Goal + Workflow + Plan join at the narrower
+  // `toolbarTight` tier so semantic mode controls move as one group.
   const renderOverflowMenuItems = () => (
     <>
       {getChatInputOverflowActionIds().map((actionId) => (
@@ -2002,8 +2002,8 @@ export default function ChatInput({
 
                 <AwarenessToggle sessionId={currentSessionId ?? null} disabled={incognitoEnabled} />
 
-                {/* Knowledge Space attach + Plan toggle — primary actions, kept
-                    inline down to the narrow `toolbarTight` tier (then they join
+                {/* Knowledge + Goal + Workflow + Plan — semantic mode controls,
+                    kept inline down to the `toolbarTight` tier (then they join
                     the "+" overflow menu, see renderOverflowMenuItems). */}
                 {!toolbarTight && (
                   <KnowledgePicker

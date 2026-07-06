@@ -21,13 +21,14 @@ test("keeps overflow visibility classes static for Tailwind scanning", () => {
   // JS-side breakpoint is measured against the input container width, so
   // right-side panels can trigger the compact toolbar without resizing window.
   // Values are derived from a per-control width budget (see toolbarOverflow.ts).
-  expect(CHAT_INPUT_OVERFLOW_BREAKPOINT_PX).toBe(810)
-  // Knowledge + Plan stay inline down to a narrower width than the add-actions.
-  expect(CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX).toBe(730)
+  expect(CHAT_INPUT_OVERFLOW_BREAKPOINT_PX).toBe(1040)
+  // Knowledge + Goal + Workflow + Plan stay inline down to a narrower width
+  // than the add-actions, then collapse together into the "+" menu.
+  expect(CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX).toBe(970)
   // Sandbox then Permission collapse at progressively narrower widths.
-  expect(CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX).toBe(620)
-  expect(CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX).toBe(470)
-  // Monotonic subset ordering: 810 ⊃ 730 ⊃ 620 ⊃ 470.
+  expect(CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX).toBe(660)
+  expect(CHAT_INPUT_PERMISSION_COLLAPSE_BREAKPOINT_PX).toBe(510)
+  // Monotonic subset ordering: 1040 ⊃ 970 ⊃ 660 ⊃ 510.
   expect(CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX).toBeLessThan(CHAT_INPUT_OVERFLOW_BREAKPOINT_PX)
   expect(CHAT_INPUT_SANDBOX_COLLAPSE_BREAKPOINT_PX).toBeLessThan(
     CHAT_INPUT_TIGHT_TOOLBAR_BREAKPOINT_PX,
