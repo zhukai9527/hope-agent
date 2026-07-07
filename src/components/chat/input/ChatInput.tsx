@@ -75,7 +75,12 @@ import {
   type ChatInputOverflowActionId,
 } from "./toolbarOverflow"
 import MentionComposerInput from "./MentionComposerInput"
+import type { ComposerPasteEvent } from "./MentionComposerInput"
 import type { ComposerInputHandle } from "./composerInputHandle"
+import {
+  createPastedTextAttachment,
+  shouldCreatePastedTextAttachment,
+} from "./pastedTextAttachment"
 import type { ContextUsageInfo } from "../chatUtils"
 import { contextUsageBarClass } from "../contextUsageColor"
 import type { AgentConfig } from "@/components/settings/types"
@@ -605,23 +610,46 @@ export default function ChatInput({
   }, [normalToolbarOpen, toolbarCompact, sandboxCollapsed, permissionCollapsed])
 
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      const items = e.clipboardData?.items
-      if (!items) return
+    (e: ComposerPasteEvent) => {
+      const clipboardData = e.clipboardData
+      if (!clipboardData) return
+      const items = clipboardData.items
       const files: File[] = []
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]
-        if (item.kind === "file") {
-          const file = item.getAsFile()
-          if (file) files.push(file)
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i]
+          if (item.kind === "file") {
+            const file = item.getAsFile()
+            if (file) files.push(file)
+          }
         }
       }
       if (files.length > 0) {
         e.preventDefault()
         onAttachFiles(files)
+        return
+      }
+
+      const pastedText = clipboardData.getData("text/plain")
+      if (shouldCreatePastedTextAttachment(pastedText)) {
+        e.preventDefault()
+        onAttachFiles([createPastedTextAttachment(pastedText)])
+
+        const selection = inputHandleRef.current?.getSelectionRange()
+        if (selection && selection.start !== selection.end) {
+          const current = inputRef.current
+          const next = current.slice(0, selection.start) + current.slice(selection.end)
+          setComposerInput(next)
+          requestAnimationFrame(() => {
+            const inputHandle = inputHandleRef.current
+            if (!inputHandle) return
+            inputHandle.focus()
+            inputHandle.setSelectionRange(selection.start, selection.start)
+          })
+        }
       }
     },
-    [onAttachFiles],
+    [onAttachFiles, setComposerInput],
   )
 
   const handleHistoryKeyDown = useCallback(
