@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard 模型用量改为统一总账统计**：新增 `model_usage_events` 用量总账，Dashboard token / cost 统计不再只看聊天消息，而是覆盖主对话、side query、摘要、embedding、语音转写、审批 judge、LLM 型网页搜索、生图与 Provider 测试等模型入口；支持按调用类型筛选并查看分类用量。统计只记录 Provider 原始 usage 返回值，未返回 token 的调用仅记录次数与耗时，不做字符估算；无痕会话不入账。新增开发约束，后续新增模型调用入口必须接入该总账。
+
 ## [0.16.0] - 2026-07-06
 
 ### Added
