@@ -126,7 +126,15 @@ impl SessionDB {
     }
 
     pub(crate) fn backfill_model_usage_from_messages(conn: &rusqlite::Connection) -> Result<()> {
-        conn.execute(
+        let incognito_filter = if conn
+            .prepare("SELECT incognito FROM sessions LIMIT 1")
+            .is_ok()
+        {
+            "AND COALESCE(s.incognito, 0) = 0"
+        } else {
+            ""
+        };
+        let sql = format!(
             "INSERT OR IGNORE INTO model_usage_events (
                 request_key, timestamp, kind, operation, source,
                 provider_id, provider_name, model_id, session_id, agent_id,
@@ -154,15 +162,15 @@ impl SessionDB {
              FROM messages m
              JOIN sessions s ON s.id = m.session_id
              WHERE m.role = 'assistant'
-               AND COALESCE(s.incognito, 0) = 0
+               {incognito_filter}
                AND (
                     m.tokens_in IS NOT NULL
                  OR m.tokens_out IS NOT NULL
                  OR m.tokens_cache_creation IS NOT NULL
                  OR m.tokens_cache_read IS NOT NULL
-               )",
-            [],
-        )?;
+               )"
+        );
+        conn.execute(&sql, [])?;
         Ok(())
     }
 
