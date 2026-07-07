@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard 模型用量改为统一总账统计**：新增 `model_usage_events` 用量总账，Dashboard token / cost 统计不再只看聊天消息，而是覆盖主对话、side query、摘要、embedding、语音转写、审批 judge、LLM 型网页搜索、生图与 Provider 测试等模型入口；支持按调用类型筛选并查看分类用量。统计只记录 Provider 原始 usage 返回值，未返回 token 的调用仅记录次数与耗时，不做字符估算；无痕会话不入账。新增开发约束，后续新增模型调用入口必须接入该总账。
 - **长文本粘贴自动转为持久文本附件**：在对话输入框粘贴超长文本时，自动生成会话文本附件并在输入框展示为可预览卡片；发送给模型时只注入文件引用与读取提示，避免一次性塞满上下文，同时保留附件路径以便上下文压缩后仍可按需读取完整原文。相关附件预览文案已补齐 12 种界面语言。
 
 ## [0.16.0] - 2026-07-06
