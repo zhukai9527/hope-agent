@@ -835,6 +835,7 @@ pub async fn resolve_async(ctx: &ResolveContext<'_>) -> Decision {
     };
 
     let judge_ctx = judge::JudgeContext {
+        session_id: ctx.session_id,
         unattended: ctx.unattended,
         task_intent: ctx.task_intent,
     };

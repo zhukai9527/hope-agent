@@ -84,7 +84,12 @@ import {
   type ChatInputToolbarGroupWidths,
 } from "./toolbarOverflow"
 import MentionComposerInput from "./MentionComposerInput"
+import type { ComposerPasteEvent } from "./MentionComposerInput"
 import type { ComposerInputHandle } from "./composerInputHandle"
+import {
+  createPastedTextAttachment,
+  shouldCreatePastedTextAttachment,
+} from "./pastedTextAttachment"
 import type { ContextUsageInfo } from "../chatUtils"
 import { contextUsageBarClass } from "../contextUsageColor"
 import type { AgentConfig } from "@/components/settings/types"
@@ -516,7 +521,7 @@ export default function ChatInput({
     ensureSession: onEnsureSession,
   }
   const slash = useSlashCommands(input, setComposerInput, slashActions, inputHandleRef)
-  const voice = useVoiceInput()
+  const voice = useVoiceInput(currentSessionId)
   const normalToolbarOpen = voice.state !== "recording" && voice.state !== "transcribing"
   // Read the latest `input` when transcription resolves — the user can keep
   // typing during the STT round-trip, and capturing `input` in the closure
@@ -887,23 +892,46 @@ export default function ChatInput({
   }, [normalToolbarOpen, toolbarCollapseLevel])
 
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      const items = e.clipboardData?.items
-      if (!items) return
+    (e: ComposerPasteEvent) => {
+      const clipboardData = e.clipboardData
+      if (!clipboardData) return
+      const items = clipboardData.items
       const files: File[] = []
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]
-        if (item.kind === "file") {
-          const file = item.getAsFile()
-          if (file) files.push(file)
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i]
+          if (item.kind === "file") {
+            const file = item.getAsFile()
+            if (file) files.push(file)
+          }
         }
       }
       if (files.length > 0) {
         e.preventDefault()
         onAttachFiles(files)
+        return
+      }
+
+      const pastedText = clipboardData.getData("text/plain")
+      if (shouldCreatePastedTextAttachment(pastedText)) {
+        e.preventDefault()
+        onAttachFiles([createPastedTextAttachment(pastedText)])
+
+        const selection = inputHandleRef.current?.getSelectionRange()
+        if (selection && selection.start !== selection.end) {
+          const current = inputRef.current
+          const next = current.slice(0, selection.start) + current.slice(selection.end)
+          setComposerInput(next)
+          requestAnimationFrame(() => {
+            const inputHandle = inputHandleRef.current
+            if (!inputHandle) return
+            inputHandle.focus()
+            inputHandle.setSelectionRange(selection.start, selection.start)
+          })
+        }
       }
     },
-    [onAttachFiles],
+    [onAttachFiles, setComposerInput],
   )
 
   const handleHistoryKeyDown = useCallback(
@@ -1512,6 +1540,17 @@ export default function ChatInput({
         className={cn(
           "relative min-w-0 overflow-visible rounded-input-dock border border-border-soft bg-surface-floating shadow-input-dock",
           hero && "shadow-floating",
+          incognitoEnabled &&
+            [
+              "[--color-surface-floating:hsl(220_13%_13%)]",
+              "[--color-surface-subtle:hsl(220_13%_18%)]",
+              "[--color-secondary:hsl(220_13%_20%)]",
+              "[--color-foreground:hsl(0_0%_96%)]",
+              "[--color-muted-foreground:hsl(215_14%_70%)]",
+              "[--color-border:hsl(220_13%_24%)]",
+              "[--color-border-soft:hsl(220_13%_24%)]",
+              "shadow-[0_18px_52px_hsl(220_18%_10%/0.24)]",
+            ],
         )}
       >
         {/* Slash Command Menu */}
