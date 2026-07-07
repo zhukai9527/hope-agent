@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest"
-import { parseSubagentResultDetail, parseSubagentResultStatus } from "./asyncResultPayload"
+import {
+  parseSubagentResultDetail,
+  parseSubagentResultStatus,
+  parseWorkflowResultDetail,
+  parseWorkflowResultStatus,
+} from "./asyncResultPayload"
 
 describe("subagent async result parsing", () => {
   test("does not parse XML tags inside legacy subagent output as metadata", () => {
@@ -32,5 +37,33 @@ describe("subagent async result parsing", () => {
 
     expect(parseSubagentResultStatus(content)).toBe("failed")
     expect(parseSubagentResultDetail(content)).toBe("ok <done> & safe")
+  })
+})
+
+describe("workflow result parsing", () => {
+  test("parses workflow-result status and escaped output", () => {
+    const content = [
+      "<workflow-result>",
+      "<state>completed</state>",
+      "<output-json>",
+      "{ &quot;note&quot;: &quot;kept as text&quot;, &quot;safe&quot;: &quot;&lt;ok&gt; &amp; done&quot; }",
+      "</output-json>",
+      "</workflow-result>",
+    ].join("\n")
+
+    expect(parseWorkflowResultStatus(content)).toBe("completed")
+    expect(parseWorkflowResultDetail(content)).toContain("<ok> & done")
+  })
+
+  test("maps blocked workflow results to failed tone", () => {
+    const content = [
+      "<workflow-result>",
+      "<state>blocked</state>",
+      "<blocked-reason>approval_required</blocked-reason>",
+      "</workflow-result>",
+    ].join("\n")
+
+    expect(parseWorkflowResultStatus(content)).toBe("failed")
+    expect(parseWorkflowResultDetail(content)).toBe("approval_required")
   })
 })

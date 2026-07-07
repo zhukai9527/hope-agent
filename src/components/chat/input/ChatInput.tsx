@@ -214,6 +214,9 @@ interface ChatInputProps {
   onEnterPlanMode?: () => void
   onExitPlanMode?: () => void
   onTogglePlanPanel?: () => void
+  // Draft workflow mode staged before the first message materializes a session.
+  draftWorkflowMode?: WorkflowMode
+  onDraftWorkflowModeChange?: (mode: WorkflowMode) => void
   // Goal mode
   goalSnapshot?: GoalSnapshot | null
   goalLoading?: boolean
@@ -397,6 +400,8 @@ export default function ChatInput({
   onEnterPlanMode,
   onExitPlanMode,
   onTogglePlanPanel,
+  draftWorkflowMode = "off",
+  onDraftWorkflowModeChange,
   goalSnapshot,
   goalLoading = false,
   onGoalModeSubmit,
@@ -531,7 +536,7 @@ export default function ChatInput({
 
   useEffect(() => {
     if (!currentSessionId || incognitoEnabled) {
-      setWorkflowMode("off")
+      setWorkflowMode(incognitoEnabled ? "off" : normalizeWorkflowMode(draftWorkflowMode))
       setWorkflowModeLoading(false)
       setWorkflowModeSaving(null)
       return
@@ -554,7 +559,7 @@ export default function ChatInput({
     return () => {
       cancelled = true
     }
-  }, [currentSessionId, incognitoEnabled])
+  }, [currentSessionId, draftWorkflowMode, incognitoEnabled])
 
   useEffect(() => {
     const onWorkflowModeChanged = (event: Event) => {
@@ -1124,25 +1129,30 @@ export default function ChatInput({
         toast.error(t("chat.workflowMode.incognito", "无痕会话不启用工作流模式"))
         return
       }
-      const targetSessionId = currentSessionId ?? (await onEnsureSession?.())
-      if (!targetSessionId) {
-        if (!onEnsureSession) {
-          toast.error(t("chat.workflowMode.sessionRequired", "先创建会话后再开启工作流模式"))
-        }
+      if (nextMode === workflowMode || workflowModeSaving) return
+      if (!currentSessionId) {
+        setWorkflowMode(nextMode)
+        onDraftWorkflowModeChange?.(nextMode)
+        toast.success(
+          nextMode === "off"
+            ? t("chat.workflowMode.draftOff", "工作流模式已关闭")
+            : t("chat.workflowMode.draftSaved", "工作流模式将在下一条消息生效：{{mode}}", {
+                mode: workflowModeLabel(t, nextMode),
+              }),
+        )
         return
       }
-      if (nextMode === workflowMode || workflowModeSaving) return
       setWorkflowModeSaving(nextMode)
       try {
         const next = await getTransport().call<unknown>("set_workflow_mode", {
-          sessionId: targetSessionId,
+          sessionId: currentSessionId,
           mode: nextMode,
         })
         const saved = normalizeWorkflowMode(next)
         setWorkflowMode(saved)
         window.dispatchEvent(
           new CustomEvent(WORKFLOW_MODE_CHANGED_EVENT, {
-            detail: { sessionId: targetSessionId, mode: saved },
+            detail: { sessionId: currentSessionId, mode: saved },
           }),
         )
         toast.success(
@@ -1157,7 +1167,14 @@ export default function ChatInput({
         setWorkflowModeSaving(null)
       }
     },
-    [currentSessionId, incognitoEnabled, onEnsureSession, t, workflowMode, workflowModeSaving],
+    [
+      currentSessionId,
+      incognitoEnabled,
+      onDraftWorkflowModeChange,
+      t,
+      workflowMode,
+      workflowModeSaving,
+    ],
   )
 
   const renderWorkflowModeMenuItems = (onPicked?: () => void) => {

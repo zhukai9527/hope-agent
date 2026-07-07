@@ -4,6 +4,7 @@ import type { Transport } from "@/lib/transport"
 import { setTransport } from "@/lib/transport-provider"
 import {
   computeContextUsage,
+  isCenteredSystemMessage,
   parseSessionMessages,
   reloadAndMergeSessionMessages,
 } from "./chatUtils"
@@ -238,6 +239,22 @@ describe("parseSessionMessages user attachments", () => {
     expect(parsed[0]).toMatchObject({ isWakeupTrigger: true })
     // Must NOT be misclassified as a sub-agent result (the bug this fixed).
     expect(parsed[0]?.isSubagentResult).toBeFalsy()
+  })
+
+  test("parses workflow_result meta as a centered workflow chip", () => {
+    const parsed = parseSessionMessages([
+      sessionMessage({
+        id: 83,
+        role: "user",
+        content: "<workflow-result><state>completed</state></workflow-result>",
+        attachmentsMeta: JSON.stringify({ workflow_result: { run_id: "wfr_123" } }),
+      }),
+    ])
+
+    expect(parsed[0]?.attachments).toBeUndefined()
+    expect(parsed[0]).toMatchObject({ isWorkflowResult: true })
+    expect(parsed[0]?.isSubagentResult).toBeFalsy()
+    expect(isCenteredSystemMessage(parsed[0]!)).toBe(true)
   })
 
   test("restores non-image user attachments as file attachments", () => {

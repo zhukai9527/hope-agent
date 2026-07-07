@@ -535,8 +535,9 @@ describe("ChatInput", () => {
     expect(screen.getByText("browser smoke")).toBeTruthy()
   })
 
-  test("materializes a draft session before enabling workflow mode from the composer", async () => {
+  test("stages workflow mode in a draft session without materializing it", async () => {
     const onEnsureSession = vi.fn(() => Promise.resolve("s-created"))
+    const onDraftWorkflowModeChange = vi.fn()
     transportMock.call.mockImplementation((command: string, args?: unknown) => {
       if (command === "get_awareness_config") return Promise.resolve({ enabled: false })
       if (command === "set_workflow_mode") {
@@ -560,7 +561,7 @@ describe("ChatInput", () => {
     )
 
     try {
-      renderChatInput({ currentSessionId: null, onEnsureSession })
+      renderChatInput({ currentSessionId: null, onEnsureSession, onDraftWorkflowModeChange })
 
       const workflowButton = await screen.findByRole("button", {
         name: "工作流模式",
@@ -570,12 +571,13 @@ describe("ChatInput", () => {
       fireEvent.click((await screen.findByText("自动")).closest("button")!)
 
       await waitFor(() => {
-        expect(onEnsureSession).toHaveBeenCalledTimes(1)
-        expect(transportMock.call).toHaveBeenCalledWith("set_workflow_mode", {
-          sessionId: "s-created",
-          mode: "on",
-        })
+        expect(onDraftWorkflowModeChange).toHaveBeenCalledWith("on")
       })
+      expect(onEnsureSession).not.toHaveBeenCalled()
+      expect(transportMock.call).not.toHaveBeenCalledWith(
+        "set_workflow_mode",
+        expect.anything(),
+      )
       expect(await screen.findByText("chat.workflowMode.activeOnDetail")).toBeTruthy()
     } finally {
       rectSpy.mockRestore()

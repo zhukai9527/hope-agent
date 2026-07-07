@@ -1261,11 +1261,11 @@ mod memory_section_tests {
             "off mode should not inject workflow policy: {out_off}"
         );
         assert!(out_on.contains("# Workflow Mode: On"));
-        assert!(out_on.contains("workflow_run"));
+        assert!(out_on.contains("workflow` with `action=create"));
         assert!(out_on.contains("workflow.task.create"));
         assert!(out_on.contains("Workflow is not coding-only"));
         assert!(out_ultracode.contains("# Workflow Mode: Ultracode"));
-        assert!(out_ultracode.contains("Use `workflow_run` by default"));
+        assert!(out_ultracode.contains("Use `workflow` with `action=create` by default"));
     }
 
     #[test]

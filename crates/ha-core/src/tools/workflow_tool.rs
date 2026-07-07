@@ -6,7 +6,8 @@ use super::ToolExecContext;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkflowRunToolArgs {
+struct WorkflowToolArgs {
+    action: WorkflowToolAction,
     #[serde(default)]
     script: Option<String>,
     #[serde(default, alias = "script_source", alias = "scriptSource")]
@@ -29,18 +30,101 @@ struct WorkflowRunToolArgs {
     goal_criterion_id: Option<String>,
     #[serde(default, alias = "worktree_id", alias = "worktreeId")]
     worktree_id: Option<String>,
+    #[serde(default, alias = "run_id", alias = "runId")]
+    run_id: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default, alias = "since_seq", alias = "sinceSeq")]
+    since_seq: Option<i64>,
+    #[serde(default, alias = "include_payload", alias = "includePayload")]
+    include_payload: Option<bool>,
+    #[serde(default)]
+    command: Option<WorkflowControlCommand>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default, alias = "inherit_goal", alias = "inheritGoal")]
+    inherit_goal: Option<bool>,
 }
 
-pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<String> {
-    let input: WorkflowRunToolArgs = serde_json::from_value(args.clone())
-        .map_err(|e| anyhow!("Invalid workflow_run arguments: {e}"))?;
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowToolAction {
+    Create,
+    List,
+    Status,
+    Trace,
+    Control,
+    Followup,
+}
+
+impl WorkflowToolAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::List => "list",
+            Self::Status => "status",
+            Self::Trace => "trace",
+            Self::Control => "control",
+            Self::Followup => "followup",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowControlCommand {
+    Pause,
+    Resume,
+    Cancel,
+}
+
+impl WorkflowControlCommand {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+pub async fn tool_workflow(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+    let input: WorkflowToolArgs = serde_json::from_value(args.clone())
+        .map_err(|e| anyhow!("Invalid workflow arguments: {e}"))?;
+    let (session_id, db, workflow_mode) = workflow_context(ctx)?;
+
+    let output = match input.action {
+        WorkflowToolAction::Create => create_workflow(&input, &db, &session_id, workflow_mode)?,
+        WorkflowToolAction::Followup => {
+            create_followup_workflow(&input, &db, &session_id, workflow_mode)?
+        }
+        WorkflowToolAction::List => list_workflows(&input, &db, &session_id, workflow_mode)?,
+        WorkflowToolAction::Status => workflow_status(&input, &db, &session_id, workflow_mode)?,
+        WorkflowToolAction::Trace => workflow_trace(&input, &db, &session_id, workflow_mode)?,
+        WorkflowToolAction::Control => {
+            control_workflow(&input, &db, &session_id, workflow_mode).await?
+        }
+    };
+
+    Ok(serde_json::to_string_pretty(&output)?)
+}
+
+fn workflow_context(
+    ctx: &ToolExecContext,
+) -> Result<(
+    String,
+    std::sync::Arc<crate::session::SessionDB>,
+    crate::workflow_mode::WorkflowMode,
+)> {
     let session_id = ctx
         .session_id
         .as_deref()
-        .ok_or_else(|| anyhow!("workflow_run requires an active session"))?;
+        .ok_or_else(|| anyhow!("workflow requires an active session"))?;
     if ctx.incognito {
         return Err(anyhow!(
-            "workflow_run is disabled for incognito sessions because workflow runs are durable"
+            "workflow is disabled for incognito sessions because workflow runs are durable"
         ));
     }
     let db = ctx
@@ -54,24 +138,115 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
         .unwrap_or_default();
     if !workflow_mode.enabled() {
         return Err(anyhow!(
-            "Workflow Mode is off for this session. Use `/workflow on` or the GUI Workflow Mode toggle before creating workflow runs."
+            "Workflow Mode is off for this session. Use `/workflow on` or the GUI Workflow Mode toggle before using the workflow tool."
         ));
     }
+    Ok((session_id.to_string(), db, workflow_mode))
+}
 
+fn create_workflow(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
     let script_source = input
         .script
-        .or(input.script_source)
+        .clone()
+        .or_else(|| input.script_source.clone())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("workflow_run requires `script` or `scriptSource`"))?;
+        .ok_or_else(|| anyhow!("workflow action=create requires `script` or `scriptSource`"))?;
 
+    create_workflow_run_from_script(
+        input,
+        db,
+        session_id,
+        workflow_mode,
+        script_source,
+        input.parent_run_id.clone(),
+        input
+            .origin
+            .clone()
+            .or_else(|| Some("agent:workflow".to_string())),
+        input.goal_id.clone(),
+        input.goal_criterion_id.clone(),
+        WorkflowToolAction::Create,
+    )
+}
+
+fn create_followup_workflow(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
+    let parent_run_id = input
+        .parent_run_id
+        .clone()
+        .or_else(|| input.run_id.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("workflow action=followup requires `runId` or `parentRunId`"))?;
+    let parent = visible_workflow_run(db, session_id, &parent_run_id)?;
+    let script_source = input
+        .script
+        .clone()
+        .or_else(|| input.script_source.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("workflow action=followup requires `script` or `scriptSource`"))?;
+    let inherit_goal = input.inherit_goal.unwrap_or(true);
+    let goal_id = input
+        .goal_id
+        .clone()
+        .or_else(|| inherit_goal.then(|| parent.goal_id.clone()).flatten());
+    let goal_criterion_id = input.goal_criterion_id.clone().or_else(|| {
+        inherit_goal
+            .then(|| parent.goal_criterion_id.clone())
+            .flatten()
+    });
+    let origin = input.origin.clone().or_else(|| {
+        Some(format!(
+            "agent:workflow_followup:{}",
+            parent_run_id.chars().take(48).collect::<String>()
+        ))
+    });
+
+    create_workflow_run_from_script(
+        input,
+        db,
+        session_id,
+        workflow_mode,
+        script_source,
+        Some(parent_run_id),
+        origin,
+        goal_id,
+        goal_criterion_id,
+        WorkflowToolAction::Followup,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_workflow_run_from_script(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+    script_source: String,
+    parent_run_id: Option<String>,
+    origin: Option<String>,
+    goal_id: Option<String>,
+    goal_criterion_id: Option<String>,
+    action: WorkflowToolAction,
+) -> Result<Value> {
     let execution_mode = resolve_execution_mode(&db, session_id, input.execution_mode.as_deref())?;
-    let budget = input.budget.unwrap_or_else(|| json!({}));
+    let budget = input.budget.clone().unwrap_or_else(|| json!({}));
     let start_now = input.run_immediately.unwrap_or(true);
     if start_now {
         crate::workflow::ensure_workflow_launcher_primary().map_err(|e| {
             anyhow!(
-                "workflow_run cannot start immediately: {e}. Retry from the primary runtime or set runImmediately=false to create a draft."
+                "workflow cannot start immediately: {e}. Retry from the primary runtime or set runImmediately=false to create a draft."
             )
         })?;
     }
@@ -81,7 +256,8 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
     ) && !has_required_autonomous_budget(&budget)
     {
         return Err(anyhow!(
-            "workflow_run with executionMode `autonomous` requires budget.maxScriptSecs or budget.maxRuntimeSecs plus budget.maxOutputTokens"
+            "workflow action={} with executionMode `autonomous` requires budget.maxScriptSecs or budget.maxRuntimeSecs plus budget.maxOutputTokens",
+            action.as_str()
         ));
     }
 
@@ -93,24 +269,25 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
     )?;
     let run = db.create_workflow_run(crate::workflow::CreateWorkflowRunInput {
         session_id: session_id.to_string(),
-        kind: input.kind.unwrap_or_else(|| "general.workflow".to_string()),
+        kind: input
+            .kind
+            .clone()
+            .unwrap_or_else(|| "general.workflow".to_string()),
         execution_mode: execution_mode.as_str().to_string(),
         script_source,
         budget,
-        parent_run_id: input.parent_run_id,
-        origin: input
-            .origin
-            .or_else(|| Some("agent:workflow_run".to_string())),
-        goal_id: input.goal_id,
-        goal_criterion_id: input.goal_criterion_id,
-        worktree_id: input.worktree_id,
+        parent_run_id,
+        origin,
+        goal_id,
+        goal_criterion_id,
+        worktree_id: input.worktree_id.clone(),
     })?;
 
     let launch_accepted = if start_now {
         crate::workflow::spawn_workflow_run_if_primary(
             db.clone(),
             run.id.clone(),
-            format!("tool:workflow_run:pid:{}", std::process::id()),
+            format!("tool:workflow:pid:{}", std::process::id()),
         )
     } else {
         false
@@ -140,7 +317,9 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
         "Workflow run draft created. The user can start it from the Workflow control center."
     };
 
-    Ok(serde_json::to_string_pretty(&json!({
+    Ok(json!({
+        "ok": true,
+        "action": action.as_str(),
         "runId": run.id,
         "state": run.state.as_str(),
         "initialState": run.state.as_str(),
@@ -154,8 +333,200 @@ pub async fn tool_workflow_run(args: &Value, ctx: &ToolExecContext) -> Result<St
         "launchAccepted": launch_accepted,
         "requiresApproval": preview.requires_approval,
         "permissionSummary": preview.permission.summary,
-        "message": message
-    }))?)
+        "message": message,
+        "modelNextAction": if start_now {
+            if preview.requires_approval { "wait_for_user_approval" } else { "continue_or_check_status" }
+        } else {
+            "tell_user_draft_created"
+        }
+    }))
+}
+
+fn list_workflows(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
+    let requested_limit = input.limit.unwrap_or(20).clamp(1, 50);
+    let scope = input.scope.as_deref().unwrap_or("active");
+    let mut runs = db.list_workflow_runs_for_session(session_id, 100)?;
+    runs.retain(|run| match scope {
+        "active" => is_visible_active_state(run.state),
+        "recent" | "session" => true,
+        "goal" => match input.goal_id.as_deref() {
+            Some(goal_id) => run.goal_id.as_deref() == Some(goal_id),
+            None => run.goal_id.is_some(),
+        },
+        other => {
+            crate::app_warn!(
+                "workflow",
+                "tool",
+                "unknown workflow list scope `{}`; returning active runs",
+                other
+            );
+            is_visible_active_state(run.state)
+        }
+    });
+    runs.truncate(requested_limit);
+    let active_count = runs
+        .iter()
+        .filter(|run| is_visible_active_state(run.state))
+        .count();
+    Ok(json!({
+        "ok": true,
+        "action": "list",
+        "workflowMode": workflow_mode.as_str(),
+        "scope": scope,
+        "count": runs.len(),
+        "activeCount": active_count,
+        "runs": runs.iter().map(run_summary_json).collect::<Vec<_>>(),
+        "modelNextAction": if runs.is_empty() {
+            "create_workflow_if_task_warrants"
+        } else if active_count > 0 {
+            "call_workflow_status_for_active_run"
+        } else {
+            "inspect_recent_run_or_create_followup"
+        }
+    }))
+}
+
+fn workflow_status(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
+    let run = if let Some(run_id) = normalized(input.run_id.as_deref()) {
+        visible_workflow_run(db, session_id, run_id)?
+    } else {
+        select_relevant_workflow_run(db, session_id)?.ok_or_else(|| {
+            anyhow!("workflow action=status found no workflow runs for this session")
+        })?
+    };
+    let event_limit = input.limit.unwrap_or(80).clamp(1, 200);
+    let snapshot = db
+        .workflow_run_snapshot(&run.id, event_limit)?
+        .ok_or_else(|| anyhow!("workflow run {} not found", run.id))?;
+    let ops_summary = ops_summary_json(&snapshot.ops);
+    let latest_event = snapshot.events.last().map(event_summary_json);
+    let latest_checkpoint = latest_checkpoint_json(&snapshot.events);
+    Ok(json!({
+        "ok": true,
+        "action": "status",
+        "workflowMode": workflow_mode.as_str(),
+        "run": run_summary_json(&snapshot.run),
+        "ops": ops_summary,
+        "pendingActions": pending_actions_json(&snapshot),
+        "latestEvent": latest_event,
+        "latestCheckpoint": latest_checkpoint,
+        "traceAvailable": snapshot.events.len(),
+        "modelNextAction": model_next_action_for_run(&snapshot.run, latest_checkpoint.is_some()),
+    }))
+}
+
+fn workflow_trace(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
+    let run_id = normalized(input.run_id.as_deref())
+        .ok_or_else(|| anyhow!("workflow action=trace requires `runId`"))?;
+    let run = visible_workflow_run(db, session_id, run_id)?;
+    let limit = input.limit.unwrap_or(80).clamp(1, 200);
+    let include_payload = input.include_payload.unwrap_or(true);
+    let since_seq = input.since_seq.unwrap_or(0);
+    let events = db
+        .list_workflow_events(&run.id, limit)?
+        .into_iter()
+        .filter(|event| event.seq > since_seq)
+        .map(|event| {
+            if include_payload {
+                json!({
+                    "seq": event.seq,
+                    "type": event.event_type,
+                    "createdAt": event.created_at,
+                    "payload": event.payload,
+                })
+            } else {
+                json!({
+                    "seq": event.seq,
+                    "type": event.event_type,
+                    "createdAt": event.created_at,
+                    "payloadSummary": payload_summary(&event.payload),
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "ok": true,
+        "action": "trace",
+        "workflowMode": workflow_mode.as_str(),
+        "run": run_summary_json(&run),
+        "sinceSeq": since_seq,
+        "count": events.len(),
+        "events": events,
+        "modelNextAction": model_next_action_for_run(&run, true),
+    }))
+}
+
+async fn control_workflow(
+    input: &WorkflowToolArgs,
+    db: &std::sync::Arc<crate::session::SessionDB>,
+    session_id: &str,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<Value> {
+    let run_id = normalized(input.run_id.as_deref())
+        .ok_or_else(|| anyhow!("workflow action=control requires `runId`"))?;
+    let command = input
+        .command
+        .ok_or_else(|| anyhow!("workflow action=control requires `command`"))?;
+    let _ = visible_workflow_run(db, session_id, run_id)?;
+    let run = match command {
+        WorkflowControlCommand::Pause => db.pause_workflow_run(run_id)?,
+        WorkflowControlCommand::Resume => {
+            let run = db.resume_workflow_run(run_id)?;
+            let _ = crate::workflow::spawn_workflow_run_if_primary(
+                db.clone(),
+                run.id.clone(),
+                format!("tool:workflow:control:pid:{}", std::process::id()),
+            );
+            run
+        }
+        WorkflowControlCommand::Cancel => {
+            crate::workflow::cancel_workflow_run_with_children(db.clone(), run_id).await?
+        }
+    };
+    let reason = normalized(input.reason.as_deref()).unwrap_or("model_control_requested");
+    let _ = db.append_workflow_event(
+        &run.id,
+        "run_model_control_action",
+        json!({
+            "action": command.as_str(),
+            "reason": reason,
+            "resultState": run.state.as_str(),
+            "accepted": true,
+            "surface": "model_control",
+        }),
+    );
+    Ok(json!({
+        "ok": true,
+        "action": "control",
+        "workflowMode": workflow_mode.as_str(),
+        "command": command.as_str(),
+        "run": run_summary_json(&run),
+        "message": match command {
+            WorkflowControlCommand::Pause => "Workflow run paused.",
+            WorkflowControlCommand::Resume => "Workflow run resumed and launch was requested from the primary runtime.",
+            WorkflowControlCommand::Cancel => "Workflow run cancelled; child tasks were asked to stop when possible.",
+        },
+        "modelNextAction": match command {
+            WorkflowControlCommand::Pause => "explain_pause_to_user",
+            WorkflowControlCommand::Resume => "monitor_or_continue",
+            WorkflowControlCommand::Cancel => "explain_cancel_to_user",
+        },
+    }))
 }
 
 fn resolve_execution_mode(
@@ -195,4 +566,232 @@ fn optional_positive_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_u64))
         .filter(|n| *n > 0)
+}
+
+fn normalized(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn visible_workflow_run(
+    db: &crate::session::SessionDB,
+    session_id: &str,
+    run_id: &str,
+) -> Result<crate::workflow::WorkflowRun> {
+    let run = db
+        .get_workflow_run(run_id)?
+        .ok_or_else(|| anyhow!("workflow run {} not found", run_id))?;
+    if run.session_id != session_id {
+        return Err(anyhow!(
+            "workflow run {} belongs to a different session and is not visible to this model",
+            run_id
+        ));
+    }
+    Ok(run)
+}
+
+fn select_relevant_workflow_run(
+    db: &crate::session::SessionDB,
+    session_id: &str,
+) -> Result<Option<crate::workflow::WorkflowRun>> {
+    let runs = db.list_workflow_runs_for_session(session_id, 100)?;
+    Ok(runs
+        .iter()
+        .find(|run| is_visible_active_state(run.state))
+        .cloned()
+        .or_else(|| runs.into_iter().next()))
+}
+
+fn is_visible_active_state(state: crate::workflow::WorkflowRunState) -> bool {
+    matches!(
+        state,
+        crate::workflow::WorkflowRunState::Draft
+            | crate::workflow::WorkflowRunState::AwaitingApproval
+            | crate::workflow::WorkflowRunState::Running
+            | crate::workflow::WorkflowRunState::AwaitingUser
+            | crate::workflow::WorkflowRunState::Paused
+            | crate::workflow::WorkflowRunState::Recovering
+    )
+}
+
+fn run_summary_json(run: &crate::workflow::WorkflowRun) -> Value {
+    json!({
+        "runId": run.id,
+        "sessionId": run.session_id,
+        "kind": run.kind,
+        "state": run.state.as_str(),
+        "executionMode": run.execution_mode,
+        "origin": run.origin,
+        "parentRunId": run.parent_run_id,
+        "goalId": run.goal_id,
+        "goalCriterionId": run.goal_criterion_id,
+        "goalCriterionText": run.goal_criterion_text,
+        "goalCriterionKind": run.goal_criterion_kind,
+        "goalRevision": run.goal_revision,
+        "worktreeId": run.worktree_id,
+        "blockedReason": run.blocked_reason,
+        "cursorSeq": run.cursor_seq,
+        "createdAt": run.created_at,
+        "updatedAt": run.updated_at,
+        "completedAt": run.completed_at,
+    })
+}
+
+fn ops_summary_json(ops: &[crate::workflow::WorkflowOp]) -> Value {
+    let mut pending = 0usize;
+    let mut started = 0usize;
+    let mut completed = 0usize;
+    let mut failed = 0usize;
+    for op in ops {
+        match op.state {
+            crate::workflow::WorkflowOpState::Pending => pending += 1,
+            crate::workflow::WorkflowOpState::Started => started += 1,
+            crate::workflow::WorkflowOpState::Completed => completed += 1,
+            crate::workflow::WorkflowOpState::Failed => failed += 1,
+        }
+    }
+    json!({
+        "total": ops.len(),
+        "pending": pending,
+        "started": started,
+        "completed": completed,
+        "failed": failed,
+        "recent": ops.iter().rev().take(8).map(|op| {
+            json!({
+                "opKey": op.op_key,
+                "opType": op.op_type,
+                "state": op.state.as_str(),
+                "startedAt": op.started_at,
+                "completedAt": op.completed_at,
+                "hasOutput": op.output.is_some(),
+                "hasError": op.error.is_some(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn pending_actions_json(snapshot: &crate::workflow::WorkflowRunSnapshot) -> Vec<Value> {
+    let mut actions = Vec::new();
+    match snapshot.run.state {
+        crate::workflow::WorkflowRunState::AwaitingApproval => actions.push(json!({
+            "kind": "user_approval",
+            "severity": "blocking",
+            "message": "Workflow is waiting for explicit user approval. The model cannot approve it."
+        })),
+        crate::workflow::WorkflowRunState::AwaitingUser => actions.push(json!({
+            "kind": "user_input",
+            "severity": "blocking",
+            "message": "Workflow is waiting for user input."
+        })),
+        crate::workflow::WorkflowRunState::Paused => actions.push(json!({
+            "kind": "paused",
+            "severity": "waiting",
+            "message": "Workflow is paused and can be resumed or cancelled."
+        })),
+        crate::workflow::WorkflowRunState::Blocked => actions.push(json!({
+            "kind": "blocked",
+            "severity": "blocking",
+            "message": snapshot.run.blocked_reason.clone().unwrap_or_else(|| "Workflow is blocked.".to_string())
+        })),
+        crate::workflow::WorkflowRunState::Failed => actions.push(json!({
+            "kind": "failed",
+            "severity": "blocking",
+            "message": "Workflow failed; inspect trace before creating a follow-up."
+        })),
+        _ => {}
+    }
+    let failed_ops = snapshot
+        .ops
+        .iter()
+        .filter(|op| op.state == crate::workflow::WorkflowOpState::Failed)
+        .take(5)
+        .map(|op| {
+            json!({
+                "kind": "failed_op",
+                "severity": "warning",
+                "opKey": op.op_key,
+                "opType": op.op_type,
+            })
+        });
+    actions.extend(failed_ops);
+    actions
+}
+
+fn event_summary_json(event: &crate::workflow::WorkflowEvent) -> Value {
+    json!({
+        "seq": event.seq,
+        "type": event.event_type,
+        "createdAt": event.created_at,
+        "payloadSummary": payload_summary(&event.payload),
+    })
+}
+
+fn latest_checkpoint_json(events: &[crate::workflow::WorkflowEvent]) -> Option<Value> {
+    events
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(
+                event.event_type.as_str(),
+                "trace"
+                    | "workflow_phase_started"
+                    | "workflow_phase_completed"
+                    | "workflow_phase_failed"
+                    | "workflow_checkpoint"
+                    | "workflow_report"
+                    | "workflow_block_requested"
+                    | "workflow_finish"
+                    | "run_runtime_result"
+                    | "run_state_changed"
+            )
+        })
+        .map(|event| {
+            json!({
+                "seq": event.seq,
+                "type": event.event_type,
+                "createdAt": event.created_at,
+                "payload": event.payload,
+            })
+        })
+}
+
+fn payload_summary(payload: &Value) -> String {
+    match payload {
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.chars().take(160).collect(),
+        Value::Array(items) => format!("array[{}]", items.len()),
+        Value::Object(map) => {
+            let keys = map.keys().take(8).cloned().collect::<Vec<_>>().join(", ");
+            format!("object{{{keys}}}")
+        }
+    }
+}
+
+fn model_next_action_for_run(
+    run: &crate::workflow::WorkflowRun,
+    has_checkpoint: bool,
+) -> &'static str {
+    match run.state {
+        crate::workflow::WorkflowRunState::Completed => "summarize_workflow_result_to_user",
+        crate::workflow::WorkflowRunState::Failed => {
+            "inspect_trace_then_explain_failure_or_create_followup"
+        }
+        crate::workflow::WorkflowRunState::Cancelled => "tell_user_workflow_was_cancelled",
+        crate::workflow::WorkflowRunState::Blocked => "explain_blocker_and_recovery_options",
+        crate::workflow::WorkflowRunState::AwaitingApproval => {
+            "ask_user_to_review_workflow_approval"
+        }
+        crate::workflow::WorkflowRunState::AwaitingUser => "ask_user_for_required_input",
+        crate::workflow::WorkflowRunState::Paused => "resume_or_cancel_when_user_confirms",
+        crate::workflow::WorkflowRunState::Running
+        | crate::workflow::WorkflowRunState::Recovering => {
+            if has_checkpoint {
+                "use_checkpoint_or_continue_monitoring"
+            } else {
+                "continue_monitoring"
+            }
+        }
+        crate::workflow::WorkflowRunState::Draft => "start_or_explain_draft_to_user",
+    }
 }

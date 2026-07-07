@@ -131,6 +131,7 @@ function optimisticAttachmentForFile(file: File): MessageAttachment {
 interface SendOptions {
   displayText?: string
   planMode?: string
+  workflowMode?: "off" | "on" | "ultracode" | string
   isPlanTrigger?: boolean
   /** Routed through the chat command into `attachments_meta.plan_comment`
    *  so the desktop GUI can render PlanCommentBubble with structured
@@ -1221,6 +1222,7 @@ export function useChatStream({
               : undefined,
           sandboxMode:
             currentSessionId || sandboxModeDirtyRef.current ? sandboxModeRef.current : undefined,
+          workflowMode: options?.workflowMode,
           planMode: effectivePlanMode && effectivePlanMode !== "off" ? effectivePlanMode : undefined,
           temperatureOverride: temperatureOverride ?? undefined,
           reasoningEffort: reasoningEffort ?? undefined,

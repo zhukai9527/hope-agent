@@ -1550,6 +1550,153 @@ export default async function main(workflow) {
 }
 
 #[test]
+fn runtime_records_phase_progress_checkpoint_and_report_events() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));
+    let session = db.create_session("ha-main").expect("create session");
+
+    let script = r#"
+export default async function main(workflow) {
+  const task = await workflow.task.create({ title: "Record stage API events" });
+  await workflow.trace({ label: "budget", payload: { maxRuntimeSecs: 30, maxOps: 8 } });
+  await workflow.phase({
+    name: "collect",
+    label: "Collect evidence",
+    expected: "Record enough evidence for the next phase"
+  }, async (phase) => {
+    await workflow.progress({
+      phaseKey: phase.phaseKey,
+      message: "Collected 1/1 evidence item",
+      percent: 100,
+      counters: { collected: 1, total: 1 }
+    });
+    await workflow.checkpoint({
+      phaseKey: phase.phaseKey,
+      title: "Evidence collected",
+      summary: "The phase produced a reviewable checkpoint.",
+      importance: "high",
+      inject: "auto"
+    });
+  });
+  let validation = { ok: true, summary: "stage API event recording is deterministic" };
+  if (false) {
+    validation = await workflow.validate({
+      label: "stage-api-smoke",
+      reason: "stage API smoke validation",
+      commands: [{ command: "true", label: "true" }]
+    });
+  }
+  await workflow.task.update({ task, status: "completed" });
+  await workflow.report({
+    title: "Ready for synthesis",
+    summary: "The workflow has a stage-level result.",
+    nextAction: "summarize_to_user"
+  });
+  await workflow.finish({ summary: "done", verification: validation, residualRisk: "none" });
+}
+"#;
+    let run = db
+        .create_workflow_run(CreateWorkflowRunInput {
+            session_id: session.id.clone(),
+            kind: "general.workflow".to_string(),
+            execution_mode: "guarded".to_string(),
+            script_source: script.to_string(),
+            budget: json!({ "max_script_secs": 10 }),
+            parent_run_id: None,
+            origin: None,
+            goal_id: None,
+            goal_criterion_id: None,
+            worktree_id: None,
+        })
+        .expect("create workflow run");
+
+    let result = run_workflow_script(db.clone(), &run.id).expect("run workflow script");
+    assert_eq!(result.snapshot.run.state, WorkflowRunState::Completed);
+
+    let op_types: Vec<&str> = result
+        .snapshot
+        .ops
+        .iter()
+        .map(|op| op.op_type.as_str())
+        .collect();
+    assert!(op_types.contains(&"phase.start"));
+    assert!(op_types.contains(&"progress"));
+    assert!(op_types.contains(&"checkpoint"));
+    assert!(op_types.contains(&"phase.complete"));
+    assert!(op_types.contains(&"report"));
+
+    let event_types: Vec<&str> = result
+        .snapshot
+        .events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert!(event_types.contains(&"workflow_phase_started"));
+    assert!(event_types.contains(&"workflow_progress"));
+    assert!(event_types.contains(&"workflow_checkpoint"));
+    assert!(event_types.contains(&"workflow_phase_completed"));
+    assert!(event_types.contains(&"workflow_report"));
+}
+
+#[test]
+fn workflow_milestone_injection_pending_list_excludes_delivered_events() {
+    let (_dir, db) = temp_db();
+    let (_session_id, run_id) = create_run(&db);
+    let checkpoint = db
+        .append_workflow_event(
+            &run_id,
+            "workflow_checkpoint",
+            json!({
+                "title": "Evidence ready",
+                "summary": "The workflow has a high-signal checkpoint.",
+                "importance": "high",
+            }),
+        )
+        .expect("append checkpoint");
+    db.append_workflow_event(
+        &run_id,
+        "workflow_milestone_injection_requested",
+        json!({
+            "sourceEventType": "workflow_checkpoint",
+            "sourceEventSeq": checkpoint.seq,
+            "injectionRunId": format!("{}:workflow-event:{}", run_id, checkpoint.seq),
+        }),
+    )
+    .expect("append requested");
+
+    let pending = db
+        .list_pending_workflow_milestone_injections(10)
+        .expect("list pending milestone injections");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].run_id, run_id);
+    assert_eq!(pending[0].source_event_seq, checkpoint.seq);
+    assert_eq!(pending[0].source_event_type, "workflow_checkpoint");
+
+    db.append_workflow_event(
+        &run_id,
+        "workflow_milestone_injection_delivered",
+        json!({
+            "sourceEventType": "workflow_checkpoint",
+            "sourceEventSeq": checkpoint.seq,
+            "injectionRunId": format!("{}:workflow-event:{}", run_id, checkpoint.seq),
+        }),
+    )
+    .expect("append delivered");
+    for index in 0..520 {
+        db.append_workflow_event(
+            &run_id,
+            "workflow_progress",
+            json!({ "message": format!("progress {index}") }),
+        )
+        .expect("append progress noise");
+    }
+    let pending = db
+        .list_pending_workflow_milestone_injections(10)
+        .expect("list pending milestone injections after delivered");
+    assert!(pending.is_empty());
+}
+
+#[test]
 fn runtime_bridges_read_grep_and_generic_tool_through_tool_dispatch() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open session db"));

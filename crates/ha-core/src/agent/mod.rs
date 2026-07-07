@@ -1567,7 +1567,7 @@ impl AssistantAgent {
         // The execution layer re-checks the persisted mode as defense-in-depth.
         if let Some(meta) = self.lookup_session_meta() {
             if meta.workflow_mode.enabled() && !meta.incognito {
-                schemas.push(tools::get_workflow_run_tool().to_provider_schema(provider));
+                schemas.push(tools::get_workflow_tool().to_provider_schema(provider));
             }
         }
 
@@ -2249,7 +2249,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_run_schema_is_injected_only_when_workflow_mode_is_enabled() {
+    fn workflow_schema_is_injected_only_when_workflow_mode_is_enabled() {
         let dir = tempfile::tempdir().expect("temp session db dir");
         let db = Arc::new(
             crate::session::SessionDB::open(&dir.path().join("sessions.db"))
@@ -2281,7 +2281,7 @@ mod tests {
             crate::workflow_mode::WorkflowMode::On
         );
 
-        let has_workflow_run = |session_id: &str| {
+        let has_workflow = |session_id: &str| {
             let mut agent = super::AssistantAgent::new_anthropic("test-key");
             agent.set_agent_id("ha-main");
             agent.set_session_db(db.clone());
@@ -2293,21 +2293,19 @@ mod tests {
                 .map(|schema| extract_tool_name(schema).to_string())
                 .collect();
             (
-                names
-                    .iter()
-                    .any(|name| name == crate::tools::TOOL_WORKFLOW_RUN),
+                names.iter().any(|name| name == crate::tools::TOOL_WORKFLOW),
                 meta,
                 names,
             )
         };
 
-        assert!(!has_workflow_run(&off_session.id).0);
-        let (on_has_workflow_run, on_meta, on_names) = has_workflow_run(&on_session.id);
+        assert!(!has_workflow(&off_session.id).0);
+        let (on_has_workflow, on_meta, on_names) = has_workflow(&on_session.id);
         assert!(
-            on_has_workflow_run,
-            "expected workflow_run schema for workflow mode {:?}, incognito={}, names={:?}",
+            on_has_workflow,
+            "expected workflow schema for workflow mode {:?}, incognito={}, names={:?}",
             on_meta.workflow_mode, on_meta.incognito, on_names
         );
-        assert!(!has_workflow_run(&incognito_session.id).0);
+        assert!(!has_workflow(&incognito_session.id).0);
     }
 }

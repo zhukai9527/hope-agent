@@ -157,10 +157,10 @@ fn set_workflow_mode(
         .map_err(|e| e.to_string())?;
     let guidance = match mode {
         WorkflowMode::Off => {
-            "The model will not receive the workflow_run tool in subsequent turns."
+            "The model will not receive the workflow control tool in subsequent turns."
         }
         WorkflowMode::On => {
-            "The model may now create observable workflow runs when dynamic orchestration helps."
+            "The model may now create, inspect, trace, pause, resume, or cancel observable workflow runs when dynamic orchestration helps."
         }
         WorkflowMode::Ultracode => {
             "The model is now biased toward exhaustive, review-heavy workflow orchestration for substantive tasks."
@@ -473,8 +473,8 @@ fn workflow_usage() -> String {
         "",
         "1. `/workflow on` enables autonomous workflow orchestration for this session.",
         "2. Send the actual task normally, for example: `research these options and produce a recommendation`.",
-        "3. If orchestration helps, the model calls `workflow_run` and the run appears in the Workspace / Workflow control center.",
-        "4. Inspect progress with `/workflow status`, `/workflow runs`, `/workflow trace`, or the GUI. Approve, pause, resume, or cancel when needed.",
+        "3. If orchestration helps, the model calls the `workflow` tool with `action=create`, and the run appears in the Workspace / Workflow control center.",
+        "4. The model can later call `workflow` with `action=status`, `action=trace`, or `action=control` to inspect or manage visible runs. You can also inspect progress with `/workflow status`, `/workflow runs`, `/workflow trace`, or the GUI.",
         "5. Use `/workflow off` when you want ordinary chat/tool behavior again.",
         "",
         "Use `/workflow ultracode` for high-rigor work where broader exploration, parallel review, validation, or long-running recovery is worth the extra cost.",
@@ -482,7 +482,7 @@ fn workflow_usage() -> String {
         "- `/workflow` or `/workflow status`: show the current Workflow Mode and run summary",
         "- `/workflow on`: allow the model to autonomously create durable workflow runs when useful",
         "- `/workflow ultracode`: bias the model toward exhaustive workflow orchestration for substantive tasks",
-        "- `/workflow off`: hide the workflow_run tool and disable autonomous workflow creation",
+        "- `/workflow off`: hide the workflow control tool and disable autonomous workflow creation",
         "- `/workflow runs`: list recent workflow runs",
         "- `/workflow trace [run_id]`: show ops and recent events",
         "- `/workflow approve [run_id]`: approve a permission-preview-gated run",

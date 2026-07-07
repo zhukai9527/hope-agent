@@ -1054,6 +1054,41 @@ function domainArtifactExportGuardReport(
   }
 }
 
+function emptyDomainArtifactExportGuardReport(): DomainArtifactExportGuardReport {
+  const base = domainArtifactExportGuardReport()
+  return {
+    ...base,
+    status: "failed",
+    scope: { ...base.scope, domain: null },
+    artifactPath: null,
+    artifactTitle: null,
+    artifactKind: null,
+    summary: {
+      evidenceItems: 0,
+      artifactCreated: 0,
+      artifactReviewed: 0,
+      exportReviewed: 0,
+      sensitiveEvidence: 0,
+      sensitiveUnreviewed: 0,
+      redactionPending: 0,
+      privateOrConnectorEvidence: 0,
+    },
+    checks: [
+      {
+        name: "artifact_created",
+        status: "failed",
+        severity: "warning",
+        expected: "delivery artifact evidence",
+        actual: "0",
+        detail: "No delivery artifact has been recorded yet.",
+      },
+    ],
+    blockers: [],
+    recommendedNextSteps: ["Create a delivery artifact."],
+    evidenceRequiringReview: [],
+  }
+}
+
 function domainConnectorActionGuardReport(
   patch: Partial<DomainConnectorActionGuardReport> = {},
 ): DomainConnectorActionGuardReport {
@@ -1103,6 +1138,41 @@ function domainConnectorActionGuardReport(
       },
     ],
     ...patch,
+  }
+}
+
+function emptyDomainConnectorActionGuardReport(): DomainConnectorActionGuardReport {
+  const base = domainConnectorActionGuardReport()
+  return {
+    ...base,
+    status: "failed",
+    scope: { ...base.scope, domain: null },
+    toolName: "unknown",
+    connector: "unknown",
+    action: "unknown",
+    risk: "external_write",
+    summary: {
+      evidenceItems: 0,
+      actionEvidence: 0,
+      approvalEvidence: 0,
+      rollbackEvidence: 0,
+      sensitiveEvidence: 0,
+      deliveryAction: true,
+      exportGuardStatus: null,
+    },
+    checks: [
+      {
+        name: "explicit_user_approval",
+        status: "failed",
+        severity: "warning",
+        expected: "user approval evidence",
+        actual: "0",
+        detail: "No external action scope has been recorded yet.",
+      },
+    ],
+    blockers: [],
+    recommendedNextSteps: ["Record an external action before checking approvals."],
+    relatedEvidence: [],
   }
 }
 
@@ -1171,6 +1241,45 @@ function domainConnectorE2EGateReport(
       },
     ],
     ...patch,
+  }
+}
+
+function emptyDomainConnectorE2EGateReport(): DomainConnectorE2EGateReport {
+  const base = domainConnectorE2EGateReport()
+  return {
+    ...base,
+    status: "failed",
+    scope: { ...base.scope, domain: null },
+    toolName: "unknown",
+    connector: "unknown",
+    action: "unknown",
+    risk: "external_write",
+    summary: {
+      evidenceItems: 0,
+      connectorInputEvidence: 0,
+      draftEvidence: 0,
+      approvalEvidence: 0,
+      executionEvidence: 0,
+      verificationEvidence: 0,
+      rollbackEvidence: 0,
+      sensitiveEvidence: 0,
+      deliveryAction: true,
+      connectorActionGuardStatus: null,
+      exportGuardStatus: null,
+    },
+    checks: [
+      {
+        name: "execution_result",
+        status: "failed",
+        severity: "warning",
+        expected: "connector execution result evidence",
+        actual: "0",
+        detail: "No connector action scope has been recorded yet.",
+      },
+    ],
+    blockers: [],
+    recommendedNextSteps: ["Record a connector action sample before running E2E verification."],
+    relatedEvidence: [],
   }
 }
 
@@ -2377,7 +2486,7 @@ describe("WorkspacePanel workflow section", () => {
 
   it("keeps empty workflow acceptance neutral before any samples exist", async () => {
     transportMock.call.mockImplementation((name: string) => {
-      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "get_active_goal") return Promise.resolve(null)
       if (name === "list_workflow_runs") return Promise.resolve([])
       if (name === "list_loop_schedules") return Promise.resolve([])
       if (name === "get_workflow_mode") return Promise.resolve({ mode: "on" })
@@ -2386,6 +2495,12 @@ describe("WorkspacePanel workflow section", () => {
         return Promise.resolve(emptyDomainOperationalGateReport())
       if (name === "generate_domain_soak_report")
         return Promise.resolve(emptyDomainSoakReport())
+      if (name === "evaluate_domain_artifact_export_guard")
+        return Promise.resolve(emptyDomainArtifactExportGuardReport())
+      if (name === "evaluate_domain_connector_action_guard")
+        return Promise.resolve(emptyDomainConnectorActionGuardReport())
+      if (name === "evaluate_domain_connector_e2e_gate")
+        return Promise.resolve(emptyDomainConnectorE2EGateReport())
       if (name === "get_background_job") return Promise.resolve(null)
       return Promise.resolve([])
     })
@@ -2397,12 +2512,19 @@ describe("WorkspacePanel workflow section", () => {
 
     await clickSectionHeader("通用任务工作台")
     expect(await screen.findByText("真实样本验收")).toBeTruthy()
-    expect(screen.getByText("未采样")).toBeTruthy()
+    expect(screen.getAllByText("未采样").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("未配置").length).toBeGreaterThan(0)
     expect(screen.getAllByText("待采样").length).toBeGreaterThan(0)
+    expect(screen.getByText("还没有交付产物需要守门")).toBeTruthy()
+    expect(screen.getByText("还没有外部动作需要守门")).toBeTruthy()
+    expect(screen.getByText("还没有连接器 E2E 样本需要验收")).toBeTruthy()
     expect(screen.queryByText("样本有事故")).toBeNull()
     expect(screen.queryByText("阻塞样本")).toBeNull()
     expect(screen.queryByText("不可验收")).toBeNull()
     expect(screen.queryByText("需处理")).toBeNull()
+    expect(screen.queryByText(/tool=unknown/)).toBeNull()
+    expect(screen.queryByText(/External system mutations/)).toBeNull()
+    expect(screen.queryByText(/Record the target connector/)).toBeNull()
   })
 
   it("opens operational and soak evidence from readiness actions", async () => {
@@ -4031,8 +4153,9 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
-  it("materializes a draft chat session before enabling workflow mode", async () => {
+  it("stages workflow mode in a draft chat session without materializing it", async () => {
     const onEnsureSession = vi.fn(() => Promise.resolve("s-created"))
+    const onDraftWorkflowModeChange = vi.fn()
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "get_workflow_mode") return Promise.resolve({ mode: "off" })
       if (name === "get_execution_mode") return Promise.resolve({ mode: "off" })
@@ -4053,6 +4176,7 @@ describe("WorkspacePanel workflow section", () => {
         sessionId: null,
         sessionMeta: null,
         onEnsureSession,
+        onDraftWorkflowModeChange,
       },
     )
 
@@ -4063,12 +4187,10 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(enableWorkflowButton!)
 
     await waitFor(() => {
-      expect(onEnsureSession).toHaveBeenCalledTimes(1)
-      expect(transportMock.call).toHaveBeenCalledWith("set_workflow_mode", {
-        sessionId: "s-created",
-        mode: "on",
-      })
+      expect(onDraftWorkflowModeChange).toHaveBeenCalledWith("on")
     })
+    expect(onEnsureSession).not.toHaveBeenCalled()
+    expect(transportMock.call).not.toHaveBeenCalledWith("set_workflow_mode", expect.anything())
   })
 
   it("keeps goal-driven workflow drafts stopped when no working directory is set", async () => {

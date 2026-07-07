@@ -64,11 +64,14 @@ const WORKFLOW_MODE_ON_PROMPT: &str = concat!(
     "- Treat Workflow Mode as permission to decide and create workflows yourself when useful. Do not ask the user to write a workflow script or switch to a special coding mode first.\n",
     "- Decision rule: create a workflow when the request has multiple dependent steps, broad search or comparison, connector/file evidence, long-running work, independent verification, recoverable background execution, or a user-visible audit trail. Stay inline for tiny, conversational, or single obvious actions.\n",
     "- Use workflows for general domains too: research, writing, data analysis, meeting prep, inbox/project ops, knowledge curation, connector action review, and coding all share the same durable control plane.\n",
-    "- You may call `workflow_run` when deterministic multi-step orchestration, fan-out, independent review, research sweeps, migration planning, or long-running verification would make the work more complete, observable, or recoverable.\n",
+    "- You may call `workflow` with `action=create` when deterministic multi-step orchestration, fan-out, independent review, research sweeps, migration planning, or long-running verification would make the work more complete, observable, or recoverable.\n",
+    "- You may call `workflow` with `action=list`, `action=status`, or `action=trace` to inspect visible workflow runs, understand blockers, read bounded trace events, and decide what to tell the user next.\n",
+    "- You may call `workflow` with `action=control` to pause, resume, or cancel a visible run when that matches the user's intent or recovery needs. You cannot approve permissions or external actions; ask the user instead.\n",
+    "- Use `workflow` with `action=followup` to create a repair or continuation workflow from a prior run when the trace shows a bounded next phase.\n",
     "- Workflow is not coding-only. Use it for any domain where structured background orchestration is useful; coding-specific validation is only one template.\n",
     "- Prefer a hybrid pattern: scout inline first to learn the work-list, then author a compact JavaScript workflow script for the deterministic fan-out or verification phase.\n",
     "- Script shape: `export default async function main(workflow) { const task = await workflow.task.create({ title: \"...\" }); ... await workflow.task.update({ task, status: \"completed\" }); await workflow.finish({ summary, verification, residualRisk }); }`.\n",
-    "- Core host APIs use options objects: `workflow.fileSearch({ query, limit?, label? })`, `workflow.read({ path, label? })`, `workflow.grep({ pattern, path?, label? })`, `workflow.tool({ name, args, label? })`, `workflow.spawnAgent({ task, label?, agent_id?, timeout_secs? })`, `workflow.waitAll(handles, { timeout?, label? })`, `workflow.validate({ commands, reason?, label? })`, `workflow.review({ profiles?, focusPaths?, label? })`, `workflow.verify({ scope?, focusPaths?, maxCommands?, label? })`, `workflow.diff({ label? })`, `workflow.askUser({ question, context?, label? })` or `workflow.askUser({ questions, context? })`, `workflow.trace({ label?, payload })`, `workflow.block({ reason?, label?, payload? })`, `workflow.repairLoop({ label?, maxAttempts?, validationCommands?, focusPaths?, reviewProfiles? }, fn)`, `workflow.now()`, `workflow.random(seed)`, `workflow.finish({ summary, verification?, residualRisk? })`.\n",
+    "- Core host APIs use options objects: `workflow.phase({ name, label?, expected?, criteriaIds?, injectPolicy? }, async (phase) => { ... })`, `workflow.progress({ phase?, phaseKey?, message, percent?, counters?, payload?, importance? })`, `workflow.checkpoint({ title, summary, phase?, importance?, inject?, findings?, evidence?, decisions?, next?, payload? })`, `workflow.report({ title?, summary, nextAction?, needsUser?, inject?, payload? })`, `workflow.fileSearch({ query, limit?, label? })`, `workflow.read({ path, label? })`, `workflow.grep({ pattern, path?, label? })`, `workflow.tool({ name, args, label? })`, `workflow.spawnAgent({ task, label?, agent_id?, timeout_secs? })`, `workflow.waitAll(handles, { timeout?, label? })`, `workflow.validate({ commands, reason?, label? })`, `workflow.review({ profiles?, focusPaths?, label? })`, `workflow.verify({ scope?, focusPaths?, maxCommands?, label? })`, `workflow.diff({ label? })`, `workflow.askUser({ question, context?, label? })` or `workflow.askUser({ questions, context? })`, `workflow.trace({ label?, payload })`, `workflow.block({ reason?, label?, payload? })`, `workflow.repairLoop({ label?, maxAttempts?, validationCommands?, focusPaths?, reviewProfiles? }, fn)`, `workflow.now()`, `workflow.random(seed)`, `workflow.finish({ summary, verification?, residualRisk? })`.\n",
     "- `label` is display-only. Reuse handles returned by APIs (for example task handles and spawn handles) instead of inventing stable ids.\n",
     "- Keep workflows well scoped. For large tasks, run several smaller workflows across phases and inspect each result before deciding the next phase.\n",
     "- Do not use Workflow for trivial conversational turns or simple one-shot edits.\n",
@@ -80,7 +83,8 @@ const WORKFLOW_MODE_ULTRACODE_PROMPT: &str = concat!(
     "Ultracode is on for this session: optimize for exhaustive correctness, stability, and coverage. Token cost is not the primary constraint.\n",
     "- Treat substantial user requests as workflow candidates by default. Decide and create the durable workflow yourself when orchestration improves outcome quality, observability, or recovery.\n",
     "- Do not wait for the user to ask for a workflow explicitly; the user has already enabled this mode. Only stay inline for tiny, conversational, or already-verified work.\n",
-    "- Use `workflow_run` by default for every substantive task where parallel readers, independent designers, adversarial verifiers, broad search, or staged migration can improve quality.\n",
+    "- Use `workflow` with `action=create` by default for every substantive task where parallel readers, independent designers, adversarial verifiers, broad search, or staged migration can improve quality.\n",
+    "- Use `workflow` with `action=status` or `action=trace` before summarizing, repairing, or declaring a workflow outcome if a run is active or recently changed.\n",
     "- Solo inline work is appropriate only for conversational, tiny, or already-verified mechanical turns.\n",
     "- Prefer multi-phase orchestration: understand -> design -> implement/check -> adversarial review -> synthesize. Keep each workflow phase observable and bounded.\n",
     "- Use the same workflow script contract as Workflow Mode On: `export default async function main(workflow) { ... }`, options-object host APIs, handles for identity, and `workflow.finish(...)` for completion.\n",
@@ -96,11 +100,16 @@ mod tests {
     #[test]
     fn workflow_mode_prompt_uses_runtime_host_api_contract() {
         let prompt = WorkflowMode::On.system_prompt_section().unwrap();
-        assert!(prompt.contains("workflow_run"));
+        assert!(prompt.contains("workflow` with `action=create"));
+        assert!(prompt.contains("workflow` with `action=status"));
+        assert!(prompt.contains("You cannot approve permissions"));
         assert!(prompt.contains("Do not ask the user to write a workflow script"));
         assert!(prompt.contains("Decision rule: create a workflow"));
         assert!(prompt.contains("research, writing, data analysis, meeting prep"));
         assert!(prompt.contains("workflow.verify({ scope?, focusPaths?, maxCommands?, label? })"));
+        assert!(prompt.contains("workflow.phase({ name, label?, expected?"));
+        assert!(prompt.contains("workflow.checkpoint({ title, summary"));
+        assert!(prompt.contains("workflow.report({ title?, summary"));
         assert!(prompt.contains("workflow.waitAll(handles, { timeout?, label? })"));
         assert!(prompt.contains("workflow.askUser({ question, context?, label? })"));
         assert!(prompt.contains("workflow.askUser({ questions, context? })"));

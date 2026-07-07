@@ -117,6 +117,7 @@ pub fn spawn_startup_recovery_if_primary() {
     let Some(db) = crate::get_session_db() else {
         return;
     };
+    spawn_pending_workflow_milestone_injection_recovery(db.clone());
     let owner = format!("startup:pid:{}", std::process::id());
     tokio::spawn(async move {
         match recover_pending_workflow_runs(db.clone(), owner).await {
@@ -145,6 +146,57 @@ pub fn spawn_startup_recovery_if_primary() {
             }
         }
     });
+}
+
+fn spawn_pending_workflow_milestone_injection_recovery(db: Arc<SessionDB>) {
+    tokio::spawn(async move {
+        match recover_pending_workflow_milestone_injections(db.clone()) {
+            Ok(recovered) => {
+                if recovered > 0 {
+                    crate::app_info!(
+                        "workflow",
+                        "milestone_injection_recovery",
+                        "recovered {} pending workflow milestone injections",
+                        recovered
+                    );
+                }
+            }
+            Err(err) => crate::app_warn!(
+                "workflow",
+                "milestone_injection_recovery",
+                "workflow milestone injection recovery failed: {err:#}"
+            ),
+        }
+    });
+}
+
+fn recover_pending_workflow_milestone_injections(db: Arc<SessionDB>) -> Result<usize> {
+    let pending = db
+        .list_pending_workflow_milestone_injections(100)
+        .context("list pending workflow milestone injections")?;
+    let mut recovered = 0;
+    for item in pending {
+        if db
+            .workflow_milestone_injection_delivered(
+                &item.run_id,
+                &item.source_event_type,
+                item.source_event_seq,
+            )
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        spawn_workflow_milestone_injection(
+            db.clone(),
+            &item.run_id,
+            &item.source_event_type,
+            item.source_event_seq,
+            &item.source_event.payload,
+            false,
+        );
+        recovered += 1;
+    }
+    Ok(recovered)
 }
 
 pub fn spawn_workflow_run_if_primary(
@@ -293,6 +345,13 @@ pub fn spawn_workflow_run_if_primary(
                     run_id,
                     result.snapshot.run.state.as_str()
                 );
+                maybe_spawn_workflow_result_injection(
+                    db.clone(),
+                    &run_id,
+                    owner.as_str(),
+                    Some(&result),
+                    None,
+                );
             }
             Err(err) => {
                 append_runtime_result_event(
@@ -312,6 +371,13 @@ pub fn spawn_workflow_run_if_primary(
                     "workflow run {} launch failed: {err:#}",
                     run_id
                 );
+                maybe_spawn_workflow_result_injection(
+                    db.clone(),
+                    &run_id,
+                    owner.as_str(),
+                    None,
+                    Some(&err.to_string()),
+                );
             }
         }
     });
@@ -325,6 +391,430 @@ fn append_runtime_result_event(db: &SessionDB, run_id: &str, owner: &str, payloa
         object.insert("pid".to_string(), json!(std::process::id()));
     }
     let _ = db.append_workflow_event(run_id, "run_runtime_result", payload);
+}
+
+fn maybe_spawn_workflow_result_injection(
+    db: Arc<SessionDB>,
+    run_id: &str,
+    owner: &str,
+    result: Option<&WorkflowRuntimeResult>,
+    runtime_error: Option<&str>,
+) {
+    let run = match db.get_workflow_run(run_id) {
+        Ok(Some(run)) => run,
+        Ok(None) => return,
+        Err(err) => {
+            crate::app_warn!(
+                "workflow",
+                "completion_injection",
+                "failed to load workflow run {} for completion injection: {err:#}",
+                run_id
+            );
+            return;
+        }
+    };
+
+    let launched_by_workflow_tool = owner.starts_with("tool:workflow");
+    let agent_origin = matches!(
+        run.origin.as_deref(),
+        Some("agent:workflow") | Some("agent:workflow_run")
+    );
+    if !launched_by_workflow_tool && !agent_origin {
+        return;
+    }
+    if run.parent_run_id.is_some() {
+        return;
+    }
+    if !run.state.is_terminal()
+        && !matches!(
+            run.state,
+            WorkflowRunState::AwaitingApproval | WorkflowRunState::AwaitingUser
+        )
+    {
+        return;
+    }
+
+    let session = match db.get_session(&run.session_id) {
+        Ok(Some(session)) => session,
+        Ok(None) => return,
+        Err(err) => {
+            crate::app_warn!(
+                "workflow",
+                "completion_injection",
+                "failed to load session {} for workflow injection: {err:#}",
+                run.session_id
+            );
+            return;
+        }
+    };
+    if session.incognito {
+        return;
+    }
+
+    let snapshot = db.workflow_run_snapshot(&run.id, 160).ok().flatten();
+    let output = result.and_then(|r| r.output.as_ref());
+    let push_message =
+        build_workflow_result_push_message(snapshot.as_ref(), &run, output, runtime_error);
+    let parent_session_id = run.session_id.clone();
+    let parent_agent_id = session.agent_id.clone();
+    let run_id = run.id.clone();
+    let session_db = db.clone();
+
+    std::thread::spawn(move || {
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => {
+                let _ = rt.block_on(crate::subagent::injection::inject_and_run_parent(
+                    parent_session_id,
+                    parent_agent_id,
+                    crate::subagent::injection::WORKFLOW_CHILD_AGENT_ID.to_string(),
+                    run_id,
+                    push_message,
+                    session_db,
+                    None,
+                ));
+            }
+            Err(err) => crate::app_error!(
+                "workflow",
+                "completion_injection",
+                "failed to build runtime for workflow completion injection: {}",
+                err
+            ),
+        }
+    });
+}
+
+fn should_inject_workflow_milestone(event_type: &str, payload: &Value) -> bool {
+    let policy = payload
+        .get("injectPolicy")
+        .or_else(|| payload.get("inject"))
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    match policy {
+        "never" => return false,
+        "now" => return true,
+        _ => {}
+    }
+
+    match event_type {
+        "workflow_checkpoint" => matches!(
+            payload.get("importance").and_then(Value::as_str),
+            Some("high") | Some("critical")
+        ),
+        "workflow_report" => payload
+            .get("needsUser")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn maybe_spawn_workflow_milestone_injection(
+    db: Arc<SessionDB>,
+    run_id: &str,
+    event_type: &str,
+    event_seq: i64,
+    payload: &Value,
+) {
+    spawn_workflow_milestone_injection(db, run_id, event_type, event_seq, payload, true);
+}
+
+fn spawn_workflow_milestone_injection(
+    db: Arc<SessionDB>,
+    run_id: &str,
+    event_type: &str,
+    event_seq: i64,
+    payload: &Value,
+    record_requested: bool,
+) {
+    let run = match db.get_workflow_run(run_id) {
+        Ok(Some(run)) => run,
+        Ok(None) => return,
+        Err(err) => {
+            crate::app_warn!(
+                "workflow",
+                "milestone_injection",
+                "failed to load workflow run {} for milestone injection: {err:#}",
+                run_id
+            );
+            return;
+        }
+    };
+
+    let agent_origin = run
+        .origin
+        .as_deref()
+        .is_some_and(|origin| origin.starts_with("agent:workflow"));
+    if !agent_origin {
+        return;
+    }
+
+    let session = match db.get_session(&run.session_id) {
+        Ok(Some(session)) => session,
+        Ok(None) => return,
+        Err(err) => {
+            crate::app_warn!(
+                "workflow",
+                "milestone_injection",
+                "failed to load session {} for workflow milestone injection: {err:#}",
+                run.session_id
+            );
+            return;
+        }
+    };
+    if session.incognito {
+        return;
+    }
+
+    let push_message = build_workflow_milestone_push_message(&run, event_type, event_seq, payload);
+    let injection_run_id = format!("{}:workflow-event:{}", run.id, event_seq);
+    if record_requested {
+        let _ = db.append_workflow_event(
+            &run.id,
+            "workflow_milestone_injection_requested",
+            json!({
+                "sourceEventType": event_type,
+                "sourceEventSeq": event_seq,
+                "injectionRunId": injection_run_id,
+                "title": payload.get("title").and_then(Value::as_str),
+                "summary": payload.get("summary").and_then(Value::as_str),
+            }),
+        );
+    }
+    let parent_session_id = run.session_id.clone();
+    let parent_agent_id = session.agent_id.clone();
+    let session_db = db.clone();
+    let delivered_db = db.clone();
+    let delivered_run_id = run.id.clone();
+    let delivered_event_type = event_type.to_string();
+    let delivered_injection_run_id = injection_run_id.clone();
+    let on_injected: crate::subagent::injection::OnInjected = Arc::new(move || {
+        let _ = delivered_db.append_workflow_event(
+            &delivered_run_id,
+            "workflow_milestone_injection_delivered",
+            json!({
+                "sourceEventType": delivered_event_type,
+                "sourceEventSeq": event_seq,
+                "injectionRunId": delivered_injection_run_id,
+            }),
+        );
+    });
+
+    std::thread::spawn(move || {
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => {
+                let _ = rt.block_on(crate::subagent::injection::inject_and_run_parent(
+                    parent_session_id,
+                    parent_agent_id,
+                    crate::subagent::injection::WORKFLOW_CHILD_AGENT_ID.to_string(),
+                    injection_run_id,
+                    push_message,
+                    session_db,
+                    Some(on_injected),
+                ));
+            }
+            Err(err) => crate::app_error!(
+                "workflow",
+                "milestone_injection",
+                "failed to build runtime for workflow milestone injection: {}",
+                err
+            ),
+        }
+    });
+}
+
+fn build_workflow_milestone_push_message(
+    run: &WorkflowRun,
+    event_type: &str,
+    event_seq: i64,
+    payload: &Value,
+) -> String {
+    const PAYLOAD_LIMIT: usize = 8 * 1024;
+
+    let title = payload
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(match event_type {
+            "workflow_report" => "Workflow report",
+            "workflow_checkpoint" => "Workflow checkpoint",
+            _ => "Workflow milestone",
+        });
+    let summary = payload
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or("Workflow produced a stage-level update.");
+    let next_action = payload
+        .get("nextAction")
+        .or_else(|| payload.get("next"))
+        .and_then(Value::as_str)
+        .unwrap_or("Call workflow.status or workflow.trace if details are needed.");
+    let importance = payload
+        .get("importance")
+        .and_then(Value::as_str)
+        .unwrap_or("normal");
+    let needs_user = payload
+        .get("needsUser")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let payload_json =
+        serde_json::to_string_pretty(payload).unwrap_or_else(|_| payload.to_string());
+    let (payload_json, payload_truncated) = truncate_for_injection(&payload_json, PAYLOAD_LIMIT);
+
+    format!(
+        "<workflow-checkpoint>\n\
+         <run-id>{}</run-id>\n\
+         <event-seq>{}</event-seq>\n\
+         <event-type>{}</event-type>\n\
+         <state>{}</state>\n\
+         <kind>{}</kind>\n\
+         <importance>{}</importance>\n\
+         <needs-user>{}</needs-user>\n\
+         <title>{}</title>\n\
+         <summary>{}</summary>\n\
+         <next-action>{}</next-action>\n\
+         <payload-json truncated=\"{}\">\n{}\n</payload-json>\n\
+         <query-hint>Use the workflow tool with action=status or action=trace and this run id if you need more detail.</query-hint>\n\
+         </workflow-checkpoint>",
+        escape_xml_text(&run.id),
+        event_seq,
+        escape_xml_text(event_type),
+        escape_xml_text(run.state.as_str()),
+        escape_xml_text(&run.kind),
+        escape_xml_text(importance),
+        needs_user,
+        escape_xml_text(title),
+        escape_xml_text(summary),
+        escape_xml_text(next_action),
+        payload_truncated,
+        escape_xml_text(&payload_json)
+    )
+}
+
+fn build_workflow_result_push_message(
+    snapshot: Option<&WorkflowRunSnapshot>,
+    run: &WorkflowRun,
+    output: Option<&Value>,
+    runtime_error: Option<&str>,
+) -> String {
+    const OUTPUT_LIMIT: usize = 16 * 1024;
+
+    let (ops_total, ops_completed, ops_failed, ops_pending, ops_started) = snapshot
+        .map(|snapshot| {
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            let mut pending = 0usize;
+            let mut started = 0usize;
+            for op in &snapshot.ops {
+                match op.state {
+                    WorkflowOpState::Completed => completed += 1,
+                    WorkflowOpState::Failed => failed += 1,
+                    WorkflowOpState::Pending => pending += 1,
+                    WorkflowOpState::Started => started += 1,
+                }
+            }
+            (snapshot.ops.len(), completed, failed, pending, started)
+        })
+        .unwrap_or((0, 0, 0, 0, 0));
+
+    let output_json = output
+        .map(|value| serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()))
+        .unwrap_or_default();
+    let (output_json, output_truncated) = truncate_for_injection(&output_json, OUTPUT_LIMIT);
+    let output_block = if output_json.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<output-json truncated=\"{}\">\n{}\n</output-json>\n",
+            output_truncated,
+            escape_xml_text(&output_json)
+        )
+    };
+    let error_block = runtime_error
+        .filter(|err| !err.trim().is_empty())
+        .map(|err| format!("<error>{}</error>\n", escape_xml_text(err.trim())))
+        .unwrap_or_default();
+    let blocked_reason = run
+        .blocked_reason
+        .as_deref()
+        .filter(|reason| !reason.trim().is_empty())
+        .map(|reason| {
+            format!(
+                "<blocked-reason>{}</blocked-reason>\n",
+                escape_xml_text(reason)
+            )
+        })
+        .unwrap_or_default();
+    let summary = match run.state {
+        WorkflowRunState::Completed => "Workflow run completed. Use the output to answer the user.",
+        WorkflowRunState::Blocked => {
+            "Workflow run is blocked. Explain the blocker and the next action."
+        }
+        WorkflowRunState::Failed => "Workflow run failed. Explain the failure and recovery option.",
+        WorkflowRunState::Cancelled => {
+            "Workflow run was cancelled. Report that no final result was produced."
+        }
+        WorkflowRunState::AwaitingApproval => {
+            "Workflow run is waiting for user approval before it can continue."
+        }
+        WorkflowRunState::AwaitingUser => {
+            "Workflow run is waiting for user input before it can continue."
+        }
+        _ => "Workflow run changed state. Report the current state clearly.",
+    };
+
+    format!(
+        "<workflow-result>\n\
+         <run-id>{}</run-id>\n\
+         <state>{}</state>\n\
+         <kind>{}</kind>\n\
+         <execution-mode>{}</execution-mode>\n\
+         <ops total=\"{}\" completed=\"{}\" failed=\"{}\" pending=\"{}\" started=\"{}\" />\n\
+         {blocked_reason}\
+         {error_block}\
+         {output_block}\
+         <summary>{}</summary>\n\
+         </workflow-result>",
+        escape_xml_text(&run.id),
+        escape_xml_text(run.state.as_str()),
+        escape_xml_text(&run.kind),
+        escape_xml_text(&run.execution_mode),
+        ops_total,
+        ops_completed,
+        ops_failed,
+        ops_pending,
+        ops_started,
+        escape_xml_text(summary)
+    )
+}
+
+fn truncate_for_injection(input: &str, limit: usize) -> (String, bool) {
+    if input.len() <= limit {
+        return (input.to_string(), false);
+    }
+    let mut end = limit;
+    while !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    (
+        format!(
+            "{}\n[truncated: {} bytes omitted]",
+            &input[..end],
+            input.len().saturating_sub(end)
+        ),
+        true,
+    )
+}
+
+fn escape_xml_text(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn ensure_workflow_launcher_primary() -> Result<()> {
@@ -816,6 +1306,86 @@ fn build_workflow_object<'js>(
         )),
     )?;
 
+    let phase_start_host = host.clone();
+    workflow.set(
+        "__phaseStart",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(
+                    &ctx,
+                    &phase_start_host,
+                    args,
+                    WorkflowRuntimeHost::phase_start,
+                )
+            },
+        )),
+    )?;
+
+    let phase_complete_host = host.clone();
+    workflow.set(
+        "__phaseComplete",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(
+                    &ctx,
+                    &phase_complete_host,
+                    args,
+                    WorkflowRuntimeHost::phase_complete,
+                )
+            },
+        )),
+    )?;
+
+    let phase_fail_host = host.clone();
+    workflow.set(
+        "__phaseFail",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(
+                    &ctx,
+                    &phase_fail_host,
+                    args,
+                    WorkflowRuntimeHost::phase_fail,
+                )
+            },
+        )),
+    )?;
+
+    let progress_host = host.clone();
+    workflow.set(
+        "progress",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(&ctx, &progress_host, args, WorkflowRuntimeHost::progress)
+            },
+        )),
+    )?;
+
+    let checkpoint_host = host.clone();
+    workflow.set(
+        "checkpoint",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(
+                    &ctx,
+                    &checkpoint_host,
+                    args,
+                    WorkflowRuntimeHost::checkpoint,
+                )
+            },
+        )),
+    )?;
+
+    let report_host = host.clone();
+    workflow.set(
+        "report",
+        Func::from(MutFn::from(
+            move |ctx: Ctx<'js>, args: JsValue<'js>| -> rquickjs::Result<JsValue<'js>> {
+                host_call(&ctx, &report_host, args, WorkflowRuntimeHost::report)
+            },
+        )),
+    )?;
+
     let trace_host = host.clone();
     workflow.set(
         "trace",
@@ -886,8 +1456,15 @@ fn install_workflow_js_helpers(ctx: &Ctx<'_>) -> Result<()> {
         const __hopeEnterMapItem = workflow.__enterMapItem;
         const __hopeExitMapItem = workflow.__exitMapItem;
         const __hopeBlock = workflow.block;
+        const __hopePhaseStart = workflow.__phaseStart;
+        const __hopePhaseComplete = workflow.__phaseComplete;
+        const __hopePhaseFail = workflow.__phaseFail;
         const __hopeNow = workflow.__now;
         const __hopeRandom = workflow.__random;
+        function __hopeErrorMessage(error) {
+          if (error && typeof error.message === "string") return error.message;
+          return String(error);
+        }
         function __hopeRepairLoopArray(value, name) {
           if (value == null) return [];
           if (typeof value === "string") return value.trim().length > 0 ? [value.trim()] : [];
@@ -1097,6 +1674,29 @@ fn install_workflow_js_helpers(ctx: &Ctx<'_>) -> Result<()> {
             });
           }
         });
+        Object.defineProperty(workflow, "phase", {
+          configurable: false,
+          enumerable: true,
+          writable: false,
+          value: async function phase(options, fn) {
+            if (options == null || typeof options !== "object" || Array.isArray(options)) {
+              throw new Error("workflow.phase requires an options object");
+            }
+            if (typeof fn !== "function") {
+              throw new Error("workflow.phase requires callback function");
+            }
+            const phase = await __hopePhaseStart(options);
+            const phaseKey = phase && phase.phaseKey;
+            try {
+              const result = await fn(phase);
+              await __hopePhaseComplete({ phaseKey, resultSummary: phase && phase.label ? `${phase.label} completed` : "phase completed" });
+              return result;
+            } catch (error) {
+              await __hopePhaseFail({ phaseKey, error: __hopeErrorMessage(error) });
+              throw error;
+            }
+          }
+        });
         Object.defineProperty(workflow, "now", {
           configurable: false,
           enumerable: true,
@@ -1119,6 +1719,9 @@ fn install_workflow_js_helpers(ctx: &Ctx<'_>) -> Result<()> {
         delete workflow.__materializeMap;
         delete workflow.__enterMapItem;
         delete workflow.__exitMapItem;
+        delete workflow.__phaseStart;
+        delete workflow.__phaseComplete;
+        delete workflow.__phaseFail;
         delete workflow.__now;
         delete workflow.__random;
         "#,
@@ -2087,6 +2690,225 @@ impl WorkflowRuntimeHost {
             Ok(hash) => (Some(hash), None),
             Err(err) => (None, Some(err.to_string())),
         }
+    }
+
+    fn phase_start(&mut self, args: Value) -> Result<Value> {
+        let name = optional_string(&args, "name")
+            .or_else(|| optional_string(&args, "label"))
+            .unwrap_or_else(|| "phase".to_string());
+        let label = optional_string(&args, "label").unwrap_or_else(|| name.clone());
+        let expected = optional_string(&args, "expected");
+        let criteria_ids = args
+            .get("criteriaIds")
+            .or_else(|| args.get("criteria_ids"))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let inject_policy = optional_string(&args, "injectPolicy")
+            .or_else(|| optional_string(&args, "inject_policy"))
+            .unwrap_or_else(|| "auto".to_string());
+        let input = compact_input(args);
+        self.execute_op_with_key(
+            "phase.start",
+            WorkflowEffectClass::Idempotent,
+            input,
+            |host, op_key| {
+                let event = host.db.append_workflow_event(
+                    &host.run_id,
+                    "workflow_phase_started",
+                    json!({
+                        "phaseKey": op_key,
+                        "name": name,
+                        "label": label,
+                        "expected": expected,
+                        "criteriaIds": criteria_ids,
+                        "injectPolicy": inject_policy,
+                    }),
+                )?;
+                Ok(json!({
+                    "phaseKey": op_key,
+                    "name": name,
+                    "label": label,
+                    "eventSeq": event.seq,
+                }))
+            },
+        )
+    }
+
+    fn phase_complete(&mut self, args: Value) -> Result<Value> {
+        let phase_key = required_string(&args, "phaseKey")?;
+        let result_summary =
+            optional_string(&args, "resultSummary").or_else(|| optional_string(&args, "summary"));
+        let input = compact_input(args);
+        self.execute_op(
+            "phase.complete",
+            WorkflowEffectClass::Idempotent,
+            input,
+            |host| {
+                let event = host.db.append_workflow_event(
+                    &host.run_id,
+                    "workflow_phase_completed",
+                    json!({
+                        "phaseKey": phase_key,
+                        "summary": result_summary,
+                    }),
+                )?;
+                Ok(json!({ "phaseKey": phase_key, "eventSeq": event.seq }))
+            },
+        )
+    }
+
+    fn phase_fail(&mut self, args: Value) -> Result<Value> {
+        let phase_key = required_string(&args, "phaseKey")?;
+        let error = optional_string(&args, "error").unwrap_or_else(|| "phase failed".to_string());
+        let input = compact_input(args);
+        self.execute_op(
+            "phase.fail",
+            WorkflowEffectClass::Idempotent,
+            input,
+            |host| {
+                let event = host.db.append_workflow_event(
+                    &host.run_id,
+                    "workflow_phase_failed",
+                    json!({
+                        "phaseKey": phase_key,
+                        "error": error,
+                    }),
+                )?;
+                Ok(json!({ "phaseKey": phase_key, "eventSeq": event.seq }))
+            },
+        )
+    }
+
+    fn progress(&mut self, args: Value) -> Result<Value> {
+        let message = required_string(&args, "message")?;
+        let phase_key =
+            optional_string(&args, "phaseKey").or_else(|| optional_string(&args, "phase"));
+        let percent = args
+            .get("percent")
+            .and_then(Value::as_f64)
+            .map(|value| value.clamp(0.0, 100.0));
+        let counters = args.get("counters").cloned().unwrap_or_else(|| json!({}));
+        let payload = args.get("payload").cloned().unwrap_or(Value::Null);
+        let importance = optional_string(&args, "importance").unwrap_or_else(|| "low".to_string());
+        let input = compact_input(args);
+        self.execute_op("progress", WorkflowEffectClass::Pure, input, |host| {
+            let event = host.db.append_workflow_event(
+                &host.run_id,
+                "workflow_progress",
+                json!({
+                    "phaseKey": phase_key,
+                    "message": message,
+                    "percent": percent,
+                    "counters": counters,
+                    "payload": payload,
+                    "importance": importance,
+                }),
+            )?;
+            Ok(json!({ "eventSeq": event.seq }))
+        })
+    }
+
+    fn checkpoint(&mut self, args: Value) -> Result<Value> {
+        let title = required_string(&args, "title")?;
+        let summary = required_string(&args, "summary")?;
+        let phase_key =
+            optional_string(&args, "phaseKey").or_else(|| optional_string(&args, "phase"));
+        let importance =
+            optional_string(&args, "importance").unwrap_or_else(|| "normal".to_string());
+        let inject_policy = optional_string(&args, "inject")
+            .or_else(|| optional_string(&args, "injectPolicy"))
+            .or_else(|| optional_string(&args, "inject_policy"))
+            .unwrap_or_else(|| "auto".to_string());
+        let findings = args.get("findings").cloned().unwrap_or_else(|| json!([]));
+        let evidence = args.get("evidence").cloned().unwrap_or_else(|| json!([]));
+        let decisions = args.get("decisions").cloned().unwrap_or_else(|| json!([]));
+        let next = args.get("next").cloned().unwrap_or(Value::Null);
+        let payload = args.get("payload").cloned().unwrap_or(Value::Null);
+        let input = compact_input(args);
+        self.execute_op(
+            "checkpoint",
+            WorkflowEffectClass::Idempotent,
+            input,
+            |host| {
+                let event_payload = json!({
+                    "phaseKey": phase_key,
+                    "title": title,
+                    "summary": summary,
+                    "importance": importance,
+                    "injectPolicy": inject_policy,
+                    "findings": findings,
+                    "evidence": evidence,
+                    "decisions": decisions,
+                    "next": next,
+                    "payload": payload,
+                });
+                let event = host.db.append_workflow_event(
+                    &host.run_id,
+                    "workflow_checkpoint",
+                    event_payload.clone(),
+                )?;
+                if should_inject_workflow_milestone("workflow_checkpoint", &event_payload) {
+                    maybe_spawn_workflow_milestone_injection(
+                        host.db.clone(),
+                        &host.run_id,
+                        "workflow_checkpoint",
+                        event.seq,
+                        &event_payload,
+                    );
+                }
+                Ok(json!({ "eventSeq": event.seq, "title": title }))
+            },
+        )
+    }
+
+    fn report(&mut self, args: Value) -> Result<Value> {
+        let summary = required_string(&args, "summary")?;
+        let title =
+            optional_string(&args, "title").unwrap_or_else(|| "Workflow report".to_string());
+        let next_action =
+            optional_string(&args, "nextAction").or_else(|| optional_string(&args, "next_action"));
+        let needs_user = args
+            .get("needsUser")
+            .or_else(|| args.get("needs_user"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let inject_policy = optional_string(&args, "inject")
+            .or_else(|| optional_string(&args, "injectPolicy"))
+            .or_else(|| optional_string(&args, "inject_policy"))
+            .unwrap_or_else(|| {
+                if needs_user {
+                    "now".to_string()
+                } else {
+                    "auto".to_string()
+                }
+            });
+        let payload = args.get("payload").cloned().unwrap_or(Value::Null);
+        let input = compact_input(args);
+        self.execute_op("report", WorkflowEffectClass::Idempotent, input, |host| {
+            let event_payload = json!({
+                "title": title,
+                "summary": summary,
+                "nextAction": next_action,
+                "needsUser": needs_user,
+                "injectPolicy": inject_policy,
+                "payload": payload,
+            });
+            let event = host.db.append_workflow_event(
+                &host.run_id,
+                "workflow_report",
+                event_payload.clone(),
+            )?;
+            if should_inject_workflow_milestone("workflow_report", &event_payload) {
+                maybe_spawn_workflow_milestone_injection(
+                    host.db.clone(),
+                    &host.run_id,
+                    "workflow_report",
+                    event.seq,
+                    &event_payload,
+                );
+            }
+            Ok(json!({ "eventSeq": event.seq, "needsUser": needs_user }))
+        })
     }
 
     fn trace(&mut self, args: Value) -> Result<Value> {

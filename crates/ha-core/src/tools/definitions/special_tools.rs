@@ -1,8 +1,7 @@
 use serde_json::json;
 
 use super::super::{
-    TOOL_ACP_SPAWN, TOOL_IMAGE_GENERATE, TOOL_SUBAGENT, TOOL_TEAM, TOOL_TOOL_SEARCH,
-    TOOL_WORKFLOW_RUN,
+    TOOL_ACP_SPAWN, TOOL_IMAGE_GENERATE, TOOL_SUBAGENT, TOOL_TEAM, TOOL_TOOL_SEARCH, TOOL_WORKFLOW,
 };
 use super::types::{CoreSubclass, ToolDefinition, ToolTier};
 
@@ -213,15 +212,15 @@ pub fn get_tool_search_tool() -> ToolDefinition {
     }
 }
 
-/// Returns the session-gated Workflow Mode orchestration tool definition.
+/// Returns the session-gated Workflow Mode orchestration and control tool definition.
 ///
 /// This tool is not part of the static dispatch catalog: `AssistantAgent`
 /// injects it only when the current session has Workflow Mode enabled, and
 /// execution re-checks the persisted session mode.
-pub fn get_workflow_run_tool() -> ToolDefinition {
+pub fn get_workflow_tool() -> ToolDefinition {
     ToolDefinition {
-        name: TOOL_WORKFLOW_RUN.into(),
-        description: "Create an observable, durable workflow run from a dynamic JavaScript workflow script, then request primary runtime launch by default. Use this only when Workflow Mode is enabled and the task benefits from explicit orchestration, fan-out, checkpoints, validation, review, or long-running recovery. The assistant writes the workflow script itself when orchestration helps; do not ask the user to provide a script or enter a coding-only mode first. It is not coding-only: use it for any substantial research, writing, data, connector, operations, knowledge, or coding task where a durable, inspectable plan of operations improves reliability. Do not use it for trivial one-step work. The workflow run appears in the user's Workflow control center, where it can be approved, paused, resumed, inspected, or cancelled.".into(),
+        name: TOOL_WORKFLOW.into(),
+        description: "Create, inspect, trace, and control observable durable workflow runs. Use this only when Workflow Mode is enabled. The assistant writes workflow scripts itself when orchestration helps; do not ask the user to provide a script or enter a coding-only mode first. Workflows are not coding-only: use them for substantial research, writing, data, connector, operations, knowledge, or coding tasks where durable, inspectable orchestration improves reliability. Use action=create to start a dynamic JavaScript workflow, action=list/status/trace to monitor runs, action=control to pause/resume/cancel a run, and action=followup to repair or continue from an existing run. The model must not approve user permissions; approval remains with the user.".into(),
         tier: ToolTier::Core {
             subclass: CoreSubclass::Meta,
         },
@@ -231,9 +230,14 @@ pub fn get_workflow_run_tool() -> ToolDefinition {
         parameters: json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["create", "list", "status", "trace", "control", "followup"],
+                    "description": "Workflow control action. create starts a workflow from a script; list/status/trace inspect visible runs; control pauses/resumes/cancels; followup creates a repair or continuation workflow from an existing run."
+                },
                 "script": {
                     "type": "string",
-                    "description": "Complete JavaScript workflow script. It must define `export default async function main(workflow) { ... }`, use the workflow host APIs, and finish via `workflow.finish(...)`."
+                    "description": "For action=create/followup: complete JavaScript workflow script. It must define `export default async function main(workflow) { ... }`, use the workflow host APIs, and finish via `workflow.finish(...)`."
                 },
                 "kind": {
                     "type": "string",
@@ -250,11 +254,48 @@ pub fn get_workflow_run_tool() -> ToolDefinition {
                 },
                 "runImmediately": {
                     "type": "boolean",
-                    "description": "Start the run immediately after creation. Defaults to true. When permission preview requires approval, the run will stop in the approval state for the user."
+                    "description": "For action=create/followup: start the run immediately after creation. Defaults to true. When permission preview requires approval, the run will stop in the approval state for the user."
                 },
                 "parentRunId": {
                     "type": "string",
-                    "description": "Optional parent workflow run id when creating a repair or follow-up workflow."
+                    "description": "For action=create/followup: optional parent workflow run id when creating a repair or follow-up workflow."
+                },
+                "runId": {
+                    "type": "string",
+                    "description": "Workflow run id for action=status/trace/control/followup. Omit for status to inspect the most relevant active or recent run in the current session."
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["active", "recent", "session", "goal"],
+                    "description": "For action=list: which visible runs to list. Defaults to active."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
+                    "description": "Bounded result limit for action=list/status/trace."
+                },
+                "sinceSeq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "For action=trace: only return workflow events with seq greater than this value."
+                },
+                "includePayload": {
+                    "type": "boolean",
+                    "description": "For action=trace: include bounded event payloads. Defaults to true; set false for summaries only."
+                },
+                "command": {
+                    "type": "string",
+                    "enum": ["pause", "resume", "cancel"],
+                    "description": "For action=control: run-control command. There is intentionally no approval command; user permissions cannot be approved by the model."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional concise reason for a control or follow-up action."
+                },
+                "inheritGoal": {
+                    "type": "boolean",
+                    "description": "For action=followup: inherit the parent run's goal and criterion binding unless explicitly overridden. Defaults to true."
                 },
                 "origin": {
                     "type": "string",
@@ -273,7 +314,7 @@ pub fn get_workflow_run_tool() -> ToolDefinition {
                     "description": "Optional managed worktree id when the workflow is explicitly tied to an isolated worktree."
                 }
             },
-            "required": ["script"],
+            "required": ["action"],
             "additionalProperties": false
         }),
     }
@@ -550,21 +591,25 @@ pub fn get_team_tool() -> ToolDefinition {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn workflow_run_schema_requires_canonical_script_without_alias() {
-        let def = super::get_workflow_run_tool();
+    fn workflow_schema_requires_action_and_supports_control() {
+        let def = super::get_workflow_tool();
+        assert_eq!(def.name, crate::tools::TOOL_WORKFLOW);
         assert!(def
             .description
-            .contains("The assistant writes the workflow script itself"));
+            .contains("The assistant writes workflow scripts itself"));
         assert!(def.description.contains("research, writing, data"));
         assert!(def
             .description
-            .contains("Do not use it for trivial one-step work"));
+            .contains("must not approve user permissions"));
         let properties = def
             .parameters
             .get("properties")
             .and_then(|value| value.as_object())
-            .expect("workflow_run properties");
+            .expect("workflow properties");
+        assert!(properties.contains_key("action"));
         assert!(properties.contains_key("script"));
+        assert!(properties.contains_key("runId"));
+        assert!(properties.contains_key("command"));
         assert!(
             !properties.contains_key("scriptSource"),
             "scriptSource remains an execution-layer compatibility alias, but the model schema should not advertise it while `script` is required"
@@ -573,13 +618,13 @@ mod tests {
             .parameters
             .get("required")
             .and_then(|value| value.as_array())
-            .expect("workflow_run required fields");
+            .expect("workflow required fields");
         assert_eq!(
             required
                 .iter()
                 .filter_map(|value| value.as_str())
                 .collect::<Vec<_>>(),
-            vec!["script"]
+            vec!["action"]
         );
     }
 }

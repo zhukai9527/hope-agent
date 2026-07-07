@@ -28,7 +28,7 @@ use super::{
     TOOL_SEND_ATTACHMENT, TOOL_SEND_NOTIFICATION, TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST,
     TOOL_SESSIONS_SEARCH, TOOL_SESSIONS_SEND, TOOL_SESSION_STATUS, TOOL_SUBAGENT, TOOL_SUBMIT_PLAN,
     TOOL_TASK_CREATE, TOOL_TASK_LIST, TOOL_TASK_UPDATE, TOOL_TEAM, TOOL_UPDATE_CORE_MEMORY,
-    TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS, TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WORKFLOW_RUN,
+    TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS, TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WORKFLOW,
     TOOL_WRITE,
 };
 use super::{
@@ -602,18 +602,18 @@ impl ToolExecContext {
         }
     }
 
-    fn workflow_run_visibility_error(&self, name: &str) -> Option<String> {
-        if canonical_builtin_tool_name(name) != TOOL_WORKFLOW_RUN {
+    fn workflow_visibility_error(&self, name: &str) -> Option<String> {
+        if canonical_builtin_tool_name(name) != TOOL_WORKFLOW {
             return None;
         }
         let Some(session_id) = self.session_id.as_deref() else {
             return Some(
-                "workflow_run requires an active session with Workflow Mode enabled.".to_string(),
+                "workflow requires an active session with Workflow Mode enabled.".to_string(),
             );
         };
         if self.incognito {
             return Some(
-                "workflow_run is disabled for incognito sessions because workflow runs are durable."
+                "workflow is disabled for incognito sessions because workflow runs are durable."
                     .to_string(),
             );
         }
@@ -623,20 +623,20 @@ impl ToolExecContext {
             .map(|handle| handle.0.clone())
             .or_else(|| crate::get_session_db().cloned())
         else {
-            return Some("workflow_run cannot execute because Session DB is unavailable.".into());
+            return Some("workflow cannot execute because Session DB is unavailable.".into());
         };
         let mode = match db.get_session_workflow_mode(session_id) {
             Ok(Some(mode)) => mode,
             Ok(None) => Default::default(),
             Err(e) => {
                 return Some(format!(
-                    "workflow_run cannot read the session Workflow Mode: {e}"
+                    "workflow cannot read the session Workflow Mode: {e}"
                 ));
             }
         };
         if !mode.enabled() {
             return Some(
-                "Workflow Mode is off for this session. Use `/workflow on` or the GUI toggle before calling workflow_run."
+                "Workflow Mode is off for this session. Use `/workflow on` or the GUI toggle before calling workflow."
                     .to_string(),
             );
         }
@@ -648,7 +648,7 @@ impl ToolExecContext {
         if let Some(err) = self.builtin_fate_error(name) {
             return Some(err);
         }
-        if let Some(err) = self.workflow_run_visibility_error(name) {
+        if let Some(err) = self.workflow_visibility_error(name) {
             return Some(err);
         }
         if self.denied_tools.iter().any(|t| t == name) {
@@ -1827,7 +1827,7 @@ pub async fn execute_tool_with_context(
             TOOL_SUBAGENT => subagent::tool_subagent(args, dispatch_ctx).await,
             TOOL_TEAM => team::tool_team(args, dispatch_ctx).await,
             TOOL_ACP_SPAWN => acp_spawn::tool_acp_spawn(args, dispatch_ctx).await,
-            TOOL_WORKFLOW_RUN => workflow_tool::tool_workflow_run(args, dispatch_ctx).await,
+            TOOL_WORKFLOW => workflow_tool::tool_workflow(args, dispatch_ctx).await,
             TOOL_MEMORY_GET => memory::tool_memory_get(args).await,
             // Knowledge base (note_*) tools.
             TOOL_NOTE_CREATE => note::tool_note_create(args, dispatch_ctx).await,
@@ -2463,7 +2463,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workflow_run_execution_uses_bound_session_db_and_mode_gate() {
+    async fn workflow_execution_uses_bound_session_db_and_mode_gate() {
         let dir = tempfile::tempdir().expect("temp session db dir");
         let db = Arc::new(
             crate::session::SessionDB::open(&dir.path().join("sessions.db"))
@@ -2489,13 +2489,14 @@ export default async function main(workflow) {
 }
 "#;
         let args = json!({
+            "action": "create",
             "script": script,
             "runImmediately": false
         });
 
-        let off_err = execute_tool_with_context(crate::tools::TOOL_WORKFLOW_RUN, &args, &ctx)
+        let off_err = execute_tool_with_context(crate::tools::TOOL_WORKFLOW, &args, &ctx)
             .await
-            .expect_err("workflow_run should be rejected while Workflow Mode is off");
+            .expect_err("workflow should be rejected while Workflow Mode is off");
         assert!(off_err.to_string().contains("Workflow Mode is off"));
         assert!(db
             .list_workflow_runs_for_session(&session.id, 10)
@@ -2504,9 +2505,9 @@ export default async function main(workflow) {
 
         db.update_session_workflow_mode(&session.id, crate::workflow_mode::WorkflowMode::On)
             .expect("enable workflow mode");
-        let raw = execute_tool_with_context(crate::tools::TOOL_WORKFLOW_RUN, &args, &ctx)
+        let raw = execute_tool_with_context(crate::tools::TOOL_WORKFLOW, &args, &ctx)
             .await
-            .expect("workflow_run should create a run when Workflow Mode is on");
+            .expect("workflow should create a run when Workflow Mode is on");
         let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse tool result");
         assert_eq!(parsed["kind"].as_str(), Some("general.workflow"));
         assert_eq!(parsed["initialState"].as_str(), Some("draft"));
@@ -2521,15 +2522,70 @@ export default async function main(workflow) {
             .expect("list workflow runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].kind, "general.workflow");
+        let run_id = runs[0].id.clone();
+
+        let list_raw = execute_tool_with_context(
+            crate::tools::TOOL_WORKFLOW,
+            &json!({ "action": "list", "scope": "active" }),
+            &ctx,
+        )
+        .await
+        .expect("workflow list should return visible runs");
+        let list: serde_json::Value =
+            serde_json::from_str(&list_raw).expect("parse workflow list result");
+        assert_eq!(list["action"].as_str(), Some("list"));
+        assert_eq!(list["count"].as_u64(), Some(1));
+        assert_eq!(list["runs"][0]["runId"].as_str(), Some(run_id.as_str()));
+
+        let status_raw = execute_tool_with_context(
+            crate::tools::TOOL_WORKFLOW,
+            &json!({ "action": "status" }),
+            &ctx,
+        )
+        .await
+        .expect("workflow status should select the visible run");
+        let status: serde_json::Value =
+            serde_json::from_str(&status_raw).expect("parse workflow status result");
+        assert_eq!(status["action"].as_str(), Some("status"));
+        assert_eq!(status["run"]["runId"].as_str(), Some(run_id.as_str()));
+        assert!(status["pendingActions"].is_array());
+
+        db.append_workflow_event(
+            &run_id,
+            "trace",
+            json!({ "label": "checkpoint", "payload": { "summary": "phase done" } }),
+        )
+        .expect("append trace event");
+        let trace_raw = execute_tool_with_context(
+            crate::tools::TOOL_WORKFLOW,
+            &json!({ "action": "trace", "runId": run_id.as_str(), "includePayload": false }),
+            &ctx,
+        )
+        .await
+        .expect("workflow trace should return events");
+        let trace: serde_json::Value =
+            serde_json::from_str(&trace_raw).expect("parse workflow trace result");
+        assert_eq!(trace["action"].as_str(), Some("trace"));
+        assert!(trace["count"].as_u64().unwrap_or(0) >= 1);
+        assert!(trace["events"][0].get("payloadSummary").is_some());
+
+        let invalid_control = execute_tool_with_context(
+            crate::tools::TOOL_WORKFLOW,
+            &json!({ "action": "control", "runId": run_id.as_str(), "command": "approve" }),
+            &ctx,
+        )
+        .await
+        .expect_err("workflow model tool must not accept approval control");
+        assert!(invalid_control.to_string().contains("unknown variant"));
 
         if !crate::runtime_lock::is_primary() {
             let start_now_err = execute_tool_with_context(
-                crate::tools::TOOL_WORKFLOW_RUN,
-                &json!({ "script": script }),
+                crate::tools::TOOL_WORKFLOW,
+                &json!({ "action": "create", "script": script }),
                 &ctx,
             )
             .await
-            .expect_err("non-primary workflow_run should not create an unstartable draft");
+            .expect_err("non-primary workflow should not create an unstartable draft");
             assert!(start_now_err
                 .to_string()
                 .contains("primary runtime process"));

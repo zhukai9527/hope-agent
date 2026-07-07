@@ -174,6 +174,7 @@ pub async fn chat(
     agent_id: Option<String>,
     permission_mode: Option<ha_core::permission::SessionMode>,
     sandbox_mode: Option<ha_core::permission::SandboxMode>,
+    workflow_mode: Option<ha_core::workflow_mode::WorkflowMode>,
     plan_mode: Option<String>,
     temperature_override: Option<f64>,
     reasoning_effort: Option<String>,
@@ -218,6 +219,7 @@ pub async fn chat(
     // Capture optional per-session modes — applied below once we have a session id.
     let permission_mode_pending = permission_mode;
     let sandbox_mode_pending = sandbox_mode;
+    let workflow_mode_pending = workflow_mode;
 
     let db = state.session_db.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -306,6 +308,9 @@ pub async fn chat(
     }
     if let Some(mode) = sandbox_mode_pending {
         db.update_session_sandbox_mode(&sid, mode)?;
+    }
+    if let Some(mode) = workflow_mode_pending {
+        db.update_session_workflow_mode(&sid, mode)?;
     }
 
     if new_session_created.is_some() {

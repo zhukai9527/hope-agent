@@ -66,6 +66,7 @@ export function isCenteredSystemMessage(msg: Message): boolean {
     !!msg.isCronTrigger ||
     !!msg.isWakeupTrigger ||
     !!msg.isProcessNotification ||
+    !!msg.isWorkflowResult ||
     !!msg.isPlanTrigger
   )
 }
@@ -452,6 +453,7 @@ export function parseSessionMessages(
       let cronJobName: string | undefined
       let isWakeupTrigger = false
       let isProcessNotification = false
+      let isWorkflowResult = false
       let isPlanTrigger = false
       let planComment: { selectedText: string; comment: string } | undefined
       let channelInbound:
@@ -474,6 +476,9 @@ export function parseSessionMessages(
           }
           if (meta?.process_notification) {
             isProcessNotification = true
+          }
+          if (meta?.workflow_result) {
+            isWorkflowResult = true
           }
           if (meta?.plan_trigger) {
             isPlanTrigger = true
@@ -523,6 +528,7 @@ export function parseSessionMessages(
         cronJobName,
         isWakeupTrigger,
         isProcessNotification,
+        isWorkflowResult,
         isPlanTrigger,
         planComment,
         channelInbound,

@@ -59,6 +59,8 @@ import {
   parseSubagentResultDetail,
   parseSubagentResultStatus,
   parseToolJobPayload,
+  parseWorkflowResultDetail,
+  parseWorkflowResultStatus,
   TOOL_JOB_AGENT_PREFIX,
   TOOL_JOB_STATUSES,
 } from "./asyncResultPayload"
@@ -256,6 +258,27 @@ function getSubagentResultDisplay(
     ),
     isToolJob: false,
     detail: parseSubagentResultDetail(msg.content),
+  }
+}
+
+function getWorkflowResultDisplay(
+  msg: Message,
+  t: TFunction,
+): { name: string; status: string; statusText: string; detail?: string } {
+  const status = parseWorkflowResultStatus(msg.content)
+  const statusText =
+    status === "completed"
+      ? String(t("chat.workflowResultCompleted", { defaultValue: "已完成" }))
+      : status === "cancelled"
+        ? String(t("chat.workflowResultCancelled", { defaultValue: "已取消" }))
+        : status === "running"
+          ? String(t("chat.workflowResultWaiting", { defaultValue: "等待继续" }))
+          : String(t("chat.workflowResultFailed", { defaultValue: "需处理" }))
+  return {
+    name: String(t("chat.workflowResultName", { defaultValue: "工作流" })),
+    status,
+    statusText,
+    detail: parseWorkflowResultDetail(msg.content),
   }
 }
 
@@ -735,6 +758,57 @@ function MessageBubbleInner({
     return (
       <div className="max-w-[80%] px-3 py-1.5 rounded-lg text-xs text-muted-foreground bg-muted/50 border border-border/50 text-center [&_p]:m-0">
         <MarkdownRenderer content={msg.content} />
+      </div>
+    )
+  }
+
+  if (msg.isWorkflowResult) {
+    const resultDisplay = getWorkflowResultDisplay(msg, t)
+    const hasDetail = !!resultDisplay.detail
+    const resultTone = getAsyncResultTone(resultDisplay.status)
+    return (
+      <div className="flex flex-col items-center gap-1 w-full max-w-[80%]">
+        <button
+          type="button"
+          disabled={!hasDetail}
+          aria-expanded={hasDetail ? resultExpanded : undefined}
+          aria-label={hasDetail ? t("chat.details") : undefined}
+          onClick={() => {
+            if (hasDetail) setResultExpanded((v) => !v)
+          }}
+          className={cn(
+            "flex flex-wrap items-center gap-1.5 max-w-full px-3 py-1.5 rounded-full border text-xs transition-colors",
+            hasDetail && "cursor-pointer",
+            resultTone.chip,
+            !hasDetail && "disabled:cursor-default",
+          )}
+        >
+          <Network className={cn("w-3 h-3 shrink-0", resultTone.icon)} />
+          <span className={cn("font-medium", resultTone.label)}>{resultDisplay.name}</span>
+          <span className={resultTone.separator}>·</span>
+          <span>{resultDisplay.statusText}</span>
+          {hasDetail && (
+            <ChevronDown
+              className={cn(
+                "w-3 h-3 shrink-0 transition-transform duration-200",
+                resultExpanded && "rotate-180",
+                resultTone.icon,
+              )}
+            />
+          )}
+        </button>
+        {hasDetail && (
+          <AnimatedCollapse open={resultExpanded}>
+            <div
+              className={cn(
+                "w-full max-h-[360px] overflow-auto px-3 py-2 rounded-lg border text-xs text-foreground/85 whitespace-pre-wrap break-words animate-in fade-in-0 slide-in-from-top-1 duration-150 font-mono text-[11px]",
+                resultTone.detail,
+              )}
+            >
+              {resultDisplay.detail}
+            </div>
+          </AnimatedCollapse>
+        )}
       </div>
     )
   }

@@ -286,6 +286,9 @@ interface WorkspacePanelProps {
   openLoopCreateRequest?: number
   /** 草稿态新对话里创建 workflow 前,由 ChatScreen 物化一个真实会话并切过去。 */
   onEnsureSession?: () => Promise<string | null>
+  /** 无 session 草稿态工作流模式:只影响下一条消息,不提前创建会话。 */
+  draftWorkflowMode?: WorkflowAutonomyMode
+  onDraftWorkflowModeChange?: (mode: WorkflowAutonomyMode) => void
   onClose: () => void
 }
 
@@ -5181,13 +5184,24 @@ function DomainTaskWorkbenchSection({
     verificationRunsState.running ||
     domainQualityRunsState.running
   const disabled = !sessionId || incognito
+  const actionableExportGuard = domainArtifactExportGuardHasScope(exportGuard) ? exportGuard : null
+  const actionableConnectorGuard = domainConnectorActionGuardHasScope(connectorGuard)
+    ? connectorGuard
+    : null
+  const actionableConnectorE2eGate = domainConnectorE2EGateHasScope(connectorE2eGate)
+    ? connectorE2eGate
+    : null
+  const sampledOperationalGate = domainOperationalGateHasSamples(operationalGate)
+    ? operationalGate
+    : null
+  const sampledSoakReport = domainSoakReportHasSamples(soakReport) ? soakReport : null
   const acceptanceSummary = domainAcceptanceCoverageSummary(t, {
     evidence,
-    exportGuard,
-    connectorGuard,
-    connectorE2eGate,
-    operationalGate,
-    soakReport,
+    exportGuard: actionableExportGuard,
+    connectorGuard: actionableConnectorGuard,
+    connectorE2eGate: actionableConnectorE2eGate,
+    operationalGate: sampledOperationalGate,
+    soakReport: sampledSoakReport,
   })
   const tone = domainWorkbenchOverallTone({
     incognito,
@@ -5199,11 +5213,11 @@ function DomainTaskWorkbenchSection({
     failedVerification,
     domainFailed,
     domainNeedsUser,
-    exportStatus: exportGuard?.status,
-    connectorStatus: connectorGuard?.status,
-    connectorE2EStatus: connectorE2eGate?.status,
-    operationalStatus: operationalGate?.status,
-    soakStatus: soakReport?.status,
+    exportStatus: actionableExportGuard?.status,
+    connectorStatus: actionableConnectorGuard?.status,
+    connectorE2EStatus: actionableConnectorE2eGate?.status,
+    operationalStatus: sampledOperationalGate?.status,
+    soakStatus: sampledSoakReport?.status,
   })
   const nextSteps = domainWorkbenchNextSteps(t, {
     incognito,
@@ -5214,11 +5228,11 @@ function DomainTaskWorkbenchSection({
     failedVerification,
     domainFailed,
     domainNeedsUser,
-    exportGuard,
-    connectorGuard,
-    connectorE2eGate,
-    operationalGate,
-    soakReport,
+    exportGuard: actionableExportGuard,
+    connectorGuard: actionableConnectorGuard,
+    connectorE2eGate: actionableConnectorE2eGate,
+    operationalGate: sampledOperationalGate,
+    soakReport: sampledSoakReport,
   })
   const canCreateStepTasks = !disabled && tone !== "good"
   const acceptanceReviewContext: DomainAcceptanceReviewContext = {
@@ -5242,9 +5256,11 @@ function DomainTaskWorkbenchSection({
     openReviewFindings.length +
     verificationSteps.length +
     (domainQualityRunsState.snapshot?.checks.length ?? 0) +
-    (connectorE2eGate?.checks?.length ?? 0) +
-    (operationalGate?.checks?.length ?? 0) +
-    (soakReport?.incidents?.length ?? 0)
+    (actionableExportGuard?.checks?.length ?? 0) +
+    (actionableConnectorGuard?.checks?.length ?? 0) +
+    (actionableConnectorE2eGate?.checks?.length ?? 0) +
+    (sampledOperationalGate?.checks?.length ?? 0) +
+    (sampledSoakReport?.incidents?.length ?? 0)
 
   const focusSignal = focusRequest?.nonce ?? 0
   const shouldAutoExpand = !incognito && (tone !== "muted" || Boolean(error))
@@ -8023,12 +8039,15 @@ function DomainOperationalGatePanel({
   const [creatingRecommendationTaskKey, setCreatingRecommendationTaskKey] = useState<string | null>(
     null,
   )
-  const issueChecks = (report?.checks ?? []).filter(
-    (check) => check.status !== "passed" && check.severity !== "advisory",
-  )
   const recommendedSteps = (report?.recommendedNextSteps ?? []).filter(Boolean).slice(0, 2)
   const summary = report?.summary
-  const clean = report?.status === "passed"
+  const hasSamples = domainOperationalGateHasSamples(report)
+  const issueChecks = hasSamples
+    ? (report?.checks ?? []).filter(
+        (check) => check.status !== "passed" && check.severity !== "advisory",
+      )
+    : []
+  const clean = hasSamples && report?.status === "passed"
   const maxActiveWorkAge =
     summary?.maxActiveWorkAgeSecs != null
       ? formatLoopDuration(Math.max(1, Math.round(summary.maxActiveWorkAgeSecs)))
@@ -8115,8 +8134,8 @@ function DomainOperationalGatePanel({
           </div>
         </div>
         <StatusPill
-          label={domainOperationalGateLabel(t, report?.status, loading)}
-          tone={domainOperationalGateTone(report?.status, loading)}
+          label={domainOperationalGateLabel(t, report?.status, loading, hasSamples)}
+          tone={domainOperationalGateTone(report?.status, loading, hasSamples)}
           loading={loading}
         />
         <IconTip label={t("workspace.domainOperationalGate.refresh", "刷新运行稳定性")}>
@@ -8141,7 +8160,7 @@ function DomainOperationalGatePanel({
             [
               t("workspace.domainOperationalGate.workflows", "工作流"),
               `${summary.completedWorkflowRuns}/${summary.workflowRuns}`,
-              summary.workflowRuns > 0 ? "good" : "warn",
+              summary.workflowRuns > 0 ? "good" : hasSamples ? "warn" : "muted",
             ],
             [
               t("workspace.domainOperationalGate.active", "运行中"),
@@ -8175,7 +8194,7 @@ function DomainOperationalGatePanel({
         </div>
       ) : null}
 
-      {report && !clean && recommendedSteps.length > 0 ? (
+      {hasSamples && report && !clean && recommendedSteps.length > 0 ? (
         <div className="mt-2 space-y-1">
           <div className="flex min-w-0 items-center gap-1.5 px-1 text-[10px] font-medium text-muted-foreground">
             <Lightbulb className="h-3 w-3 shrink-0" />
@@ -8260,7 +8279,11 @@ function DomainOperationalGatePanel({
           })}
         </div>
       ) : !loading ? (
-        <EmptyHint>{t("workspace.domainOperationalGate.empty", "还没有运行稳定性结果")}</EmptyHint>
+        <EmptyHint>
+          {report && !hasSamples
+            ? t("workspace.domainOperationalGate.noSamples", "还没有运行样本")
+            : t("workspace.domainOperationalGate.empty", "还没有运行稳定性结果")}
+        </EmptyHint>
       ) : null}
     </div>
   )
@@ -8283,7 +8306,8 @@ function DomainSoakReportPanel({
 }) {
   const { t } = useTranslation()
   const summary = report?.summary
-  const clean = report?.status === "passed"
+  const hasSamples = domainSoakReportHasSamples(report)
+  const clean = hasSamples && report?.status === "passed"
   const [creatingIncidentTaskKey, setCreatingIncidentTaskKey] = useState<string | null>(null)
   const [creatingRecommendationTaskKey, setCreatingRecommendationTaskKey] = useState<string | null>(
     null,
@@ -8307,7 +8331,9 @@ function DomainSoakReportPanel({
   const sampleDayTone: StatusTone =
     summary == null
       ? "muted"
-      : summary.sampleDays >= summary.requiredSampleDays
+      : !hasSamples
+        ? "muted"
+        : summary.sampleDays >= summary.requiredSampleDays
         ? "info"
         : "warn"
   const maxApprovalWait =
@@ -8350,7 +8376,9 @@ function DomainSoakReportPanel({
         ? "info"
         : "muted"
   const canCreateIncidentTasks = Boolean(sessionId) && !disabled
-  const recommendedSteps = (report?.recommendedNextSteps ?? []).filter(Boolean).slice(0, 2)
+  const recommendedSteps = hasSamples
+    ? (report?.recommendedNextSteps ?? []).filter(Boolean).slice(0, 2)
+    : []
   const canCreateRecommendationTasks = Boolean(sessionId) && !disabled
   const timelineItems = (report?.timeline ?? []).slice(0, 3)
   const canCopyReport = Boolean(report?.markdown)
@@ -8445,8 +8473,8 @@ function DomainSoakReportPanel({
           </div>
         </div>
         <StatusPill
-          label={domainSoakReportLabel(t, report?.status, loading)}
-          tone={domainSoakReportTone(report?.status, loading)}
+          label={domainSoakReportLabel(t, report?.status, loading, hasSamples)}
+          tone={domainSoakReportTone(report?.status, loading, hasSamples)}
           loading={loading}
         />
         {canCopyReport ? (
@@ -8480,7 +8508,11 @@ function DomainSoakReportPanel({
       {summary ? (
         <div className="mt-2 grid grid-cols-3 gap-1.5">
           {[
-            [t("workspace.domainSoakReport.records", "样本"), summary.totalRecords, "info"],
+            [
+              t("workspace.domainSoakReport.records", "样本"),
+              summary.totalRecords,
+              summary.totalRecords > 0 ? "info" : "muted",
+            ],
             [t("workspace.domainSoakReport.freshness", "新鲜"), latestActivityAge, latestActivityTone],
             [t("workspace.domainSoakReport.sampleDays", "跨天"), sampleDayCoverage, sampleDayTone],
             [
@@ -8601,7 +8633,7 @@ function DomainSoakReportPanel({
         <div className="mt-2 rounded-md bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
           {t("workspace.domainSoakReport.clean", "最近窗口没有长任务事故。")}
         </div>
-      ) : report?.incidents?.length ? (
+      ) : hasSamples && report?.incidents?.length ? (
         <div className="mt-2 space-y-1">
           {report.incidents.slice(0, 2).map((incident, index) => (
             <div
@@ -8641,7 +8673,11 @@ function DomainSoakReportPanel({
           ))}
         </div>
       ) : !loading ? (
-        <EmptyHint>{t("workspace.domainSoakReport.empty", "还没有长跑审计结果")}</EmptyHint>
+        <EmptyHint>
+          {report && !hasSamples
+            ? t("workspace.domainSoakReport.noSamples", "还没有长跑样本")
+            : t("workspace.domainSoakReport.empty", "还没有长跑审计结果")}
+        </EmptyHint>
       ) : null}
     </div>
   )
@@ -8650,8 +8686,10 @@ function DomainSoakReportPanel({
 function domainOperationalGateTone(
   status?: string | null,
   loading?: boolean,
+  hasSamples = true,
 ): StatusTone {
   if (loading) return "info"
+  if (status && !hasSamples) return "muted"
   if (status === "passed") return "good"
   if (status === "failed") return "danger"
   if (status === "insufficient_data") return "warn"
@@ -8662,16 +8700,23 @@ function domainOperationalGateLabel(
   t: ReturnType<typeof useTranslation>["t"],
   status?: string | null,
   loading?: boolean,
+  hasSamples = true,
 ): string {
   if (loading) return t("workspace.domainOperationalGate.loading", "评估中")
+  if (status && !hasSamples) return t("workspace.domainOperationalGate.noSamples", "未采样")
   if (status === "passed") return t("workspace.domainOperationalGate.passed", "稳定")
   if (status === "failed") return t("workspace.domainOperationalGate.failed", "阻塞")
   if (status === "insufficient_data") return t("workspace.domainOperationalGate.insufficient", "待排空")
   return t("workspace.domainOperationalGate.idle", "未评估")
 }
 
-function domainSoakReportTone(status?: string | null, loading?: boolean): StatusTone {
+function domainSoakReportTone(
+  status?: string | null,
+  loading?: boolean,
+  hasSamples = true,
+): StatusTone {
   if (loading) return "info"
+  if (status && !hasSamples) return "muted"
   if (status === "passed") return "good"
   if (status === "failed") return "danger"
   if (status === "insufficient_data") return "warn"
@@ -8711,8 +8756,10 @@ function domainSoakReportLabel(
   t: ReturnType<typeof useTranslation>["t"],
   status?: string | null,
   loading?: boolean,
+  hasSamples = true,
 ): string {
   if (loading) return t("workspace.domainSoakReport.loading", "评估中")
+  if (status && !hasSamples) return t("workspace.domainSoakReport.noSamplesLabel", "未采样")
   if (status === "passed") return t("workspace.domainSoakReport.passed", "干净")
   if (status === "failed") return t("workspace.domainSoakReport.failed", "有事故")
   if (status === "insufficient_data") return t("workspace.domainSoakReport.insufficient", "样本不足")
@@ -8743,16 +8790,19 @@ function DomainArtifactExportGuardPanel({
   const [reviewingArtifact, setReviewingArtifact] = useState(false)
   const [recordingReviewMarker, setRecordingReviewMarker] =
     useState<DomainArtifactExportReviewMarker | null>(null)
-  const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const evidenceRequiringReview = report?.evidenceRequiringReview ?? []
-  const clean = report?.status === "passed"
-  const canCreateTasks = Boolean(sessionId) && !disabled
+  const hasScope = domainArtifactExportGuardHasScope(report)
+  const issueChecks = hasScope
+    ? (report?.checks ?? []).filter((check) => check.status !== "passed")
+    : []
+  const clean = hasScope && report?.status === "passed"
+  const canCreateTasks = hasScope && Boolean(sessionId) && !disabled
   const artifactLabel =
     report?.artifactTitle || report?.artifactPath || report?.artifactKind || null
   const canReviewArtifact =
     Boolean(onReviewArtifact) && Boolean(artifactLabel) && Boolean(sessionId) && !disabled
-  const canRecordReviewMarker = Boolean(report) && Boolean(sessionId) && !disabled
+  const canRecordReviewMarker = hasScope && Boolean(report) && Boolean(sessionId) && !disabled
 
   const reviewArtifact = async () => {
     if (!report || !onReviewArtifact || !canReviewArtifact || reviewingArtifact) return
@@ -8899,8 +8949,8 @@ function DomainArtifactExportGuardPanel({
           </div>
         </div>
         <StatusPill
-          label={domainArtifactExportGuardLabel(t, report?.status, loading)}
-          tone={domainArtifactExportGuardTone(report?.status, loading)}
+          label={domainArtifactExportGuardLabel(t, report?.status, loading, hasScope)}
+          tone={domainArtifactExportGuardTone(report?.status, loading, hasScope)}
           loading={loading}
         />
         {canReviewArtifact ? (
@@ -8937,10 +8987,26 @@ function DomainArtifactExportGuardPanel({
       {summary ? (
         <div className="mt-2 grid grid-cols-4 gap-1.5">
           {[
-            [t("workspace.domainExportGuard.artifact", "产物"), summary.artifactCreated, "info"],
-            [t("workspace.domainExportGuard.reviewed", "复核"), summary.artifactReviewed, "good"],
-            [t("workspace.domainExportGuard.sensitive", "敏感"), summary.sensitiveEvidence, summary.sensitiveEvidence > 0 ? "warn" : "muted"],
-            [t("workspace.domainExportGuard.redaction", "待脱敏"), summary.redactionPending, summary.redactionPending > 0 ? "danger" : "muted"],
+            [
+              t("workspace.domainExportGuard.artifact", "产物"),
+              summary.artifactCreated,
+              summary.artifactCreated > 0 ? "info" : "muted",
+            ],
+            [
+              t("workspace.domainExportGuard.reviewed", "复核"),
+              summary.artifactReviewed,
+              summary.artifactReviewed > 0 ? "good" : hasScope ? "warn" : "muted",
+            ],
+            [
+              t("workspace.domainExportGuard.sensitive", "敏感"),
+              summary.sensitiveEvidence,
+              summary.sensitiveEvidence > 0 ? "warn" : "muted",
+            ],
+            [
+              t("workspace.domainExportGuard.redaction", "待脱敏"),
+              summary.redactionPending,
+              summary.redactionPending > 0 ? "danger" : "muted",
+            ],
           ].map(([label, count, tone]) => (
             <div
               key={label as string}
@@ -8953,7 +9019,7 @@ function DomainArtifactExportGuardPanel({
         </div>
       ) : null}
 
-      {report && !clean ? (
+      {hasScope && report && !clean ? (
         <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
           <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
             <CheckCircle2 className="h-3 w-3 shrink-0" />
@@ -9028,7 +9094,11 @@ function DomainArtifactExportGuardPanel({
           })}
         </div>
       ) : !loading ? (
-        <EmptyHint>{t("workspace.domainExportGuard.empty", "还没有交付守门结果")}</EmptyHint>
+        <EmptyHint>
+          {report && !hasScope
+            ? t("workspace.domainExportGuard.noScope", "还没有交付产物需要守门")
+            : t("workspace.domainExportGuard.empty", "还没有交付守门结果")}
+        </EmptyHint>
       ) : null}
 
       {evidenceRequiringReview.length ? (
@@ -9092,12 +9162,15 @@ function DomainConnectorActionGuardPanel({
   const [recordingConfirmation, setRecordingConfirmation] =
     useState<DomainConnectorActionConfirmationMarker | null>(null)
   const [rollbackPlanDraft, setRollbackPlanDraft] = useState("")
-  const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const relatedEvidence = report?.relatedEvidence ?? []
-  const clean = report?.status === "passed"
-  const canCreateTasks = Boolean(sessionId) && !disabled
-  const canRecordConfirmation = Boolean(report) && Boolean(sessionId) && !disabled
+  const hasScope = domainConnectorActionGuardHasScope(report)
+  const issueChecks = hasScope
+    ? (report?.checks ?? []).filter((check) => check.status !== "passed")
+    : []
+  const clean = hasScope && report?.status === "passed"
+  const canCreateTasks = hasScope && Boolean(sessionId) && !disabled
+  const canRecordConfirmation = hasScope && Boolean(report) && Boolean(sessionId) && !disabled
   const rollbackPlan = rollbackPlanDraft.trim()
 
   const createCheckTask = async (
@@ -9182,8 +9255,8 @@ function DomainConnectorActionGuardPanel({
           </div>
         </div>
         <StatusPill
-          label={domainConnectorActionGuardLabel(t, report?.status, loading)}
-          tone={domainConnectorActionGuardTone(report?.status, loading)}
+          label={domainConnectorActionGuardLabel(t, report?.status, loading, hasScope)}
+          tone={domainConnectorActionGuardTone(report?.status, loading, hasScope)}
           loading={loading}
         />
         <IconTip label={t("workspace.domainConnectorGuard.refresh", "刷新外部动作守门")}>
@@ -9205,9 +9278,21 @@ function DomainConnectorActionGuardPanel({
       {summary ? (
         <div className="mt-2 grid grid-cols-4 gap-1.5">
           {[
-            [t("workspace.domainConnectorGuard.action", "动作"), summary.actionEvidence, "info"],
-            [t("workspace.domainConnectorGuard.approval", "批准"), summary.approvalEvidence, summary.approvalEvidence > 0 ? "good" : "danger"],
-            [t("workspace.domainConnectorGuard.rollback", "回滚"), summary.rollbackEvidence, summary.rollbackEvidence > 0 ? "good" : "warn"],
+            [
+              t("workspace.domainConnectorGuard.action", "动作"),
+              summary.actionEvidence,
+              summary.actionEvidence > 0 ? "info" : "muted",
+            ],
+            [
+              t("workspace.domainConnectorGuard.approval", "批准"),
+              summary.approvalEvidence,
+              summary.approvalEvidence > 0 ? "good" : hasScope ? "danger" : "muted",
+            ],
+            [
+              t("workspace.domainConnectorGuard.rollback", "回滚"),
+              summary.rollbackEvidence,
+              summary.rollbackEvidence > 0 ? "good" : hasScope ? "warn" : "muted",
+            ],
             [t("workspace.domainConnectorGuard.sensitive", "敏感"), summary.sensitiveEvidence, summary.sensitiveEvidence > 0 ? "warn" : "muted"],
           ].map(([label, count, tone]) => (
             <div
@@ -9221,15 +9306,23 @@ function DomainConnectorActionGuardPanel({
         </div>
       ) : null}
 
-      {report?.connector || report?.action || report?.toolName ? (
+      {hasMeaningfulScopeValue(report?.connector) ||
+      hasMeaningfulScopeValue(report?.action) ||
+      hasMeaningfulScopeValue(report?.toolName) ? (
         <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-          {report.connector ? <StatusPill label={report.connector} tone="info" /> : null}
-          {report.action ? <StatusPill label={report.action} tone="muted" /> : null}
-          {report.toolName ? <StatusPill label={report.toolName} tone="muted" /> : null}
+          {hasMeaningfulScopeValue(report?.connector) ? (
+            <StatusPill label={report?.connector ?? ""} tone="info" />
+          ) : null}
+          {hasMeaningfulScopeValue(report?.action) ? (
+            <StatusPill label={report?.action ?? ""} tone="muted" />
+          ) : null}
+          {hasMeaningfulScopeValue(report?.toolName) ? (
+            <StatusPill label={report?.toolName ?? ""} tone="muted" />
+          ) : null}
         </div>
       ) : null}
 
-      {report && !clean ? (
+      {hasScope && report && !clean ? (
         <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
           <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
             <CheckCircle2 className="h-3 w-3 shrink-0" />
@@ -9325,7 +9418,11 @@ function DomainConnectorActionGuardPanel({
           })}
         </div>
       ) : !loading ? (
-        <EmptyHint>{t("workspace.domainConnectorGuard.empty", "还没有外部动作守门结果")}</EmptyHint>
+        <EmptyHint>
+          {report && !hasScope
+            ? t("workspace.domainConnectorGuard.noScope", "还没有外部动作需要守门")
+            : t("workspace.domainConnectorGuard.empty", "还没有外部动作守门结果")}
+        </EmptyHint>
       ) : null}
 
       {relatedEvidence.length ? (
@@ -9375,12 +9472,15 @@ function DomainConnectorE2EGatePanel({
   const [verificationDraft, setVerificationDraft] = useState("")
   const [recordedExecutionSample, setRecordedExecutionSample] = useState(false)
   const [recordedVerificationSample, setRecordedVerificationSample] = useState(false)
-  const issueChecks = (report?.checks ?? []).filter((check) => check.status !== "passed")
   const summary = report?.summary
   const relatedEvidence = report?.relatedEvidence ?? []
-  const clean = report?.status === "passed"
-  const canRecordSample = Boolean(report) && Boolean(sessionId) && !disabled
-  const canCreateTasks = Boolean(sessionId) && !disabled
+  const hasScope = domainConnectorE2EGateHasScope(report)
+  const issueChecks = hasScope
+    ? (report?.checks ?? []).filter((check) => check.status !== "passed")
+    : []
+  const clean = hasScope && report?.status === "passed"
+  const canRecordSample = hasScope && Boolean(report) && Boolean(sessionId) && !disabled
+  const canCreateTasks = hasScope && Boolean(sessionId) && !disabled
   const executionResult = executionResultDraft.trim()
   const verification = verificationDraft.trim()
   const reportKey = report
@@ -9406,7 +9506,7 @@ function DomainConnectorE2EGatePanel({
         {
           label: t("workspace.domainConnectorE2E.input", "输入"),
           value: summary.connectorInputEvidence,
-          tone: summary.connectorInputEvidence > 0 ? "good" : "warn",
+          tone: summary.connectorInputEvidence > 0 ? "good" : hasScope ? "warn" : "muted",
         },
         {
           label: t("workspace.domainConnectorE2E.draft", "草稿"),
@@ -9416,22 +9516,22 @@ function DomainConnectorE2EGatePanel({
         {
           label: t("workspace.domainConnectorE2E.approval", "批准"),
           value: summary.approvalEvidence,
-          tone: summary.approvalEvidence > 0 ? "good" : "danger",
+          tone: summary.approvalEvidence > 0 ? "good" : hasScope ? "danger" : "muted",
         },
         {
           label: t("workspace.domainConnectorE2E.execution", "执行"),
           value: summary.executionEvidence,
-          tone: summary.executionEvidence > 0 ? "good" : "warn",
+          tone: summary.executionEvidence > 0 ? "good" : hasScope ? "warn" : "muted",
         },
         {
           label: t("workspace.domainConnectorE2E.verification", "复核"),
           value: summary.verificationEvidence,
-          tone: summary.verificationEvidence > 0 ? "good" : "warn",
+          tone: summary.verificationEvidence > 0 ? "good" : hasScope ? "warn" : "muted",
         },
         {
           label: t("workspace.domainConnectorE2E.rollback", "回滚"),
           value: summary.rollbackEvidence,
-          tone: summary.rollbackEvidence > 0 ? "good" : "warn",
+          tone: summary.rollbackEvidence > 0 ? "good" : hasScope ? "warn" : "muted",
         },
       ]
     : []
@@ -9523,8 +9623,8 @@ function DomainConnectorE2EGatePanel({
           </div>
         </div>
         <StatusPill
-          label={domainConnectorE2EGateLabel(t, report?.status, loading)}
-          tone={domainConnectorE2EGateTone(report?.status, loading)}
+          label={domainConnectorE2EGateLabel(t, report?.status, loading, hasScope)}
+          tone={domainConnectorE2EGateTone(report?.status, loading, hasScope)}
           loading={loading}
         />
         <IconTip label={t("workspace.domainConnectorE2E.refresh", "刷新连接器 E2E")}>
@@ -9560,9 +9660,15 @@ function DomainConnectorE2EGatePanel({
             ))}
           </div>
           <div className="mt-2 flex min-w-0 flex-wrap gap-1">
-            {report?.connector ? <StatusPill label={report.connector} tone="info" /> : null}
-            {report?.action ? <StatusPill label={report.action} tone="muted" /> : null}
-            {report?.toolName ? <StatusPill label={report.toolName} tone="muted" /> : null}
+            {hasMeaningfulScopeValue(report?.connector) ? (
+              <StatusPill label={report?.connector ?? ""} tone="info" />
+            ) : null}
+            {hasMeaningfulScopeValue(report?.action) ? (
+              <StatusPill label={report?.action ?? ""} tone="muted" />
+            ) : null}
+            {hasMeaningfulScopeValue(report?.toolName) ? (
+              <StatusPill label={report?.toolName ?? ""} tone="muted" />
+            ) : null}
             {summary.connectorActionGuardStatus ? (
               <StatusPill
                 label={t("workspace.domainConnectorE2E.actionGuard", "动作 {{status}}", {
@@ -9583,7 +9689,7 @@ function DomainConnectorE2EGatePanel({
         </>
       ) : null}
 
-      {report && !clean ? (
+      {hasScope && report && !clean ? (
         <div className="mt-2 rounded-md border border-border/50 bg-secondary/20 px-2 py-1.5">
           <div className="mb-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
             <CheckCircle2 className="h-3 w-3 shrink-0" />
@@ -9717,7 +9823,11 @@ function DomainConnectorE2EGatePanel({
           })}
         </div>
       ) : !loading ? (
-        <EmptyHint>{t("workspace.domainConnectorE2E.empty", "还没有连接器 E2E 评估结果")}</EmptyHint>
+        <EmptyHint>
+          {report && !hasScope
+            ? t("workspace.domainConnectorE2E.noScope", "还没有连接器 E2E 样本需要验收")
+            : t("workspace.domainConnectorE2E.empty", "还没有连接器 E2E 评估结果")}
+        </EmptyHint>
       ) : null}
 
       {relatedEvidence.length ? (
@@ -9748,8 +9858,10 @@ function DomainConnectorE2EGatePanel({
 function domainConnectorE2EGateTone(
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): StatusTone {
   if (loading) return "info"
+  if (status && !hasScope) return "muted"
   if (status === "passed") return "good"
   if (status === "failed") return "danger"
   if (status === "insufficient_data") return "warn"
@@ -9760,8 +9872,10 @@ function domainConnectorE2EGateLabel(
   t: ReturnType<typeof useTranslation>["t"],
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): string {
   if (loading) return t("workspace.domainConnectorE2E.loading", "评估中")
+  if (status && !hasScope) return t("workspace.domainConnectorE2E.noScopeLabel", "未采样")
   if (status === "passed") return t("workspace.domainConnectorE2E.passed", "已闭环")
   if (status === "failed") return t("workspace.domainConnectorE2E.failed", "阻塞")
   if (status === "insufficient_data") {
@@ -9773,8 +9887,10 @@ function domainConnectorE2EGateLabel(
 function domainConnectorActionGuardTone(
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): StatusTone {
   if (loading) return "info"
+  if (status && !hasScope) return "muted"
   if (status === "passed") return "good"
   if (status === "failed") return "danger"
   if (status === "insufficient_data") return "warn"
@@ -9785,8 +9901,10 @@ function domainConnectorActionGuardLabel(
   t: ReturnType<typeof useTranslation>["t"],
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): string {
   if (loading) return t("workspace.domainConnectorGuard.loading", "评估中")
+  if (status && !hasScope) return t("workspace.domainConnectorGuard.noScopeLabel", "未配置")
   if (status === "passed") return t("workspace.domainConnectorGuard.passed", "可执行")
   if (status === "failed") return t("workspace.domainConnectorGuard.failed", "阻塞")
   if (status === "insufficient_data") {
@@ -9798,8 +9916,10 @@ function domainConnectorActionGuardLabel(
 function domainArtifactExportGuardTone(
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): StatusTone {
   if (loading) return "info"
+  if (status && !hasScope) return "muted"
   if (status === "passed") return "good"
   if (status === "failed") return "danger"
   if (status === "insufficient_data") return "warn"
@@ -9810,8 +9930,10 @@ function domainArtifactExportGuardLabel(
   t: ReturnType<typeof useTranslation>["t"],
   status?: string | null,
   loading?: boolean,
+  hasScope = true,
 ): string {
   if (loading) return t("workspace.domainExportGuard.loading", "评估中")
+  if (status && !hasScope) return t("workspace.domainExportGuard.noScopeLabel", "未配置")
   if (status === "passed") return t("workspace.domainExportGuard.passed", "可交付")
   if (status === "failed") return t("workspace.domainExportGuard.failed", "阻塞")
   if (status === "insufficient_data") {
@@ -11392,6 +11514,14 @@ function readinessStatusLabel(
   return t("workspace.autonomousReadiness.idle", "未开始")
 }
 
+function readinessTitle(t: ReturnType<typeof useTranslation>["t"], tone: StatusTone): string {
+  if (tone === "danger") return t("workspace.autonomousReadiness.titleBlocked", "自主推进需处理")
+  if (tone === "warn") return t("workspace.autonomousReadiness.titleSetup", "自主推进待配置")
+  if (tone === "info") return t("workspace.autonomousReadiness.titleObserving", "自主推进观察中")
+  if (tone === "good") return t("workspace.autonomousReadiness.titleReady", "自主推进就绪")
+  return t("workspace.autonomousReadiness.titleIdle", "自主推进待开始")
+}
+
 function readinessMetricTone(ready: boolean, warning = false): StatusTone {
   if (warning) return "warn"
   return ready ? "good" : "muted"
@@ -11403,6 +11533,114 @@ function readinessGuardStatusNeedsAttention(status?: string | null): boolean {
 
 function readinessGuardStatusFailed(status?: string | null): boolean {
   return status === "failed"
+}
+
+function hasMeaningfulScopeValue(value?: string | null): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return Boolean(
+    normalized &&
+      normalized !== "unknown" &&
+      normalized !== "none" &&
+      normalized !== "null" &&
+      normalized !== "-",
+  )
+}
+
+function domainArtifactExportGuardHasScope(
+  report?: DomainArtifactExportGuardReport | null,
+): boolean {
+  const summary = report?.summary
+  return Boolean(
+    report &&
+      (hasMeaningfulScopeValue(report.artifactPath) ||
+        hasMeaningfulScopeValue(report.artifactTitle) ||
+        hasMeaningfulScopeValue(report.artifactKind) ||
+        (summary?.evidenceItems ?? 0) > 0 ||
+        (summary?.artifactCreated ?? 0) > 0 ||
+        (summary?.artifactReviewed ?? 0) > 0 ||
+        (summary?.exportReviewed ?? 0) > 0 ||
+        (summary?.sensitiveEvidence ?? 0) > 0 ||
+        (summary?.privateOrConnectorEvidence ?? 0) > 0 ||
+        (summary?.redactionPending ?? 0) > 0 ||
+        (report.evidenceRequiringReview?.length ?? 0) > 0),
+  )
+}
+
+function domainConnectorActionGuardHasScope(
+  report?: DomainConnectorActionGuardReport | null,
+): boolean {
+  const summary = report?.summary
+  const hasConcreteTarget =
+    hasMeaningfulScopeValue(report?.toolName) ||
+    hasMeaningfulScopeValue(report?.connector) ||
+    hasMeaningfulScopeValue(report?.action)
+  return Boolean(
+    report &&
+      (hasConcreteTarget ||
+        (summary?.evidenceItems ?? 0) > 0 ||
+        (summary?.actionEvidence ?? 0) > 0 ||
+        (summary?.approvalEvidence ?? 0) > 0 ||
+        (summary?.rollbackEvidence ?? 0) > 0 ||
+        (summary?.sensitiveEvidence ?? 0) > 0 ||
+        (report.relatedEvidence?.length ?? 0) > 0),
+  )
+}
+
+function domainConnectorE2EGateHasScope(report?: DomainConnectorE2EGateReport | null): boolean {
+  const summary = report?.summary
+  const hasConcreteTarget =
+    hasMeaningfulScopeValue(report?.toolName) ||
+    hasMeaningfulScopeValue(report?.connector) ||
+    hasMeaningfulScopeValue(report?.action)
+  return Boolean(
+    report &&
+      (hasConcreteTarget ||
+        (summary?.evidenceItems ?? 0) > 0 ||
+        (summary?.connectorInputEvidence ?? 0) > 0 ||
+        (summary?.draftEvidence ?? 0) > 0 ||
+        (summary?.approvalEvidence ?? 0) > 0 ||
+        (summary?.executionEvidence ?? 0) > 0 ||
+        (summary?.verificationEvidence ?? 0) > 0 ||
+        (summary?.rollbackEvidence ?? 0) > 0 ||
+        (summary?.sensitiveEvidence ?? 0) > 0 ||
+        (report.relatedEvidence?.length ?? 0) > 0),
+  )
+}
+
+function domainOperationalGateHasSamples(report?: DomainOperationalGateReport | null): boolean {
+  const summary = report?.summary
+  return Boolean(
+    summary &&
+      (summary.workflowRuns > 0 ||
+        summary.loopSchedules > 0 ||
+        summary.loopRuns > 0 ||
+        summary.campaigns > 0 ||
+        summary.campaignItems > 0 ||
+        summary.activeWorkflowRuns > 0 ||
+        summary.activeLoopSchedules > 0 ||
+        summary.activeLoopRuns > 0 ||
+        summary.activeCampaigns > 0 ||
+        hasMeaningfulScopeValue(summary.latestActivityAt) ||
+        summary.maxActiveWorkAgeSecs != null),
+  )
+}
+
+function domainSoakReportHasSamples(report?: DomainSoakReport | null): boolean {
+  const summary = report?.summary
+  return Boolean(
+    summary &&
+      (summary.totalRecords > 0 ||
+        summary.workflowRuns > 0 ||
+        summary.loopRuns > 0 ||
+        summary.campaignItems > 0 ||
+        summary.connectorE2eEvidence > 0 ||
+        summary.connectorExecutionEvidence > 0 ||
+        summary.connectorVerificationEvidence > 0 ||
+        summary.incidents > 0 ||
+        (report?.incidents.length ?? 0) > 0 ||
+        (report?.timeline.length ?? 0) > 0 ||
+        hasMeaningfulScopeValue(summary.latestActivityAt)),
+  )
 }
 
 function autonomousReadinessNextSteps(
@@ -11570,6 +11808,27 @@ function AutonomousReadinessCard({
   )
   const hasReadinessSamples =
     readinessControlRecords > 0 || workflowProblems > 0 || loopProblems > 0
+  const readinessExportGuard = domainArtifactExportGuardHasScope(domainWorkbenchState.exportGuard)
+    ? domainWorkbenchState.exportGuard
+    : null
+  const readinessConnectorGuard = domainConnectorActionGuardHasScope(
+    domainWorkbenchState.connectorGuard,
+  )
+    ? domainWorkbenchState.connectorGuard
+    : null
+  const readinessConnectorE2eGate = domainConnectorE2EGateHasScope(
+    domainWorkbenchState.connectorE2eGate,
+  )
+    ? domainWorkbenchState.connectorE2eGate
+    : null
+  const readinessOperationalGate =
+    hasReadinessSamples && domainOperationalGateHasSamples(domainWorkbenchState.operationalGate)
+      ? domainWorkbenchState.operationalGate
+      : null
+  const readinessSoakReport =
+    hasReadinessSamples && domainSoakReportHasSamples(domainWorkbenchState.soakReport)
+      ? domainWorkbenchState.soakReport
+      : null
   const loading =
     workflowModeLoading ||
     executionModeLoading ||
@@ -11588,11 +11847,11 @@ function AutonomousReadinessCard({
     workflowProblems,
     loopProblems,
     controlRecords: readinessControlRecords,
-    exportStatus: domainWorkbenchState.exportGuard?.status,
-    connectorStatus: domainWorkbenchState.connectorGuard?.status,
-    connectorE2EStatus: domainWorkbenchState.connectorE2eGate?.status,
-    operationalStatus: domainWorkbenchState.operationalGate?.status,
-    soakStatus: domainWorkbenchState.soakReport?.status,
+    exportStatus: readinessExportGuard?.status,
+    connectorStatus: readinessConnectorGuard?.status,
+    connectorE2EStatus: readinessConnectorE2eGate?.status,
+    operationalStatus: readinessOperationalGate?.status,
+    soakStatus: readinessSoakReport?.status,
   })
   const nextSteps = autonomousReadinessNextSteps(t, {
     incognito,
@@ -11602,31 +11861,31 @@ function AutonomousReadinessCard({
     workflowProblems,
     loopProblems,
     workflowLoopCount,
-    exportGuard: domainWorkbenchState.exportGuard,
-    connectorGuard: domainWorkbenchState.connectorGuard,
-    connectorE2eGate: domainWorkbenchState.connectorE2eGate,
-    operationalGate: domainWorkbenchState.operationalGate,
-    soakReport: domainWorkbenchState.soakReport,
+    exportGuard: readinessExportGuard,
+    connectorGuard: readinessConnectorGuard,
+    connectorE2eGate: readinessConnectorE2eGate,
+    operationalGate: readinessOperationalGate,
+    soakReport: readinessSoakReport,
   })
   const goalReady = Boolean(activeGoal)
   const workflowReady = workflowMode !== "off"
   const executionReady = executionMode !== "off"
   const guardStatuses = [
-    domainWorkbenchState.exportGuard?.status,
-    domainWorkbenchState.connectorGuard?.status,
-    domainWorkbenchState.connectorE2eGate?.status,
-    domainWorkbenchState.operationalGate?.status,
-    domainWorkbenchState.soakReport?.status,
+    readinessExportGuard?.status,
+    readinessConnectorGuard?.status,
+    readinessConnectorE2eGate?.status,
+    readinessOperationalGate?.status,
+    readinessSoakReport?.status,
   ]
   const guardAttentionCount = guardStatuses.filter(readinessGuardStatusNeedsAttention).length
   const hardFailedGuardCount = [
-    domainWorkbenchState.exportGuard?.status,
-    domainWorkbenchState.connectorGuard?.status,
-    domainWorkbenchState.connectorE2eGate?.status,
+    readinessExportGuard?.status,
+    readinessConnectorGuard?.status,
+    readinessConnectorE2eGate?.status,
   ].filter(readinessGuardStatusFailed).length
   const runtimeFailedGuardCount = [
-    domainWorkbenchState.operationalGate?.status,
-    domainWorkbenchState.soakReport?.status,
+    readinessOperationalGate?.status,
+    readinessSoakReport?.status,
   ].filter(readinessGuardStatusFailed).length
   const failedGuardCount =
     hardFailedGuardCount + (hasReadinessSamples ? runtimeFailedGuardCount : 0)
@@ -11668,8 +11927,8 @@ function AutonomousReadinessCard({
   }
   if (
     !incognito &&
-    domainWorkbenchState.exportGuard?.status &&
-    domainWorkbenchState.exportGuard.status !== "passed" &&
+    readinessExportGuard?.status &&
+    readinessExportGuard.status !== "passed" &&
     onOpenExportGuard
   ) {
     quickActions.push({
@@ -11681,8 +11940,8 @@ function AutonomousReadinessCard({
   }
   if (
     !incognito &&
-    domainWorkbenchState.connectorGuard?.status &&
-    domainWorkbenchState.connectorGuard.status !== "passed" &&
+    readinessConnectorGuard?.status &&
+    readinessConnectorGuard.status !== "passed" &&
     onOpenConnectorGuard
   ) {
     quickActions.push({
@@ -11694,8 +11953,8 @@ function AutonomousReadinessCard({
   }
   if (
     !incognito &&
-    domainWorkbenchState.connectorE2eGate?.status &&
-    domainWorkbenchState.connectorE2eGate.status !== "passed" &&
+    readinessConnectorE2eGate?.status &&
+    readinessConnectorE2eGate.status !== "passed" &&
     onOpenConnectorE2EGate
   ) {
     quickActions.push({
@@ -11707,8 +11966,8 @@ function AutonomousReadinessCard({
   }
   if (
     !incognito &&
-    domainWorkbenchState.operationalGate?.status &&
-    domainWorkbenchState.operationalGate.status !== "passed" &&
+    readinessOperationalGate?.status &&
+    readinessOperationalGate.status !== "passed" &&
     onOpenOperationalGate
   ) {
     quickActions.push({
@@ -11720,8 +11979,8 @@ function AutonomousReadinessCard({
   }
   if (
     !incognito &&
-    domainWorkbenchState.soakReport?.status &&
-    domainWorkbenchState.soakReport.status !== "passed" &&
+    readinessSoakReport?.status &&
+    readinessSoakReport.status !== "passed" &&
     onOpenSoakReport
   ) {
     quickActions.push({
@@ -11788,7 +12047,7 @@ function AutonomousReadinessCard({
         <Bot className="h-3.5 w-3.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium">
-            {t("workspace.autonomousReadiness.title", "自主推进就绪")}
+            {readinessTitle(t, tone)}
           </div>
           <div className="truncate text-[10px] opacity-75">
             {activeGoal?.objective ??
@@ -12342,6 +12601,10 @@ function workflowEventNeedsAttention(event: WorkflowEvent): boolean {
     event.eventType === "script_permission_approval_required" ||
     event.eventType === "budget_usage" ||
     event.eventType === "guarded_repair_validation_failed" ||
+    event.eventType === "workflow_checkpoint" ||
+    event.eventType === "workflow_report" ||
+    event.eventType === "workflow_milestone_injection_requested" ||
+    event.eventType === "workflow_milestone_injection_delivered" ||
     event.eventType === "run_derived_from" ||
     event.eventType === "run_derived_child_created" ||
     to === "failed" ||
@@ -12358,6 +12621,13 @@ const WORKFLOW_OVERVIEW_EVENT_TYPES = new Set([
   "run_runtime_result",
   "run_recovery_claimed",
   "run_worktree_attached",
+  "workflow_phase_started",
+  "workflow_phase_completed",
+  "workflow_phase_failed",
+  "workflow_checkpoint",
+  "workflow_report",
+  "workflow_milestone_injection_requested",
+  "workflow_milestone_injection_delivered",
   "script_permission_preview",
   "script_permission_preview_blocked",
   "script_permission_approval_required",
@@ -12402,6 +12672,22 @@ function workflowEventTone(event: WorkflowEvent): StatusTone {
       return "warn"
     }
     if (finalState === "completed") return "good"
+    return "info"
+  }
+  if (event.eventType === "workflow_phase_failed") return "danger"
+  if (event.eventType === "workflow_checkpoint") {
+    const importance = stringField(payload, "importance")
+    if (importance === "critical") return "danger"
+    if (importance === "high") return "good"
+    return "info"
+  }
+  if (event.eventType === "workflow_report") {
+    return boolField(payload, "needsUser") ? "warn" : "info"
+  }
+  if (event.eventType === "workflow_milestone_injection_requested") return "info"
+  if (event.eventType === "workflow_milestone_injection_delivered") return "good"
+  if (event.eventType === "workflow_phase_completed") return "good"
+  if (event.eventType === "workflow_phase_started" || event.eventType === "workflow_progress") {
     return "info"
   }
   if (
@@ -12463,6 +12749,22 @@ function workflowEventTitle(
       return t("workspace.workflow.eventRecoveryClaimed", "恢复接管")
     case "run_worktree_attached":
       return t("workspace.workflow.eventWorktreeAttached", "运行位置已绑定")
+    case "workflow_phase_started":
+      return t("workspace.workflow.eventPhaseStarted", "阶段开始")
+    case "workflow_phase_completed":
+      return t("workspace.workflow.eventPhaseCompleted", "阶段完成")
+    case "workflow_phase_failed":
+      return t("workspace.workflow.eventPhaseFailed", "阶段失败")
+    case "workflow_progress":
+      return t("workspace.workflow.eventProgress", "阶段进度")
+    case "workflow_checkpoint":
+      return stringField(payload, "title") ?? t("workspace.workflow.eventCheckpoint", "阶段检查点")
+    case "workflow_report":
+      return stringField(payload, "title") ?? t("workspace.workflow.eventReport", "阶段报告")
+    case "workflow_milestone_injection_requested":
+      return t("workspace.workflow.eventMilestoneInjectionRequested", "已请求通知模型")
+    case "workflow_milestone_injection_delivered":
+      return t("workspace.workflow.eventMilestoneInjectionDelivered", "模型已收到")
     case "script_permission_preview":
       return t("workspace.workflow.eventPermissionPreview", "权限预览")
     case "script_permission_preview_blocked":
@@ -12544,6 +12846,63 @@ function workflowEventDetail(
       const path = stringField(payload, "path")
       const state = stringField(payload, "state")
       return [worktreeId, path ? basename(path) : null, state].filter(Boolean).join(" · ")
+    }
+    case "workflow_phase_started": {
+      const label = stringField(payload, "label") ?? stringField(payload, "name")
+      const expected = stringField(payload, "expected")
+      return [label, expected].filter(Boolean).join(" · ")
+    }
+    case "workflow_phase_completed": {
+      const phaseKey = stringField(payload, "phaseKey")
+      const summary = stringField(payload, "summary")
+      return [phaseKey, summary].filter(Boolean).join(" · ")
+    }
+    case "workflow_phase_failed": {
+      const phaseKey = stringField(payload, "phaseKey")
+      const error = stringField(payload, "error")
+      return [phaseKey, error ? truncateMiddle(error, 96) : null].filter(Boolean).join(" · ")
+    }
+    case "workflow_progress": {
+      const message = stringField(payload, "message")
+      const percent = numberField(payload, "percent")
+      const phaseKey = stringField(payload, "phaseKey")
+      const percentLabel = typeof percent === "number" ? `${Math.round(percent)}%` : null
+      return [message, percentLabel, phaseKey].filter(Boolean).join(" · ")
+    }
+    case "workflow_checkpoint": {
+      const summary = stringField(payload, "summary")
+      const importance = stringField(payload, "importance")
+      const injectPolicy = stringField(payload, "injectPolicy")
+      return [summary, importance, injectPolicy ? `inject=${injectPolicy}` : null]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    case "workflow_report": {
+      const summary = stringField(payload, "summary")
+      const nextAction = stringField(payload, "nextAction")
+      const needsUser = boolField(payload, "needsUser")
+      return [
+        summary,
+        nextAction,
+        needsUser ? t("workspace.workflow.needsUser", "需要用户") : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    }
+    case "workflow_milestone_injection_requested":
+    case "workflow_milestone_injection_delivered": {
+      const sourceEventType = stringField(payload, "sourceEventType")
+      const sourceEventSeq = numberField(payload, "sourceEventSeq")
+      const title = stringField(payload, "title")
+      const summary = stringField(payload, "summary")
+      return [
+        sourceEventSeq ? `#${sourceEventSeq}` : null,
+        sourceEventType,
+        title,
+        summary ? truncateMiddle(summary, 96) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
     }
     case "budget_usage": {
       const spent = numberField(payload, "spentOutputTokens")
@@ -14292,6 +14651,8 @@ function WorkflowRunsSection({
   turnActive,
   workingDir,
   onEnsureSession,
+  draftWorkflowMode = "off",
+  onDraftWorkflowModeChange,
   onViewSubagentSession,
   onOpenLoopCreate,
   onOpenLoopProblem,
@@ -14307,6 +14668,8 @@ function WorkflowRunsSection({
   turnActive?: boolean
   workingDir?: string | null
   onEnsureSession?: () => Promise<string | null>
+  draftWorkflowMode?: WorkflowAutonomyMode
+  onDraftWorkflowModeChange?: (mode: WorkflowAutonomyMode) => void
   onViewSubagentSession?: (sessionId: string) => void
   onOpenLoopCreate?: () => void
   onOpenLoopProblem?: (loopId: string) => void
@@ -14615,7 +14978,7 @@ function WorkflowRunsSection({
   const loadWorkflowMode = useCallback(() => {
     if (!sessionId || incognito) {
       workflowModeReqRef.current += 1
-      setWorkflowMode("off")
+      setWorkflowMode(incognito ? "off" : normalizeWorkflowAutonomyMode(draftWorkflowMode))
       setWorkflowModeLoading(false)
       setWorkflowModeSaving(null)
       return
@@ -14639,7 +15002,7 @@ function WorkflowRunsSection({
         )
         setWorkflowModeLoading(false)
       })
-  }, [incognito, sessionId])
+  }, [draftWorkflowMode, incognito, sessionId])
 
   const loadExecutionMode = useCallback(() => {
     if (!sessionId || incognito) {
@@ -14703,6 +15066,18 @@ function WorkflowRunsSection({
   const updateWorkflowMode = useCallback(
     async (nextMode: WorkflowAutonomyMode) => {
       if (incognito || nextMode === workflowMode || workflowModeSaving) return
+      if (!sessionId) {
+        setWorkflowMode(nextMode)
+        onDraftWorkflowModeChange?.(nextMode)
+        toast.success(
+          nextMode === "off"
+            ? t("workspace.workflow.modeDraftOff", "工作流模式已关闭")
+            : t("workspace.workflow.modeDraftSaved", "工作流模式将在下一条消息生效：{{mode}}", {
+                mode: workflowAutonomyModeLabel(t, nextMode),
+              }),
+        )
+        return
+      }
       const targetSessionId = sessionId ?? (await ensureWorkflowSession())
       if (!targetSessionId) return
       setWorkflowModeSaving(nextMode)
@@ -14735,7 +15110,15 @@ function WorkflowRunsSection({
         setWorkflowModeSaving(null)
       }
     },
-    [ensureWorkflowSession, incognito, sessionId, t, workflowMode, workflowModeSaving],
+    [
+      ensureWorkflowSession,
+      incognito,
+      onDraftWorkflowModeChange,
+      sessionId,
+      t,
+      workflowMode,
+      workflowModeSaving,
+    ],
   )
 
   const updateExecutionMode = useCallback(
@@ -15463,10 +15846,19 @@ ${repairPrompt}`
     <>
       <WorkspaceSection
         title={t("workspace.workflow.title", "工作流")}
-        count={activeCount}
+        count={runs.length}
         icon={GitPullRequest}
         meta={
-          loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null
+          loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : activeCount > 0 ? (
+            <StatusPill
+              label={t("workspace.workflow.activeCount", "{{count}} 运行中", {
+                count: activeCount,
+              })}
+              tone="info"
+            />
+          ) : null
         }
       >
         {incognito ? (
@@ -20361,6 +20753,8 @@ export default function WorkspacePanel({
   onViewSubagentSession,
   openLoopCreateRequest = 0,
   onEnsureSession,
+  draftWorkflowMode = "off",
+  onDraftWorkflowModeChange,
   onClose,
 }: WorkspacePanelProps) {
   const { t } = useTranslation()
@@ -20570,6 +20964,8 @@ export default function WorkspacePanel({
             turnActive={turnActive}
             workingDir={effectiveWorkingDir}
             onEnsureSession={onEnsureSession}
+            draftWorkflowMode={draftWorkflowMode}
+            onDraftWorkflowModeChange={onDraftWorkflowModeChange}
             onViewSubagentSession={onViewSubagentSession}
             onOpenLoopCreate={openLoopCreate}
             onOpenLoopProblem={(loopId) =>

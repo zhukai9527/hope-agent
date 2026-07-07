@@ -48,6 +48,10 @@ pub struct ChatRequest {
     /// `sandbox_mode` column is updated before chat starts.
     #[serde(default)]
     pub sandbox_mode: Option<SandboxMode>,
+    /// Per-session workflow autonomy mode. When provided, the session's
+    /// `workflow_mode` column is updated before chat starts.
+    #[serde(default)]
+    pub workflow_mode: Option<ha_core::workflow_mode::WorkflowMode>,
     #[serde(default)]
     pub temperature_override: Option<f64>,
     #[serde(default)]
@@ -237,6 +241,7 @@ pub async fn chat(
     // session id (we need a session_id to persist).
     let permission_mode_pending = body.permission_mode;
     let sandbox_mode_pending = body.sandbox_mode;
+    let workflow_mode_pending = body.workflow_mode;
 
     // Resolve agent ID. Explicit caller wins; otherwise existing sessions use
     // their stored agent, while new sessions inherit the app-wide default.
@@ -312,6 +317,10 @@ pub async fn chat(
     }
     if let Some(mode) = sandbox_mode_pending {
         db.update_session_sandbox_mode(&sid, mode)
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+    }
+    if let Some(mode) = workflow_mode_pending {
+        db.update_session_workflow_mode(&sid, mode)
             .map_err(|e| AppError::bad_request(e.to_string()))?;
     }
 
@@ -998,9 +1007,11 @@ mod tests {
         let body = serde_json::json!({
             "message": "hi",
             "projectId": "proj-123",
+            "workflowMode": "on",
         });
         let req: ChatRequest = serde_json::from_value(body).expect("deserialize chat request");
         assert_eq!(req.project_id.as_deref(), Some("proj-123"));
+        assert_eq!(req.workflow_mode, Some(ha_core::workflow_mode::WorkflowMode::On));
         // Omitted project_id defaults to None (plain chats are unaffected).
         let plain: ChatRequest =
             serde_json::from_value(serde_json::json!({ "message": "hi" })).expect("deserialize");

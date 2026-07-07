@@ -31,6 +31,11 @@ function hasSubagentResultEnvelope(content: string): boolean {
   return /^<subagent-result(?:\s|>)/.test(trimmed) && trimmed.includes("</subagent-result>")
 }
 
+function hasWorkflowResultEnvelope(content: string): boolean {
+  const trimmed = content.trimStart()
+  return /^<workflow-result(?:\s|>)/.test(trimmed) && trimmed.includes("</workflow-result>")
+}
+
 export function parseToolJobPayload(
   content: string,
 ): { toolName?: string; status?: string; detail?: string } | null {
@@ -91,6 +96,39 @@ export function parseSubagentResultStatus(content: string): string {
     case "spawning":
       return "running"
     case "error":
+      return "failed"
+    default:
+      return "completed"
+  }
+}
+
+export function parseWorkflowResultDetail(content: string): string | undefined {
+  if (!hasWorkflowResultEnvelope(content)) return undefined
+  return (
+    decodeXmlishText(getXmlishElement(content, "output-json")) ||
+    decodeXmlishText(getXmlishElement(content, "error")) ||
+    decodeXmlishText(getXmlishElement(content, "blocked-reason")) ||
+    decodeXmlishText(getXmlishElement(content, "summary"))
+  )
+}
+
+export function parseWorkflowResultStatus(content: string): string {
+  const status = hasWorkflowResultEnvelope(content)
+    ? decodeXmlishText(getXmlishElement(content, "state"))
+    : undefined
+  switch (status) {
+    case "completed":
+      return "completed"
+    case "cancelled":
+      return "cancelled"
+    case "awaiting_approval":
+    case "awaiting_user":
+    case "paused":
+    case "running":
+    case "recovering":
+      return "running"
+    case "blocked":
+    case "failed":
       return "failed"
     default:
       return "completed"

@@ -6,8 +6,9 @@ use crate::session::SessionDB;
 
 use super::events;
 use super::types::{
-    CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
-    WorkflowEvent, WorkflowOp, WorkflowOpState, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState,
+    CreateWorkflowRunInput, PendingWorkflowMilestoneInjection, StartedOpRecoveryAction,
+    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowEvent, WorkflowOp, WorkflowOpState,
+    WorkflowRun, WorkflowRunSnapshot, WorkflowRunState,
 };
 
 const EVENT_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
@@ -1008,6 +1009,116 @@ impl SessionDB {
         let mut events = collect_rows(rows)?;
         events.reverse();
         Ok(events)
+    }
+
+    pub fn get_workflow_event_by_seq(
+        &self,
+        run_id: &str,
+        seq: i64,
+    ) -> Result<Option<WorkflowEvent>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT id, run_id, seq, type, payload_json, created_at
+             FROM workflow_events
+             WHERE run_id = ?1 AND seq = ?2",
+            params![run_id, seq],
+            row_to_event,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn workflow_milestone_injection_delivered(
+        &self,
+        run_id: &str,
+        source_event_type: &str,
+        source_event_seq: i64,
+    ) -> Result<bool> {
+        let payloads = {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let mut stmt = conn.prepare(
+                "SELECT payload_json
+                 FROM workflow_events
+                 WHERE run_id = ?1 AND type = 'workflow_milestone_injection_delivered'",
+            )?;
+            let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
+            collect_rows(rows)?
+        };
+        for payload_json in payloads {
+            let payload: Value = serde_json::from_str(&payload_json)?;
+            if payload.get("sourceEventType").and_then(Value::as_str) == Some(source_event_type)
+                && payload.get("sourceEventSeq").and_then(Value::as_i64) == Some(source_event_seq)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn list_pending_workflow_milestone_injections(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingWorkflowMilestoneInjection>> {
+        let pending_limit = limit.clamp(1, 200);
+        let scan_limit = pending_limit.saturating_mul(20).clamp(20, 5000) as i64;
+        let requested_events = {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            let mut stmt = conn.prepare(
+                "SELECT id, run_id, seq, type, payload_json, created_at
+                 FROM workflow_events
+                 WHERE type = 'workflow_milestone_injection_requested'
+                 ORDER BY id ASC
+                 LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![scan_limit], row_to_event)?;
+            collect_rows(rows)?
+        };
+
+        let mut pending = Vec::new();
+        for requested in requested_events {
+            let Some(source_event_type) = requested
+                .payload
+                .get("sourceEventType")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(source_event_seq) = requested
+                .payload
+                .get("sourceEventSeq")
+                .and_then(Value::as_i64)
+            else {
+                continue;
+            };
+            if self.workflow_milestone_injection_delivered(
+                &requested.run_id,
+                &source_event_type,
+                source_event_seq,
+            )? {
+                continue;
+            }
+            let Some(source_event) =
+                self.get_workflow_event_by_seq(&requested.run_id, source_event_seq)?
+            else {
+                continue;
+            };
+            if source_event.event_type != source_event_type {
+                continue;
+            }
+            pending.push(PendingWorkflowMilestoneInjection {
+                run_id: requested.run_id.clone(),
+                source_event_type,
+                source_event_seq,
+                requested_event_seq: requested.seq,
+                requested_at: requested.created_at,
+                source_event,
+            });
+            if pending.len() >= pending_limit {
+                break;
+            }
+        }
+        Ok(pending)
     }
 
     fn ensure_workflow_run_allows_new_op(&self, run_id: &str) -> Result<()> {

@@ -186,6 +186,9 @@ export interface Message {
   /** If true, this is an exec process completion notification injected by
    *  the backend after a legacy process session exits. */
   isProcessNotification?: boolean
+  /** If true, this is a workflow completion/status notification injected by
+   *  the backend after a model-created durable workflow settles. */
+  isWorkflowResult?: boolean
   /** If true, this user message is a Plan Mode trigger (approve / resume) —
    *  sent to the LLM as a normal user turn but rendered as a system chip
    *  in the UI to distinguish it from real user input. */
@@ -386,7 +389,7 @@ export interface SessionMeta {
   permissionMode?: SessionMode
   /** Per-session sandbox execution posture. */
   sandboxMode?: SandboxMode
-  /** Session-scoped Workflow Mode. Enables autonomous workflow_run orchestration when not off. */
+  /** Session-scoped Workflow Mode. Enables autonomous workflow orchestration when not off. */
   workflowMode?: "off" | "on" | "ultracode"
   /**
    * When set, this session belongs to a Project — project-scoped memories

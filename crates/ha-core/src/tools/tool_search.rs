@@ -373,8 +373,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workflow_run_is_not_discoverable_via_tool_search() {
-        let args = json!({ "query": "select:workflow_run" });
+    async fn workflow_is_not_discoverable_via_tool_search() {
+        let args = json!({ "query": "select:workflow" });
         let result = tool_search(&args, &ToolExecContext::default())
             .await
             .unwrap();

@@ -205,6 +205,7 @@ fn parent_session_present(db: &crate::session::SessionDB, session_id: &str) -> b
 pub(crate) const WAKEUP_CHILD_AGENT_ID: &str = "wakeup";
 pub(crate) const PROCESS_NOTIFICATION_CHILD_AGENT_ID: &str = "process_notification";
 pub(crate) const LOOP_CHILD_AGENT_ID: &str = "loop";
+pub(crate) const WORKFLOW_CHILD_AGENT_ID: &str = "workflow";
 
 /// Outcome of waiting for a parent session to become idle before injecting.
 enum IdleWait {
@@ -556,6 +557,8 @@ pub(crate) async fn inject_and_run_parent(
             serde_json::json!({ "loop_trigger": { "run_id": &run_id } })
         } else if child_agent_id == PROCESS_NOTIFICATION_CHILD_AGENT_ID {
             serde_json::json!({ "process_notification": { "run_id": &run_id } })
+        } else if child_agent_id == WORKFLOW_CHILD_AGENT_ID {
+            serde_json::json!({ "workflow_result": { "run_id": &run_id } })
         } else {
             serde_json::json!({
                 "subagent_result": {

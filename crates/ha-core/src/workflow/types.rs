@@ -227,6 +227,17 @@ pub struct WorkflowEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PendingWorkflowMilestoneInjection {
+    pub run_id: String,
+    pub source_event_type: String,
+    pub source_event_seq: i64,
+    pub requested_event_seq: i64,
+    pub requested_at: String,
+    pub source_event: WorkflowEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateWorkflowRunInput {
     pub session_id: String,
     pub kind: String,

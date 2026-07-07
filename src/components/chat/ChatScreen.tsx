@@ -1672,6 +1672,13 @@ export default function ChatScreen({
   }, [currentModelForUsage, manualCompactOverride, session.currentSessionId, session.messages])
   const setPlanState = planMode.setPlanState
   const sendMessage = stream.handleSend
+  const [draftWorkflowMode, setDraftWorkflowMode] = useState<"off" | "on" | "ultracode">("off")
+
+  useEffect(() => {
+    if (session.currentSessionId) {
+      setDraftWorkflowMode("off")
+    }
+  }, [session.currentSessionId])
 
   // ── Memory extraction toast ────────────────────────────────
   const [memoryToast, setMemoryToast] = useState<{ count: number } | null>(null)
@@ -3063,7 +3070,14 @@ export default function ChatScreen({
                       onInputChange={stream.setInput}
                       inputHistory={inputHistory}
                       quickPrompts={quickPrompts}
-                      onSend={() => stream.handleSend()}
+                      onSend={() =>
+                        stream.handleSend(
+                          undefined,
+                          !session.currentSessionId && draftWorkflowMode !== "off"
+                            ? { workflowMode: draftWorkflowMode }
+                            : undefined,
+                        )
+                      }
                       loading={session.loading}
                       availableModels={availableModels}
                       activeModel={activeModel}
@@ -3133,6 +3147,8 @@ export default function ChatScreen({
                       onEnterPlanMode={planMode.enterPlanMode}
                       onExitPlanMode={planMode.exitPlanMode}
                       onTogglePlanPanel={() => planMode.setShowPanel((p) => !p)}
+                      draftWorkflowMode={draftWorkflowMode}
+                      onDraftWorkflowModeChange={setDraftWorkflowMode}
                       goalSnapshot={chatGoal.snapshot}
                       goalLoading={chatGoal.loading}
                       onGoalModeSubmit={handleGoalModeSubmit}
@@ -3344,6 +3360,8 @@ export default function ChatScreen({
                 onViewSubagentSession={setSubagentPreviewSessionId}
                 openLoopCreateRequest={workspaceLoopCreateRequest}
                 onEnsureSession={ensureWorkflowSession}
+                draftWorkflowMode={draftWorkflowMode}
+                onDraftWorkflowModeChange={setDraftWorkflowMode}
                 onClose={() => {
                   workspacePanelDismissedRef.current = true
                   setShowWorkspacePanel(false)

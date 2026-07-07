@@ -67,7 +67,7 @@ pub use definitions::{
     get_core_tools_for_provider, get_deferred_tools, get_enter_plan_mode_tool,
     get_image_generate_tool_dynamic, get_notification_tool, get_subagent_tool,
     get_submit_plan_tool, get_tool_search_tool, get_tools_for_provider, get_web_search_tool,
-    get_workflow_run_tool, is_async_capable, is_concurrent_safe, is_internal_tool, CoreSubclass,
+    get_workflow_tool, is_async_capable, is_concurrent_safe, is_internal_tool, CoreSubclass,
     ToolApprovalHint, ToolDefinition, ToolEffect, ToolInputMetadata, ToolInterruptBehavior,
     ToolMetadata, ToolPathExtractorMetadata, ToolPermissionMetadata, ToolPermissionSubject,
     ToolRenderMetadata, ToolResultKind, ToolRisk, ToolTier, ToolValidationMetadata,
@@ -147,7 +147,7 @@ pub const TOOL_ASK_USER_QUESTION: &str = "ask_user_question";
 pub const TOOL_SUBMIT_PLAN: &str = "submit_plan";
 pub const TOOL_ENTER_PLAN_MODE: &str = "enter_plan_mode";
 pub const TOOL_TOOL_SEARCH: &str = "tool_search";
-pub const TOOL_WORKFLOW_RUN: &str = "workflow_run";
+pub const TOOL_WORKFLOW: &str = "workflow";
 pub const TOOL_TASK_CREATE: &str = "task_create";
 pub const TOOL_TASK_UPDATE: &str = "task_update";
 pub const TOOL_TASK_LIST: &str = "task_list";

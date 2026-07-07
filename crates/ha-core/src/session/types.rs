@@ -133,7 +133,7 @@ pub struct SessionMeta {
     #[serde(default)]
     pub execution_mode: ExecutionMode,
     /// Persistent workflow autonomy mode for this session (`off` / `on` /
-    /// `ultracode`). When enabled, the model may call the workflow_run tool
+    /// `ultracode`). When enabled, the model may call the workflow tool
     /// to create observable durable workflow runs.
     #[serde(default)]
     pub workflow_mode: crate::workflow_mode::WorkflowMode,

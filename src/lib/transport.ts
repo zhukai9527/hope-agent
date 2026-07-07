@@ -38,6 +38,7 @@ export interface ChatStartArgs {
   agentId?: string;
   permissionMode?: SessionMode;
   sandboxMode?: SandboxMode;
+  workflowMode?: "off" | "on" | "ultracode" | string;
   planMode?: string;
   temperatureOverride?: number;
   reasoningEffort?: string;
