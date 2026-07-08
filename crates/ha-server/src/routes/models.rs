@@ -40,6 +40,13 @@ pub struct SetFallbackBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SetVisionModelBody {
+    /// `None` / omitted disables the vision bridge.
+    #[serde(default)]
+    pub model: Option<ActiveModel>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetReasoningEffortBody {
     pub effort: String,
@@ -97,6 +104,25 @@ pub async fn set_active_model(
 pub async fn get_fallback_models() -> Result<Json<Vec<ActiveModel>>, AppError> {
     let store = ha_core::config::cached_config();
     Ok(Json(store.fallback_models.clone()))
+}
+
+/// `GET /api/models/vision` — the configured vision bridge model, or `null`.
+pub async fn get_vision_model() -> Result<Json<Option<ActiveModel>>, AppError> {
+    let store = ha_core::config::cached_config();
+    Ok(Json(store.function_models.vision.clone()))
+}
+
+/// `PUT /api/models/vision` — set (or clear, with `model: null`) the vision
+/// bridge model (issue #434).
+pub async fn set_vision_model(
+    Json(body): Json<SetVisionModelBody>,
+) -> Result<Json<Value>, AppError> {
+    ha_core::config::mutate_config_async(("function_models", "http"), move |store| {
+        store.function_models.vision = body.model;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(json!({ "updated": true })))
 }
 
 /// `POST /api/models/fallback` — overwrite the fallback model chain.

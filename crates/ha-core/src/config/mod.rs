@@ -1272,6 +1272,27 @@ pub struct AppConfig {
     /// paths. See `crate::updater::AutoUpdateConfig`.
     #[serde(default)]
     pub auto_update: crate::updater::AutoUpdateConfig,
+
+    /// Per-function model overrides (issue #434). Currently just the vision
+    /// bridge: when the main model can't see images, a separately-configured
+    /// vision model transcribes them to text. Opt-in — `vision = None` keeps
+    /// the existing drop-image + placeholder behavior. See `agent::vision_bridge`.
+    #[serde(default)]
+    pub function_models: FunctionModelsConfig,
+}
+
+// ── Per-function model overrides (issue #434) ───────────────────────
+
+/// Model overrides keyed by function type. Extensible container so future
+/// function→model routing (tool-use, reasoning, …) can be added without
+/// reshaping `AppConfig`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionModelsConfig {
+    /// Vision bridge model: transcribes images to text when the main model is
+    /// text-only. `None` = bridge disabled (drop image + placeholder, as before).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<ActiveModel>,
 }
 
 // ── Local LLM (Ollama) auto-maintenance ─────────────────────────────
@@ -1390,6 +1411,7 @@ impl Default for AppConfig {
             disable_all_hooks: false,
             hooks_allow_project_scope: false,
             auto_update: crate::updater::AutoUpdateConfig::default(),
+            function_models: FunctionModelsConfig::default(),
         }
     }
 }

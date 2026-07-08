@@ -130,6 +130,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 - **failover policy 三档**：`chat_engine_default` / `side_query_default` / `summarize_default`；**Codex 强制不参与 profile 轮换**
 - **温度 / Think 三层覆盖**：会话 > Agent > 全局；`thinking_style` Provider 默认 + 模型级覆盖
 - **Side Query**：复用主对话 system_prompt + history 前缀命中 cache，Tier 3 摘要 / 记忆提取成本降 ~90%
+- **视觉桥（issue #434，`agent/vision_bridge.rs`）**：主模型无视觉能力（`model_supports_vision==false`）且收到图片时，用 `function_models.vision`（`Option<ActiveModel>`，opt-in，未配=关）单独配置的视觉模型把图转文字注入，替代「丢图 + 占位符」。**红线**：① 只在 `run_streaming_chat` **round head** 挂接——对 `prepare_messages_for_api` 产出的**临时 `api_messages` 副本**做「异步 `ensure`（每图转述一次、`(image_hash, vision_model)` memo）+ 同步 `rewrite`（换描述文字）」，**绝不改 `conversation_history`**（`save_agent_context` 原样落库，就地改写=永久丢图不可逆）；② provider 无关（按 content 形态识别 anthropic/openai/responses 三种图片块 + `__IMAGE_*__` 工具 marker，统一降级点，顺带覆盖 Anthropic/Codex 现状不降级的场景）；**只扫 user/tool 消息、跳 assistant**（tool_use/tool_call 参数可能形似图片块，改写会毁 tool 调用）；③ 转述走 `transcribe_images_for_vision_bridge`（单次 one_shot、**超时在其内部**令超时也记账、不走 failover、失败静默回退占位符不 hard-fail），用量记 **`KIND_VISION`**（非 `KIND_SIDE_QUERY`）+ 带 session_id 令 incognito 跳过入账；④ 防递归——转述本身带图调视觉模型，**只在主对话入口 gate，绝不在 side_query 触发**；⑤ **注入即 untrusted**——转录文本（含图片内可见文字，逐字转录）必套 `<untrusted_external_data>` 信封 + 转义 `<`/`&`，**绝不作 system 指令**（防图片藏 `SYSTEM: …` 注入）；⑥ **incognito 缓存隔离**——无痕会话走 per-turn 临时缓存、**绝不写全局共享缓存**（转录含敏感文字，关闭即焚 + 不跨会话/跨租户命中）；全局缓存用有界 `TtlCache`（非无界 HashMap）；⑦ **agent 惰性 + 有界构建**——`prepare` 只解析配置不建 agent，vision agent 在 apply 首个真图 miss 时才 `try_new_from_provider`（免图-free turn 白建）；**惰性单独不够**——含图轮首次构建仍在关键路径跑 Codex OAuth（自身无 timeout），故 build 套 `AGENT_BUILD_TIMEOUT`（20s）超时兜底，超时=静默回退占位符、`None`-init **不缓存**（下轮可重试）；⑧ **取消可响应 + 不缓存**——build + 转述整体经 `tokio::select!` 与 `poll_cancel(cancel)` **竞速**，Stop 触发即腰斩在途 build/转述；被取消的图**绝不缓存**（取消非失败，须干净重试）、取消同时抑制误导性 `unavailable` 提示
 
 ### Chat Engine & Streaming
 
@@ -305,7 +306,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 详见 [`dashboard.md`](docs/architecture/dashboard.md) / [`recap.md`](docs/architecture/recap.md)。
 
 - `dashboard/insights.rs`：overview delta / cost trend / heatmap / health score / `query_insights` orchestrator
-- **模型用量总账**：所有会触发模型推理 / one-shot / side_query / summarize / embedding / STT / judge / web_search / image_generation / provider_test 的新调用入口，必须通过 [`model_usage.rs`](crates/ha-core/src/model_usage.rs) 写入 `session.db.model_usage_events`；Dashboard token / cost 总量以该表为准。Provider 原始 usage 返回多少就记录多少，未返回 token 的本地模型 / STT / embedding / 生图只记录调用次数与耗时，**禁止用字符估算冒充准确 token**。无痕会话不得入账。
+- **模型用量总账**：所有会触发模型推理 / one-shot / side_query / summarize / embedding / STT / judge / web_search / image_generation / provider_test / vision（视觉桥图片转述）的新调用入口，必须通过 [`model_usage.rs`](crates/ha-core/src/model_usage.rs) 写入 `session.db.model_usage_events`；Dashboard token / cost 总量以该表为准。Provider 原始 usage 返回多少就记录多少，未返回 token 的本地模型 / STT / embedding / 生图只记录调用次数与耗时，**禁止用字符估算冒充准确 token**。无痕会话不得入账。
 - Learning Tracker 落 `session.db.learning_events`，目前埋点：`skills::author` CRUD + `tool_recall_memory` 命中 + MCP tool 调用
 - `/recap` 独立 `~/.hope-agent/recap/recap.db` 缓存按 `last_message_ts` 失效；`recap.analysisAgent` 与主对话 Agent 解耦
 

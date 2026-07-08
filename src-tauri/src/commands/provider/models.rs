@@ -78,4 +78,29 @@ pub async fn set_fallback_models(
     .map_err(Into::into)
 }
 
+/// Vision bridge model (issue #434): the model used to transcribe images to text
+/// when the main model is text-only. `None` disables the bridge.
+#[tauri::command]
+pub async fn get_vision_model(
+    _state: State<'_, AppState>,
+) -> Result<Option<ActiveModel>, CmdError> {
+    Ok(ha_core::config::cached_config()
+        .function_models
+        .vision
+        .clone())
+}
+
+#[tauri::command]
+pub async fn set_vision_model(
+    model: Option<ActiveModel>,
+    _state: State<'_, AppState>,
+) -> Result<(), CmdError> {
+    ha_core::config::mutate_config_async(("function_models", "ui"), move |store| {
+        store.function_models.vision = model;
+        Ok(())
+    })
+    .await
+    .map_err(Into::into)
+}
+
 // has_providers is in crud.rs
