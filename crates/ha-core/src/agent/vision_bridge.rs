@@ -91,7 +91,7 @@ const FALLBACK_PLACEHOLDER: &str = "[image omitted: this model cannot read image
 
 // ── Shared transcription cache (bounded, non-incognito only) ─────────
 
-type CacheKey = (u64, String); // (image identity hash, vision model id)
+type CacheKey = (u64, String, String); // (image identity hash, vision provider id, vision model id)
 /// Value carries its own `Instant` for the short failure-retry window; the
 /// `TtlCache` provides capacity + long-TTL eviction on top (memory bound).
 type CacheVal = (Option<String>, Instant);
@@ -464,7 +464,7 @@ impl ResolvedVisionBridge {
                 _ => None,
             }
         } else {
-            cache_read(&(hash, self.vision_model.model_id.clone()))
+            cache_read(&self.shared_key(hash))
         }
     }
 
@@ -475,8 +475,22 @@ impl ResolvedVisionBridge {
                 .unwrap_or_else(|p| p.into_inner())
                 .insert(hash, (desc, Instant::now()));
         } else {
-            cache_write((hash, self.vision_model.model_id.clone()), desc);
+            cache_write(self.shared_key(hash), desc);
         }
+    }
+
+    /// Shared-cache key for this bridge's image hash. Includes `provider_id`
+    /// (not just `model_id`) so two configured providers that expose the same
+    /// `model_id` (common with OpenAI-compatible / Azure-style providers) don't
+    /// collide: a success — or a cached failure within `FAILURE_RETRY_TTL` —
+    /// resolved to provider A must never satisfy / suppress a lookup that
+    /// resolved to provider B.
+    fn shared_key(&self, hash: u64) -> CacheKey {
+        (
+            hash,
+            self.vision_model.provider_id.clone(),
+            self.vision_model.model_id.clone(),
+        )
     }
 
     /// Fill the cache for any not-yet-transcribed image (once each, concurrently
@@ -606,7 +620,13 @@ async fn transcribe_one(agent: &AssistantAgent, id: &ImageIdentity) -> Option<St
         payload: id.payload.clone(),
         text: String::new(),
     };
-    let base64 = match encode_marker_image(&marker) {
+    // Read + base64-encode off the async worker: file-path markers (browser
+    // screenshots / materialized generated images / PDF-page previews) do a
+    // synchronous fs canonicalize + read here (up to MAX_CONCURRENT of them, at
+    // ~image size each). On a slow / cloud-synced disk that must degrade this one
+    // transcription rather than pin a Tokio worker — the same freeze class this
+    // branch fixes for DB/config IO (issue #433 Bug 2).
+    let base64 = match crate::blocking::run_blocking(move || encode_marker_image(&marker)).await {
         Ok(b) => b,
         Err(e) => {
             crate::app_warn!(
@@ -793,7 +813,12 @@ mod tests {
             Some(Some("passport no. X1234567".to_string()))
         );
         // …but absent from the shared cross-session cache.
-        assert!(cache_read(&(hash, "incognito-isolation-model".to_string())).is_none());
+        assert!(cache_read(&(
+            hash,
+            "p".to_string(),
+            "incognito-isolation-model".to_string()
+        ))
+        .is_none());
     }
 
     #[test]
@@ -802,7 +827,7 @@ mod tests {
         let hash = 0x8765_4321_u64;
         bridge.write(hash, Some("a bar chart".to_string()));
         assert_eq!(
-            cache_read(&(hash, "shared-cache-model".to_string())),
+            cache_read(&(hash, "p".to_string(), "shared-cache-model".to_string())),
             Some(Some("a bar chart".to_string()))
         );
     }
@@ -881,20 +906,46 @@ mod tests {
     #[test]
     fn cache_roundtrip_and_miss() {
         // Unique keys isolate this from the shared process-wide static cache.
-        let hit = (0xDEAD_BEEF_u64, "test-vision-model-a".to_string());
+        let hit = (
+            0xDEAD_BEEF_u64,
+            "prov-a".to_string(),
+            "test-vision-model-a".to_string(),
+        );
         assert!(cache_read(&hit).is_none(), "never-written key is a miss");
         cache_write(hit.clone(), Some("a red square".to_string()));
         assert_eq!(cache_read(&hit), Some(Some("a red square".to_string())));
 
         // A cached failure is a fresh `Some(None)` (→ placeholder this round,
         // not an LLM re-hit) until its TTL expires.
-        let fail = (0x0BAD_F00D_u64, "test-vision-model-b".to_string());
+        let fail = (
+            0x0BAD_F00D_u64,
+            "prov-a".to_string(),
+            "test-vision-model-b".to_string(),
+        );
         cache_write(fail.clone(), None);
         assert_eq!(cache_read(&fail), Some(None));
 
         // Different vision model on the same image identity is a distinct key.
-        let other_model = (0xDEAD_BEEF_u64, "test-vision-model-c".to_string());
+        let other_model = (
+            0xDEAD_BEEF_u64,
+            "prov-a".to_string(),
+            "test-vision-model-c".to_string(),
+        );
         assert!(cache_read(&other_model).is_none());
+
+        // Same model id but a DIFFERENT provider must be a distinct key too —
+        // two OpenAI-compatible providers exposing the same `model_id` must not
+        // share cached transcriptions (nor let one's cached failure suppress the
+        // other's retry). Guards the P2 cache-collision fix.
+        let prov_b = (
+            0xDEAD_BEEF_u64,
+            "prov-b".to_string(),
+            "test-vision-model-a".to_string(),
+        );
+        assert!(
+            cache_read(&prov_b).is_none(),
+            "same model id, different provider = distinct key"
+        );
     }
 
     #[test]
