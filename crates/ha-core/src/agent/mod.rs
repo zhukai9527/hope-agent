@@ -21,6 +21,7 @@ mod side_query;
 mod streaming_adapter;
 mod streaming_loop;
 mod types;
+mod vision_bridge;
 
 // Re-export public API
 pub use config::{
