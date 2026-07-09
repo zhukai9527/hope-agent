@@ -4,6 +4,7 @@ import type { SlashCommandDef, CommandResult } from "./types"
 import { CATEGORY_ORDER } from "./types"
 import type { ComposerInputHandle } from "../input/composerInputHandle"
 import { isGoalUpsertSlashCommand } from "../goalSlashCommand"
+import { isLoopCreateSlashCommand } from "../loopSlashCommand"
 
 export interface SlashCommandActions {
   /** Called when a command produces a CommandAction */
@@ -14,6 +15,8 @@ export interface SlashCommandActions {
   agentId: string
   /** Materializes a draft chat before running commands that persist session state. */
   ensureSession?: () => Promise<string | null>
+  /** Let the composer submit `/loop <prompt>` directly when this surface supports Loop mode. */
+  bypassLoopCreateOnEnter?: boolean
 }
 
 export interface UseSlashCommandsReturn {
@@ -86,6 +89,10 @@ function commandNeedsMaterializedSession(commandText: string): boolean {
       "evaluate",
       "audit",
     ].includes(first)
+  }
+  if (name === "loop") {
+    if (!args) return false
+    return !["status", "list", "show", "help", "pause", "resume", "stop", "cancel"].includes(first)
   }
   return false
 }
@@ -361,11 +368,30 @@ export function useSlashCommands(
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
-      if (e.key === "Enter" && isGoalUpsertSlashCommand(input)) {
+      if (
+        e.key === "Enter" &&
+        (isGoalUpsertSlashCommand(input) ||
+          (actionsRef.current.bypassLoopCreateOnEnter && isLoopCreateSlashCommand(input)))
+      ) {
         setIsOpen(false)
         setExpandedCmd(null)
         setForceOpen(false)
         return false
+      }
+      if (
+        e.key === "Enter" &&
+        !actionsRef.current.bypassLoopCreateOnEnter &&
+        isLoopCreateSlashCommand(input)
+      ) {
+        const match = commands.find((c) => c.name.toLowerCase() === "loop")
+        if (match) {
+          e.preventDefault()
+          setIsOpen(false)
+          setExpandedCmd(null)
+          setForceOpen(false)
+          executeCommandInner(match)
+          return true
+        }
       }
 
       if (!isOpen) {
@@ -481,8 +507,10 @@ export function useSlashCommands(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       isOpen,
+      commands,
       filteredCommands,
       selectedIndex,
+      executeCommandInner,
       executeCommand,
       setInput,
       fillInput,

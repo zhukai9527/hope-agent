@@ -523,6 +523,31 @@
       "ultracodeDesc": "更偏向長任務、深度驗證和完整動態編排",
       "viewRuns": "查看工作流運行"
     },
+    "workflowProgress": {
+      "defaultKind": "通用任務",
+      "more": "+{{count}} 個",
+      "stateAwaitingApproval": "待審批",
+      "stateAwaitingUser": "等待你",
+      "stateBlocked": "阻塞",
+      "stateCancelled": "已取消",
+      "stateCompleted": "已完成",
+      "stateDraft": "草稿",
+      "stateFailed": "失敗",
+      "statePaused": "已暫停",
+      "stateRecovering": "恢復中",
+      "stateRunning": "執行中",
+      "steps": "{{count}} 步",
+      "title": "工作流執行",
+      "view": "查看"
+    },
+    "workflowTriggerHint": {
+      "description": "開啟後模型可自行判斷是否建立可觀察、可恢復的背景工作流。",
+      "dismiss": "忽略",
+      "enable": "開啟自動",
+      "enableUltracode": "開啟 Ultracode",
+      "title": "這則訊息看起來適合工作流",
+      "ultracodeDescription": "開啟後模型會更偏向深度編排、交叉驗證和長任務恢復。"
+    },
     "permissionMode": {
       "applyToAgentDefault": {
         "desc": "開啟後，選擇模式會同時更新此 Agent 的新對話預設權限。",
@@ -533,6 +558,7 @@
         "desc": "編輯類工具與高危命令需要審批，其餘直接放行",
         "label": "預設權限"
       },
+      "menuLabel": "權限模式",
       "smart": {
         "desc": "由模型自評或獨立判官模型決定是否需要審批",
         "label": "智慧審批"
@@ -540,14 +566,14 @@
       "yolo": {
         "desc": "本會話內所有工具直接執行（保護路徑仍記稽核日誌）",
         "label": "完全放行"
-      },
-      "menuLabel": "權限模式"
+      }
     },
     "sandboxMode": {
       "isolated": {
         "desc": "隔離副本試跑，編輯審批不放鬆",
         "label": "Isolated Sandbox"
       },
+      "menuLabel": "沙箱",
       "off": {
         "desc": "Run on the host; approval behavior is unchanged.",
         "label": "Sandbox Off"
@@ -706,30 +732,6 @@
       "reloadBody": "已安裝的擴充功能與宿主版本不符,重新載入即可恢復對真實 Chrome 的控制。",
       "openSettings": "前往設定",
       "dismiss": "不再顯示"
-    },
-    "sandboxMode": {
-      "isolated": {
-        "desc": "隔離副本試跑，編輯審批不放鬆",
-        "label": "Isolated Sandbox"
-      },
-      "off": {
-        "desc": "Run on the host; approval behavior is unchanged.",
-        "label": "Sandbox Off"
-      },
-      "setupTitle": "Configure Docker to enable sandbox",
-      "standard": {
-        "desc": "Run in Docker; approval behavior is unchanged.",
-        "label": "Standard Sandbox"
-      },
-      "trusted": {
-        "desc": "沙箱內 exec 最大自治，嚴格風險仍審批",
-        "label": "Trusted Sandbox"
-      },
-      "workspace": {
-        "desc": "掛載目前工作區，減少編輯命令審批",
-        "label": "Workspace Sandbox"
-      },
-      "menuLabel": "沙箱"
     },
     "browserExtensionRequired": {
       "nextAction": "下一步行動：{{nextAction}}",
@@ -3468,6 +3470,11 @@
     "knowledge": {
       "tab": "知識空間"
     },
+    "knowledgeCompile": {
+      "agent": "資料整理 Agent",
+      "agentDefault": "使用全域預設 Agent",
+      "agentDesc": "用於將來源資料整理成可審閱的筆記建議，未設定時繼承全域預設 Agent。"
+    },
     "knowledgeChunk": {
       "title": "進階 · 分塊",
       "description": "控制筆記如何切分成檢索單元。預設值適合大多數筆記。",
@@ -3525,6 +3532,16 @@
         "openQuestionsMoc": "Open Questions MOC",
         "forAgentSummary": "For Agent summaries"
       }
+    },
+    "knowledgeMediaRetention": {
+      "saved": "已儲存",
+      "title": "原始媒體留存",
+      "description": "可選擇保留匯入的音訊、影片和圖片原件，用於來源證據回看。",
+      "maxTotal": "總配額（MiB）",
+      "maxSource": "單一資料上限（MiB）",
+      "thumbnail": "縮圖最長邊（px）",
+      "prune": "超過配額時清理最舊媒體",
+      "pruneDesc": "當新的留存檔案會超過配額時，先刪除最舊的已留存原件；若仍不足，則跳過新檔案留存。"
     },
     "knowledgePassiveRecall": {
       "title": "被動相關筆記",
@@ -4381,6 +4398,9 @@
     "serverEmbeddedBind": "監聽地址",
     "serverEmbeddedBindDesc": "默認 127.0.0.1 僅本機訪問。改為 0.0.0.0 可對外暴露到局域網",
     "serverGenerateApiKey": "生成",
+    "serverKnowledgeAgentReadToken": "知識空間 Agent 唯讀 Token",
+    "serverKnowledgeAgentReadTokenPlaceholder": "留空則關閉唯讀 Agent 存取",
+    "serverKnowledgeAgentReadTokenDesc": "給外部 Agent 使用的受限 Token。只有同時設定 owner API Key 時才生效；生效後只能呼叫知識空間唯讀介面，不授予 owner API 權限。",
     "serverMode": "服務器模式",
     "serverModeDesc": "選擇內嵌模式或連接遠程服務器",
     "serverModeEmbedded": "內嵌",
@@ -5046,24 +5066,6 @@
     "webSearchSaved": "已保存",
     "webSearchTimeout": "超時（秒）",
     "webSearchTimeoutDesc": "搜索請求 HTTP 超時時間（5-120 秒）",
-    "knowledgeCompile": {
-      "agent": "資料整理 Agent",
-      "agentDefault": "使用全域預設 Agent",
-      "agentDesc": "用於將來源資料整理成可審閱的筆記建議，未設定時繼承全域預設 Agent。"
-    },
-    "knowledgeMediaRetention": {
-      "saved": "已儲存",
-      "title": "原始媒體留存",
-      "description": "可選擇保留匯入的音訊、影片和圖片原件，用於來源證據回看。",
-      "maxTotal": "總配額（MiB）",
-      "maxSource": "單一資料上限（MiB）",
-      "thumbnail": "縮圖最長邊（px）",
-      "prune": "超過配額時清理最舊媒體",
-      "pruneDesc": "當新的留存檔案會超過配額時，先刪除最舊的已留存原件；若仍不足，則跳過新檔案留存。"
-    },
-    "serverKnowledgeAgentReadToken": "知識空間 Agent 唯讀 Token",
-    "serverKnowledgeAgentReadTokenPlaceholder": "留空則關閉唯讀 Agent 存取",
-    "serverKnowledgeAgentReadTokenDesc": "給外部 Agent 使用的受限 Token。只有同時設定 owner API Key 時才生效；生效後只能呼叫知識空間唯讀介面，不授予 owner API 權限。",
     "devVisualTest": "UI動畫測試",
     "permLoading": "正在檢查權限...",
     "uiEffects": "背景動畫",
@@ -5636,6 +5638,16 @@
       "loadingDiff": "讀取差異",
       "noTextDiff": "沒有文字可顯示差異"
     },
+    "goal": {
+      "watchdogTitle": "有目標需要確認",
+      "watchdogStaleEvaluatingWithAge": "評估中但沒有新進展，已等待 {{age}}",
+      "watchdogStaleEvaluating": "評估中但沒有新進展",
+      "watchdogNoRecentProgressWithAge": "目標一段時間沒有新進展，已等待 {{age}}",
+      "watchdogNoRecentProgress": "目標一段時間沒有新進展",
+      "watchdogUnknown": "目標需要確認",
+      "watchdogNeedsAttention": "需確認",
+      "evaluate": "評估"
+    },
     "worktree": {
       "manualLabel": "手動工作樹",
       "created": "已建立隔離工作樹",
@@ -5671,6 +5683,67 @@
     "kbWrote": "寫入",
     "kbRead": "讀取",
     "kbSearchCount": "檢索 {{n}} 次",
+    "loop": {
+      "title": "持續推進",
+      "stateActive": "執行中",
+      "statePaused": "已暫停",
+      "stateCompleted": "已完成",
+      "stateCancelled": "已停止",
+      "stateBlocked": "已阻塞",
+      "activeCount": "{{count}} 個活躍",
+      "incognitoEmpty": "無痕會話不保存持續推進",
+      "empty": "暫無持續推進",
+      "pause": "暫停",
+      "resume": "恢復",
+      "stop": "停止",
+      "runs": "執行",
+      "maxRuntime": "最長",
+      "more": "還有 {{count}} 個持續推進，可用 /loop status 查看",
+      "sessionRequired": "先選擇一個會話",
+      "intervalInvalid": "請輸入有效間隔，例如 10m",
+      "conditionRequired": "請輸入停止條件",
+      "promptOrGoalRequired": "請輸入提示詞，或先建立一個進行中的目標",
+      "maxRuntimeInvalid": "請輸入有效最長執行時間，例如 2h",
+      "maxRunsInvalid": "最大次數必須是正整數",
+      "tokensInvalid": "Token 預算必須是正整數",
+      "defaultConditionPrompt": "持續推進，直到該條件滿足：{{condition}}。每次先檢查條件，滿足後停止，否則繼續推進下一步。",
+      "created": "持續推進已建立",
+      "runNowStarted": "持續推進已立即開始",
+      "runNowFailed": "持續推進立即啟動失敗",
+      "watchdogTitle": "有持續推進需要確認",
+      "watchdogPill": "需確認",
+      "watchdogCronMissingWithAge": "調度記錄缺失，已延遲 {{age}}",
+      "watchdogCronMissing": "調度記錄缺失",
+      "watchdogDueNotClaimedWithAge": "到點後還未開始，已延遲 {{age}}",
+      "watchdogDueNotClaimed": "到點後還未開始",
+      "watchdogRunMaybeInterruptedWithAge": "上次運行可能中斷，已持續 {{age}}",
+      "watchdogRunMaybeInterrupted": "上次運行可能中斷",
+      "watchdogUnknown": "持續推進需要確認",
+      "watchdogMore": "還有 {{count}} 條診斷可在執行記錄中查看",
+      "boundGoal": "綁定目前目標",
+      "promptMode": "按提示詞重複觸發",
+      "closeCreate": "收起",
+      "new": "新增",
+      "kindInterval": "定期",
+      "kindCondition": "直到",
+      "interval": "間隔",
+      "maxRunsPlaceholder": "最大次數",
+      "maxRunsLabel": "最大次數",
+      "conditionPlaceholder": "例如 CI 已通過",
+      "condition": "停止條件",
+      "promptOptionalPlaceholder": "每次觸發要做什麼；留空則只檢查條件並推進下一步",
+      "promptGoalPlaceholder": "留空則繼續目前目標",
+      "promptPlaceholder": "檢查 CI，失敗時繼續修復",
+      "prompt": "提示詞",
+      "maxRuntimePlaceholder": "最長時間",
+      "maxRuntimeLabel": "最長執行時間",
+      "tokensPlaceholder": "Token 預算",
+      "tokensLabel": "Token 預算",
+      "create": "建立持續推進",
+      "runUsage": "本輪 Token",
+      "runUsageValue": "{{total}} · 輸入 {{input}} / 輸出 {{output}}",
+      "runUsageBoundary": "優先依 Loop 觸發訊息到下一則使用者訊息之間統計；舊資料沒有觸發中繼資料時回退到執行窗口。不代表完整成本。"
+    },
     "workflow": {
       "title": "工作流",
       "stateDraft": "待啟動",
@@ -5904,58 +5977,58 @@
       "validationMetricFailed": "失敗",
       "validationMetricPassed": "通過",
       "validationMetricRunning": "執行中",
-      "validationMetricTotal": "驗證"
+      "validationMetricTotal": "驗證",
+      "saveTemplate": "儲存範本",
+      "savedTemplateDefaultName": "工作流程範本",
+      "savedTemplateSaved": "已儲存範本：{{name}}",
+      "savedTemplateTitle": "已儲存範本",
+      "savedTemplateReload": "重新整理範本",
+      "savedTemplateEmpty": "完成的工作流程可儲存在這裡重複使用",
+      "savedTemplateProject": "專案",
+      "savedTemplateApply": "套用",
+      "savedTemplateRun": "建立並執行",
+      "savedTemplateCreate": "建立",
+      "savedTemplateApplied": "已載入範本：{{name}}",
+      "savedTemplateCreatedAndStarted": "已從範本建立並要求啟動",
+      "savedTemplateCreated": "已從範本建立工作流程",
+      "summaryTitle": "執行摘要",
+      "summaryReliable": "已記錄指標",
+      "summaryDuration": "耗時",
+      "summaryPhases": "階段",
+      "summaryReviews": "檢查",
+      "summaryMilestones": "注入",
+      "summarySize": "規模",
+      "summaryCaps": "上限",
+      "summaryUnknown": "未記錄",
+      "summaryNoOutputBudget": "未設定",
+      "summaryRuntimeDone": "runtime 已回報結果",
+      "summaryAgentTokens": "子代理 Token",
+      "summaryAgentUsageValue": "{{total}} · {{agents}} 個 Agent",
+      "summaryAgentUsageBoundary": "僅統計本工作流關聯子代理用量；完整成本仍等待執行歸因。",
+      "summaryWindowTokens": "窗口 Token",
+      "summaryWindowUsageValue": "{{total}} · 父會話 {{parent}} / 子代理 {{agents}}",
+      "summaryWindowUsageBoundary": "窗口 Token = 父會話執行窗口 + 本工作流關聯子代理；工作流注入回合另有強關聯口徑；不是 provider 級完整成本。",
+      "summaryUsageBoundary": "Token/成本等待工作流執行歸因接入；目前不估算。",
+      "summarySizeUnrestricted": "不限制",
+      "summarySizeSmall": "小",
+      "summarySizeMedium": "中",
+      "summarySizeLarge": "大",
+      "summaryCapOps": "{{value}} 步",
+      "summaryCapTokens": "{{value}} Token",
+      "watchdogTitle": "有工作流需要確認",
+      "watchdogRecoverableOwnerWithAge": "執行 owner 不可用，已無進展 {{age}}",
+      "watchdogRecoverableOwner": "執行 owner 不可用",
+      "watchdogNoRecentProgressWithAge": "執行中但沒有新進展，已等待 {{age}}",
+      "watchdogNoRecentProgress": "執行中但沒有新進展",
+      "watchdogUnknown": "工作流需要確認",
+      "watchdogNeedsAttention": "需確認",
+      "watchdogMore": "還有 {{count}} 條診斷可在執行詳情中查看",
+      "viewDetails": "查看詳情"
     },
     "codingEntry": "工作流",
     "openCodingPanel": "開啟工作流工作台",
     "openCodingPanelActive": "開啟工作流工作台 · {{count}} 個活躍",
-    "openCodingPanelAttention": "開啟工作流工作台 · {{count}} 個待處理",
-    "loop": {
-      "title": "持續推進",
-      "stateActive": "執行中",
-      "statePaused": "已暫停",
-      "stateCompleted": "已完成",
-      "stateCancelled": "已停止",
-      "stateBlocked": "已阻塞",
-      "activeCount": "{{count}} 個活躍",
-      "incognitoEmpty": "無痕會話不保存持續推進",
-      "empty": "暫無持續推進",
-      "pause": "暫停",
-      "resume": "恢復",
-      "stop": "停止",
-      "runs": "執行",
-      "maxRuntime": "最長",
-      "more": "還有 {{count}} 個持續推進，可用 /loop status 查看",
-      "sessionRequired": "先選擇一個會話",
-      "intervalInvalid": "請輸入有效間隔，例如 10m",
-      "conditionRequired": "請輸入停止條件",
-      "promptOrGoalRequired": "請輸入提示詞，或先建立一個進行中的目標",
-      "maxRuntimeInvalid": "請輸入有效最長執行時間，例如 2h",
-      "maxRunsInvalid": "最大次數必須是正整數",
-      "tokensInvalid": "Token 預算必須是正整數",
-      "defaultConditionPrompt": "持續推進，直到該條件滿足：{{condition}}。每次先檢查條件，滿足後停止，否則繼續推進下一步。",
-      "created": "持續推進已建立",
-      "boundGoal": "綁定目前目標",
-      "promptMode": "按提示詞重複觸發",
-      "closeCreate": "收起",
-      "new": "新增",
-      "kindInterval": "定期",
-      "kindCondition": "直到",
-      "interval": "間隔",
-      "maxRunsPlaceholder": "最大次數",
-      "maxRunsLabel": "最大次數",
-      "conditionPlaceholder": "例如 CI 已通過",
-      "condition": "停止條件",
-      "promptOptionalPlaceholder": "每次觸發要做什麼；留空則只檢查條件並推進下一步",
-      "promptGoalPlaceholder": "留空則繼續目前目標",
-      "promptPlaceholder": "檢查 CI，失敗時繼續修復",
-      "prompt": "提示詞",
-      "maxRuntimePlaceholder": "最長時間",
-      "maxRuntimeLabel": "最長執行時間",
-      "tokensPlaceholder": "Token 預算",
-      "tokensLabel": "Token 預算",
-      "create": "建立持續推進"
-    }
+    "openCodingPanelAttention": "開啟工作流工作台 · {{count}} 個待處理"
   },
   "knowledge": {
     "picker": {

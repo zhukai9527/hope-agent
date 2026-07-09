@@ -1,8 +1,8 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::Json;
 use ha_core::goal::{
     AppendGoalFollowUpInput, CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot,
-    UpdateGoalInput,
+    GoalWatchdogFinding, UpdateGoalInput,
 };
 use serde::Deserialize;
 
@@ -17,6 +17,23 @@ pub async fn get_active_goal(
 
 pub async fn get_goal(Path(goal_id): Path<String>) -> Result<Json<Option<GoalSnapshot>>, AppError> {
     Ok(Json(session_db()?.goal_snapshot(&goal_id, 200)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListGoalWatchdogQuery {
+    #[serde(default)]
+    pub stale_secs: Option<i64>,
+}
+
+pub async fn list_goal_watchdog_findings(
+    Path(session_id): Path<String>,
+    Query(query): Query<ListGoalWatchdogQuery>,
+) -> Result<Json<Vec<GoalWatchdogFinding>>, AppError> {
+    Ok(Json(session_db()?.list_goal_watchdog_findings(
+        &session_id,
+        query.stale_secs.unwrap_or(300),
+    )?))
 }
 
 #[derive(Debug, Deserialize)]

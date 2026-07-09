@@ -9,6 +9,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { GoalSnapshot } from "@/components/chat/workspace/useGoal"
 import ChatInput from "./ChatInput"
 import IncognitoToggle from "./IncognitoToggle"
+import PermissionModeSwitcher from "./PermissionModeSwitcher"
+import SandboxModeSwitcher from "./SandboxModeSwitcher"
 import { getPastedTextFileMeta } from "./pastedTextAttachment"
 
 vi.mock("react-i18next", () => ({
@@ -276,6 +278,35 @@ describe("IncognitoToggle", () => {
   })
 })
 
+describe("Collapsed toolbar mode switchers", () => {
+  test("render permission and sandbox controls inline when used inside the overflow menu", () => {
+    render(
+      <TooltipProvider>
+        <div>
+          <PermissionModeSwitcher
+            variant="menu"
+            permissionMode="default"
+            onPermissionModeChange={vi.fn()}
+          />
+          <SandboxModeSwitcher variant="menu" sandboxMode="off" onSandboxModeChange={vi.fn()} />
+        </div>
+      </TooltipProvider>,
+    )
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "chat.permissionMode.default.label (Shift+Tab)" }),
+    )
+    const smartOption = screen.getByText("chat.permissionMode.smart.label")
+    expect(smartOption.closest(".rounded-floating")).toBeFalsy()
+    expect(smartOption.closest(".absolute")).toBeFalsy()
+
+    fireEvent.click(screen.getByRole("button", { name: "off" }))
+    const standardOption = screen.getByText("standard")
+    expect(standardOption.closest(".rounded-floating")).toBeFalsy()
+    expect(standardOption.closest(".absolute")).toBeFalsy()
+  })
+})
+
 describe("ChatInput", () => {
   test("forwards composer changes and disables empty sends", () => {
     const onInputChange = vi.fn()
@@ -341,6 +372,87 @@ describe("ChatInput", () => {
     expect(inputDock).toBeTruthy()
     expect(inputDock?.className).toContain("overflow-visible")
     expect(inputDock?.className).not.toContain("overflow-hidden")
+  })
+
+  test("shows loop as a direct semantic toolbar action and enters loop mode", () => {
+    renderChatInput({ onLoopModeSubmit: vi.fn(() => Promise.resolve(true)) })
+
+    fireEvent.click(screen.getByRole("button", { name: "chat.loopMode.enter" }))
+
+    expect(screen.getByText("chat.loopMode.restricted")).toBeTruthy()
+  })
+
+  test("stacks model submenus upward when a side panel would overflow the viewport", async () => {
+    const originalInnerWidth = window.innerWidth
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    const longModel: AvailableModel = {
+      ...model,
+      providerId: "anthropic",
+      providerName: "Anthropic",
+      apiType: "anthropic",
+      modelId: "claude-long-name",
+      modelName: "Claude Sonnet 工作流验证超长模型名称",
+    }
+
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 430,
+    })
+    HTMLElement.prototype.getBoundingClientRect = vi.fn(() => ({
+      x: 120,
+      y: 0,
+      top: 0,
+      left: 120,
+      right: 220,
+      bottom: 20,
+      width: 100,
+      height: 20,
+      toJSON: () => ({}),
+    }))
+
+    try {
+      renderChatInput({
+        availableModels: [model, longModel],
+      })
+
+      fireEvent.click(screen.getByText("GPT Test"))
+      await waitFor(() => expect(screen.getAllByText("GPT Test").length).toBeGreaterThan(1))
+
+      fireEvent.click(screen.getAllByText("GPT Test")[1])
+
+      await waitFor(() => {
+        const submenuItem = screen.getByText(longModel.modelName)
+        expect(submenuItem.closest(".ha-menu-from-top")).toBeTruthy()
+        expect(submenuItem.closest(".ha-menu-from-left")).toBeFalsy()
+      })
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+    }
+  })
+
+  test("renders the workflow mode menu through a portal outside the input dock", async () => {
+    renderChatInput({
+      onDraftWorkflowModeChange: vi.fn(),
+      onOpenWorkspace: vi.fn(),
+    })
+
+    const inputDock = screen.getByRole("textbox").closest(".rounded-input-dock")
+    expect(inputDock).toBeTruthy()
+
+    const workflowMenuButton = screen.getByRole("button", { name: "工作流模式" })
+    fireEvent.pointerDown(workflowMenuButton)
+    fireEvent.mouseDown(workflowMenuButton)
+    fireEvent.click(workflowMenuButton)
+
+    await waitFor(() => expect(screen.getByText("Ultracode")).toBeTruthy())
+    const ultracodeOption = screen.getByText("Ultracode")
+
+    expect(inputDock?.contains(ultracodeOption)).toBe(false)
+    expect(ultracodeOption.closest(".rounded-floating")).toBeTruthy()
   })
 
   test("insets the context usage bar inside the rounded input dock corners", () => {
@@ -508,6 +620,51 @@ describe("ChatInput", () => {
     expect(onInputChange).toHaveBeenCalledWith("")
   })
 
+  test("submits the current draft through loop mode instead of normal send", async () => {
+    const onLoopModeSubmit = vi.fn(() => Promise.resolve(true))
+    const onInputChange = vi.fn()
+    const onSend = vi.fn()
+
+    renderChatInput({
+      input: "每天检查发布阻塞项",
+      onLoopModeSubmit,
+      onInputChange,
+      onSend,
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "chat.loopMode.enter" }))
+    expect(screen.getByText("chat.loopMode.restricted")).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
+
+    await waitFor(() => {
+      expect(onLoopModeSubmit).toHaveBeenCalledWith("每天检查发布阻塞项")
+    })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onInputChange).toHaveBeenCalledWith("")
+  })
+
+  test("treats /loop drafts as loop mode when sent directly", async () => {
+    const onLoopModeSubmit = vi.fn(() => Promise.resolve(true))
+    const onInputChange = vi.fn()
+    const onSend = vi.fn()
+
+    renderChatInput({
+      input: "/loop every 10m: check release blockers",
+      onLoopModeSubmit,
+      onInputChange,
+      onSend,
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
+
+    await waitFor(() => {
+      expect(onLoopModeSubmit).toHaveBeenCalledWith("every 10m: check release blockers")
+    })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onInputChange).toHaveBeenCalledWith("")
+  })
+
   test("lets /goal drafts bypass slash execution on Enter", async () => {
     const onGoalModeSubmit = vi.fn(() => Promise.resolve(true))
     const onCommandAction = vi.fn()
@@ -553,6 +710,108 @@ describe("ChatInput", () => {
       "execute_slash_command",
       expect.anything(),
     )
+  })
+
+  test("lets /loop drafts bypass slash execution on Enter", async () => {
+    const onLoopModeSubmit = vi.fn(() => Promise.resolve(true))
+    const onCommandAction = vi.fn()
+    transportMock.call.mockImplementation((command: string) => {
+      if (command === "get_awareness_config") return Promise.resolve({ enabled: false })
+      if (command === "list_slash_commands") {
+        return Promise.resolve([
+          {
+            name: "loop",
+            category: "utility",
+            descriptionKey: "slashCommands.loop.description",
+            hasArgs: true,
+            argsOptional: true,
+            argOptions: ["status", "pause", "resume", "stop"],
+          },
+        ])
+      }
+      if (command === "execute_slash_command") {
+        return Promise.resolve({
+          content: "should not execute",
+          action: { type: "displayOnly" },
+        })
+      }
+      return Promise.resolve([])
+    })
+
+    renderChatInput({
+      input: "/loop Build release notes every 10m",
+      onLoopModeSubmit,
+      onCommandAction,
+    })
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("list_slash_commands")
+    })
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" })
+
+    await waitFor(() => {
+      expect(onLoopModeSubmit).toHaveBeenCalledWith("Build release notes every 10m")
+    })
+    expect(onCommandAction).not.toHaveBeenCalled()
+    expect(transportMock.call).not.toHaveBeenCalledWith(
+      "execute_slash_command",
+      expect.anything(),
+    )
+  })
+
+  test("executes /loop drafts as slash commands when loop composer submit is unavailable", async () => {
+    const onCommandAction = vi.fn()
+    const onSend = vi.fn()
+    transportMock.call.mockImplementation((command: string) => {
+      if (command === "get_awareness_config") return Promise.resolve({ enabled: false })
+      if (command === "list_slash_commands") {
+        return Promise.resolve([
+          {
+            name: "loop",
+            category: "utility",
+            descriptionKey: "slashCommands.loop.description",
+            hasArgs: true,
+            argsOptional: true,
+            argOptions: ["status", "pause", "resume", "stop"],
+          },
+        ])
+      }
+      if (command === "execute_slash_command") {
+        return Promise.resolve({
+          content: "Loop created.",
+          action: { type: "displayOnly" },
+        })
+      }
+      return Promise.resolve([])
+    })
+
+    renderChatInput({
+      input: "/loop Build release notes every 10m",
+      currentSessionId: "s1",
+      currentAgentId: "agent-test",
+      onCommandAction,
+      onSend,
+    })
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("list_slash_commands")
+    })
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" })
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("execute_slash_command", {
+        sessionId: "s1",
+        agentId: "agent-test",
+        commandText: "/loop Build release notes every 10m",
+      })
+    })
+    expect(onCommandAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Loop created.",
+        _slashCommandText: "/loop Build release notes every 10m",
+      }),
+    )
+    expect(onSend).not.toHaveBeenCalled()
   })
 
   test("keeps goal composer and plan composer mutually exclusive", async () => {
@@ -626,6 +885,33 @@ describe("ChatInput", () => {
     expect(screen.getByText("1/2")).toBeTruthy()
   })
 
+  test("shows a compact workflow progress line for the most relevant run", () => {
+    renderChatInput({
+      workflowProgressRun: {
+        id: "wfr_attention",
+        sessionId: "s1",
+        kind: "coding.workflow",
+        state: "awaiting_approval",
+        executionMode: "guarded",
+        scriptHash: "abc",
+        scriptSource: "export default async function main(workflow) {}",
+        budget: { sizeGuideline: "large" },
+        cursorSeq: 12,
+        createdAt: "2026-07-08T00:00:00Z",
+        updatedAt: "2026-07-08T00:03:00Z",
+      },
+      workflowProgressCount: 2,
+      onOpenWorkspace: vi.fn(),
+    })
+
+    expect(screen.getByText("chat.workflowProgress.title")).toBeTruthy()
+    expect(screen.getByText("coding.workflow")).toBeTruthy()
+    expect(screen.getByText("chat.workflowProgress.stateAwaitingApproval")).toBeTruthy()
+    expect(screen.getByText("chat.workflowProgress.steps")).toBeTruthy()
+    expect(screen.getByText("chat.workflowProgress.more")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "chat.workflowProgress.view" })).toBeTruthy()
+  })
+
   test("previews required optional and follow-up criteria while editing the active goal", () => {
     renderChatInput({
       goalSnapshot: {
@@ -696,6 +982,30 @@ describe("ChatInput", () => {
     } finally {
       rectSpy.mockRestore()
     }
+  })
+
+  test("suggests workflow mode for explicit orchestration requests", async () => {
+    const onDraftWorkflowModeChange = vi.fn()
+
+    renderChatInput({
+      input: "请用 workflow 多代理交叉验证完成这次迁移",
+      currentSessionId: null,
+      onDraftWorkflowModeChange,
+    })
+
+    expect(screen.getByText("chat.workflowTriggerHint.title")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "chat.workflowTriggerHint.enable" }))
+
+    await waitFor(() => {
+      expect(onDraftWorkflowModeChange).toHaveBeenCalledWith("on")
+    })
+    expect(transportMock.call).not.toHaveBeenCalledWith("set_workflow_mode", expect.anything())
+  })
+
+  test("does not suggest workflow mode for plain workflow questions", () => {
+    renderChatInput({ input: "workflow 是什么？" })
+
+    expect(screen.queryByText("chat.workflowTriggerHint.title")).toBeNull()
   })
 
   test("materializes a draft session before executing workflow slash mode command", async () => {

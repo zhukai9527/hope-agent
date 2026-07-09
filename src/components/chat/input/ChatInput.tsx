@@ -97,8 +97,13 @@ import type { QuickPromptItem } from "@/types/quickPrompts"
 import type { GoalSnapshot } from "../workspace/useGoal"
 import { parseGoalCriteriaDraft, type DraftGoalCriterionKind } from "../workspace/goalCriteriaDraft"
 import { parseGoalUpsertSlashCommand } from "../goalSlashCommand"
+import { parseLoopCreateSlashCommand } from "../loopSlashCommand"
+import type { WorkflowRun, WorkflowRunState } from "../workspace/useWorkflowRuns"
 
 type WorkflowMode = "off" | "on" | "ultracode"
+type WorkflowTriggerHint = {
+  mode: Exclude<WorkflowMode, "off">
+}
 export type GoalModeSubmitAction =
   | "create_or_update"
   | "replace"
@@ -107,6 +112,32 @@ export type GoalModeSubmitAction =
   | "append_follow_up"
 
 const WORKFLOW_MODE_CHANGED_EVENT = "hope-agent:workflow-mode-changed"
+
+const ULTRACODE_TRIGGER_PATTERNS: RegExp[] = [
+  /(?:用|使用|开启|打开|启用|切到|进入).{0,12}(?:ultracode|超高|极致|穷尽)/i,
+  /(?:ultracode|超高|极致|穷尽).{0,12}(?:模式|跑|执行|做|完成|推进|编排|验证)/i,
+  /(?:大规模|全面|完整|彻底).{0,10}(?:交叉验证|并行审查|多代理|multi[-\s]?agent)/i,
+]
+
+const WORKFLOW_TRIGGER_PATTERNS: RegExp[] = [
+  /(?:用|使用|开启|打开|启用|切到|进入).{0,12}(?:工作流|workflow|动态工作流|多代理|multi[-\s]?agent|subagent)/i,
+  /(?:workflow|工作流|动态工作流).{0,16}(?:跑|执行|完成|处理|做|推进|编排|迁移|验证|审查|复核|调研|分析|review|verify|run)/i,
+  /(?:多代理|多\s*agent|multi[-\s]?agent|subagent|并行.{0,6}(?:审查|验证|复核)|交叉验证|cross[-\s]?check|parallel review)/i,
+  /(?:大规模|完整|全面|彻底).{0,12}(?:迁移|重构|验证|审查|复核|调研|分析|排查|修复)/i,
+  /(?:后台|长任务|可恢复|durable|long[-\s]?running).{0,12}(?:执行|运行|跑|推进|orchestrat)/i,
+]
+
+function detectWorkflowTriggerHint(raw: string): WorkflowTriggerHint | null {
+  const text = raw.replace(/\s+/g, " ").trim()
+  if (!text || text.startsWith("/")) return null
+  if (ULTRACODE_TRIGGER_PATTERNS.some((pattern) => pattern.test(text))) {
+    return { mode: "ultracode" }
+  }
+  if (WORKFLOW_TRIGGER_PATTERNS.some((pattern) => pattern.test(text))) {
+    return { mode: "on" }
+  }
+  return null
+}
 
 function normalizeWorkflowMode(value: unknown): WorkflowMode {
   const raw =
@@ -145,6 +176,66 @@ function workflowModeDescription(
         defaultValue: "更偏向长任务、深度验证和完整动态编排",
       })
   }
+}
+
+function workflowRunStateLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  state: WorkflowRunState,
+): string {
+  switch (state) {
+    case "draft":
+      return t("chat.workflowProgress.stateDraft", "草稿")
+    case "awaiting_approval":
+      return t("chat.workflowProgress.stateAwaitingApproval", "待审批")
+    case "running":
+      return t("chat.workflowProgress.stateRunning", "运行中")
+    case "awaiting_user":
+      return t("chat.workflowProgress.stateAwaitingUser", "等待你")
+    case "paused":
+      return t("chat.workflowProgress.statePaused", "已暂停")
+    case "recovering":
+      return t("chat.workflowProgress.stateRecovering", "恢复中")
+    case "completed":
+      return t("chat.workflowProgress.stateCompleted", "已完成")
+    case "failed":
+      return t("chat.workflowProgress.stateFailed", "失败")
+    case "cancelled":
+      return t("chat.workflowProgress.stateCancelled", "已取消")
+    case "blocked":
+      return t("chat.workflowProgress.stateBlocked", "阻塞")
+  }
+}
+
+function workflowRunToneClass(state: WorkflowRunState): string {
+  switch (state) {
+    case "awaiting_approval":
+    case "awaiting_user":
+    case "blocked":
+    case "failed":
+      return "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300"
+    case "running":
+    case "recovering":
+      return "border-blue-500/20 bg-blue-500/8 text-blue-700 dark:text-blue-300"
+    case "paused":
+    case "draft":
+      return "border-muted-foreground/20 bg-muted/50 text-muted-foreground"
+    case "completed":
+      return "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+    case "cancelled":
+      return "border-muted-foreground/20 bg-muted/50 text-muted-foreground"
+  }
+}
+
+function workflowRunIsLive(state: WorkflowRunState): boolean {
+  return (
+    state === "awaiting_approval" ||
+    state === "running" ||
+    state === "awaiting_user" ||
+    state === "paused" ||
+    state === "recovering" ||
+    state === "blocked" ||
+    state === "failed"
+  )
 }
 
 interface ChatInputProps {
@@ -227,6 +318,7 @@ interface ChatInputProps {
   goalSnapshot?: GoalSnapshot | null
   goalLoading?: boolean
   onGoalModeSubmit?: (objective: string, action?: GoalModeSubmitAction) => Promise<boolean>
+  onLoopModeSubmit?: (prompt: string) => Promise<boolean>
   onGoalUpdate?: (objective: string, completionCriteria: string) => Promise<boolean>
   onPauseGoal?: () => Promise<boolean>
   onResumeGoal?: () => Promise<boolean>
@@ -237,8 +329,10 @@ interface ChatInputProps {
   executionState?: ChatTurnStatus | null
   /** 打开右侧工作台面板（状态条点击）。 */
   onOpenWorkspace?: () => void
-  /** 打开工作台并展开「持续推进」创建器。 */
-  onOpenLoopCreate?: () => void
+  /** Most relevant visible workflow run, shown as a compact progress line. */
+  workflowProgressRun?: WorkflowRun | null
+  /** Total workflow runs relevant to the compact progress line. */
+  workflowProgressCount?: number
   /** True when the right-side workspace panel is expanded and showing task detail. */
   workspacePanelVisible?: boolean
   /** Larger centered presentation for a brand-new empty conversation. */
@@ -411,6 +505,7 @@ export default function ChatInput({
   goalSnapshot,
   goalLoading = false,
   onGoalModeSubmit,
+  onLoopModeSubmit,
   onGoalUpdate,
   onPauseGoal,
   onResumeGoal,
@@ -419,7 +514,8 @@ export default function ChatInput({
   taskProgressSnapshot,
   executionState,
   onOpenWorkspace,
-  onOpenLoopCreate,
+  workflowProgressRun,
+  workflowProgressCount = 0,
   workspacePanelVisible = false,
   hero = false,
   contextUsage,
@@ -445,9 +541,11 @@ export default function ChatInput({
   const [toolbarMinHeight, setToolbarMinHeight] = useState<number | null>(null)
   const [pendingExpanded, setPendingExpanded] = useState(false)
   const [goalComposerMode, setGoalComposerMode] = useState(false)
+  const [loopComposerMode, setLoopComposerMode] = useState(false)
   const [goalComposerAction, setGoalComposerAction] =
     useState<GoalModeSubmitAction>("create_or_update")
   const [goalSubmitting, setGoalSubmitting] = useState(false)
+  const [loopSubmitting, setLoopSubmitting] = useState(false)
   const [goalEditOpen, setGoalEditOpen] = useState(false)
   const [goalEditObjective, setGoalEditObjective] = useState("")
   const [goalEditCriteria, setGoalEditCriteria] = useState("")
@@ -456,6 +554,7 @@ export default function ChatInput({
   const [workflowModeLoading, setWorkflowModeLoading] = useState(false)
   const [workflowModeSaving, setWorkflowModeSaving] = useState<WorkflowMode | null>(null)
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false)
+  const [dismissedWorkflowHintFor, setDismissedWorkflowHintFor] = useState<string | null>(null)
   const { toolbarCompact, toolbarTight, sandboxCollapsed, permissionCollapsed } =
     getChatInputToolbarFlags(toolbarCollapseLevel)
 
@@ -520,6 +619,7 @@ export default function ChatInput({
     sessionId: currentSessionId ?? null,
     agentId: currentAgentId,
     ensureSession: onEnsureSession,
+    bypassLoopCreateOnEnter: !!onLoopModeSubmit,
   }
   const slash = useSlashCommands(input, setComposerInput, slashActions, inputHandleRef)
   const voice = useVoiceInput(currentSessionId)
@@ -758,7 +858,7 @@ export default function ChatInput({
   const quickPrompt = useQuickPrompts(input, setComposerInput, inputHandleRef, quickPrompts)
   // URL preview
   const { previews: urlPreviews, dismissedUrls, dismiss: dismissUrl } = useUrlPreview(input)
-  const hasSendableContent = goalComposerMode
+  const hasSendableContent = goalComposerMode || loopComposerMode
     ? input.trim().length > 0
     : input.trim().length > 0 || attachedFiles.length > 0 || (pendingQuotes?.length ?? 0) > 0
 
@@ -1003,6 +1103,10 @@ export default function ChatInput({
   const handleSend = useCallback(() => {
     resetHistoryBrowsing()
     const directGoalObjective = goalComposerMode ? null : parseGoalUpsertSlashCommand(input)
+    const directLoopPrompt =
+      goalComposerMode || loopComposerMode || !onLoopModeSubmit
+        ? null
+        : parseLoopCreateSlashCommand(input)
     if (goalComposerMode || directGoalObjective) {
       const objective = directGoalObjective ?? input.trim()
       if (!objective || goalSubmitting) return
@@ -1023,15 +1127,36 @@ export default function ChatInput({
         .finally(() => setGoalSubmitting(false))
       return
     }
+    if (loopComposerMode || directLoopPrompt) {
+      const prompt = directLoopPrompt ?? input.trim()
+      if (!prompt || loopSubmitting) return
+      if (incognitoEnabled) {
+        toast.error(t("chat.loopMode.incognito", "无痕会话不持久化持续推进"))
+        return
+      }
+      if (!onLoopModeSubmit) return
+      setLoopSubmitting(true)
+      void onLoopModeSubmit(prompt)
+        .then((ok) => {
+          if (!ok) return
+          setComposerInput("")
+          setLoopComposerMode(false)
+        })
+        .finally(() => setLoopSubmitting(false))
+      return
+    }
     onSend()
   }, [
     goalComposerMode,
+    loopComposerMode,
     goalComposerAction,
     goalSubmitting,
+    loopSubmitting,
     incognitoEnabled,
     input,
     activeGoal,
     onGoalModeSubmit,
+    onLoopModeSubmit,
     onSend,
     resetHistoryBrowsing,
     setComposerInput,
@@ -1080,9 +1205,27 @@ export default function ChatInput({
   const goalToggleTip = goalComposerMode
     ? t("chat.goalMode.activeTip", "正在设置目标")
     : t("chat.goalMode.enter", "进入目标模式")
+  const loopToggleLabel = t("chat.loopMode.label", "持续推进")
+  const loopModeAvailable = !!onLoopModeSubmit
+  const loopToggleTip = loopComposerMode
+    ? t("chat.loopMode.activeTip", "正在设置持续推进")
+    : t("chat.loopMode.enter", "进入持续推进模式")
   const workflowToggleLabel = t("chat.workflowMode.label", "工作流")
   const workflowModeActive = workflowMode !== "off"
   const WorkflowModeIcon = workflowMode === "ultracode" ? Sparkles : GitPullRequest
+  const normalizedWorkflowTriggerInput = input.replace(/\s+/g, " ").trim()
+  const workflowTriggerHint = useMemo(() => detectWorkflowTriggerHint(input), [input])
+  const showWorkflowTriggerHint =
+    !!workflowTriggerHint &&
+    workflowMode === "off" &&
+    !incognitoEnabled &&
+    !goalComposerMode &&
+    !loopComposerMode &&
+    planState !== "planning" &&
+    normalizedWorkflowTriggerInput !== dismissedWorkflowHintFor
+  const showWorkflowProgressLine =
+    !!workflowProgressRun && workflowRunIsLive(workflowProgressRun.state) && !incognitoEnabled
+  const workflowProgressExtraCount = Math.max(0, workflowProgressCount - 1)
   const workflowMenuLabel = t("chat.workflowMode.menuTitle", { defaultValue: "工作流模式" })
   const workflowButtonLabel = workflowModeActive
     ? `${workflowToggleLabel} · ${workflowModeLabel(t, workflowMode)}`
@@ -1127,7 +1270,7 @@ export default function ChatInput({
       ? `${activeGoalRequiredDone}/${activeGoalRequiredTotal}`
       : null
   const planModeActive = planState !== "off" && planState !== "completed"
-  const planComposerBannerOpen = planState === "planning" && !goalComposerMode
+  const planComposerBannerOpen = planState === "planning" && !goalComposerMode && !loopComposerMode
 
   const overflowMenuItemClass =
     "flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-foreground/80 outline-none transition-all duration-150 hover:bg-secondary/60 hover:text-foreground focus-visible:bg-secondary/60 focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
@@ -1136,11 +1279,13 @@ export default function ChatInput({
   const handlePlanToggle = () => {
     if (planState === "off" || planState === "completed") {
       setGoalComposerMode(false)
+      setLoopComposerMode(false)
       onEnterPlanMode?.()
     } else if (planState === "planning") {
       onExitPlanMode?.()
     } else {
       setGoalComposerMode(false)
+      setLoopComposerMode(false)
       onTogglePlanPanel?.()
     }
   }
@@ -1153,8 +1298,25 @@ export default function ChatInput({
     setGoalComposerMode((value) => {
       const next = !value
       if (next) {
+        setLoopComposerMode(false)
         if (planModeActive) void onExitPlanMode?.()
         setGoalComposerAction("create_or_update")
+      }
+      return next
+    })
+  }
+
+  const handleLoopModeToggle = () => {
+    if (!loopModeAvailable) return
+    if (incognitoEnabled) {
+      toast.error(t("chat.loopMode.incognito", "无痕会话不持久化持续推进"))
+      return
+    }
+    setLoopComposerMode((value) => {
+      const next = !value
+      if (next) {
+        setGoalComposerMode(false)
+        if (planModeActive) void onExitPlanMode?.()
       }
       return next
     })
@@ -1333,15 +1495,24 @@ export default function ChatInput({
         : []
   const pendingVisibleItems = pendingExpanded ? pendingQueueItems : pendingQueueItems.slice(0, 2)
   const hasPendingQueue = loading && pendingQueueItems.length > 0
-  const activeGoalStripIsFirstContent =
+  const topStripBase =
     !hasVisibleTaskProgress &&
     attachedFiles.length === 0 &&
     !pendingQuotes?.length &&
     !hasPendingQueue
+  const workflowTriggerHintIsFirstContent = topStripBase
+  const activeGoalStripIsFirstContent = topStripBase && !showWorkflowTriggerHint
+  const activeGoalStatusOpen = !!activeGoal && !goalComposerMode
+  const workflowModeStatusOpen = workflowModeActive && !incognitoEnabled
+  const workflowProgressLineIsFirstContent =
+    activeGoalStripIsFirstContent && !activeGoalStatusOpen
+  const workflowModeStatusIsFirstContent =
+    activeGoalStripIsFirstContent && !activeGoalStatusOpen && !showWorkflowProgressLine
   const modeBannerIsFirstContent =
     activeGoalStripIsFirstContent &&
-    !(!!activeGoal && !goalComposerMode) &&
-    !(workflowModeActive && !incognitoEnabled)
+    !activeGoalStatusOpen &&
+    !showWorkflowProgressLine &&
+    !workflowModeStatusOpen
 
   const pendingStatusLabel = (item: PendingSendPreview) => {
     switch (item.status) {
@@ -1398,6 +1569,10 @@ export default function ChatInput({
     </>
   )
 
+  const handleLoopCreateOpen = () => {
+    handleLoopModeToggle()
+  }
+
   const renderOverflowMenuItem = (actionId: ChatInputOverflowActionId) => {
     switch (actionId) {
       case "attach-files":
@@ -1441,7 +1616,7 @@ export default function ChatInput({
   }
 
   // Add-style actions (working dir / attach / slash) live here once the toolbar
-  // is compact. Knowledge + Goal + Workflow + Plan join at the narrower
+  // is compact. Knowledge + Goal + Loop + Workflow + Plan join at the narrower
   // `toolbarTight` tier so semantic mode controls move as one group.
   const renderOverflowMenuItems = () => (
     <>
@@ -1471,22 +1646,20 @@ export default function ChatInput({
             <Target className="h-4 w-4 shrink-0" />
             <span className="truncate">{goalToggleLabel}</span>
           </button>
-          <button
-            type="button"
-            className={overflowMenuItemClass}
-            disabled={incognitoEnabled}
-            onClick={() => {
-              setShowOverflowMenu(false)
-              if (onOpenLoopCreate) {
-                onOpenLoopCreate()
-              } else {
-                onOpenWorkspace?.()
-              }
-            }}
-          >
-            <Radio className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">{t("chat.loopMode.label", "持续推进")}</span>
-          </button>
+          {loopModeAvailable && (
+            <button
+              type="button"
+              className={cn(overflowMenuItemClass, loopComposerMode && "text-sky-600")}
+              disabled={incognitoEnabled}
+              onClick={() => {
+                setShowOverflowMenu(false)
+                handleLoopCreateOpen()
+              }}
+            >
+              <Radio className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{loopToggleLabel}</span>
+            </button>
+          )}
           <div className="rounded-md border border-border/50 bg-background/35 p-1">
             <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium text-muted-foreground">
               {workflowModeSaving ? (
@@ -1794,8 +1967,71 @@ export default function ChatInput({
           </div>
         </AnimatedCollapse>
 
+        {/* Natural workflow trigger hint — suggests mode only, never creates a run itself. */}
+        <AnimatedCollapse open={showWorkflowTriggerHint}>
+          {workflowTriggerHint ? (
+            <div
+              className={cn(
+                "border-b px-3 py-2 text-xs",
+                workflowTriggerHint.mode === "ultracode"
+                  ? "border-purple-500/15 bg-purple-500/7 text-purple-700 dark:text-purple-300"
+                  : "border-blue-500/15 bg-blue-500/7 text-blue-700 dark:text-blue-300",
+                workflowTriggerHintIsFirstContent && "rounded-t-2xl",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                {workflowTriggerHint.mode === "ultracode" ? (
+                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">
+                    {t("chat.workflowTriggerHint.title", "这条消息看起来适合工作流")}
+                  </div>
+                  <div className="truncate text-foreground/65">
+                    {workflowTriggerHint.mode === "ultracode"
+                      ? t(
+                          "chat.workflowTriggerHint.ultracodeDescription",
+                          "开启后模型会更偏向深度编排、交叉验证和长任务恢复。",
+                        )
+                      : t(
+                          "chat.workflowTriggerHint.description",
+                          "开启后模型可自行判断是否创建可观察、可恢复的后台工作流。",
+                        )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md border border-current/15 bg-background/45 px-2 py-1 text-[11px] font-medium transition-colors hover:bg-background/70 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={workflowMenuDisabled}
+                  onClick={() => {
+                    void updateWorkflowMode(workflowTriggerHint.mode).then(() => {
+                      setDismissedWorkflowHintFor(normalizedWorkflowTriggerInput)
+                    })
+                  }}
+                >
+                  {workflowTriggerHint.mode === "ultracode"
+                    ? t("chat.workflowTriggerHint.enableUltracode", "开启 Ultracode")
+                    : t("chat.workflowTriggerHint.enable", "开启自动")}
+                </button>
+                <IconTip label={t("chat.workflowTriggerHint.dismiss", "忽略")}>
+                  <button
+                    type="button"
+                    aria-label={t("chat.workflowTriggerHint.dismiss", "忽略")}
+                    className="shrink-0 rounded-md p-1 transition-colors hover:bg-background/60"
+                    onClick={() => setDismissedWorkflowHintFor(normalizedWorkflowTriggerInput)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </IconTip>
+              </div>
+            </div>
+          ) : null}
+        </AnimatedCollapse>
+
         {/* Active Goal status — always visible near the composer while a durable goal is open. */}
-        <AnimatedCollapse open={!!activeGoal && !goalComposerMode}>
+        <AnimatedCollapse open={activeGoalStatusOpen}>
           {activeGoal ? (
             <div
               className={cn(
@@ -1947,9 +2183,67 @@ export default function ChatInput({
           ) : null}
         </AnimatedCollapse>
 
+        {/* Workflow progress line — compact run status without opening the expert workspace. */}
+        <AnimatedCollapse open={showWorkflowProgressLine}>
+          {workflowProgressRun ? (
+            <div
+              className={cn(
+                "border-b px-3 py-1.5 text-xs",
+                workflowRunToneClass(workflowProgressRun.state),
+                workflowProgressLineIsFirstContent && "rounded-t-2xl",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <GitPullRequest className="h-3.5 w-3.5 shrink-0" />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 truncate text-left font-medium"
+                  onClick={onOpenWorkspace}
+                >
+                  {t("chat.workflowProgress.title", "工作流运行")}{" "}
+                  <span className="font-normal text-foreground/75">
+                    {workflowProgressRun.kind || t("chat.workflowProgress.defaultKind", "通用任务")}
+                  </span>
+                </button>
+                <span className="shrink-0 rounded-full border border-current/15 bg-background/45 px-2 py-0.5 text-[11px]">
+                  {workflowRunStateLabel(t, workflowProgressRun.state)}
+                </span>
+                {workflowProgressRun.cursorSeq > 0 ? (
+                  <span className="hidden shrink-0 rounded-full border border-current/15 bg-background/45 px-2 py-0.5 text-[11px] sm:inline-flex">
+                    {t("chat.workflowProgress.steps", "{{count}} 步", {
+                      count: workflowProgressRun.cursorSeq,
+                    })}
+                  </span>
+                ) : null}
+                {workflowProgressExtraCount > 0 ? (
+                  <span className="hidden shrink-0 rounded-full border border-current/15 bg-background/45 px-2 py-0.5 text-[11px] sm:inline-flex">
+                    {t("chat.workflowProgress.more", "+{{count}} 个", {
+                      count: workflowProgressExtraCount,
+                    })}
+                  </span>
+                ) : null}
+                {onOpenWorkspace ? (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-background/60"
+                    onClick={onOpenWorkspace}
+                  >
+                    {t("chat.workflowProgress.view", "查看")}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </AnimatedCollapse>
+
         {/* Workflow Mode status — visible only when autonomous orchestration is enabled. */}
-        <AnimatedCollapse open={workflowModeActive && !incognitoEnabled}>
-          <div className="border-b border-blue-500/15 bg-blue-500/7 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300">
+        <AnimatedCollapse open={workflowModeStatusOpen}>
+          <div
+            className={cn(
+              "border-b border-blue-500/15 bg-blue-500/7 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300",
+              workflowModeStatusIsFirstContent && "rounded-t-2xl",
+            )}
+          >
             <div className="flex min-w-0 items-center gap-2">
               <WorkflowModeIcon className="h-3.5 w-3.5 shrink-0" />
               <button
@@ -2041,6 +2335,28 @@ export default function ChatInput({
           </div>
         </AnimatedCollapse>
 
+        {/* Loop Mode Banner */}
+        <AnimatedCollapse open={loopComposerMode}>
+          <div
+            className={cn(
+              "flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-700 animate-in fade-in slide-in-from-top-1 duration-200 dark:text-sky-300",
+              modeBannerIsFirstContent && "rounded-t-2xl",
+            )}
+          >
+            <Radio className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {t("chat.loopMode.restricted", "持续推进模式：发送后会创建可重复触发的推进任务")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setLoopComposerMode(false)}
+              className="transition-colors hover:text-sky-900 dark:hover:text-sky-100"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </AnimatedCollapse>
+
         {/* Plan Mode Banner */}
         <AnimatedCollapse open={planComposerBannerOpen}>
           <div
@@ -2068,6 +2384,8 @@ export default function ChatInput({
             placeholder={
               goalComposerMode
                 ? t("chat.goalMode.placeholder", "描述你希望持续推进并最终完成的目标")
+                : loopComposerMode
+                  ? t("chat.loopMode.placeholder", "描述你希望持续推进的任务")
                 : planState === "planning"
                   ? t("planMode.placeholder")
                   : hasPendingQueue
@@ -2202,7 +2520,7 @@ export default function ChatInput({
 
                 <AwarenessToggle sessionId={currentSessionId ?? null} disabled={incognitoEnabled} />
 
-                {/* Knowledge + Goal + Workflow + Plan — semantic mode controls,
+                {/* Knowledge + Goal + Loop + Workflow + Plan — semantic mode controls,
                     kept inline until the measured toolbar would wrap. */}
                 {!toolbarTight && (
                   <div ref={semanticModesRef} className="flex shrink-0 items-center gap-1">
@@ -2232,6 +2550,26 @@ export default function ChatInput({
                         <span>{goalToggleLabel}</span>
                       </button>
                     </IconTip>
+
+                    {loopModeAvailable && (
+                      <IconTip label={loopToggleTip}>
+                        <button
+                          type="button"
+                          aria-label={loopToggleTip}
+                          onClick={handleLoopCreateOpen}
+                          disabled={incognitoEnabled}
+                          className={cn(
+                            "flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg bg-transparent px-2 py-1 text-xs font-medium transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50",
+                            loopComposerMode
+                              ? "bg-sky-500/10 text-sky-600"
+                              : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Radio className="h-4 w-4 shrink-0" />
+                          <span>{loopToggleLabel}</span>
+                        </button>
+                      </IconTip>
+                    )}
 
                     <DropdownMenu.Root open={workflowMenuOpen} onOpenChange={setWorkflowMenuOpen}>
                       <IconTip label={workflowMenuLabel}>
@@ -2353,12 +2691,12 @@ export default function ChatInput({
                     size="icon"
                     className="h-8 w-8 rounded-full shrink-0"
                     onClick={handleSend}
-                    disabled={!hasSendableContent || goalSubmitting}
+                    disabled={!hasSendableContent || goalSubmitting || loopSubmitting}
                     aria-label={
                       loading && hasSendableContent ? t("chat.queueMessage") : t("chat.send")
                     }
                   >
-                    {goalSubmitting ? (
+                    {goalSubmitting || loopSubmitting ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Send className="h-4 w-4" />

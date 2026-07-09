@@ -26,13 +26,33 @@ function readGoalSlashArgs(commandText: string | undefined): string | null {
 export function parseGoalUpsertSlashCommand(commandText: string | undefined): string | null {
   const args = readGoalSlashArgs(commandText)
   if (!args) return null
-  const first = args.split(/\s+/)[0]?.toLowerCase()
-  if (GOAL_SLASH_CONTROL_WORDS.has(first)) return null
+  if (GOAL_SLASH_CONTROL_WORDS.has(args.toLowerCase())) return null
   return args
 }
 
 export function isGoalUpsertSlashCommand(commandText: string | undefined): boolean {
   return parseGoalUpsertSlashCommand(commandText) != null
+}
+
+export function parseGoalObjectiveAndCriteria(raw: string): {
+  objective: string
+  completionCriteria: string
+} {
+  const markers = ["--criteria", "criteria:", "completion criteria:", "完成标准：", "完成标准:"]
+  const lower = raw.toLowerCase()
+  for (const marker of markers) {
+    const index = lower.indexOf(marker.toLowerCase())
+    if (index < 0) continue
+    return {
+      objective: raw.slice(0, index).trim().replace(/^-+|-+$/g, "").trim(),
+      completionCriteria: raw
+        .slice(index + marker.length)
+        .trim()
+        .replace(/^:/, "")
+        .trim(),
+    }
+  }
+  return { objective: raw.trim(), completionCriteria: "" }
 }
 
 export function goalSlashCommandDisplay(commandText: string): {
@@ -42,27 +62,27 @@ export function goalSlashCommandDisplay(commandText: string): {
   const args = readGoalSlashArgs(commandText)
   if (args == null) return { content: commandText }
 
-  const [first = ""] = args.split(/\s+/)
+  const lowerArgs = args.toLowerCase()
   const goalContent =
     args.length === 0
       ? "Show active goal"
-      : first === "status" || first === "show"
+      : lowerArgs === "status" || lowerArgs === "show"
         ? "Show active goal"
-        : first === "pause"
+        : lowerArgs === "pause"
           ? "Pause active goal"
-          : first === "resume"
+          : lowerArgs === "resume"
             ? "Resume active goal"
-            : first === "clear" || first === "cancel"
+            : lowerArgs === "clear" || lowerArgs === "cancel"
               ? "Clear active goal"
-              : first === "evaluate" || first === "audit"
+              : lowerArgs === "evaluate" || lowerArgs === "audit"
                 ? "Evaluate active goal"
-                : first === "accept" || first === "close" || first === "done"
+                : lowerArgs === "accept" || lowerArgs === "close" || lowerArgs === "done"
                   ? "Accept goal completion"
-                  : first === "strict" ||
-                      first === "needs-strict-evidence" ||
-                      first === "needs_strict_evidence"
+                  : lowerArgs === "strict" ||
+                      lowerArgs === "needs-strict-evidence" ||
+                      lowerArgs === "needs_strict_evidence"
                     ? "Require stricter evidence"
-                    : first === "help"
+                    : lowerArgs === "help"
                       ? "Goal help"
                       : args
   return { content: goalContent || "Goal", mode: "goal" }

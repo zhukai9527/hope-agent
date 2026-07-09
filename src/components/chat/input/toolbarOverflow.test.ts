@@ -70,7 +70,7 @@ test("estimates all toolbar collapse tier widths from the currently visible tier
       visibleWidth: 420,
       widths,
     }),
-  ).toEqual([760, 684, 420, 270, 135])
+  ).toEqual([836, 760, 420, 270, 135])
 })
 
 test("resolves the toolbar collapse tier directly from available width", () => {
@@ -79,8 +79,8 @@ test("resolves the toolbar collapse tier directly from available width", () => {
   expect(
     resolveChatInputToolbarCollapseLevel({
       currentLevel: 0,
-      availableWidth: 760 + CHAT_INPUT_TOOLBAR_FIT_BUFFER_PX,
-      visibleWidth: 760,
+      availableWidth: 836 + CHAT_INPUT_TOOLBAR_FIT_BUFFER_PX,
+      visibleWidth: 836,
       widths,
     }),
   ).toBe(0)
@@ -89,7 +89,7 @@ test("resolves the toolbar collapse tier directly from available width", () => {
     resolveChatInputToolbarCollapseLevel({
       currentLevel: 0,
       availableWidth: 500,
-      visibleWidth: 760,
+      visibleWidth: 836,
       widths,
     }),
   ).toBe(2)
@@ -98,7 +98,7 @@ test("resolves the toolbar collapse tier directly from available width", () => {
     resolveChatInputToolbarCollapseLevel({
       currentLevel: 0,
       availableWidth: 240,
-      visibleWidth: 760,
+      visibleWidth: 836,
       widths,
     }),
   ).toBe(4)
@@ -119,7 +119,7 @@ test("keeps an expansion buffer so compact toolbar tiers do not jitter", () => {
   expect(
     resolveChatInputToolbarCollapseLevel({
       currentLevel: 2,
-      availableWidth: 710,
+      availableWidth: 790,
       visibleWidth: 420,
       widths,
     }),

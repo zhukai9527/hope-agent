@@ -1,6 +1,7 @@
 mod core_tools;
 mod extra_tools;
 mod goal_tools;
+mod loop_tools;
 mod metadata;
 mod plan_tools;
 mod registry;

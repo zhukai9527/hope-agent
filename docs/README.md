@@ -14,6 +14,8 @@
 
 仓库内 `docs/architecture/` 只保留已经实现并稳定下来的最终技术架构。重要设计决策已经沉淀到对应 architecture 文档的实现契约、非目标或后续边界中；历史规划材料、阶段 roadmap、review packet 和原始参考材料进入外部 Plans 归档。
 
+截至 2026-07-09，Agent Control Plane V3 的 strict proof evidence 也已归档到同一 Plans 目录下的 `11-agent-control-plane-v3-claude-parity/`：5 个 required strict proof 全部 passed，最终 audit `14/14 passed`。后续若继续扩展 Goal / Loop / Workflow，应继续遵循“过程资料进入 Plans，稳定实现事实进入 architecture”的边界。
+
 ---
 
 ## 系统架构
@@ -62,13 +64,13 @@
 | 文档                                          | 说明                                | 关联源码                  |
 | ------------------------------------------- | --------------------------------- | --------------------- |
 | [Plan Mode](architecture/plan-mode.md)      | 5 状态机、plan = 设计契约 + task = 进度真相双轨分离、enter_plan_mode 模型主动入口、Git Checkpoint 回滚 | `plan/`, `tools/enter_plan_mode.rs`, `tools/submit_plan.rs`, `tools/task.rs` |
-| [Workspace Control Panel](architecture/workspace.md) | 主聊天右侧工作台：Environment / Goal / Session / Progress / Workflow / Loop / Background Jobs / Output / Sources / Knowledge / Advanced Diagnostics 的信息架构、输入框联动、多语言和 UI 验收契约 | `components/chat/workspace/`, `components/chat/input/ChatInput.tsx` |
-| [Goal 控制平面](architecture/goal.md) | 长任务顶层目标：objective、completion criteria、状态机、证据链、final audit、Workflow 绑定与 Workspace Goal section | `goal/`, `workflow/`, `components/chat/workspace/` |
-| [Workflow Mode、Workflow Run 与 Execution Mode](architecture/workflow.md) | Durable `workflow.js` 执行编排、WorkflowRun/Op/Event 三表、QuickJS host API、replay、permission preview、pause/resume/cancel、Workspace Workflow section | `workflow/`, `execution_mode.rs`, `components/chat/workspace/` |
+| [Workspace Control Panel](architecture/workspace.md) | 主聊天右侧工作台：Environment / Goal / Session / Progress / Workflow / Loop / Background Jobs / Output / Sources / Knowledge / Advanced Diagnostics 的信息架构、输入框联动、多语言、UI 验收契约与 V3 strict proof 证据边界 | `components/chat/workspace/`, `components/chat/input/ChatInput.tsx` |
+| [Goal 控制平面](architecture/goal.md) | 长任务顶层目标：objective、completion criteria、状态机、证据链、final audit、Goal v3 Runtime/Runner、completion report、Workflow/Loop 绑定与 Workspace Goal section | `goal/`, `workflow/`, `components/chat/workspace/` |
+| [Workflow Mode、Workflow Run 与 Execution Mode](architecture/workflow.md) | Durable `workflow.js` 执行编排、WorkflowRun/Op/Event 三表、QuickJS host API、replay、permission preview、模型自主 create/status/trace/control/followup、阶段注入、pause/resume/cancel、Workspace Workflow section | `workflow/`, `execution_mode.rs`, `components/chat/workspace/` |
 | [Domain Workflow 控制平面](architecture/domain-workflow.md) | Phase 7.1-7.16 通用场景模板 registry、workflow draft 预览、General Evidence 持久化、Goal evidence 链接、Context Retrieval、Domain Quality、Domain Learning、Domain Eval、Artifact Export Guard、Connector Action Guard、Phase 8.2 Connector E2E Gate 与 Phase 8.4 Workspace 通用任务工作台衔接，覆盖 Research / Writing / Data Analysis / Meeting Prep / Knowledge Curation / Inbox / Project Ops | `domain_workflow.rs`, `goal/`, `workflow/`, `context_retrieval.rs`, `components/chat/workspace/` |
 | [Domain Quality 控制平面](architecture/domain-quality.md) | Phase 7.4 通用领域 review / verification：基于 Domain Workflow template、General Evidence 与 approval gates 生成 durable quality run/check/event，失败或需用户确认时写回 Goal blocking evidence，并在 Workspace「领域复核」区块展示；Phase 7.5 作为 Domain Learning 的输入信号 | `domain_quality.rs`, `goal/`, `components/chat/workspace/` |
 | [Domain Eval 与 Quality Gate 控制平面](architecture/domain-eval.md) | Phase 7.6-7.14 通用领域 eval / gate / readiness，Phase 8.1-8.3 运行稳定性 Operational Gate 与跨窗口 Soak Report：基于 Goal、Workflow、Loop、Domain Evidence、Domain Quality、Domain Campaign trace 与 Connector E2E evidence 做 deterministic scoring、质量守门、可交付判断、运行稳定性判断和长期运行审计，并在 Dashboard 独立展示 | `domain_eval.rs`, `domain_quality.rs`, `domain_workflow.rs`, `components/dashboard/learning/` |
-| [Loop 控制平面](architecture/loop.md) | 真实 `/loop`：复用 Cron 的可靠调度，按时间/条件重复触发原会话，记录 loop_schedules / loop_runs trace，支持 status / pause / resume / stop | `loop_control.rs`, `cron/`, `components/chat/workspace/` |
+| [Loop 控制平面](architecture/loop.md) | 真实 `/loop`：复用 Cron 的可靠调度，按时间/条件/事件或 dynamic self-paced 触发原会话，记录 loop_schedules / loop_runs trace，支持模型侧 `loop_*` 工具、status / pause / resume / stop / run history / progress guard | `loop_control.rs`, `cron/`, `components/chat/workspace/` |
 | [Managed Worktree 控制平面](architecture/worktree.md) | Durable git worktree 隔离环境：创建/恢复/归档/交接、Workflow 绑定执行、Subagent 隔离、WorktreeCreate/Remove hooks、Workspace GUI 控制 | `worktree.rs`, `workflow/`, `subagent/`, `components/chat/workspace/` |
 | [LSP 与语义代码智能](architecture/lsp.md) | Language Server Protocol 控制面：语义导航工具、诊断缓存、文件修改后同步、动态 diagnostics prompt 后缀、Workspace 诊断面板 | `lsp.rs`, `tools/lsp.rs`, `components/chat/workspace/` |
 | [Review Engine 控制平面](architecture/review-engine.md) | Durable 本地代码审查：review run/finding/event、profiles、Deep Review 降级、symbol/IDE evidence、Goal evidence、Workspace 代码审查面板与 `/review` | `review.rs`, `slash_commands/`, `components/chat/workspace/` |

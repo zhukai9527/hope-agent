@@ -22,8 +22,10 @@ pub use runtime::{
     WorkflowRuntimeResult,
 };
 pub use types::{
-    CreateWorkflowRunInput, StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass,
-    WorkflowEvent, WorkflowOp, WorkflowOpState, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState,
+    CreateWorkflowRunFromTemplateInput, CreateWorkflowRunInput, ListSavedWorkflowTemplatesInput,
+    SaveWorkflowTemplateInput, SavedWorkflowTemplate, SavedWorkflowTemplateScope,
+    StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowEvent, WorkflowOp,
+    WorkflowOpState, WorkflowRun, WorkflowRunSnapshot, WorkflowRunState, WorkflowWatchdogFinding,
 };
 
 #[cfg(test)]

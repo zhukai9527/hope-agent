@@ -15,6 +15,14 @@ use tauri::State;
 const CHAT_CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 const CHAT_CANCELLED_BY_CALLER: &str = "chat cancelled by caller";
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitialGoalInput {
+    pub objective: String,
+    #[serde(default)]
+    pub completion_criteria: Option<String>,
+}
+
 async fn wait_for_chat_cancel(cancel: Arc<AtomicBool>) {
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -191,6 +199,10 @@ pub async fn chat(
     // `attachments_meta = {"goal_trigger": true}` so the UI can render a
     // regular user bubble with a Goal badge.
     goal_trigger: Option<bool>,
+    // First-turn Goal creation payload. Only honored on the auto-create branch:
+    // the durable Goal is created after prompt preflight passes and before the
+    // model turn starts, so the first assistant response sees Active Goal.
+    initial_goal: Option<InitialGoalInput>,
     // Structured payload for plan inline-comment messages — stamped into
     // `attachments_meta = {"plan_comment": {selectedText, comment}}`. The
     // desktop GUI reads this back to render PlanCommentBubble; IM channels
@@ -241,6 +253,23 @@ pub async fn chat(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned);
+    let auto_create_session = session_id.as_deref().is_none_or(|id| id.is_empty());
+    if auto_create_session
+        && initial_goal
+            .as_ref()
+            .is_some_and(|goal| goal.objective.trim().is_empty())
+    {
+        return Err(CmdError::msg("Initial goal objective must not be empty"));
+    }
+    if auto_create_session
+        && initial_goal.is_some()
+        && incognito.unwrap_or(false)
+        && project_id.is_none()
+    {
+        return Err(CmdError::msg(
+            "Cannot create a durable goal for an incognito session",
+        ));
+    }
 
     // Resolve or create session — prefer explicit agent_id from frontend
     let current_agent_id = match agent_id {
@@ -418,6 +447,26 @@ pub async fn chat(
             return Ok(notice);
         }
     };
+
+    if let (Some(new_sid), Some(goal)) = (new_session_created.as_ref(), initial_goal.as_ref()) {
+        db.create_goal(ha_core::goal::CreateGoalInput {
+            session_id: new_sid.clone(),
+            objective: goal.objective.trim().to_string(),
+            completion_criteria: goal
+                .completion_criteria
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            domain: None,
+            workflow_template_id: None,
+            workflow_template_version: None,
+            workflow_task_type: None,
+            budget_token_limit: None,
+            budget_time_limit_secs: None,
+            budget_turn_limit: None,
+        })?;
+    }
 
     // KB sidebar chat: promote the freshly-created session into a knowledge
     // thread (hidden from the main list; bound to the KB + anchor note) now that

@@ -523,6 +523,31 @@
       "ultracodeDesc": "Prefer long-running orchestration, deeper verification, and full dynamic planning",
       "viewRuns": "View workflow runs"
     },
+    "workflowProgress": {
+      "defaultKind": "General task",
+      "more": "+{{count}} more",
+      "stateAwaitingApproval": "Needs approval",
+      "stateAwaitingUser": "Waiting for you",
+      "stateBlocked": "Blocked",
+      "stateCancelled": "Cancelled",
+      "stateCompleted": "Completed",
+      "stateDraft": "Draft",
+      "stateFailed": "Failed",
+      "statePaused": "Paused",
+      "stateRecovering": "Recovering",
+      "stateRunning": "Running",
+      "steps": "{{count}} steps",
+      "title": "Workflow run",
+      "view": "View"
+    },
+    "workflowTriggerHint": {
+      "description": "Turn it on so the model can decide whether to create an observable, recoverable background workflow.",
+      "dismiss": "Ignore",
+      "enable": "Turn on Auto",
+      "enableUltracode": "Turn on Ultracode",
+      "title": "Looks like a good fit for Workflow",
+      "ultracodeDescription": "Turn it on to bias the model toward deeper orchestration, cross-checks, and long-task recovery."
+    },
     "permissionMode": {
       "applyToAgentDefault": {
         "desc": "When enabled, choosing a mode also updates this agent's default for new chats.",
@@ -5114,7 +5139,7 @@
       "description": "Set and audit the session goal"
     },
     "loop": {
-      "description": "Schedule recurring triggers for a goal or prompt"
+      "description": "Run a prompt repeatedly on a fixed interval"
     },
     "review": {
       "description": "Review local code changes"
@@ -5613,6 +5638,16 @@
       "loadingDiff": "Read diff",
       "noTextDiff": "No text to display diff"
     },
+    "goal": {
+      "watchdogTitle": "Goal needs confirmation",
+      "watchdogStaleEvaluatingWithAge": "Evaluating with no new progress for {{age}}",
+      "watchdogStaleEvaluating": "Evaluating with no new progress",
+      "watchdogNoRecentProgressWithAge": "Goal has no new progress for {{age}}",
+      "watchdogNoRecentProgress": "Goal has no new progress",
+      "watchdogUnknown": "Goal needs confirmation",
+      "watchdogNeedsAttention": "Needs check",
+      "evaluate": "Evaluate"
+    },
     "worktree": {
       "manualLabel": "Manual worktree",
       "created": "Created isolated worktree",
@@ -5673,6 +5708,18 @@
       "tokensInvalid": "Token budget must be a positive integer",
       "defaultConditionPrompt": "Continue until this condition is true: {{condition}}. Check the condition first, stop when it is satisfied, otherwise take the next useful step.",
       "created": "Loop created",
+      "runNowStarted": "Loop started immediately",
+      "runNowFailed": "Failed to start Loop immediately",
+      "watchdogTitle": "Loop needs attention",
+      "watchdogPill": "Needs check",
+      "watchdogCronMissingWithAge": "Backing schedule is missing; overdue by {{age}}",
+      "watchdogCronMissing": "Backing schedule is missing",
+      "watchdogDueNotClaimedWithAge": "Due but not started; overdue by {{age}}",
+      "watchdogDueNotClaimed": "Due but not started",
+      "watchdogRunMaybeInterruptedWithAge": "Previous run may be interrupted; active for {{age}}",
+      "watchdogRunMaybeInterrupted": "Previous run may be interrupted",
+      "watchdogUnknown": "Loop needs attention",
+      "watchdogMore": "{{count}} more findings are available in run history",
       "boundGoal": "Bound to current Goal",
       "promptMode": "Recurring prompt",
       "closeCreate": "Close",
@@ -5692,7 +5739,10 @@
       "maxRuntimeLabel": "Max runtime",
       "tokensPlaceholder": "tokens",
       "tokensLabel": "Token budget",
-      "create": "Create Loop"
+      "create": "Create Loop",
+      "runUsage": "Run tokens",
+      "runUsageValue": "{{total}} · in {{input}} / out {{output}}",
+      "runUsageBoundary": "Prefer the Loop trigger turn through the next user message; fall back to the run window for older data without trigger metadata. Not a full cost."
     },
     "workflow": {
       "title": "Workflow",
@@ -5927,7 +5977,53 @@
       "validationMetricFailed": "Failed",
       "validationMetricPassed": "Passed",
       "validationMetricRunning": "Running",
-      "validationMetricTotal": "Validation"
+      "validationMetricTotal": "Validation",
+      "saveTemplate": "Save template",
+      "savedTemplateDefaultName": "Workflow template",
+      "savedTemplateSaved": "Saved template: {{name}}",
+      "savedTemplateTitle": "Saved templates",
+      "savedTemplateReload": "Refresh templates",
+      "savedTemplateEmpty": "Completed workflows can be saved here for reuse",
+      "savedTemplateProject": "Project",
+      "savedTemplateApply": "Apply",
+      "savedTemplateRun": "Create and run",
+      "savedTemplateCreate": "Create",
+      "savedTemplateApplied": "Loaded template: {{name}}",
+      "savedTemplateCreatedAndStarted": "Created from template and requested start",
+      "savedTemplateCreated": "Created workflow from template",
+      "summaryTitle": "Run summary",
+      "summaryReliable": "Recorded metrics",
+      "summaryDuration": "Duration",
+      "summaryPhases": "Phases",
+      "summaryReviews": "Checks",
+      "summaryMilestones": "Injected",
+      "summarySize": "Size",
+      "summaryCaps": "Caps",
+      "summaryUnknown": "Not recorded",
+      "summaryNoOutputBudget": "Not set",
+      "summaryRuntimeDone": "Runtime reported a result",
+      "summaryAgentTokens": "Sub-agent tokens",
+      "summaryAgentUsageValue": "{{total}} · {{agents}} agents",
+      "summaryAgentUsageBoundary": "Only usage from sub-agents linked to this workflow is counted; full cost still waits for run attribution.",
+      "summaryWindowTokens": "Window tokens",
+      "summaryWindowUsageValue": "{{total}} · parent {{parent}} / agents {{agents}}",
+      "summaryWindowUsageBoundary": "Window tokens = parent session run window + linked workflow sub-agents; workflow injection turns have a separate strong link when available; not a provider-level full cost.",
+      "summaryUsageBoundary": "Token/cost will appear after workflow run attribution is connected; no estimate is shown now.",
+      "summarySizeUnrestricted": "Unrestricted",
+      "summarySizeSmall": "Small",
+      "summarySizeMedium": "Medium",
+      "summarySizeLarge": "Large",
+      "summaryCapOps": "{{value}} ops",
+      "summaryCapTokens": "{{value}} tokens",
+      "watchdogTitle": "Workflow needs confirmation",
+      "watchdogRecoverableOwnerWithAge": "Runtime owner is unavailable; no progress for {{age}}",
+      "watchdogRecoverableOwner": "Runtime owner is unavailable",
+      "watchdogNoRecentProgressWithAge": "Running with no new progress for {{age}}",
+      "watchdogNoRecentProgress": "Running with no new progress",
+      "watchdogUnknown": "Workflow needs confirmation",
+      "watchdogNeedsAttention": "Needs check",
+      "watchdogMore": "{{count}} more diagnostics are available in run details",
+      "viewDetails": "View details"
     },
     "codingEntry": "Workflow",
     "openCodingPanel": "Open Workflow workspace",

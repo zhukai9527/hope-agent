@@ -1,7 +1,7 @@
 use crate::commands::CmdError;
 use ha_core::loop_control::{
-    CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopSnapshot, LoopState,
-    LoopTriggerKind, UpdateLoopSchedulePolicyInput,
+    CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopSnapshot, LoopTriggerKind,
+    LoopWatchdogFinding, UpdateLoopSchedulePolicyInput,
 };
 use serde_json::Value;
 
@@ -13,6 +13,18 @@ pub async fn list_loop_schedules(
     app_state
         .session_db
         .list_loop_schedules_for_session_with_cron(&app_state.cron_db, &session_id, 100)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_loop_watchdog_findings(
+    session_id: String,
+    grace_secs: Option<i64>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<LoopWatchdogFinding>, CmdError> {
+    app_state
+        .session_db
+        .list_loop_watchdog_findings(&app_state.cron_db, &session_id, grace_secs.unwrap_or(120))
         .map_err(Into::into)
 }
 
@@ -116,39 +128,12 @@ pub async fn run_loop_schedule_now(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CmdError> {
-    if !ha_core::runtime_lock::is_primary() {
-        return Err(CmdError::msg(
-            "run-now is unavailable on this instance: scheduled jobs only run on the primary",
-        ));
-    }
-    let schedule = app_state
-        .session_db
-        .get_loop_schedule(&loop_id)?
-        .ok_or_else(|| CmdError::msg("Loop schedule not found"))?;
-    if schedule.state.is_terminal() {
-        return Err(CmdError::msg(format!(
-            "loop schedule {} is {}",
-            schedule.id,
-            schedule.state.as_str()
-        )));
-    }
-    if schedule.state != LoopState::Active {
-        return Err(CmdError::msg(format!(
-            "loop schedule {} must be active before run-now; current state is {}",
-            schedule.id,
-            schedule.state.as_str()
-        )));
-    }
-    let job = app_state
-        .cron_db
-        .get_job(&schedule.cron_job_id)?
-        .ok_or_else(|| CmdError::msg("Cron job not found"))?;
-    let cron_db = app_state.cron_db.clone();
-    let session_db = app_state.session_db.clone();
-    tokio::spawn(async move {
-        ha_core::cron::execute_job_public(&cron_db, &session_db, &job).await;
-    });
-    Ok(())
+    ha_core::loop_control::spawn_loop_schedule_run_now(
+        &app_state.cron_db,
+        &app_state.session_db,
+        &loop_id,
+    )
+    .map_err(Into::into)
 }
 
 #[tauri::command]

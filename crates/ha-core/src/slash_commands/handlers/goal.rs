@@ -1,7 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::goal::{
-    CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot, GoalState, UpdateGoalInput,
+    CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalCriterionKind, GoalCriterionStatus,
+    GoalSnapshot, GoalState, UpdateGoalInput,
 };
 use crate::plan::{self, PlanModeState, TransitionOutcome};
 use crate::session::SessionDB;
@@ -230,17 +231,6 @@ fn parse_goal_create_args(raw: &str) -> (String, String) {
 fn render_goal_snapshot(snapshot: &GoalSnapshot) -> String {
     let goal = &snapshot.goal;
     let state = goal_state_label(goal.state);
-    let criteria = if goal.completion_criteria.trim().is_empty() {
-        "_No explicit completion criteria yet._".to_string()
-    } else {
-        goal.completion_criteria
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| format!("- {line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
     let workflows = snapshot.workflow_runs.len();
     let tasks_total = snapshot.tasks.len();
     let tasks_done = snapshot
@@ -248,34 +238,59 @@ fn render_goal_snapshot(snapshot: &GoalSnapshot) -> String {
         .iter()
         .filter(|task| task.status == "completed")
         .count();
-    let final_summary = goal
-        .final_summary
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or("No final audit yet.");
+    let required_total = snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.kind == GoalCriterionKind::Required)
+        .count();
+    let required_done = snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| {
+            criterion.kind == GoalCriterionKind::Required
+                && criterion.status == GoalCriterionStatus::Satisfied
+        })
+        .count();
+    let required_progress = if required_total > 0 {
+        format!(" · required {required_done}/{required_total}")
+    } else {
+        String::new()
+    };
+    let usage = format!(
+        "elapsed {} · {} tokens · {} turns",
+        format_duration_secs(snapshot.budget.elapsed_secs),
+        format_count(snapshot.budget.tokens_used),
+        format_count(snapshot.budget.turns_used)
+    );
+    let evidence = snapshot.evidence.len();
     let closure = goal
         .closure_decision
-        .map(|decision| format!("\nClosure decision: `{}`", decision.as_str()))
-        .unwrap_or_else(|| "\nClosure decision: `pending_user_acceptance`".to_string());
+        .map(|decision| decision.as_str())
+        .unwrap_or("pending");
+    let audit = render_goal_audit_summary(snapshot);
+    let criteria = render_goal_criteria_summary(snapshot);
     let blocked = goal
         .blocked_reason
         .as_deref()
-        .map(|reason| format!("\nBlocked reason: `{reason}`"))
+        .filter(|reason| !reason.trim().is_empty())
+        .map(|reason| format!("\n\nBlocked: `{reason}`"))
         .unwrap_or_default();
 
     format!(
-        "## Goal `{}`\n\nState: **{}** · revision: **{}** · workflows: **{}** · tasks: **{}/{}**{}{}\n\n**Objective**\n{}\n\n**Completion criteria**\n{}\n\n**Final audit**\n{}\n\nUse `/goal evaluate` to run the conservative final audit, `/goal accept` to accept v1 closure, `/goal strict` to require stricter evidence, `/goal pause|resume|clear` to control it.",
-        short_id(&goal.id),
+        "## Active Goal\n\nState: **{}** · r{}{} · {}\nWorkflows: {} · tasks: {}/{} · evidence: {} · closure: `{}`{}\n\n**Objective**\n{}\n\n**Progress**\n{}\n\n**Latest evaluator**\n{}",
         state,
         goal.revision,
+        required_progress,
+        usage,
         workflows,
         tasks_done,
         tasks_total,
+        evidence,
         closure,
         blocked,
         goal.objective,
         criteria,
-        final_summary,
+        audit,
     )
 }
 
@@ -296,6 +311,193 @@ fn goal_state_label(state: GoalState) -> &'static str {
         GoalState::Cancelled => "cancelled",
         GoalState::Blocked => "blocked",
     }
+}
+
+fn render_goal_criteria_summary(snapshot: &GoalSnapshot) -> String {
+    if snapshot.criteria.is_empty() {
+        if snapshot.goal.completion_criteria.trim().is_empty() {
+            return "- No explicit completion criteria yet.".to_string();
+        }
+        return snapshot
+            .goal
+            .completion_criteria
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(6)
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+
+    let mut lines = Vec::new();
+    for criterion in snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.kind == GoalCriterionKind::Required)
+    {
+        let marker = match criterion.status {
+            GoalCriterionStatus::Satisfied => "[done]",
+            GoalCriterionStatus::Missing => "[missing]",
+            GoalCriterionStatus::Blocked => "[blocked]",
+        };
+        let reason = criterion
+            .reason
+            .as_deref()
+            .filter(|reason| !reason.trim().is_empty())
+            .map(|reason| format!(" — {reason}"))
+            .unwrap_or_default();
+        lines.push(format!("- {marker} {}{}", criterion.text, reason));
+        if lines.len() >= 6 {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        lines.push(
+            "- No required criteria; optional/follow-up items do not block closure.".to_string(),
+        );
+    }
+    let hidden = snapshot
+        .criteria
+        .iter()
+        .filter(|criterion| criterion.kind == GoalCriterionKind::Required)
+        .count()
+        .saturating_sub(lines.len());
+    if hidden > 0 {
+        lines.push(format!("- ... {hidden} more required criteria"));
+    }
+    lines.join("\n")
+}
+
+fn render_goal_audit_summary(snapshot: &GoalSnapshot) -> String {
+    let audit = latest_evaluator_for_display(snapshot);
+    let status = audit.get("status").and_then(Value::as_str);
+    if status.is_none() && snapshot.goal.final_summary.is_none() {
+        return "No final audit yet.".to_string();
+    }
+
+    let mut lines = Vec::new();
+    if let Some(status) = status {
+        lines.push(format!("- Status: `{status}`"));
+    }
+    if snapshot.audit_stale {
+        lines.push("- Audit is stale after newer goal evidence or revision changes.".to_string());
+    }
+    if let Some(summary) = snapshot
+        .goal
+        .final_summary
+        .as_deref()
+        .filter(|_| std::ptr::eq(audit, &snapshot.goal.final_evidence))
+        .or_else(|| audit.get("summary").and_then(Value::as_str))
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        lines.push(format!("- Reason: {summary}"));
+    }
+    if let Some(blocked_reason) = audit
+        .get("blockedReason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+    {
+        lines.push(format!("- Blocked reason: `{blocked_reason}`"));
+    }
+    let missing = json_string_items(audit.get("missing"));
+    if !missing.is_empty() {
+        lines.push(format!(
+            "- Missing: {}",
+            missing
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    let blockers = json_string_items(audit.get("blockers"));
+    if !blockers.is_empty() {
+        lines.push(format!(
+            "- Blockers: {}",
+            blockers
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    let next = json_string_items(audit.get("nextEvidenceNeeded"));
+    if !next.is_empty() {
+        lines.push(format!(
+            "- Next evidence: {}",
+            next.iter().take(3).cloned().collect::<Vec<_>>().join("; ")
+        ));
+    }
+    if lines.is_empty() {
+        "No final audit yet.".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn latest_evaluator_for_display(snapshot: &GoalSnapshot) -> &Value {
+    if snapshot
+        .goal
+        .last_evaluator_result
+        .as_object()
+        .is_some_and(|object| !object.is_empty())
+    {
+        &snapshot.goal.last_evaluator_result
+    } else {
+        &snapshot.goal.final_evidence
+    }
+}
+
+fn json_string_items(value: Option<&Value>) -> Vec<String> {
+    let Some(items) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            item.as_str()
+                .or_else(|| item.get("text").and_then(Value::as_str))
+                .or_else(|| item.get("summary").and_then(Value::as_str))
+                .or_else(|| item.get("reason").and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn format_duration_secs(secs: i64) -> String {
+    let secs = secs.max(0);
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn format_count(value: i64) -> String {
+    let negative = value < 0;
+    let digits = value.unsigned_abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    let mut formatted: String = out.chars().rev().collect();
+    if negative {
+        formatted.insert(0, '-');
+    }
+    formatted
 }
 
 fn goal_usage() -> String {
@@ -322,10 +524,6 @@ fn display_only(content: impl Into<String>) -> CommandResult {
         content: content.into(),
         action: Some(CommandAction::DisplayOnly),
     }
-}
-
-fn short_id(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
 }
 
 #[cfg(test)]
@@ -366,6 +564,89 @@ mod tests {
                 String::new()
             )
         );
+    }
+
+    #[test]
+    fn goal_status_format_helpers_are_user_readable() {
+        assert_eq!(format_duration_secs(0), "0s");
+        assert_eq!(format_duration_secs(65), "1m 5s");
+        assert_eq!(format_duration_secs(3661), "1h 1m");
+        assert_eq!(format_count(1_173_488), "1,173,488");
+    }
+
+    #[test]
+    fn goal_status_card_is_concise_and_usage_oriented() {
+        let snapshot = GoalSnapshot {
+            goal: crate::goal::Goal {
+                id: "goal_123".to_string(),
+                session_id: "session_123".to_string(),
+                objective: "Ship Goal v3".to_string(),
+                completion_criteria: "[required] typecheck passes".to_string(),
+                revision: 2,
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                state: GoalState::Active,
+                mode_snapshot: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+                created_at: "2026-07-08T00:00:00Z".to_string(),
+                updated_at: "2026-07-08T00:01:00Z".to_string(),
+                completed_at: None,
+                final_summary: Some("Need one more verification.".to_string()),
+                final_evidence: json!({
+                    "status": "blocked",
+                    "missing": ["typecheck evidence"],
+                    "nextEvidenceNeeded": ["run focused check"]
+                }),
+                blocked_reason: None,
+                last_evaluator_result: json!({
+                    "evaluatorKind": "post_turn",
+                    "status": "blocked",
+                    "summary": "Latest post-turn check needs one more pass.",
+                    "missing": ["latest evaluator evidence"]
+                }),
+                closure_decision: None,
+                closure_reason: None,
+                closed_at: None,
+                follow_up_items: Vec::new(),
+            },
+            links: Vec::new(),
+            events: Vec::new(),
+            audit_stale: false,
+            criteria_items: Vec::new(),
+            criteria: vec![crate::goal::GoalCriterionAudit {
+                id: "crit_1".to_string(),
+                text: "typecheck passes".to_string(),
+                kind: GoalCriterionKind::Required,
+                status: GoalCriterionStatus::Missing,
+                evidence_ids: Vec::new(),
+                reason: Some("typecheck evidence".to_string()),
+            }],
+            evidence: Vec::new(),
+            timeline: Vec::new(),
+            budget: crate::goal::GoalBudgetSnapshot {
+                tokens_used: 1_173_488,
+                elapsed_secs: 3340,
+                turns_used: 7,
+                ..Default::default()
+            },
+            workflow_runs: Vec::new(),
+            tasks: Vec::new(),
+        };
+
+        let rendered = render_goal_snapshot(&snapshot);
+
+        assert!(rendered.contains("Active Goal"));
+        assert!(rendered.contains("55m 40s"));
+        assert!(rendered.contains("1,173,488 tokens"));
+        assert!(rendered.contains("required 0/1"));
+        assert!(rendered.contains("Latest post-turn check needs one more pass."));
+        assert!(rendered.contains("latest evaluator evidence"));
+        assert!(!rendered.contains("/goal evaluate"));
+        assert!(!rendered.contains("pending_user_acceptance"));
     }
 
     #[test]

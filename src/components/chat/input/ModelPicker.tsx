@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Check, ChevronDown, ChevronRight } from "lucide-react"
@@ -7,6 +7,12 @@ import { FloatingMenu } from "@/components/ui/floating-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { AvailableModel, ActiveModel } from "@/types/chat"
 import { getEffortOptionsForModel, modelSupportsThinking } from "@/types/chat"
+
+const ROOT_MENU_WIDTH = 260
+const MODEL_SUBMENU_WIDTH = 280
+const TEMPERATURE_SUBMENU_WIDTH = 220
+const SUBMENU_GAP = 6
+const VIEWPORT_MARGIN = 8
 
 interface ModelPickerProps {
   availableModels: AvailableModel[]
@@ -32,7 +38,26 @@ export default function ModelPicker({
   const { t } = useTranslation()
   const [showMenu, setShowMenu] = useState(false)
   const [openPanel, setOpenPanel] = useState<"model" | "temperature" | null>(null)
+  const [submenuPlacement, setSubmenuPlacement] = useState<"right" | "top">("right")
   const menuRef = useRef<HTMLDivElement>(null)
+
+  const placeSubmenu = useCallback((panel: "model" | "temperature") => {
+    const root = menuRef.current
+    if (!root) {
+      setSubmenuPlacement("right")
+      return
+    }
+
+    const submenuWidth = panel === "model" ? MODEL_SUBMENU_WIDTH : TEMPERATURE_SUBMENU_WIDTH
+    const rootLeft = root.getBoundingClientRect().left
+    const sideMenuRight = rootLeft + ROOT_MENU_WIDTH + SUBMENU_GAP + submenuWidth
+    setSubmenuPlacement(sideMenuRight > window.innerWidth - VIEWPORT_MARGIN ? "top" : "right")
+  }, [])
+
+  const setNestedPanel = useCallback((panel: "model" | "temperature" | null) => {
+    if (panel) placeSubmenu(panel)
+    setOpenPanel(panel)
+  }, [placeSubmenu])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -46,6 +71,14 @@ export default function ModelPicker({
       return () => document.removeEventListener("mousedown", handleClickOutside)
     }
   }, [showMenu])
+
+  useEffect(() => {
+    if (!showMenu || !openPanel) return
+    const updatePlacement = () => placeSubmenu(openPanel)
+    updatePlacement()
+    window.addEventListener("resize", updatePlacement)
+    return () => window.removeEventListener("resize", updatePlacement)
+  }, [openPanel, placeSubmenu, showMenu])
 
   const supportsThinking = modelSupportsThinking(currentModelInfo)
   const effortOptions = getEffortOptionsForModel(currentModelInfo, t)
@@ -112,7 +145,7 @@ export default function ModelPicker({
         className="w-[260px] overflow-visible p-1.5"
         onEscapeKeyDown={() => {
           setShowMenu(false)
-          setOpenPanel(null)
+          setNestedPanel(null)
         }}
       >
         <div className="max-h-[min(420px,calc(100vh-96px))] overflow-y-auto overscroll-contain pr-0.5">
@@ -131,11 +164,11 @@ export default function ModelPicker({
                       ? "bg-secondary text-foreground font-medium shadow-sm"
                       : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
                   )}
-                  onMouseEnter={() => setOpenPanel(null)}
+                  onMouseEnter={() => setNestedPanel(null)}
                   onClick={() => {
                     onEffortChange(opt.value)
                     setShowMenu(false)
-                    setOpenPanel(null)
+                    setNestedPanel(null)
                   }}
                 >
                   <span className="truncate">{opt.label}</span>
@@ -162,8 +195,8 @@ export default function ModelPicker({
                   ? "bg-secondary text-foreground shadow-sm"
                   : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
               )}
-              onMouseEnter={() => setOpenPanel("model")}
-              onClick={() => setOpenPanel(openPanel === "model" ? null : "model")}
+              onMouseEnter={() => setNestedPanel("model")}
+              onClick={() => setNestedPanel(openPanel === "model" ? null : "model")}
             >
               <span className="truncate">{modelLabel}</span>
               <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -178,8 +211,8 @@ export default function ModelPicker({
                 ? "bg-secondary text-foreground shadow-sm"
                 : "text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
             )}
-            onMouseEnter={() => setOpenPanel("temperature")}
-            onClick={() => setOpenPanel(openPanel === "temperature" ? null : "temperature")}
+            onMouseEnter={() => setNestedPanel("temperature")}
+            onClick={() => setNestedPanel(openPanel === "temperature" ? null : "temperature")}
           >
             <span className="truncate">{t("settings.temperature")}</span>
             <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
@@ -191,9 +224,14 @@ export default function ModelPicker({
 
         <FloatingMenu
           open={openPanel === "model"}
-          positionClassName="bottom-0 left-full ml-1.5"
-          originClassName="origin-left"
-          className="ha-menu-from-left w-[280px] p-1.5"
+          positionClassName={
+            submenuPlacement === "top" ? "bottom-full left-0 mb-1.5" : "bottom-0 left-full ml-1.5"
+          }
+          originClassName={submenuPlacement === "top" ? "origin-bottom-left" : "origin-left"}
+          className={cn(
+            submenuPlacement === "top" ? "ha-menu-from-top" : "ha-menu-from-left",
+            "w-[280px] p-1.5",
+          )}
         >
           <div className="max-h-[min(360px,calc(100vh-112px))] overflow-y-auto overscroll-contain">
             {modelGroups.map(([providerId, group]) => (
@@ -221,7 +259,7 @@ export default function ModelPicker({
                         onClick={() => {
                           onModelChange(`${model.providerId}::${model.modelId}`)
                           setShowMenu(false)
-                          setOpenPanel(null)
+                          setNestedPanel(null)
                         }}
                       >
                         <span className="truncate">{model.modelName}</span>
@@ -239,9 +277,14 @@ export default function ModelPicker({
 
         <FloatingMenu
           open={openPanel === "temperature"}
-          positionClassName="bottom-0 left-full ml-1.5"
-          originClassName="origin-left"
-          className="ha-menu-from-left w-[220px] p-3"
+          positionClassName={
+            submenuPlacement === "top" ? "bottom-full left-0 mb-1.5" : "bottom-0 left-full ml-1.5"
+          }
+          originClassName={submenuPlacement === "top" ? "origin-bottom-left" : "origin-left"}
+          className={cn(
+            submenuPlacement === "top" ? "ha-menu-from-top" : "ha-menu-from-left",
+            "w-[220px] p-3",
+          )}
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <span className="text-[11px] font-medium text-muted-foreground">
@@ -272,7 +315,7 @@ export default function ModelPicker({
               onClick={() => {
                 onSessionTemperatureChange?.(null)
                 setShowMenu(false)
-                setOpenPanel(null)
+                setNestedPanel(null)
               }}
             >
               {t("settings.temperatureReset")}

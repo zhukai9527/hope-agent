@@ -413,6 +413,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Goals --
   get_active_goal:                 { method: "GET",    path: "/api/sessions/{sessionId}/goal" },
+  list_goal_watchdog_findings:      { method: "GET",    path: "/api/sessions/{sessionId}/goal/watchdog" },
   create_goal:                     { method: "POST",   path: "/api/sessions/{sessionId}/goal" },
   get_goal:                        { method: "GET",    path: "/api/goals/{goalId}" },
   update_goal:                     { method: "PATCH",  path: "/api/goals/{goalId}" },
@@ -425,6 +426,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Loop schedules --
   list_loop_schedules:             { method: "GET",    path: "/api/sessions/{sessionId}/loops" },
+  list_loop_watchdog_findings:      { method: "GET",    path: "/api/sessions/{sessionId}/loops/watchdog" },
   create_loop_schedule:            { method: "POST",   path: "/api/sessions/{sessionId}/loops" },
   get_loop_schedule:               { method: "GET",    path: "/api/loops/{loopId}" },
   pause_loop_schedule:             { method: "POST",   path: "/api/loops/{loopId}/pause" },
@@ -528,8 +530,12 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Workflow runs --
   list_workflow_runs:              { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs" },
+  list_workflow_watchdog_findings:  { method: "GET",    path: "/api/sessions/{sessionId}/workflow-runs/watchdog" },
   preview_workflow_script:         { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs/preview" },
   create_workflow_run:             { method: "POST",   path: "/api/sessions/{sessionId}/workflow-runs" },
+  list_saved_workflow_templates:    { method: "POST",   path: "/api/workflow-templates" },
+  save_workflow_template_from_run:  { method: "POST",   path: "/api/workflow-templates/save" },
+  create_workflow_run_from_template:{ method: "POST",   path: "/api/workflow-templates/run" },
   get_workflow_run:                { method: "GET",    path: "/api/workflow-runs/{runId}" },
   run_workflow_run:                { method: "POST",   path: "/api/workflow-runs/{runId}/run" },
   pause_workflow_run:              { method: "POST",   path: "/api/workflow-runs/{runId}/pause" },

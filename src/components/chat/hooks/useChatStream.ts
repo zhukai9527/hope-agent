@@ -138,6 +138,10 @@ interface SendOptions {
   workflowMode?: "off" | "on" | "ultracode" | string
   isPlanTrigger?: boolean
   goalTrigger?: boolean
+  initialGoal?: {
+    objective: string
+    completionCriteria?: string
+  }
   sessionIdOverride?: string
   /** Routed through the chat command into `attachments_meta.plan_comment`
    *  so the desktop GUI can render PlanCommentBubble with structured
@@ -1244,6 +1248,13 @@ export function useChatStream({
           displayText: options?.displayText?.trim() || undefined,
           isPlanTrigger: options?.isPlanTrigger,
           goalTrigger: options?.goalTrigger,
+          initialGoal:
+            !sendSessionId && options?.initialGoal
+              ? {
+                  objective: options.initialGoal.objective,
+                  completionCriteria: options.initialGoal.completionCriteria,
+                }
+              : undefined,
           planComment: options?.planComment,
           workingDir: sendSessionId ? undefined : draftWorkingDir ?? undefined,
           // Lazy project binding — send-time snapshot, only on the auto-create send.

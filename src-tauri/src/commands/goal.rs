@@ -1,7 +1,7 @@
 use crate::commands::CmdError;
 use ha_core::goal::{
     AppendGoalFollowUpInput, CloseGoalInput, CreateGoalInput, GoalClosureDecision, GoalSnapshot,
-    UpdateGoalInput,
+    GoalWatchdogFinding, UpdateGoalInput,
 };
 
 #[tauri::command]
@@ -23,6 +23,18 @@ pub async fn get_goal(
     app_state
         .session_db
         .goal_snapshot(&goal_id, 200)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_goal_watchdog_findings(
+    session_id: String,
+    stale_secs: Option<i64>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<GoalWatchdogFinding>, CmdError> {
+    app_state
+        .session_db
+        .list_goal_watchdog_findings(&session_id, stale_secs.unwrap_or(300))
         .map_err(Into::into)
 }
 

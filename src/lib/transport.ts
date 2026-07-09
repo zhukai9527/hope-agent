@@ -51,6 +51,14 @@ export interface ChatStartArgs {
    *  `attachments_meta = {goal_trigger: true}` and the UI renders a normal
    *  user bubble with a Goal badge. */
   goalTrigger?: boolean;
+  /** First-turn Goal creation payload. Only honored when the chat request
+   *  auto-creates a new session; the backend creates the durable Goal before
+   *  the model turn starts so the first response can immediately use the
+   *  Active Goal system section. */
+  initialGoal?: {
+    objective: string;
+    completionCriteria?: string;
+  };
   /** Structured payload for plan inline-comment messages. Backend stamps
    *  `attachments_meta = {plan_comment: {...}}`; the desktop GUI uses it to
    *  render PlanCommentBubble instead of the markdown displayText. */

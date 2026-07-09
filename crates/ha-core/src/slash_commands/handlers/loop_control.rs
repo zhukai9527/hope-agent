@@ -4,7 +4,9 @@ use serde_json::json;
 
 use crate::cron::CronDB;
 use crate::loop_control::{
-    CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopTriggerKind,
+    default_dynamic_loop_trigger_spec, dynamic_loop_trigger_spec_with_maintenance_prompt,
+    resolve_default_loop_prompt_for_session, CreateLoopScheduleInput, LoopExecutionStrategy,
+    LoopSchedule, LoopTriggerKind,
 };
 use crate::session::SessionDB;
 use crate::slash_commands::types::{CommandAction, CommandResult};
@@ -16,6 +18,19 @@ fn display_only(content: String) -> CommandResult {
     }
 }
 
+fn loop_created_result(
+    session_db: &Arc<SessionDB>,
+    cron_db: &Arc<CronDB>,
+    schedule: &LoopSchedule,
+) -> CommandResult {
+    let mut content = render_loop_created(schedule);
+    match crate::loop_control::spawn_loop_schedule_run_now(cron_db, session_db, &schedule.id) {
+        Ok(()) => content.push_str("\n\nImmediate first run: queued."),
+        Err(err) => content.push_str(&format!("\n\nImmediate first run: not started ({err}).")),
+    }
+    display_only(content)
+}
+
 pub fn handle_loop(
     session_db: &Arc<SessionDB>,
     cron_db: &Arc<CronDB>,
@@ -23,7 +38,10 @@ pub fn handle_loop(
     args: &str,
 ) -> Result<CommandResult, String> {
     let trimmed = args.trim();
-    if trimmed.is_empty() || matches!(first_word(trimmed), "status" | "list" | "show") {
+    if trimmed.is_empty() {
+        return create_default_dynamic_loop(session_db, cron_db, sid);
+    }
+    if matches!(first_word(trimmed), "status" | "list" | "show") {
         let rest = trimmed
             .split_once(char::is_whitespace)
             .map(|(_, rest)| rest.trim())
@@ -37,7 +55,7 @@ pub fn handle_loop(
         "resume" => transition_loop(session_db, cron_db, sid, trimmed, LoopCommand::Resume),
         "stop" | "cancel" => transition_loop(session_db, cron_db, sid, trimmed, LoopCommand::Stop),
         "help" => Ok(display_only(loop_usage())),
-        _ => Err(loop_usage()),
+        _ => create_natural_interval_loop(session_db, cron_db, sid, trimmed),
     }
 }
 
@@ -75,7 +93,7 @@ fn create_every_loop(
             },
         )
         .map_err(|e| e.to_string())?;
-    Ok(display_only(render_loop_created(&schedule)))
+    Ok(loop_created_result(session_db, cron_db, &schedule))
 }
 
 fn create_until_loop(
@@ -125,7 +143,104 @@ fn create_until_loop(
             },
         )
         .map_err(|e| e.to_string())?;
-    Ok(display_only(render_loop_created(&schedule)))
+    Ok(loop_created_result(session_db, cron_db, &schedule))
+}
+
+fn create_natural_interval_loop(
+    session_db: &Arc<SessionDB>,
+    cron_db: &Arc<CronDB>,
+    sid: &str,
+    raw: &str,
+) -> Result<CommandResult, String> {
+    let (interval_secs, prompt) = parse_natural_interval_prompt(raw)?;
+    let Some(interval_secs) = interval_secs else {
+        return create_dynamic_loop(session_db, cron_db, sid, prompt);
+    };
+    let schedule = session_db
+        .create_loop_schedule(
+            cron_db,
+            CreateLoopScheduleInput {
+                session_id: sid.to_string(),
+                goal_id: None,
+                goal_criterion_id: None,
+                prompt,
+                trigger_kind: LoopTriggerKind::Interval,
+                trigger_spec: json!({ "intervalSecs": interval_secs }),
+                execution_strategy: LoopExecutionStrategy::Continue,
+                max_runs: None,
+                max_runtime_secs: None,
+                token_budget: None,
+                cost_budget_micros: None,
+                max_no_progress_runs: None,
+                max_failures: None,
+                backoff_secs: None,
+                agent_id: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(loop_created_result(session_db, cron_db, &schedule))
+}
+
+fn create_default_dynamic_loop(
+    session_db: &Arc<SessionDB>,
+    cron_db: &Arc<CronDB>,
+    sid: &str,
+) -> Result<CommandResult, String> {
+    let resolution = resolve_default_loop_prompt_for_session(session_db, sid);
+    create_dynamic_loop_with_spec(
+        session_db,
+        cron_db,
+        sid,
+        resolution.prompt,
+        dynamic_loop_trigger_spec_with_maintenance_prompt(resolution.metadata),
+    )
+}
+
+fn create_dynamic_loop(
+    session_db: &Arc<SessionDB>,
+    cron_db: &Arc<CronDB>,
+    sid: &str,
+    prompt: String,
+) -> Result<CommandResult, String> {
+    create_dynamic_loop_with_spec(
+        session_db,
+        cron_db,
+        sid,
+        prompt,
+        default_dynamic_loop_trigger_spec(),
+    )
+}
+
+fn create_dynamic_loop_with_spec(
+    session_db: &Arc<SessionDB>,
+    cron_db: &Arc<CronDB>,
+    sid: &str,
+    prompt: String,
+    trigger_spec: serde_json::Value,
+) -> Result<CommandResult, String> {
+    let schedule = session_db
+        .create_loop_schedule(
+            cron_db,
+            CreateLoopScheduleInput {
+                session_id: sid.to_string(),
+                goal_id: None,
+                goal_criterion_id: None,
+                prompt,
+                trigger_kind: LoopTriggerKind::Dynamic,
+                trigger_spec,
+                execution_strategy: LoopExecutionStrategy::Continue,
+                max_runs: None,
+                max_runtime_secs: None,
+                token_budget: None,
+                cost_budget_micros: None,
+                max_no_progress_runs: None,
+                max_failures: None,
+                backoff_secs: None,
+                agent_id: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(loop_created_result(session_db, cron_db, &schedule))
 }
 
 fn render_loop_status(
@@ -146,7 +261,7 @@ fn render_loop_status(
         .map_err(|e| e.to_string())?;
     if schedules.is_empty() {
         return Ok(display_only(
-            "No loop schedules for this session.\n\nUse `/loop every 10m: <prompt>` or `/loop until <condition>`."
+            "No loop schedules for this session.\n\nUse `/loop` to start a self-paced maintenance loop, `/loop <prompt>` for a dynamic loop, `/loop every 10m: <prompt>`, or `/loop until <condition>`."
                 .to_string(),
         ));
     }
@@ -315,6 +430,12 @@ fn trigger_summary(schedule: &LoopSchedule) -> String {
         }
         LoopTriggerKind::Cron => "cron".into(),
         LoopTriggerKind::Event => "event".into(),
+        LoopTriggerKind::Dynamic => schedule
+            .trigger_spec
+            .get("fallbackSecs")
+            .and_then(|v| v.as_i64())
+            .map(|secs| format!("dynamic self-paced (fallback {})", format_duration(secs)))
+            .unwrap_or_else(|| "dynamic self-paced".to_string()),
     }
 }
 
@@ -404,6 +525,56 @@ fn parse_until_head(raw: &str) -> Result<(String, i64, LoopOptions), String> {
     Ok((condition, interval_secs, opts))
 }
 
+fn parse_natural_interval_prompt(raw: &str) -> Result<(Option<i64>, String), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(loop_usage());
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    if let Some(first) = parts.next() {
+        if let Some(interval_secs) = parse_duration_secs(first) {
+            let prompt = parts.collect::<Vec<_>>().join(" ");
+            if prompt.trim().is_empty() {
+                return Err("Usage: /loop <interval> <prompt>".to_string());
+            }
+            return Ok((Some(interval_secs), prompt));
+        }
+    }
+
+    if let Some((prompt, interval_secs)) = split_trailing_every_interval(trimmed) {
+        if prompt.trim().is_empty() {
+            return Err("Usage: /loop <prompt> every <interval>".to_string());
+        }
+        return Ok((Some(interval_secs), prompt.to_string()));
+    }
+
+    Ok((None, trimmed.to_string()))
+}
+
+fn split_trailing_every_interval(input: &str) -> Option<(&str, i64)> {
+    let (before_every, after_every) = input.rsplit_once(" every ")?;
+    let interval_secs = parse_duration_phrase(after_every.trim())?;
+    Some((before_every.trim_end(), interval_secs))
+}
+
+fn parse_duration_phrase(input: &str) -> Option<i64> {
+    let compact = input.trim();
+    if compact.is_empty() {
+        return None;
+    }
+    if let Some(secs) = parse_duration_secs(compact) {
+        return Some(secs);
+    }
+    let mut parts = compact.split_whitespace();
+    let number = parts.next()?.parse::<i64>().ok()?;
+    let unit = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    parse_duration_secs(&format!("{number}{unit}"))
+}
+
 fn split_head_prompt(raw: &str) -> (&str, &str) {
     raw.split_once(':')
         .map(|(head, prompt)| (head.trim(), prompt.trim()))
@@ -426,8 +597,9 @@ fn parse_duration_secs(input: &str) -> Option<i64> {
     let n = num.parse::<i64>().ok()?;
     let multiplier = match unit {
         "" | "s" | "sec" | "secs" => 1,
-        "m" | "min" | "mins" => 60,
-        "h" | "hr" | "hrs" => 3600,
+        "second" | "seconds" => 1,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3600,
         "d" | "day" | "days" => 86_400,
         _ => return None,
     };
@@ -464,6 +636,10 @@ fn truncate(input: &str, max: usize) -> &str {
 fn loop_usage() -> String {
     [
         "Usage:",
+        "- `/loop`: start a dynamic self-paced maintenance loop; reads `loop.md` when present",
+        "- `/loop 10m <prompt>`: repeat a prompt on an interval",
+        "- `/loop <prompt> every 10m`: repeat a prompt on an interval",
+        "- `/loop <prompt>`: create a dynamic self-paced loop; the model chooses the next wakeup after each iteration",
         "- `/loop every 10m: <prompt>`: repeat a prompt on an interval",
         "- `/loop until <condition> [every 5m]: [prompt]`: poll until a condition is true",
         "- `/loop status [id]`: show loop schedules or a trace",
@@ -537,6 +713,8 @@ mod tests {
         .expect("create workflow loop");
 
         assert!(result.content.contains("Strategy: **workflow**"));
+        assert!(result.content.contains("Immediate first run:"));
+        assert!(matches!(result.action, Some(CommandAction::DisplayOnly)));
         let schedules = session_db
             .list_loop_schedules_for_session(&session.id, 10)
             .expect("list loops");
@@ -544,6 +722,158 @@ mod tests {
         assert_eq!(
             schedules[0].execution_strategy,
             LoopExecutionStrategy::Workflow
+        );
+    }
+
+    #[test]
+    fn slash_natural_leading_interval_creates_loop_and_runs_now() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+
+        let result = handle_loop(
+            &session_db,
+            &cron_db,
+            &session.id,
+            "5m check if the deployment finished",
+        )
+        .expect("create natural leading interval loop");
+
+        assert!(result.content.contains("Immediate first run:"));
+        assert!(matches!(result.action, Some(CommandAction::DisplayOnly)));
+        let loop_id = session_db
+            .list_loop_schedules_for_session(&session.id, 10)
+            .expect("list loops")[0]
+            .id
+            .clone();
+        let schedule = session_db
+            .get_loop_schedule(&loop_id)
+            .expect("get loop")
+            .expect("loop persisted");
+        assert_eq!(schedule.trigger_kind, LoopTriggerKind::Interval);
+        assert_eq!(
+            schedule
+                .trigger_spec
+                .get("intervalSecs")
+                .and_then(|v| v.as_i64()),
+            Some(300)
+        );
+        assert_eq!(schedule.prompt, "check if the deployment finished");
+    }
+
+    #[test]
+    fn slash_natural_trailing_every_creates_loop_and_runs_now() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+
+        let result = handle_loop(
+            &session_db,
+            &cron_db,
+            &session.id,
+            "check CI and address review comments every 5 minutes",
+        )
+        .expect("create natural trailing every loop");
+
+        assert!(result.content.contains("Immediate first run:"));
+        assert!(matches!(result.action, Some(CommandAction::DisplayOnly)));
+        let loop_id = session_db
+            .list_loop_schedules_for_session(&session.id, 10)
+            .expect("list loops")[0]
+            .id
+            .clone();
+        let schedule = session_db
+            .get_loop_schedule(&loop_id)
+            .expect("get loop")
+            .expect("loop persisted");
+        assert_eq!(schedule.trigger_kind, LoopTriggerKind::Interval);
+        assert_eq!(
+            schedule
+                .trigger_spec
+                .get("intervalSecs")
+                .and_then(|v| v.as_i64()),
+            Some(300)
+        );
+        assert_eq!(schedule.prompt, "check CI and address review comments");
+    }
+
+    #[test]
+    fn slash_prompt_only_creates_dynamic_loop_and_runs_now() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+
+        let result = handle_loop(
+            &session_db,
+            &cron_db,
+            &session.id,
+            "check CI and address review comments",
+        )
+        .expect("create prompt-only dynamic loop");
+
+        assert!(result.content.contains("dynamic self-paced"));
+        assert!(result.content.contains("Immediate first run:"));
+        assert!(matches!(result.action, Some(CommandAction::DisplayOnly)));
+        let loop_id = session_db
+            .list_loop_schedules_for_session(&session.id, 10)
+            .expect("list loops")[0]
+            .id
+            .clone();
+        let schedule = session_db
+            .get_loop_schedule(&loop_id)
+            .expect("get loop")
+            .expect("loop persisted");
+        assert_eq!(schedule.trigger_kind, LoopTriggerKind::Dynamic);
+        assert_eq!(schedule.prompt, "check CI and address review comments");
+        assert_eq!(
+            schedule
+                .trigger_spec
+                .get("fallbackSecs")
+                .and_then(|v| v.as_i64()),
+            Some(1200)
+        );
+        assert!(schedule.trigger_spec.get("maintenancePrompt").is_none());
+    }
+
+    #[test]
+    fn slash_bare_loop_reads_loop_md_and_runs_now() {
+        let (dir, session_db, cron_db) = temp_dbs();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        std::fs::write(
+            workspace.join("loop.md"),
+            "Keep checking the release checklist and report when blocked.",
+        )
+        .expect("write loop md");
+        let session = session_db.create_session("ha-main").expect("session");
+        session_db
+            .update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+            .expect("set working dir");
+
+        let result = handle_loop(&session_db, &cron_db, &session.id, "")
+            .expect("create default dynamic loop");
+
+        assert!(result.content.contains("dynamic self-paced"));
+        assert!(result.content.contains("Immediate first run:"));
+        assert!(matches!(result.action, Some(CommandAction::DisplayOnly)));
+        let loop_id = session_db
+            .list_loop_schedules_for_session(&session.id, 10)
+            .expect("list loops")[0]
+            .id
+            .clone();
+        let schedule = session_db
+            .get_loop_schedule(&loop_id)
+            .expect("get loop")
+            .expect("loop persisted");
+        assert_eq!(schedule.trigger_kind, LoopTriggerKind::Dynamic);
+        assert!(schedule.prompt.contains("loop.md instructions"));
+        assert!(schedule
+            .prompt
+            .contains("Keep checking the release checklist"));
+        assert_eq!(
+            schedule
+                .trigger_spec
+                .get("maintenancePrompt")
+                .and_then(|value| value.get("source"))
+                .and_then(|value| value.as_str()),
+            Some("loop_md")
         );
     }
 

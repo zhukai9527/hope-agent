@@ -10,6 +10,13 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::{
+    fs,
+    hash::{Hash, Hasher},
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::cron::{CronDB, CronPayload, CronSchedule, NewCronJob};
@@ -22,6 +29,19 @@ const DEFAULT_UNTIL_INTERVAL_SECS: i64 = 300;
 const EVENT_LOOP_IDLE_INTERVAL_SECS: u64 = 366 * 24 * 60 * 60;
 const DEFAULT_EVENT_DEBOUNCE_SECS: i64 = 30;
 const MAX_EVENT_DEBOUNCE_SECS: i64 = 3600;
+const DEFAULT_DYNAMIC_LOOP_FALLBACK_SECS: i64 = 20 * 60;
+const MIN_DYNAMIC_LOOP_RESCHEDULE_SECS: i64 = 60;
+const MAX_DYNAMIC_LOOP_RESCHEDULE_SECS: i64 = 60 * 60;
+const DEFAULT_DYNAMIC_LOOP_MAX_RUNTIME_SECS: i64 = 7 * 24 * 60 * 60;
+const LOOP_MD_MAX_BYTES: usize = 25_000;
+const BUILTIN_LOOP_MAINTENANCE_PROMPT: &str = "\
+Continue this session as a self-paced maintenance loop.
+
+At each iteration:
+- Review the current goal, visible tasks, workflow/loop status, recent assistant context, and workspace state.
+- Take one conservative useful step toward unfinished user-visible work.
+- Prefer verification, cleanup, documentation, review follow-up, or clear progress reporting when there is no obvious edit to make.
+- Do not invent work, do not make irreversible external changes without explicit approval, and stop or report blocked when there is nothing useful to do.";
 const DEFAULT_LOOP_MAX_NO_PROGRESS_RUNS: i64 = 3;
 const DEFAULT_LOOP_MAX_FAILURES: i64 = 3;
 const DEFAULT_LOOP_BACKOFF_SECS: i64 = 300;
@@ -42,6 +62,90 @@ const STRONG_PROGRESS_RELATIONS: &[&str] = &[
     "data_quality_checked",
     "user_decision",
 ];
+
+#[derive(Debug, Clone)]
+pub struct DefaultLoopPromptResolution {
+    pub prompt: String,
+    pub metadata: Value,
+}
+
+pub fn resolve_default_loop_prompt_for_session(
+    session_db: &SessionDB,
+    session_id: &str,
+) -> DefaultLoopPromptResolution {
+    for candidate in loop_prompt_candidates(session_db, session_id) {
+        if let Some(resolution) = read_loop_prompt_file(&candidate) {
+            return resolution;
+        }
+    }
+    DefaultLoopPromptResolution {
+        prompt: BUILTIN_LOOP_MAINTENANCE_PROMPT.to_string(),
+        metadata: json!({
+            "enabled": true,
+            "source": "builtin",
+            "contentHash": hash_text(BUILTIN_LOOP_MAINTENANCE_PROMPT),
+        }),
+    }
+}
+
+pub fn dynamic_loop_trigger_spec_with_maintenance_prompt(metadata: Value) -> Value {
+    json!({
+        "fallbackSecs": DEFAULT_DYNAMIC_LOOP_FALLBACK_SECS,
+        "fallbackUsed": false,
+        "maintenancePrompt": normalize_maintenance_prompt_spec(Some(&metadata))
+            .unwrap_or_else(|| json!({ "enabled": true, "source": "unknown" })),
+    })
+}
+
+pub fn default_dynamic_loop_trigger_spec() -> Value {
+    json!({
+        "fallbackSecs": DEFAULT_DYNAMIC_LOOP_FALLBACK_SECS,
+        "fallbackUsed": false,
+    })
+}
+
+/// Start an active Loop schedule immediately through the same primary-only
+/// Cron execution path used by owner `run-now` commands. This only enqueues an
+/// immediate run; it does not alter the recurring schedule.
+pub fn spawn_loop_schedule_run_now(
+    cron_db: &Arc<CronDB>,
+    session_db: &Arc<SessionDB>,
+    loop_id: &str,
+) -> Result<()> {
+    if !crate::runtime_lock::is_primary() {
+        return Err(anyhow!(
+            "run-now is unavailable on this instance: scheduled jobs only run on the primary"
+        ));
+    }
+    let schedule = session_db
+        .get_loop_schedule(loop_id)?
+        .ok_or_else(|| anyhow!("Loop schedule not found"))?;
+    if schedule.state.is_terminal() {
+        return Err(anyhow!(
+            "loop schedule {} is {}",
+            schedule.id,
+            schedule.state.as_str()
+        ));
+    }
+    if schedule.state != LoopState::Active {
+        return Err(anyhow!(
+            "loop schedule {} must be active before run-now; current state is {}",
+            schedule.id,
+            schedule.state.as_str()
+        ));
+    }
+    let job = cron_db
+        .get_job(&schedule.cron_job_id)?
+        .ok_or_else(|| anyhow!("Cron job not found"))?;
+    let handle = tokio::runtime::Handle::try_current()
+        .map_err(|_| anyhow!("run-now requires an active Tokio runtime"))?;
+    let cron_db = cron_db.clone();
+    let session_db = session_db.clone();
+    handle.spawn(async move {
+        crate::cron::execute_job_public(&cron_db, &session_db, &job).await;
+    });
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -169,6 +273,7 @@ pub enum LoopTriggerKind {
     Cron,
     Condition,
     Event,
+    Dynamic,
 }
 
 impl LoopTriggerKind {
@@ -178,6 +283,7 @@ impl LoopTriggerKind {
             Self::Cron => "cron",
             Self::Condition => "condition",
             Self::Event => "event",
+            Self::Dynamic => "dynamic",
         }
     }
 
@@ -187,6 +293,7 @@ impl LoopTriggerKind {
             "cron" => Some(Self::Cron),
             "condition" => Some(Self::Condition),
             "event" => Some(Self::Event),
+            "dynamic" => Some(Self::Dynamic),
             _ => None,
         }
     }
@@ -302,9 +409,29 @@ pub struct LoopRun {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduling_decision: Option<String>,
     pub trace: Value,
+    pub usage: LoopRunUsageSnapshot,
     pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopRunUsageSnapshot {
+    pub message_count: i64,
+    pub user_turns: i64,
+    pub assistant_messages: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub attribution: String,
+    pub provider_events: i64,
+    pub provider_input_tokens: i64,
+    pub provider_output_tokens: i64,
+    pub provider_cache_creation_input_tokens: i64,
+    pub provider_cache_read_input_tokens: i64,
+    pub provider_total_tokens: i64,
+    pub provider_attribution: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +440,21 @@ pub struct LoopSnapshot {
     pub schedule: LoopSchedule,
     #[serde(default)]
     pub runs: Vec<LoopRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopWatchdogFinding {
+    pub loop_id: String,
+    pub session_id: String,
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub next_run_at: Option<String>,
+    pub overdue_secs: Option<i64>,
+    pub cron_status: Option<String>,
+    pub latest_run_id: Option<String>,
+    pub latest_run_state: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -416,12 +558,26 @@ pub struct LoopAfterRunAction {
 }
 
 #[derive(Debug, Clone)]
+struct LoopMaintenancePromptRefresh {
+    prompt: String,
+    trigger_spec: Value,
+}
+
+#[derive(Debug, Clone)]
 struct LoopProgressEvaluation {
     state: LoopProgressState,
     summary: Option<String>,
     delta: Value,
     no_progress_reason: Option<String>,
     scheduling_decision: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum DynamicLoopDecision {
+    Reschedule { delay_secs: i64, reason: String },
+    Stop { reason: String },
+    Block { reason: String },
+    Missing,
 }
 
 #[derive(Debug, Clone)]
@@ -856,6 +1012,117 @@ impl SessionDB {
         Ok(schedules)
     }
 
+    pub fn list_loop_watchdog_findings(
+        &self,
+        cron_db: &CronDB,
+        session_id: &str,
+        grace_secs: i64,
+    ) -> Result<Vec<LoopWatchdogFinding>> {
+        let grace_secs = grace_secs.max(0);
+        let now = Utc::now();
+        let schedules = self.list_loop_schedules_for_session_with_cron(cron_db, session_id, 100)?;
+        let mut findings = Vec::new();
+
+        for schedule in schedules {
+            if schedule.state != LoopState::Active {
+                continue;
+            }
+            if schedule.trigger_kind == LoopTriggerKind::Event {
+                continue;
+            }
+
+            let Some(cron_job) = cron_db.get_job(&schedule.cron_job_id)? else {
+                findings.push(LoopWatchdogFinding {
+                    loop_id: schedule.id,
+                    session_id: schedule.session_id,
+                    severity: "warning".to_string(),
+                    code: "loop_cron_missing".to_string(),
+                    message: "Loop is active but its backing Cron job is missing.".to_string(),
+                    next_run_at: schedule.next_run_at.clone(),
+                    overdue_secs: schedule.next_run_at.as_deref().and_then(|value| {
+                        DateTime::parse_from_rfc3339(value)
+                            .ok()
+                            .map(|dt| (now - dt.with_timezone(&Utc)).num_seconds().max(0))
+                    }),
+                    cron_status: None,
+                    latest_run_id: None,
+                    latest_run_state: None,
+                });
+                continue;
+            };
+
+            if cron_job.status.as_str() != "active" {
+                continue;
+            }
+
+            let latest_run = self.list_loop_runs(&schedule.id, 1)?.into_iter().next();
+            if let Some(run) = latest_run.as_ref() {
+                if run.state == LoopRunState::Running && cron_job.running_at.is_none() {
+                    if let Ok(started_at) = DateTime::parse_from_rfc3339(&run.started_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                    {
+                        let run_age_secs = (now - started_at).num_seconds();
+                        if run_age_secs > grace_secs {
+                            findings.push(LoopWatchdogFinding {
+                                loop_id: schedule.id,
+                                session_id: schedule.session_id,
+                                severity: "warning".to_string(),
+                                code: "loop_run_maybe_interrupted".to_string(),
+                                message: "Loop has a running run but its backing Cron job is no longer running."
+                                    .to_string(),
+                                next_run_at: schedule.next_run_at.clone(),
+                                overdue_secs: Some(run_age_secs),
+                                cron_status: Some(cron_job.status.as_str().to_string()),
+                                latest_run_id: Some(run.id.clone()),
+                                latest_run_state: Some(run.state.as_str().to_string()),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                if matches!(
+                    run.state,
+                    LoopRunState::Running | LoopRunState::Queued | LoopRunState::Injected
+                ) {
+                    continue;
+                }
+            }
+
+            if cron_job.running_at.is_some() {
+                continue;
+            }
+
+            let Some(next_run_at) = schedule.next_run_at.as_deref() else {
+                continue;
+            };
+            let Ok(next_run) =
+                DateTime::parse_from_rfc3339(next_run_at).map(|dt| dt.with_timezone(&Utc))
+            else {
+                continue;
+            };
+            let overdue_secs = (now - next_run).num_seconds();
+            if overdue_secs <= grace_secs {
+                continue;
+            }
+
+            findings.push(LoopWatchdogFinding {
+                loop_id: schedule.id,
+                session_id: schedule.session_id,
+                severity: "warning".to_string(),
+                code: "loop_due_not_claimed".to_string(),
+                message: "Loop is past its scheduled run time but no active loop run is recorded."
+                    .to_string(),
+                next_run_at: Some(next_run_at.to_string()),
+                overdue_secs: Some(overdue_secs),
+                cron_status: Some(cron_job.status.as_str().to_string()),
+                latest_run_id: latest_run.as_ref().map(|run| run.id.clone()),
+                latest_run_state: latest_run.map(|run| run.state.as_str().to_string()),
+            });
+        }
+
+        Ok(findings)
+    }
+
     pub fn loop_snapshot(&self, loop_id: &str, run_limit: usize) -> Result<Option<LoopSnapshot>> {
         let Some(schedule) = self.get_loop_schedule(loop_id)? else {
             return Ok(None);
@@ -889,7 +1156,11 @@ impl SessionDB {
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![loop_id, limit as i64], row_to_loop_run)?;
-        collect_rows(rows)
+        let mut runs = collect_rows(rows)?;
+        for run in &mut runs {
+            run.usage = loop_run_usage_snapshot_with_conn(&conn, run)?;
+        }
+        Ok(runs)
     }
 
     pub fn enqueue_loop_event_triggers(&self, event: &AppEvent) -> Result<Vec<String>> {
@@ -1032,13 +1303,245 @@ impl SessionDB {
         Ok(schedule)
     }
 
+    pub fn record_loop_tool_progress(
+        &self,
+        loop_id: &str,
+        progress_state: LoopProgressState,
+        summary: &str,
+        reason: Option<&str>,
+        metadata: Value,
+    ) -> Result<LoopSchedule> {
+        let schedule = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        if schedule.state.is_terminal() {
+            return Err(anyhow!(
+                "loop schedule {} is {}; terminal loops cannot record progress",
+                schedule.id,
+                schedule.state.as_str()
+            ));
+        }
+        let now = now_rfc3339();
+        {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "UPDATE loop_schedules
+                 SET progress_state = ?2,
+                     progress_summary = ?3,
+                     updated_at = ?4
+                 WHERE id = ?1",
+                params![loop_id, progress_state.as_str(), summary, now],
+            )?;
+        }
+        if let Some(run_id) = self.latest_running_loop_run_id(loop_id)? {
+            self.patch_loop_run_trace(
+                &run_id,
+                json!({
+                    "agentToolProgress": {
+                        "source": "tool",
+                        "state": progress_state.as_str(),
+                        "summary": summary,
+                        "reason": reason,
+                        "metadata": metadata,
+                        "recordedAt": now,
+                    }
+                }),
+                None,
+            )?;
+        }
+        let updated = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        emit_loop_event("loop:changed", &updated);
+        Ok(updated)
+    }
+
+    pub fn record_loop_tool_reschedule(
+        &self,
+        cron_db: &CronDB,
+        loop_id: &str,
+        delay_secs: i64,
+        reason: &str,
+    ) -> Result<(LoopSchedule, Option<String>)> {
+        let schedule = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        if schedule.state != LoopState::Active {
+            return Err(anyhow!(
+                "loop schedule {} must be active to reschedule; current state is {}",
+                schedule.id,
+                schedule.state.as_str()
+            ));
+        }
+        if schedule.trigger_kind != LoopTriggerKind::Dynamic {
+            return Err(anyhow!(
+                "loop schedule {} is {}; loop_reschedule only controls dynamic loops",
+                schedule.id,
+                schedule.trigger_kind.as_str()
+            ));
+        }
+        let delay_secs = delay_secs.clamp(
+            MIN_DYNAMIC_LOOP_RESCHEDULE_SECS,
+            MAX_DYNAMIC_LOOP_RESCHEDULE_SECS,
+        );
+        let next_run_at = cron_db.delay_next_run(&schedule.cron_job_id, delay_secs)?;
+        self.set_dynamic_loop_fallback_used(&schedule.id, &schedule.trigger_spec, false)?;
+        if let Some(run_id) = self.latest_running_loop_run_id(loop_id)? {
+            self.patch_loop_run_trace(
+                &run_id,
+                json!({
+                    "dynamicDecision": {
+                        "source": "tool",
+                        "action": "reschedule",
+                        "delaySecs": delay_secs,
+                        "reason": reason,
+                    }
+                }),
+                None,
+            )?;
+            self.update_loop_run_scheduling_decision(
+                &run_id,
+                Some(&format!("dynamic_reschedule_{delay_secs}s")),
+            )?;
+        }
+        let mut updated = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut updated)?;
+        emit_loop_event("loop:changed", &updated);
+        Ok((updated, next_run_at))
+    }
+
+    pub fn record_loop_tool_stop(
+        &self,
+        cron_db: &CronDB,
+        loop_id: &str,
+        completed: bool,
+        reason: &str,
+    ) -> Result<LoopSchedule> {
+        let current = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        if current.state.is_terminal() {
+            return Err(anyhow!(
+                "loop schedule {} is already {}",
+                current.id,
+                current.state.as_str()
+            ));
+        }
+        let next_state = if completed {
+            LoopState::Completed
+        } else {
+            LoopState::Blocked
+        };
+        if let Some(run_id) = self.latest_running_loop_run_id(loop_id)? {
+            self.patch_loop_run_trace(
+                &run_id,
+                json!({
+                    "dynamicDecision": {
+                        "source": "tool",
+                        "action": if completed { "stop" } else { "block" },
+                        "reason": reason,
+                    }
+                }),
+                None,
+            )?;
+            self.update_loop_run_scheduling_decision(
+                &run_id,
+                Some(if completed {
+                    "completed_dynamic_stop"
+                } else {
+                    "blocked_dynamic"
+                }),
+            )?;
+        }
+        let mut schedule =
+            self.transition_loop_schedule(loop_id, next_state, (!completed).then_some(reason))?;
+        {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "UPDATE loop_schedules
+                 SET progress_state = ?2,
+                     progress_summary = ?3,
+                     updated_at = ?4
+                 WHERE id = ?1",
+                params![
+                    loop_id,
+                    if completed {
+                        LoopProgressState::Progressed.as_str()
+                    } else {
+                        LoopProgressState::Blocked.as_str()
+                    },
+                    reason,
+                    now_rfc3339(),
+                ],
+            )?;
+        }
+        cron_db.toggle_job(&schedule.cron_job_id, false)?;
+        if schedule.trigger_kind == LoopTriggerKind::Dynamic {
+            self.set_dynamic_loop_fallback_used(&schedule.id, &schedule.trigger_spec, false)?;
+        }
+        schedule = self
+            .get_loop_schedule(loop_id)?
+            .ok_or_else(|| anyhow!("loop schedule not found: {loop_id}"))?;
+        hydrate_loop_schedule_from_cron(cron_db, &mut schedule)?;
+        emit_loop_event("loop:changed", &schedule);
+        Ok(schedule)
+    }
+
+    fn refresh_dynamic_loop_maintenance_prompt(
+        &self,
+        schedule: &LoopSchedule,
+    ) -> Result<Option<LoopMaintenancePromptRefresh>> {
+        if schedule.trigger_kind != LoopTriggerKind::Dynamic
+            || !dynamic_loop_uses_maintenance_prompt(&schedule.trigger_spec)
+        {
+            return Ok(None);
+        }
+        let resolution = resolve_default_loop_prompt_for_session(self, &schedule.session_id);
+        let mut trigger_spec = schedule.trigger_spec.clone();
+        trigger_spec["maintenancePrompt"] = resolution.metadata.clone();
+        let trigger_spec = normalized_trigger_spec(LoopTriggerKind::Dynamic, &trigger_spec)?;
+
+        let prompt_changed = schedule.prompt != resolution.prompt;
+        let metadata_changed = dynamic_loop_maintenance_prompt_metadata(&schedule.trigger_spec)
+            != dynamic_loop_maintenance_prompt_metadata(&trigger_spec);
+        if !prompt_changed && !metadata_changed {
+            return Ok(None);
+        }
+
+        let now = now_rfc3339();
+        let trigger_spec_json = stable_json(&trigger_spec)?;
+        {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "UPDATE loop_schedules
+                 SET prompt = ?2,
+                     trigger_spec_json = ?3,
+                     updated_at = ?4
+                 WHERE id = ?1",
+                params![schedule.id, resolution.prompt, trigger_spec_json, now],
+            )?;
+        }
+        let mut updated = schedule.clone();
+        updated.prompt = resolution.prompt.clone();
+        updated.trigger_spec = trigger_spec.clone();
+        updated.updated_at = now;
+        emit_loop_event("loop:changed", &updated);
+
+        Ok(Some(LoopMaintenancePromptRefresh {
+            prompt: resolution.prompt,
+            trigger_spec,
+        }))
+    }
+
     pub fn prepare_loop_cron_run(
         &self,
         cron_job_id: &str,
         session_id: &str,
         started_at: &str,
     ) -> Result<LoopRunDecision> {
-        let Some(schedule) = self.loop_schedule_for_cron_job(cron_job_id)? else {
+        let Some(mut schedule) = self.loop_schedule_for_cron_job(cron_job_id)? else {
             return Ok(LoopRunDecision::NotLoop);
         };
         if schedule.session_id != session_id {
@@ -1065,7 +1568,7 @@ impl SessionDB {
                 }));
             }
         }
-        if let Some(limit) = schedule.max_runtime_secs {
+        if let Some(limit) = loop_runtime_limit_secs(&schedule) {
             if loop_elapsed_secs(&schedule.created_at)? >= limit {
                 self.complete_loop_due_to_limit(&schedule, "max_runtime_reached")?;
                 return Ok(LoopRunDecision::Reject(LoopRunRejection {
@@ -1172,6 +1675,11 @@ impl SessionDB {
             }
         }
 
+        if let Some(refreshed) = self.refresh_dynamic_loop_maintenance_prompt(&schedule)? {
+            schedule.prompt = refreshed.prompt;
+            schedule.trigger_spec = refreshed.trigger_spec;
+        }
+
         let run_id = format!("lrun_{}", uuid::Uuid::new_v4().simple());
         let seq = schedule.run_count + 1;
         let mut trigger_reason = format!(
@@ -1187,6 +1695,7 @@ impl SessionDB {
             "cronJobId": cron_job_id,
             "seq": seq,
             "goalCriterion": loop_schedule_goal_criterion_metadata(&schedule),
+            "maintenancePrompt": dynamic_loop_maintenance_prompt_metadata(&schedule.trigger_spec),
         });
         {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
@@ -1360,7 +1869,7 @@ impl SessionDB {
                     scheduling_decision = Some("completed_max_runs".to_string());
                 }
             }
-            if let Some(max_runtime) = schedule.max_runtime_secs {
+            if let Some(max_runtime) = loop_runtime_limit_secs(&schedule) {
                 if loop_elapsed_secs(&schedule.created_at)? >= max_runtime {
                     next_state = LoopState::Completed;
                     pause = true;
@@ -1434,6 +1943,136 @@ impl SessionDB {
                                 .unwrap_or_else(|| "loop is blocked".to_string()),
                         );
                         scheduling_decision = Some("blocked".to_string());
+                    }
+                }
+            }
+            if !next_state.is_terminal() && schedule.trigger_kind == LoopTriggerKind::Dynamic {
+                let dynamic_decision = match run_id.as_deref() {
+                    Some(run_id) => self
+                        .loop_run_dynamic_decision(run_id)?
+                        .unwrap_or_else(|| dynamic_loop_decision(result_summary)),
+                    None => dynamic_loop_decision(result_summary),
+                };
+                match dynamic_decision {
+                    DynamicLoopDecision::Reschedule { delay_secs, reason } => {
+                        backoff_secs = Some(delay_secs);
+                        scheduling_decision = Some(format!("dynamic_reschedule_{delay_secs}s"));
+                        self.set_dynamic_loop_fallback_used(
+                            &schedule.id,
+                            &schedule.trigger_spec,
+                            false,
+                        )?;
+                        if let Some(run_id) = run_id.as_deref() {
+                            self.patch_loop_run_trace(
+                                run_id,
+                                json!({
+                                    "dynamicDecision": {
+                                        "action": "reschedule",
+                                        "delaySecs": delay_secs,
+                                        "reason": reason,
+                                    }
+                                }),
+                                None,
+                            )?;
+                        }
+                    }
+                    DynamicLoopDecision::Stop { reason } => {
+                        next_state = LoopState::Completed;
+                        pause = true;
+                        backoff_secs = None;
+                        scheduling_decision = Some("completed_dynamic_stop".to_string());
+                        self.set_dynamic_loop_fallback_used(
+                            &schedule.id,
+                            &schedule.trigger_spec,
+                            false,
+                        )?;
+                        if let Some(run_id) = run_id.as_deref() {
+                            self.patch_loop_run_trace(
+                                run_id,
+                                json!({
+                                    "dynamicDecision": {
+                                        "action": "stop",
+                                        "reason": reason,
+                                    }
+                                }),
+                                None,
+                            )?;
+                        }
+                    }
+                    DynamicLoopDecision::Block { reason } => {
+                        next_state = LoopState::Blocked;
+                        pause = true;
+                        backoff_secs = None;
+                        blocked_reason = Some(reason.clone());
+                        scheduling_decision = Some("blocked_dynamic".to_string());
+                        self.set_dynamic_loop_fallback_used(
+                            &schedule.id,
+                            &schedule.trigger_spec,
+                            false,
+                        )?;
+                        if let Some(run_id) = run_id.as_deref() {
+                            self.patch_loop_run_trace(
+                                run_id,
+                                json!({
+                                    "dynamicDecision": {
+                                        "action": "block",
+                                        "reason": reason,
+                                    }
+                                }),
+                                None,
+                            )?;
+                        }
+                    }
+                    DynamicLoopDecision::Missing => {
+                        if dynamic_loop_fallback_used(&schedule.trigger_spec) {
+                            next_state = LoopState::Blocked;
+                            pause = true;
+                            backoff_secs = None;
+                            blocked_reason = Some(
+                                "dynamic loop did not reschedule, stop, or block after its fallback wakeup"
+                                    .to_string(),
+                            );
+                            scheduling_decision =
+                                Some("blocked_dynamic_missing_decision".to_string());
+                            self.set_dynamic_loop_fallback_used(
+                                &schedule.id,
+                                &schedule.trigger_spec,
+                                false,
+                            )?;
+                            if let Some(run_id) = run_id.as_deref() {
+                                self.patch_loop_run_trace(
+                                    run_id,
+                                    json!({
+                                        "dynamicDecision": {
+                                            "action": "missing_after_fallback",
+                                        }
+                                    }),
+                                    None,
+                                )?;
+                            }
+                        } else {
+                            let delay_secs = dynamic_loop_fallback_secs(&schedule.trigger_spec);
+                            backoff_secs = Some(delay_secs);
+                            scheduling_decision = Some(format!("dynamic_fallback_{delay_secs}s"));
+                            self.set_dynamic_loop_fallback_used(
+                                &schedule.id,
+                                &schedule.trigger_spec,
+                                true,
+                            )?;
+                            if let Some(run_id) = run_id.as_deref() {
+                                self.patch_loop_run_trace(
+                                    run_id,
+                                    json!({
+                                        "dynamicDecision": {
+                                            "action": "fallback",
+                                            "delaySecs": delay_secs,
+                                            "reason": "model did not provide a dynamic loop decision",
+                                        }
+                                    }),
+                                    None,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -1994,6 +2633,34 @@ impl SessionDB {
         Ok(())
     }
 
+    fn set_dynamic_loop_fallback_used(
+        &self,
+        loop_id: &str,
+        current_spec: &Value,
+        fallback_used: bool,
+    ) -> Result<()> {
+        let mut spec = current_spec.clone();
+        if !spec.is_object() {
+            spec = json!({});
+        }
+        if let Some(object) = spec.as_object_mut() {
+            object.insert(
+                "fallbackSecs".to_string(),
+                json!(dynamic_loop_fallback_secs(current_spec)),
+            );
+            object.insert("fallbackUsed".to_string(), json!(fallback_used));
+        }
+        let now = now_rfc3339();
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE loop_schedules
+             SET trigger_spec_json = ?2, updated_at = ?3
+             WHERE id = ?1",
+            params![loop_id, stable_json(&spec)?, now],
+        )?;
+        Ok(())
+    }
+
     fn loop_run_started_at(&self, run_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         Ok(conn
@@ -2003,6 +2670,22 @@ impl SessionDB {
                 |row| row.get(0),
             )
             .optional()?)
+    }
+
+    fn loop_run_dynamic_decision(&self, run_id: &str) -> Result<Option<DynamicLoopDecision>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let trace_json: Option<String> = conn
+            .query_row(
+                "SELECT trace_json FROM loop_runs WHERE id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(trace_json) = trace_json else {
+            return Ok(None);
+        };
+        let trace: Value = serde_json::from_str(&trace_json).unwrap_or_else(|_| json!({}));
+        Ok(dynamic_loop_decision_from_trace(&trace))
     }
 
     fn evaluate_loop_progress(
@@ -2253,6 +2936,284 @@ impl SessionDB {
     }
 }
 
+fn loop_runtime_limit_secs(schedule: &LoopSchedule) -> Option<i64> {
+    schedule.max_runtime_secs.or_else(|| {
+        (schedule.trigger_kind == LoopTriggerKind::Dynamic)
+            .then_some(DEFAULT_DYNAMIC_LOOP_MAX_RUNTIME_SECS)
+    })
+}
+
+fn dynamic_loop_fallback_secs(spec: &Value) -> i64 {
+    spec.get("fallbackSecs")
+        .or_else(|| spec.get("fallback_secs"))
+        .and_then(Value::as_i64)
+        .unwrap_or(DEFAULT_DYNAMIC_LOOP_FALLBACK_SECS)
+        .clamp(
+            MIN_DYNAMIC_LOOP_RESCHEDULE_SECS,
+            MAX_DYNAMIC_LOOP_RESCHEDULE_SECS,
+        )
+}
+
+fn dynamic_loop_fallback_used(spec: &Value) -> bool {
+    spec.get("fallbackUsed")
+        .or_else(|| spec.get("fallback_used"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn dynamic_loop_uses_maintenance_prompt(spec: &Value) -> bool {
+    spec.get("maintenancePrompt")
+        .or_else(|| spec.get("maintenance_prompt"))
+        .and_then(|value| value.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn dynamic_loop_maintenance_prompt_metadata(spec: &Value) -> Option<Value> {
+    normalize_maintenance_prompt_spec(
+        spec.get("maintenancePrompt")
+            .or_else(|| spec.get("maintenance_prompt")),
+    )
+}
+
+fn normalize_maintenance_prompt_spec(value: Option<&Value>) -> Option<Value> {
+    let spec = value?;
+    let enabled = spec
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    let source = spec
+        .get("source")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let mut metadata = json!({
+        "enabled": true,
+        "source": source,
+    });
+    if let Some(path) = spec
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        metadata["path"] = json!(path);
+    }
+    if let Some(hash) = spec
+        .get("contentHash")
+        .or_else(|| spec.get("content_hash"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        metadata["contentHash"] = json!(hash);
+    }
+    Some(metadata)
+}
+
+fn loop_prompt_candidates(session_db: &SessionDB, sid: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(Some(meta)) = session_db.get_session(sid) {
+        if let Some(working_dir) = crate::session::effective_working_dir_for_meta(&meta) {
+            roots.push(PathBuf::from(working_dir));
+        }
+    }
+    if let Ok(home) = crate::paths::home_dir() {
+        roots.push(home);
+    }
+
+    let mut candidates = Vec::new();
+    for root in roots {
+        candidates.push(root.join("loop.md"));
+        candidates.push(root.join(".hope").join("loop.md"));
+        candidates.push(root.join(".hope-agent").join("loop.md"));
+        candidates.push(root.join(".claude").join("loop.md"));
+    }
+    candidates
+}
+
+fn read_loop_prompt_file(path: &Path) -> Option<DefaultLoopPromptResolution> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let mut file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((LOOP_MD_MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let truncated = bytes.len() > LOOP_MD_MAX_BYTES;
+    if truncated {
+        bytes.truncate(LOOP_MD_MAX_BYTES);
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let truncation_note = if truncated {
+        "\n\n[The loop.md file was truncated to the first 25KB.]"
+    } else {
+        ""
+    };
+    let prompt = format!(
+        "Use the following loop.md instructions from `{}` as the standing prompt for this self-paced loop.\n\n{}{}",
+        path.display(),
+        trimmed,
+        truncation_note
+    );
+    Some(DefaultLoopPromptResolution {
+        metadata: json!({
+            "enabled": true,
+            "source": "loop_md",
+            "path": path.to_string_lossy(),
+            "contentHash": hash_text(trimmed),
+        }),
+        prompt,
+    })
+}
+
+fn hash_text(input: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn dynamic_loop_decision(summary: Option<&str>) -> DynamicLoopDecision {
+    let Some(summary) = summary else {
+        return DynamicLoopDecision::Missing;
+    };
+    for line in summary.lines() {
+        let line = line.trim();
+        if let Some((_, rest)) = line.split_once("LOOP_RESCHEDULE_AFTER:") {
+            if let Some((delay_secs, reason)) = parse_dynamic_reschedule(rest) {
+                return DynamicLoopDecision::Reschedule { delay_secs, reason };
+            }
+            return DynamicLoopDecision::Missing;
+        }
+        if let Some((_, rest)) = line.split_once("LOOP_STOP:") {
+            return DynamicLoopDecision::Stop {
+                reason: non_empty(rest.trim())
+                    .unwrap_or("model stopped the dynamic loop")
+                    .to_string(),
+            };
+        }
+        if let Some((_, rest)) = line.split_once("LOOP_BLOCKED:") {
+            return DynamicLoopDecision::Block {
+                reason: non_empty(rest.trim())
+                    .unwrap_or("dynamic loop is blocked")
+                    .to_string(),
+            };
+        }
+    }
+    DynamicLoopDecision::Missing
+}
+
+fn dynamic_loop_decision_from_trace(trace: &Value) -> Option<DynamicLoopDecision> {
+    let decision = trace.get("dynamicDecision")?;
+    let action = decision.get("action").and_then(Value::as_str)?;
+    match action {
+        "reschedule" => {
+            let delay_secs = decision
+                .get("delaySecs")
+                .or_else(|| decision.get("delay_secs"))
+                .and_then(Value::as_i64)?
+                .clamp(
+                    MIN_DYNAMIC_LOOP_RESCHEDULE_SECS,
+                    MAX_DYNAMIC_LOOP_RESCHEDULE_SECS,
+                );
+            let reason = decision
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+                .unwrap_or("model requested dynamic reschedule")
+                .to_string();
+            Some(DynamicLoopDecision::Reschedule { delay_secs, reason })
+        }
+        "stop" => {
+            let reason = decision
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+                .unwrap_or("model stopped the dynamic loop")
+                .to_string();
+            Some(DynamicLoopDecision::Stop { reason })
+        }
+        "block" => {
+            let reason = decision
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(non_empty)
+                .unwrap_or("dynamic loop is blocked")
+                .to_string();
+            Some(DynamicLoopDecision::Block { reason })
+        }
+        _ => None,
+    }
+}
+
+fn parse_dynamic_reschedule(input: &str) -> Option<(i64, String)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = trimmed.split_whitespace();
+    let first = parts.next()?;
+    let first_clean = first.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.'));
+    let (raw_delay, consumed_len) = if let Some(secs) = parse_loop_duration_secs(first_clean) {
+        (secs, first.len())
+    } else {
+        let second = parts.next()?;
+        let second_clean = second.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.'));
+        let secs = parse_loop_duration_secs(&format!("{first_clean}{second_clean}"))?;
+        (secs, first.len() + 1 + second.len())
+    };
+    let delay_secs = raw_delay.clamp(
+        MIN_DYNAMIC_LOOP_RESCHEDULE_SECS,
+        MAX_DYNAMIC_LOOP_RESCHEDULE_SECS,
+    );
+    let reason = trimmed
+        .get(consumed_len..)
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches(|c: char| matches!(c, '-' | ':' | ',' | ';'))
+        .trim();
+    Some((
+        delay_secs,
+        non_empty(reason)
+            .unwrap_or("model requested dynamic reschedule")
+            .to_string(),
+    ))
+}
+
+fn parse_loop_duration_secs(input: &str) -> Option<i64> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let split = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    let (num, unit) = trimmed.split_at(split);
+    let n = num.parse::<i64>().ok()?;
+    let multiplier = match unit {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => 1,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3600,
+        "d" | "day" | "days" => 86_400,
+        _ => return None,
+    };
+    Some(n.saturating_mul(multiplier))
+}
+
 fn cron_schedule_from_loop(input: &CreateLoopScheduleInput) -> Result<CronSchedule> {
     match input.trigger_kind {
         LoopTriggerKind::Interval | LoopTriggerKind::Condition => {
@@ -2294,6 +3255,13 @@ fn cron_schedule_from_loop(input: &CreateLoopScheduleInput) -> Result<CronSchedu
             interval_ms: EVENT_LOOP_IDLE_INTERVAL_SECS.saturating_mul(1000),
             start_at: None,
         }),
+        LoopTriggerKind::Dynamic => {
+            let secs = dynamic_loop_fallback_secs(&input.trigger_spec);
+            Ok(CronSchedule::Every {
+                interval_ms: (secs as u64).saturating_mul(1000),
+                start_at: None,
+            })
+        }
     }
 }
 
@@ -2351,6 +3319,23 @@ fn normalized_trigger_spec(kind: LoopTriggerKind, spec: &Value) -> Result<Value>
                 "filters": filters,
                 "debounceSecs": debounce_secs,
             }))
+        }
+        LoopTriggerKind::Dynamic => {
+            let mut normalized = json!({
+                "fallbackSecs": dynamic_loop_fallback_secs(spec),
+                "fallbackUsed": spec
+                    .get("fallbackUsed")
+                    .or_else(|| spec.get("fallback_used"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            });
+            if let Some(maintenance) = normalize_maintenance_prompt_spec(
+                spec.get("maintenancePrompt")
+                    .or_else(|| spec.get("maintenance_prompt")),
+            ) {
+                normalized["maintenancePrompt"] = maintenance;
+            }
+            Ok(normalized)
         }
         LoopTriggerKind::Cron => Ok(spec.clone()),
     }
@@ -2435,9 +3420,305 @@ fn row_to_loop_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<LoopRun> {
         no_progress_reason: row.get(12)?,
         scheduling_decision: row.get(13)?,
         trace: serde_json::from_str(&trace_json).unwrap_or_else(|_| json!({})),
+        usage: empty_loop_run_usage_snapshot("not_loaded"),
         started_at: row.get(15)?,
         finished_at: row.get(16)?,
     })
+}
+
+fn empty_loop_run_usage_snapshot(attribution: &str) -> LoopRunUsageSnapshot {
+    LoopRunUsageSnapshot {
+        message_count: 0,
+        user_turns: 0,
+        assistant_messages: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        attribution: attribution.to_string(),
+        provider_events: 0,
+        provider_input_tokens: 0,
+        provider_output_tokens: 0,
+        provider_cache_creation_input_tokens: 0,
+        provider_cache_read_input_tokens: 0,
+        provider_total_tokens: 0,
+        provider_attribution: "not_loaded".to_string(),
+    }
+}
+
+fn loop_run_usage_snapshot_with_conn(
+    conn: &Connection,
+    run: &LoopRun,
+) -> Result<LoopRunUsageSnapshot> {
+    if let Some(snapshot) = loop_run_usage_from_trigger_message(conn, run)? {
+        return Ok(snapshot);
+    }
+
+    let window_end = run
+        .finished_at
+        .clone()
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+    let lower_bound = i64::MIN;
+    let upper_bound = i64::MAX;
+    let mut snapshot = conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(tokens_in_last, tokens_in, 0) > 0
+                    THEN COALESCE(tokens_in_last, tokens_in, 0)
+                    ELSE 0
+                END
+            ), 0),
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(tokens_out, 0) > 0 THEN tokens_out
+                    ELSE 0
+                END
+            ), 0)
+         FROM messages
+         WHERE session_id = ?1
+           AND timestamp >= ?2
+           AND timestamp <= ?3
+           AND role IN (?4, ?5)",
+        params![
+            &run.session_id,
+            &run.started_at,
+            window_end,
+            MessageRole::User.as_str(),
+            MessageRole::Assistant.as_str(),
+        ],
+        |row| {
+            let input_tokens = row.get::<_, i64>(3)?;
+            let output_tokens = row.get::<_, i64>(4)?;
+            Ok(LoopRunUsageSnapshot {
+                message_count: row.get(0)?,
+                user_turns: row.get(1)?,
+                assistant_messages: row.get(2)?,
+                input_tokens,
+                output_tokens,
+                total_tokens: input_tokens.saturating_add(output_tokens),
+                attribution: "session_messages_between_loop_run_bounds".to_string(),
+                provider_events: 0,
+                provider_input_tokens: 0,
+                provider_output_tokens: 0,
+                provider_cache_creation_input_tokens: 0,
+                provider_cache_read_input_tokens: 0,
+                provider_total_tokens: 0,
+                provider_attribution: "not_loaded".to_string(),
+            })
+        },
+    )?;
+    hydrate_loop_provider_usage_for_timestamp_range(
+        conn,
+        &run.session_id,
+        &run.started_at,
+        &window_end,
+        lower_bound,
+        upper_bound,
+        &mut snapshot,
+    )?;
+    if run.finished_at.is_none() {
+        snapshot.attribution = "session_messages_since_loop_run_start".to_string();
+    }
+    Ok(snapshot)
+}
+
+fn loop_run_usage_from_trigger_message(
+    conn: &Connection,
+    run: &LoopRun,
+) -> Result<Option<LoopRunUsageSnapshot>> {
+    let pattern = format!("%\"run_id\":\"{}\"%", run.id);
+    let Some(trigger_message_id) = conn
+        .query_row(
+            "SELECT id
+             FROM messages
+             WHERE session_id = ?1
+               AND role = ?2
+               AND attachments_meta LIKE ?3
+             ORDER BY id ASC
+             LIMIT 1",
+            params![&run.session_id, MessageRole::User.as_str(), pattern],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let next_user_message_id = conn
+        .query_row(
+            "SELECT id
+             FROM messages
+             WHERE session_id = ?1
+               AND role = ?2
+               AND id > ?3
+             ORDER BY id ASC
+             LIMIT 1",
+            params![
+                &run.session_id,
+                MessageRole::User.as_str(),
+                trigger_message_id
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let upper_bound = next_user_message_id.unwrap_or(i64::MAX);
+    let mut snapshot = conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(tokens_in_last, tokens_in, 0) > 0
+                    THEN COALESCE(tokens_in_last, tokens_in, 0)
+                    ELSE 0
+                END
+            ), 0),
+            COALESCE(SUM(
+                CASE
+                    WHEN COALESCE(tokens_out, 0) > 0 THEN tokens_out
+                    ELSE 0
+                END
+            ), 0)
+         FROM messages
+         WHERE session_id = ?1
+           AND id >= ?2
+           AND id < ?3
+           AND role IN (?4, ?5)",
+        params![
+            &run.session_id,
+            trigger_message_id,
+            upper_bound,
+            MessageRole::User.as_str(),
+            MessageRole::Assistant.as_str(),
+        ],
+        |row| {
+            let input_tokens = row.get::<_, i64>(3)?;
+            let output_tokens = row.get::<_, i64>(4)?;
+            Ok(LoopRunUsageSnapshot {
+                message_count: row.get(0)?,
+                user_turns: row.get(1)?,
+                assistant_messages: row.get(2)?,
+                input_tokens,
+                output_tokens,
+                total_tokens: input_tokens.saturating_add(output_tokens),
+                attribution: "loop_trigger_message_boundary".to_string(),
+                provider_events: 0,
+                provider_input_tokens: 0,
+                provider_output_tokens: 0,
+                provider_cache_creation_input_tokens: 0,
+                provider_cache_read_input_tokens: 0,
+                provider_total_tokens: 0,
+                provider_attribution: "not_loaded".to_string(),
+            })
+        },
+    )?;
+    hydrate_loop_provider_usage_for_message_id_range(
+        conn,
+        &run.session_id,
+        trigger_message_id,
+        upper_bound,
+        &mut snapshot,
+    )?;
+    Ok(Some(snapshot))
+}
+
+fn hydrate_loop_provider_usage_for_message_id_range(
+    conn: &Connection,
+    session_id: &str,
+    lower_bound: i64,
+    upper_bound: i64,
+    snapshot: &mut LoopRunUsageSnapshot,
+) -> Result<()> {
+    hydrate_loop_provider_usage_with_where(
+        conn,
+        session_id,
+        "m.id >= ?2 AND m.id < ?3",
+        params![
+            session_id,
+            lower_bound,
+            upper_bound,
+            crate::model_usage::KIND_CHAT,
+            MessageRole::Assistant.as_str(),
+        ],
+        snapshot,
+    )
+}
+
+fn hydrate_loop_provider_usage_for_timestamp_range(
+    conn: &Connection,
+    session_id: &str,
+    started_at: &str,
+    window_end: &str,
+    _lower_bound: i64,
+    _upper_bound: i64,
+    snapshot: &mut LoopRunUsageSnapshot,
+) -> Result<()> {
+    hydrate_loop_provider_usage_with_where(
+        conn,
+        session_id,
+        "m.timestamp >= ?2 AND m.timestamp <= ?3",
+        params![
+            session_id,
+            started_at,
+            window_end,
+            crate::model_usage::KIND_CHAT,
+            MessageRole::Assistant.as_str(),
+        ],
+        snapshot,
+    )
+}
+
+fn hydrate_loop_provider_usage_with_where<P>(
+    conn: &Connection,
+    session_id: &str,
+    message_predicate: &str,
+    params: P,
+    snapshot: &mut LoopRunUsageSnapshot,
+) -> Result<()>
+where
+    P: rusqlite::Params,
+{
+    let sql = format!(
+        "SELECT
+            COUNT(u.id),
+            COALESCE(SUM(u.input_tokens), 0),
+            COALESCE(SUM(u.output_tokens), 0),
+            COALESCE(SUM(u.cache_creation_input_tokens), 0),
+            COALESCE(SUM(u.cache_read_input_tokens), 0)
+         FROM messages m
+         JOIN model_usage_events u ON u.request_key = ('message:' || m.id)
+         WHERE m.session_id = ?1
+           AND {message_predicate}
+           AND u.kind = ?4
+           AND m.role = ?5",
+    );
+    let provider = conn.query_row(&sql, params, |row| {
+        let input_tokens = row.get::<_, i64>(1)?;
+        let output_tokens = row.get::<_, i64>(2)?;
+        Ok((
+            row.get::<_, i64>(0)?,
+            input_tokens,
+            output_tokens,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+            input_tokens.saturating_add(output_tokens),
+        ))
+    })?;
+    snapshot.provider_events = provider.0;
+    snapshot.provider_input_tokens = provider.1;
+    snapshot.provider_output_tokens = provider.2;
+    snapshot.provider_cache_creation_input_tokens = provider.3;
+    snapshot.provider_cache_read_input_tokens = provider.4;
+    snapshot.provider_total_tokens = provider.5;
+    snapshot.provider_attribution = if snapshot.provider_events > 0 {
+        "model_usage_events.request_key=message_id".to_string()
+    } else {
+        format!("no_linked_model_usage_events_for_session:{session_id}")
+    };
+    Ok(())
 }
 
 fn collect_rows<T>(
@@ -2806,10 +4087,26 @@ pub fn build_loop_trigger_message(
             )
         })
         .unwrap_or_default();
+    let dynamic = if trigger_kind == LoopTriggerKind::Dynamic {
+        let fallback_secs = dynamic_loop_fallback_secs(trigger_spec);
+        format!(
+            "This is a dynamic self-paced loop. At the end of this turn, include exactly one \
+             final decision line: `LOOP_RESCHEDULE_AFTER: <duration> - <reason>` to continue, \
+             `LOOP_STOP: <reason>` when the recurring objective is complete or no longer useful, \
+             or `LOOP_BLOCKED: <reason>` when user input or an external state change is required. \
+             Choose a duration between 1 minute and 1 hour. If no decision line appears, the \
+             system will schedule one fallback wakeup after {} and then block if the fallback \
+             turn also has no decision.\n",
+            format_loop_duration(fallback_secs)
+        )
+    } else {
+        String::new()
+    };
     format!(
         "<loop_trigger>\n\
          <loop_id>{}</loop_id>\n\
          <run_id>{}</run_id>\n\
+         {}\
          {}\
          {}\
          {}\
@@ -2826,6 +4123,7 @@ pub fn build_loop_trigger_message(
         goal_criterion,
         condition,
         event,
+        dynamic,
         escape_xml(prompt)
     )
 }
@@ -2834,6 +4132,18 @@ fn condition_satisfied_marker(summary: Option<&str>) -> bool {
     summary
         .map(|s| s.contains("LOOP_CONDITION_SATISFIED:"))
         .unwrap_or(false)
+}
+
+fn format_loop_duration(secs: i64) -> String {
+    if secs % 86_400 == 0 {
+        format!("{}d", secs / 86_400)
+    } else if secs % 3600 == 0 {
+        format!("{}h", secs / 3600)
+    } else if secs % 60 == 0 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    }
 }
 
 fn escape_xml(input: &str) -> String {
@@ -2953,6 +4263,7 @@ mod tests {
     use super::*;
     use crate::domain_eval::{DomainOperationalGateInput, DomainSoakReportInput};
     use crate::goal::{CreateGoalInput, UpdateGoalInput};
+    use crate::model_usage::{ModelUsageEvent, KIND_CHAT};
     use crate::session::NewMessage;
     use crate::workflow::WorkflowRunState;
 
@@ -3027,6 +4338,26 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_trigger_message_includes_self_pacing_contract() {
+        let msg = build_loop_trigger_message(
+            "loop",
+            "run",
+            None,
+            None,
+            None,
+            LoopTriggerKind::Dynamic,
+            &json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+            None,
+            "check CI and address review comments",
+        );
+        assert!(msg.contains("dynamic self-paced loop"));
+        assert!(msg.contains("LOOP_RESCHEDULE_AFTER:"));
+        assert!(msg.contains("LOOP_STOP:"));
+        assert!(msg.contains("LOOP_BLOCKED:"));
+        assert!(msg.contains("check CI and address review comments"));
+    }
+
+    #[test]
     fn event_trigger_message_includes_bounded_event_context() {
         let msg = build_loop_trigger_message(
             "loop",
@@ -3067,6 +4398,32 @@ mod tests {
             agent_id: None,
         };
         assert!(cron_schedule_from_loop(&input).is_err());
+    }
+
+    #[test]
+    fn dynamic_trigger_uses_clamped_fallback_interval() {
+        let input = CreateLoopScheduleInput {
+            session_id: "s".into(),
+            goal_id: None,
+            goal_criterion_id: None,
+            prompt: "poll".into(),
+            trigger_kind: LoopTriggerKind::Dynamic,
+            trigger_spec: json!({ "fallbackSecs": 5, "fallbackUsed": false }),
+            execution_strategy: LoopExecutionStrategy::Continue,
+            max_runs: None,
+            max_runtime_secs: None,
+            token_budget: None,
+            cost_budget_micros: None,
+            max_no_progress_runs: None,
+            max_failures: None,
+            backoff_secs: None,
+            agent_id: None,
+        };
+        let schedule = cron_schedule_from_loop(&input).expect("dynamic cron schedule");
+        match schedule {
+            CronSchedule::Every { interval_ms, .. } => assert_eq!(interval_ms, 60_000),
+            other => panic!("expected every schedule, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3270,6 +4627,247 @@ mod tests {
             .expect("load schedule")
             .expect("schedule exists");
         assert_eq!(updated.state, LoopState::Blocked);
+    }
+
+    #[test]
+    fn loop_run_usage_counts_only_messages_within_run_bounds() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+
+        let started_at = "2026-01-01T00:00:10Z";
+        let finished_at = "2026-01-01T00:00:20Z";
+        let admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, started_at)
+            .expect("prepare loop")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+
+        let mut before = NewMessage::assistant("old budget");
+        before.timestamp = "2026-01-01T00:00:09Z".to_string();
+        before.tokens_in_last = Some(500);
+        before.tokens_out = Some(500);
+        session_db
+            .append_message(&session.id, &before)
+            .expect("append before");
+
+        let mut user = NewMessage::user("loop tick");
+        user.timestamp = "2026-01-01T00:00:12Z".to_string();
+        session_db
+            .append_message(&session.id, &user)
+            .expect("append user");
+
+        let mut assistant_one = NewMessage::assistant("inside one");
+        assistant_one.timestamp = "2026-01-01T00:00:15Z".to_string();
+        assistant_one.tokens_in = Some(100);
+        assistant_one.tokens_in_last = Some(40);
+        assistant_one.tokens_out = Some(10);
+        session_db
+            .append_message(&session.id, &assistant_one)
+            .expect("append assistant one");
+
+        let mut assistant_two = NewMessage::assistant("inside two");
+        assistant_two.timestamp = "2026-01-01T00:00:18Z".to_string();
+        assistant_two.tokens_in = Some(20);
+        assistant_two.tokens_out = Some(5);
+        session_db
+            .append_message(&session.id, &assistant_two)
+            .expect("append assistant two");
+
+        let mut after = NewMessage::assistant("future budget");
+        after.timestamp = "2026-01-01T00:00:21Z".to_string();
+        after.tokens_in_last = Some(900);
+        after.tokens_out = Some(900);
+        session_db
+            .append_message(&session.id, &after)
+            .expect("append after");
+
+        session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&admission.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("done"),
+                None,
+                finished_at,
+            )
+            .expect("finish loop");
+
+        let snapshot = session_db
+            .loop_snapshot(&schedule.id, 5)
+            .expect("snapshot")
+            .expect("snapshot exists");
+        let usage = &snapshot.runs[0].usage;
+        assert_eq!(usage.message_count, 3);
+        assert_eq!(usage.user_turns, 1);
+        assert_eq!(usage.assistant_messages, 2);
+        assert_eq!(usage.input_tokens, 60);
+        assert_eq!(usage.output_tokens, 15);
+        assert_eq!(usage.total_tokens, 75);
+        assert_eq!(
+            usage.attribution, "session_messages_between_loop_run_bounds",
+            "loop run usage should disclose its window-based attribution"
+        );
+    }
+
+    #[test]
+    fn loop_run_usage_prefers_trigger_message_boundary_over_time_window() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: default_dynamic_loop_trigger_spec(),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+
+        let started_at = "2026-01-01T00:00:10Z";
+        let finished_at = "2026-01-01T00:00:30Z";
+        let admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, started_at)
+            .expect("prepare loop")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+
+        let mut unrelated_before = NewMessage::assistant("inside window, wrong turn");
+        unrelated_before.timestamp = "2026-01-01T00:00:11Z".to_string();
+        unrelated_before.tokens_in_last = Some(999);
+        unrelated_before.tokens_out = Some(999);
+        let unrelated_before_id = session_db
+            .append_message(&session.id, &unrelated_before)
+            .expect("append unrelated before");
+        let mut unrelated_before_event = ModelUsageEvent::new(KIND_CHAT).with_usage(999, 999, 9, 9);
+        unrelated_before_event.request_key = Some(format!("message:{unrelated_before_id}"));
+        unrelated_before_event.session_id = Some(session.id.clone());
+        session_db
+            .insert_model_usage_event(&unrelated_before_event)
+            .expect("insert unrelated before usage");
+
+        let mut trigger = NewMessage::user("loop tick");
+        trigger.timestamp = "2026-01-01T00:00:12Z".to_string();
+        trigger.attachments_meta = Some(
+            json!({
+                "loop_trigger": {
+                    "run_id": &admission.run_id,
+                }
+            })
+            .to_string(),
+        );
+        session_db
+            .append_message(&session.id, &trigger)
+            .expect("append trigger");
+
+        let mut assistant = NewMessage::assistant("loop result");
+        assistant.timestamp = "2026-01-01T00:00:18Z".to_string();
+        assistant.tokens_in = Some(100);
+        assistant.tokens_in_last = Some(25);
+        assistant.tokens_out = Some(7);
+        let assistant_id = session_db
+            .append_message(&session.id, &assistant)
+            .expect("append assistant");
+        let mut assistant_event = ModelUsageEvent::new(KIND_CHAT).with_usage(30, 9, 3, 4);
+        assistant_event.request_key = Some(format!("message:{assistant_id}"));
+        assistant_event.session_id = Some(session.id.clone());
+        session_db
+            .insert_model_usage_event(&assistant_event)
+            .expect("insert loop assistant usage");
+
+        let mut unrelated_next_turn = NewMessage::user("manual follow-up");
+        unrelated_next_turn.timestamp = "2026-01-01T00:00:20Z".to_string();
+        session_db
+            .append_message(&session.id, &unrelated_next_turn)
+            .expect("append unrelated next user");
+
+        let mut unrelated_after = NewMessage::assistant("manual answer");
+        unrelated_after.timestamp = "2026-01-01T00:00:22Z".to_string();
+        unrelated_after.tokens_in_last = Some(888);
+        unrelated_after.tokens_out = Some(888);
+        let unrelated_after_id = session_db
+            .append_message(&session.id, &unrelated_after)
+            .expect("append unrelated after");
+        let mut unrelated_after_event = ModelUsageEvent::new(KIND_CHAT).with_usage(888, 888, 8, 8);
+        unrelated_after_event.request_key = Some(format!("message:{unrelated_after_id}"));
+        unrelated_after_event.session_id = Some(session.id.clone());
+        session_db
+            .insert_model_usage_event(&unrelated_after_event)
+            .expect("insert unrelated after usage");
+
+        session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&admission.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("done"),
+                None,
+                finished_at,
+            )
+            .expect("finish loop");
+
+        let snapshot = session_db
+            .loop_snapshot(&schedule.id, 5)
+            .expect("snapshot")
+            .expect("snapshot exists");
+        let usage = &snapshot.runs[0].usage;
+        assert_eq!(usage.message_count, 2);
+        assert_eq!(usage.user_turns, 1);
+        assert_eq!(usage.assistant_messages, 1);
+        assert_eq!(usage.input_tokens, 25);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(usage.total_tokens, 32);
+        assert_eq!(usage.attribution, "loop_trigger_message_boundary");
+        assert_eq!(usage.provider_events, 1);
+        assert_eq!(usage.provider_input_tokens, 30);
+        assert_eq!(usage.provider_output_tokens, 9);
+        assert_eq!(usage.provider_cache_creation_input_tokens, 3);
+        assert_eq!(usage.provider_cache_read_input_tokens, 4);
+        assert_eq!(usage.provider_total_tokens, 39);
+        assert_eq!(
+            usage.provider_attribution,
+            "model_usage_events.request_key=message_id"
+        );
     }
 
     #[test]
@@ -3652,6 +5250,373 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_loop_reschedule_marker_delays_next_run() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "check CI and review comments".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create dynamic loop");
+        let admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare loop")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+        let action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&admission.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("CI is still running.\nLOOP_RESCHEDULE_AFTER: 5m - wait for checks"),
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish dynamic loop");
+        assert_eq!(action.backoff_secs, Some(300));
+        assert!(!action.pause_cron_job);
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load schedule")
+            .expect("schedule");
+        assert_eq!(updated.state, LoopState::Active);
+        assert_eq!(
+            updated
+                .trigger_spec
+                .get("fallbackUsed")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let runs = session_db
+            .list_loop_runs(&schedule.id, 10)
+            .expect("list runs");
+        assert_eq!(
+            runs[0].scheduling_decision.as_deref(),
+            Some("dynamic_reschedule_300s")
+        );
+        assert_eq!(
+            runs[0].trace["dynamicDecision"]["action"],
+            json!("reschedule")
+        );
+    }
+
+    #[test]
+    fn dynamic_loop_tool_reschedule_decision_prevents_missing_fallback() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "check CI and review comments".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create dynamic loop");
+        let admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare loop")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+
+        let (_updated, next_run_at) = session_db
+            .record_loop_tool_reschedule(&cron_db, &schedule.id, 600, "wait for CI to finish")
+            .expect("tool reschedule");
+        assert!(next_run_at.is_some());
+
+        let action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&admission.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("Checked CI; no textual decision marker."),
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish dynamic loop");
+        assert_eq!(action.backoff_secs, Some(600));
+        assert!(!action.pause_cron_job);
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load schedule")
+            .expect("schedule");
+        assert_eq!(updated.state, LoopState::Active);
+        assert_eq!(
+            updated
+                .trigger_spec
+                .get("fallbackUsed")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let runs = session_db
+            .list_loop_runs(&schedule.id, 10)
+            .expect("list runs");
+        assert_eq!(
+            runs[0].scheduling_decision.as_deref(),
+            Some("dynamic_reschedule_600s")
+        );
+        assert_eq!(
+            runs[0].trace["dynamicDecision"]["action"],
+            json!("reschedule")
+        );
+    }
+
+    #[test]
+    fn dynamic_maintenance_loop_refreshes_loop_md_before_run() {
+        let (dir, session_db, cron_db) = temp_dbs();
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace dir");
+        let loop_md = workspace.join("loop.md");
+        std::fs::write(&loop_md, "First maintenance instructions").expect("write loop md");
+        let session = session_db.create_session("ha-main").expect("session");
+        session_db
+            .update_session_working_dir(&session.id, Some(workspace.to_string_lossy().to_string()))
+            .expect("set working dir");
+        let resolution = resolve_default_loop_prompt_for_session(&session_db, &session.id);
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: resolution.prompt,
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: dynamic_loop_trigger_spec_with_maintenance_prompt(
+                        resolution.metadata,
+                    ),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create dynamic maintenance loop");
+
+        std::fs::write(&loop_md, "Updated maintenance instructions").expect("update loop md");
+        let admission = session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, "2026-01-01T00:01:00Z")
+            .expect("prepare loop run");
+        let LoopRunDecision::Admit(admission) = admission else {
+            panic!("expected loop run admission");
+        };
+        assert!(admission
+            .prompt
+            .contains("Updated maintenance instructions"));
+        assert!(!admission.prompt.contains("First maintenance instructions"));
+        assert_eq!(
+            admission
+                .trigger_spec
+                .get("maintenancePrompt")
+                .and_then(|value| value.get("source"))
+                .and_then(Value::as_str),
+            Some("loop_md")
+        );
+
+        let updated = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("get loop")
+            .expect("loop exists");
+        assert!(updated.prompt.contains("Updated maintenance instructions"));
+        let snapshot = session_db
+            .loop_snapshot(&schedule.id, 5)
+            .expect("snapshot")
+            .expect("snapshot exists");
+        assert_eq!(
+            snapshot.runs[0]
+                .trace
+                .get("maintenancePrompt")
+                .and_then(|value| value.get("source"))
+                .and_then(Value::as_str),
+            Some("loop_md")
+        );
+    }
+
+    #[test]
+    fn dynamic_loop_tool_stop_completes_and_pauses_cron() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "check CI and review comments".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create dynamic loop");
+        let _admission = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare loop")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+
+        let updated = session_db
+            .record_loop_tool_stop(
+                &cron_db,
+                &schedule.id,
+                true,
+                "CI is green and no review remains",
+            )
+            .expect("tool stop");
+        assert_eq!(updated.state, LoopState::Completed);
+        assert_eq!(
+            updated.progress_summary.as_deref(),
+            Some("CI is green and no review remains")
+        );
+        let job = cron_db
+            .get_job(&schedule.cron_job_id)
+            .expect("read cron job")
+            .expect("cron job exists");
+        assert_eq!(job.status.as_str(), "paused");
+    }
+
+    #[test]
+    fn dynamic_loop_fallback_once_then_blocks_without_decision() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "check CI and review comments".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create dynamic loop");
+        let first = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare first")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+        let first_action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&first.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("Checked CI; no decision marker."),
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish first");
+        assert_eq!(first_action.backoff_secs, Some(1200));
+        assert!(!first_action.pause_cron_job);
+        let after_first = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load first")
+            .expect("schedule");
+        assert_eq!(
+            after_first
+                .trigger_spec
+                .get("fallbackUsed")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let second = match session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &now_rfc3339())
+            .expect("prepare second")
+        {
+            LoopRunDecision::Admit(admission) => admission,
+            other => panic!("expected admission, got {other:?}"),
+        };
+        let second_action = session_db
+            .finish_loop_cron_run(
+                &schedule.cron_job_id,
+                Some(&second.run_id),
+                None,
+                LoopRunState::Succeeded,
+                Some("Checked CI again; still no decision marker."),
+                None,
+                &now_rfc3339(),
+            )
+            .expect("finish second");
+        assert!(second_action.pause_cron_job);
+        let after_second = session_db
+            .get_loop_schedule(&schedule.id)
+            .expect("load second")
+            .expect("schedule");
+        assert_eq!(after_second.state, LoopState::Blocked);
+        assert!(after_second
+            .blocked_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("did not reschedule"));
+    }
+
+    #[test]
     fn no_progress_backoff_then_blocks_after_threshold() {
         let (_dir, session_db, cron_db) = temp_dbs();
         let session = session_db.create_session("ha-main").expect("session");
@@ -4000,5 +5965,189 @@ mod tests {
             .expect("cron job");
         assert_eq!(cron_job.max_failures, 6);
         assert_eq!(cron_job.job_timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn loop_watchdog_reports_due_active_loop_without_active_run() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        let overdue_at = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+        cron_db
+            .conn
+            .lock()
+            .expect("cron lock")
+            .execute(
+                "UPDATE cron_jobs SET status='active', next_run_at=?1, running_at=NULL WHERE id=?2",
+                rusqlite::params![overdue_at, schedule.cron_job_id],
+            )
+            .expect("set overdue cron");
+
+        let findings = session_db
+            .list_loop_watchdog_findings(&cron_db, &session.id, 60)
+            .expect("watchdog findings");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].loop_id, schedule.id);
+        assert_eq!(findings[0].code, "loop_due_not_claimed");
+        assert_eq!(findings[0].cron_status.as_deref(), Some("active"));
+        assert!(findings[0].overdue_secs.unwrap_or_default() >= 60);
+    }
+
+    #[test]
+    fn loop_watchdog_reports_missing_backing_cron_even_without_next_run() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        cron_db
+            .delete_job(&schedule.cron_job_id)
+            .expect("delete backing cron");
+
+        let findings = session_db
+            .list_loop_watchdog_findings(&cron_db, &session.id, 60)
+            .expect("watchdog findings");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].loop_id, schedule.id);
+        assert_eq!(findings[0].code, "loop_cron_missing");
+        assert!(findings[0].next_run_at.is_none());
+        assert!(findings[0].cron_status.is_none());
+    }
+
+    #[test]
+    fn loop_watchdog_reports_stale_running_loop_run_after_cron_recovery() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Dynamic,
+                    trigger_spec: json!({ "fallbackSecs": 1200, "fallbackUsed": false }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        let stale_started_at = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+        let admission = session_db
+            .prepare_loop_cron_run(&schedule.cron_job_id, &session.id, &stale_started_at)
+            .expect("prepare loop");
+        let run_id = match admission {
+            LoopRunDecision::Admit(admission) => admission.run_id,
+            other => panic!("expected admission, got {other:?}"),
+        };
+        cron_db
+            .clear_running(&schedule.cron_job_id)
+            .expect("simulate startup cron recovery clearing running marker");
+
+        let findings = session_db
+            .list_loop_watchdog_findings(&cron_db, &session.id, 60)
+            .expect("watchdog findings");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].loop_id, schedule.id);
+        assert_eq!(findings[0].code, "loop_run_maybe_interrupted");
+        assert_eq!(findings[0].latest_run_id.as_deref(), Some(run_id.as_str()));
+        assert_eq!(findings[0].latest_run_state.as_deref(), Some("running"));
+        assert!(findings[0].overdue_secs.unwrap_or_default() >= 60);
+    }
+
+    #[test]
+    fn loop_watchdog_does_not_flag_cron_job_already_running() {
+        let (_dir, session_db, cron_db) = temp_dbs();
+        let session = session_db.create_session("ha-main").expect("session");
+        let schedule = session_db
+            .create_loop_schedule(
+                &cron_db,
+                CreateLoopScheduleInput {
+                    session_id: session.id.clone(),
+                    goal_id: None,
+                    goal_criterion_id: None,
+                    prompt: "poll".into(),
+                    trigger_kind: LoopTriggerKind::Interval,
+                    trigger_spec: json!({ "intervalSecs": 60 }),
+                    execution_strategy: LoopExecutionStrategy::Continue,
+                    max_runs: None,
+                    max_runtime_secs: None,
+                    token_budget: None,
+                    cost_budget_micros: None,
+                    max_no_progress_runs: None,
+                    max_failures: None,
+                    backoff_secs: None,
+                    agent_id: None,
+                },
+            )
+            .expect("create loop");
+        let overdue_at = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+        let running_at = Utc::now().to_rfc3339();
+        cron_db
+            .conn
+            .lock()
+            .expect("cron lock")
+            .execute(
+                "UPDATE cron_jobs SET status='active', next_run_at=?1, running_at=?2 WHERE id=?3",
+                rusqlite::params![overdue_at, running_at, schedule.cron_job_id],
+            )
+            .expect("set running cron");
+
+        let findings = session_db
+            .list_loop_watchdog_findings(&cron_db, &session.id, 60)
+            .expect("watchdog findings");
+
+        assert!(findings.is_empty());
     }
 }

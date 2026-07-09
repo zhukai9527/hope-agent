@@ -10,8 +10,8 @@ use super::issue_report;
 use super::send_attachment;
 use super::skill;
 use super::{
-    acp_spawn, browser, cron, goal, mac_control, memory, note, notification, settings, subagent,
-    team, weather, web_fetch, web_search, workflow_tool,
+    acp_spawn, browser, cron, goal, loop_tool, mac_control, memory, note, notification, settings,
+    subagent, team, weather, web_fetch, web_search, workflow_tool,
 };
 use super::{
     agents, ask_user_question, canvas, enter_plan_mode, image, image_generate, job_status, pdf,
@@ -24,13 +24,14 @@ use super::{
     TOOL_FIND, TOOL_GET_SETTINGS, TOOL_GET_WEATHER, TOOL_GOAL_BLOCK_REQUEST, TOOL_GOAL_CHECKPOINT,
     TOOL_GOAL_EVALUATE, TOOL_GOAL_FINISH_REQUEST, TOOL_GOAL_RECORD_EVIDENCE, TOOL_GOAL_STATUS,
     TOOL_GREP, TOOL_IMAGE, TOOL_IMAGE_GENERATE, TOOL_ISSUE_REPORT, TOOL_JOB_STATUS,
-    TOOL_LIST_SETTINGS_BACKUPS, TOOL_LS, TOOL_LSP, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON,
-    TOOL_MEMORY_GET, TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY,
-    TOOL_RESTORE_SETTINGS_BACKUP, TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT,
-    TOOL_SEND_NOTIFICATION, TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEARCH,
-    TOOL_SESSIONS_SEND, TOOL_SESSION_STATUS, TOOL_SUBAGENT, TOOL_SUBMIT_PLAN, TOOL_TASK_CREATE,
-    TOOL_TASK_LIST, TOOL_TASK_UPDATE, TOOL_TEAM, TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY,
-    TOOL_UPDATE_SETTINGS, TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WORKFLOW, TOOL_WRITE,
+    TOOL_LIST_SETTINGS_BACKUPS, TOOL_LOOP_RECORD_PROGRESS, TOOL_LOOP_RESCHEDULE, TOOL_LOOP_STATUS,
+    TOOL_LOOP_STOP, TOOL_LS, TOOL_LSP, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON, TOOL_MEMORY_GET,
+    TOOL_PDF, TOOL_PROCESS, TOOL_READ, TOOL_RECALL_MEMORY, TOOL_RESTORE_SETTINGS_BACKUP,
+    TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT, TOOL_SEND_NOTIFICATION,
+    TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEARCH, TOOL_SESSIONS_SEND,
+    TOOL_SESSION_STATUS, TOOL_SUBAGENT, TOOL_SUBMIT_PLAN, TOOL_TASK_CREATE, TOOL_TASK_LIST,
+    TOOL_TASK_UPDATE, TOOL_TEAM, TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS,
+    TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WORKFLOW, TOOL_WRITE,
 };
 use super::{
     TOOL_KNOWLEDGE_RECALL, TOOL_NOTE_APPEND, TOOL_NOTE_ASSIGN_BLOCK, TOOL_NOTE_BACKLINKS,
@@ -1895,6 +1896,12 @@ pub async fn execute_tool_with_context(
                 Ok(goal::tool_goal_finish_request(args, dispatch_ctx).await)
             }
             TOOL_GOAL_BLOCK_REQUEST => Ok(goal::tool_goal_block_request(args, dispatch_ctx).await),
+            TOOL_LOOP_STATUS => Ok(loop_tool::tool_loop_status(args, dispatch_ctx).await),
+            TOOL_LOOP_RESCHEDULE => Ok(loop_tool::tool_loop_reschedule(args, dispatch_ctx).await),
+            TOOL_LOOP_STOP => Ok(loop_tool::tool_loop_stop(args, dispatch_ctx).await),
+            TOOL_LOOP_RECORD_PROGRESS => {
+                Ok(loop_tool::tool_loop_record_progress(args, dispatch_ctx).await)
+            }
             super::TOOL_APP_UPDATE => app_update::tool_app_update(args, dispatch_ctx).await,
             TOOL_JOB_STATUS => {
                 job_status::tool_job_status(args, dispatch_ctx.session_id.as_deref()).await
@@ -2502,6 +2509,7 @@ export default async function main(workflow) {
         let args = json!({
             "action": "create",
             "script": script,
+            "sizeGuideline": "small",
             "runImmediately": false
         });
 
@@ -2523,6 +2531,7 @@ export default async function main(workflow) {
         assert_eq!(parsed["kind"].as_str(), Some("general.workflow"));
         assert_eq!(parsed["initialState"].as_str(), Some("draft"));
         assert_eq!(parsed["expectedNextState"].as_str(), Some("draft"));
+        assert_eq!(parsed["sizeGuideline"].as_str(), Some("small"));
         assert_eq!(parsed["startRequested"].as_bool(), Some(false));
         assert_eq!(parsed["launchAccepted"].as_bool(), Some(false));
         assert!(parsed.get("started").is_none());
@@ -2533,6 +2542,13 @@ export default async function main(workflow) {
             .expect("list workflow runs");
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].kind, "general.workflow");
+        assert_eq!(
+            runs[0]
+                .budget
+                .get("sizeGuideline")
+                .and_then(serde_json::Value::as_str),
+            Some("small")
+        );
         let run_id = runs[0].id.clone();
 
         let list_raw = execute_tool_with_context(
@@ -2547,6 +2563,7 @@ export default async function main(workflow) {
         assert_eq!(list["action"].as_str(), Some("list"));
         assert_eq!(list["count"].as_u64(), Some(1));
         assert_eq!(list["runs"][0]["runId"].as_str(), Some(run_id.as_str()));
+        assert_eq!(list["runs"][0]["sizeGuideline"].as_str(), Some("small"));
 
         let status_raw = execute_tool_with_context(
             crate::tools::TOOL_WORKFLOW,
@@ -2559,6 +2576,7 @@ export default async function main(workflow) {
             serde_json::from_str(&status_raw).expect("parse workflow status result");
         assert_eq!(status["action"].as_str(), Some("status"));
         assert_eq!(status["run"]["runId"].as_str(), Some(run_id.as_str()));
+        assert_eq!(status["run"]["sizeGuideline"].as_str(), Some("small"));
         assert!(status["pendingActions"].is_array());
 
         db.append_workflow_event(

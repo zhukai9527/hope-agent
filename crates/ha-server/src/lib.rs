@@ -1475,6 +1475,10 @@ fn build_router_with_cors(
             get(routes::goal::get_active_goal).post(routes::goal::create_goal),
         )
         .route(
+            "/sessions/{sid}/goal/watchdog",
+            get(routes::goal::list_goal_watchdog_findings),
+        )
+        .route(
             "/goals/{id}",
             get(routes::goal::get_goal).patch(routes::goal::update_goal),
         )
@@ -1491,6 +1495,10 @@ fn build_router_with_cors(
             "/sessions/{sid}/loops",
             get(routes::loop_control::list_loop_schedules)
                 .post(routes::loop_control::create_loop_schedule),
+        )
+        .route(
+            "/sessions/{sid}/loops/watchdog",
+            get(routes::loop_control::list_loop_watchdog_findings),
         )
         .route("/loops/{id}", get(routes::loop_control::get_loop_schedule))
         .route(
@@ -1897,8 +1905,24 @@ fn build_router_with_cors(
             get(routes::workflow::list_workflow_runs).post(routes::workflow::create_workflow_run),
         )
         .route(
+            "/sessions/{sid}/workflow-runs/watchdog",
+            get(routes::workflow::list_workflow_watchdog_findings),
+        )
+        .route(
             "/sessions/{sid}/workflow-runs/preview",
             post(routes::workflow::preview_workflow_script),
+        )
+        .route(
+            "/workflow-templates",
+            post(routes::workflow::list_saved_workflow_templates),
+        )
+        .route(
+            "/workflow-templates/save",
+            post(routes::workflow::save_workflow_template_from_run),
+        )
+        .route(
+            "/workflow-templates/run",
+            post(routes::workflow::create_workflow_run_from_template),
         )
         .route(
             "/workflow-runs/{id}",

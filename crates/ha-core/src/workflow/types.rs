@@ -262,6 +262,92 @@ fn default_execution_mode() -> String {
     "guarded".to_string()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedWorkflowTemplateScope {
+    User,
+    Project,
+}
+
+impl SavedWorkflowTemplateScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "project" => Some(Self::Project),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedWorkflowTemplate {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub scope: SavedWorkflowTemplateScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub kind: String,
+    pub execution_mode: String,
+    pub script_hash: String,
+    pub script_source: String,
+    pub budget: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_run_id: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListSavedWorkflowTemplatesInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub include_disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWorkflowTemplateInput {
+    pub source_run_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub scope: SavedWorkflowTemplateScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub explicit_save_consent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkflowRunFromTemplateInput {
+    pub session_id: String,
+    pub template_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_criterion_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpsertWorkflowOpInput {
@@ -280,6 +366,71 @@ pub struct WorkflowRunSnapshot {
     pub run: WorkflowRun,
     pub ops: Vec<WorkflowOp>,
     pub events: Vec<WorkflowEvent>,
+    pub agent_usage: WorkflowAgentUsageSnapshot,
+    pub usage: WorkflowRunUsageSnapshot,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowAgentUsageSnapshot {
+    pub spawned_agents: i64,
+    pub completed_agents: i64,
+    pub running_agents: i64,
+    pub failed_agents: i64,
+    pub attributed_agents: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub attribution: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowRunUsageSnapshot {
+    pub parent_events: i64,
+    pub parent_input_tokens: i64,
+    pub parent_output_tokens: i64,
+    pub parent_cache_creation_input_tokens: i64,
+    pub parent_cache_read_input_tokens: i64,
+    pub parent_total_tokens: i64,
+    pub parent_injection_turns: i64,
+    pub parent_injection_messages: i64,
+    pub parent_injection_input_tokens: i64,
+    pub parent_injection_output_tokens: i64,
+    pub parent_injection_total_tokens: i64,
+    pub parent_injection_provider_events: i64,
+    pub parent_injection_provider_input_tokens: i64,
+    pub parent_injection_provider_output_tokens: i64,
+    pub parent_injection_provider_cache_creation_input_tokens: i64,
+    pub parent_injection_provider_cache_read_input_tokens: i64,
+    pub parent_injection_provider_total_tokens: i64,
+    pub parent_injection_attribution: String,
+    pub agent_input_tokens: i64,
+    pub agent_output_tokens: i64,
+    pub agent_total_tokens: i64,
+    pub total_tokens: i64,
+    pub attribution: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowWatchdogFinding {
+    pub run_id: String,
+    pub session_id: String,
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_secs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_event_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_event_seq: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

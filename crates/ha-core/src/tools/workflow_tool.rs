@@ -18,6 +18,8 @@ struct WorkflowToolArgs {
     execution_mode: Option<String>,
     #[serde(default)]
     budget: Option<Value>,
+    #[serde(default, alias = "size_guideline", alias = "workflowSize")]
+    size_guideline: Option<String>,
     #[serde(default, alias = "run_immediately", alias = "runImmediately")]
     run_immediately: Option<bool>,
     #[serde(default, alias = "parent_run_id", alias = "parentRunId")]
@@ -172,6 +174,7 @@ fn create_workflow(
         input.goal_id.clone(),
         input.goal_criterion_id.clone(),
         WorkflowToolAction::Create,
+        None,
     )
 }
 
@@ -224,6 +227,7 @@ fn create_followup_workflow(
         goal_id,
         goal_criterion_id,
         WorkflowToolAction::Followup,
+        workflow_size_guideline_from_budget(&parent.budget).map(str::to_string),
     )
 }
 
@@ -239,9 +243,18 @@ fn create_workflow_run_from_script(
     goal_id: Option<String>,
     goal_criterion_id: Option<String>,
     action: WorkflowToolAction,
+    default_size_guideline: Option<String>,
 ) -> Result<Value> {
     let execution_mode = resolve_execution_mode(&db, session_id, input.execution_mode.as_deref())?;
-    let budget = input.budget.clone().unwrap_or_else(|| json!({}));
+    let size_guideline = resolve_workflow_size_guideline(
+        input.size_guideline.as_deref(),
+        default_size_guideline.as_deref(),
+        workflow_mode,
+    )?;
+    let budget = budget_with_size_guideline(
+        input.budget.clone().unwrap_or_else(|| json!({})),
+        size_guideline,
+    );
     let start_now = input.run_immediately.unwrap_or(true);
     if start_now {
         crate::workflow::ensure_workflow_launcher_primary().map_err(|e| {
@@ -326,6 +339,7 @@ fn create_workflow_run_from_script(
         "expectedNextState": expected_next_state,
         "kind": run.kind,
         "executionMode": run.execution_mode,
+        "sizeGuideline": workflow_size_guideline_from_budget(&run.budget).unwrap_or(size_guideline),
         "workflowMode": workflow_mode.as_str(),
         "goalId": run.goal_id,
         "goalCriterionId": run.goal_criterion_id,
@@ -340,6 +354,60 @@ fn create_workflow_run_from_script(
             "tell_user_draft_created"
         }
     }))
+}
+
+fn resolve_workflow_size_guideline<'a>(
+    requested: Option<&'a str>,
+    inherited: Option<&'a str>,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+) -> Result<&'static str> {
+    if let Some(value) = requested.and_then(normalized_size_guideline) {
+        return Ok(value);
+    }
+    if requested.is_some() {
+        return Err(anyhow!(
+            "workflow sizeGuideline must be one of unrestricted, small, medium, or large"
+        ));
+    }
+    if let Some(value) = inherited.and_then(normalized_size_guideline) {
+        return Ok(value);
+    }
+    Ok(match workflow_mode {
+        crate::workflow_mode::WorkflowMode::Ultracode => "large",
+        crate::workflow_mode::WorkflowMode::Off | crate::workflow_mode::WorkflowMode::On => {
+            "medium"
+        }
+    })
+}
+
+fn normalized_size_guideline(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "unrestricted" | "unbounded" | "open" => Some("unrestricted"),
+        "small" | "s" => Some("small"),
+        "medium" | "med" | "m" => Some("medium"),
+        "large" | "l" => Some("large"),
+        _ => None,
+    }
+}
+
+fn budget_with_size_guideline(mut budget: Value, size_guideline: &str) -> Value {
+    if !budget.is_object() {
+        budget = json!({});
+    }
+    if let Some(object) = budget.as_object_mut() {
+        object.insert(
+            "sizeGuideline".to_string(),
+            Value::String(size_guideline.to_string()),
+        );
+    }
+    budget
+}
+
+fn workflow_size_guideline_from_budget(budget: &Value) -> Option<&str> {
+    budget
+        .get("sizeGuideline")
+        .and_then(Value::as_str)
+        .and_then(normalized_size_guideline)
 }
 
 fn list_workflows(
@@ -620,6 +688,8 @@ fn run_summary_json(run: &crate::workflow::WorkflowRun) -> Value {
         "kind": run.kind,
         "state": run.state.as_str(),
         "executionMode": run.execution_mode,
+        "sizeGuideline": workflow_size_guideline_from_budget(&run.budget),
+        "runtimeCaps": workflow_runtime_caps_json(&run.budget),
         "origin": run.origin,
         "parentRunId": run.parent_run_id,
         "goalId": run.goal_id,
@@ -633,6 +703,15 @@ fn run_summary_json(run: &crate::workflow::WorkflowRun) -> Value {
         "createdAt": run.created_at,
         "updatedAt": run.updated_at,
         "completedAt": run.completed_at,
+    })
+}
+
+fn workflow_runtime_caps_json(budget: &Value) -> Value {
+    json!({
+        "maxScriptSecs": budget.get("maxScriptSecs").or_else(|| budget.get("max_script_secs")),
+        "maxRuntimeSecs": budget.get("maxRuntimeSecs").or_else(|| budget.get("max_runtime_secs")),
+        "maxOps": budget.get("maxOps").or_else(|| budget.get("max_ops")),
+        "maxOutputTokens": budget.get("maxOutputTokens").or_else(|| budget.get("max_output_tokens")),
     })
 }
 

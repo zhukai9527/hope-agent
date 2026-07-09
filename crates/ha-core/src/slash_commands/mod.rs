@@ -283,26 +283,37 @@ struct SlashHistoryCommandDisplay {
 
 fn slash_history_command_display(command_text: &str) -> SlashHistoryCommandDisplay {
     let trimmed = command_text.trim();
-    let Some(raw_rest) = trimmed.strip_prefix("/goal") else {
+    if let Some(args) = slash_command_args(trimmed, "goal") {
+        let content = goal_command_display_text(args)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Goal".to_string());
         return SlashHistoryCommandDisplay {
-            content: trimmed.to_string(),
-            mode: None,
-        };
-    };
-    if !raw_rest.is_empty() && !raw_rest.starts_with(char::is_whitespace) {
-        return SlashHistoryCommandDisplay {
-            content: trimmed.to_string(),
-            mode: None,
+            content,
+            mode: Some("goal"),
         };
     }
-    let args = raw_rest.trim();
-    let content = goal_command_display_text(args)
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Goal".to_string());
+    if let Some(args) = slash_command_args(trimmed, "loop") {
+        let content = loop_command_display_text(args)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Loop".to_string());
+        return SlashHistoryCommandDisplay {
+            content,
+            mode: Some("loop"),
+        };
+    }
     SlashHistoryCommandDisplay {
-        content,
-        mode: Some("goal"),
+        content: trimmed.to_string(),
+        mode: None,
     }
+}
+
+fn slash_command_args<'a>(trimmed: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("/{name}");
+    let raw_rest = trimmed.strip_prefix(&prefix)?;
+    if !raw_rest.is_empty() && !raw_rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(raw_rest.trim())
 }
 
 fn goal_command_display_text(args: &str) -> Option<String> {
@@ -321,6 +332,44 @@ fn goal_command_display_text(args: &str) -> Option<String> {
     }
 }
 
+fn loop_command_display_text(args: &str) -> Option<String> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return Some("Start self-paced loop".to_string());
+    }
+    let first = trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match first.as_str() {
+        "status" | "list" | "show" => Some("Show loops".to_string()),
+        "pause" => Some("Pause loop".to_string()),
+        "resume" => Some("Resume loop".to_string()),
+        "stop" | "cancel" => Some("Stop loop".to_string()),
+        "help" => Some("Loop help".to_string()),
+        _ => Some(trimmed.to_string()),
+    }
+}
+
+fn is_loop_create_slash_command(command_text: &str) -> bool {
+    let Some(args) = slash_command_args(command_text.trim(), "loop") else {
+        return false;
+    };
+    if args.trim().is_empty() {
+        return false;
+    }
+    let first = args
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    !matches!(
+        first.as_str(),
+        "status" | "list" | "show" | "help" | "pause" | "resume" | "stop" | "cancel"
+    )
+}
+
 /// Persist a full `CommandResult`, including markdown fallbacks for structured
 /// actions whose live desktop UI is card/modal based and therefore has empty
 /// `content`.
@@ -331,7 +380,7 @@ pub fn append_slash_history_result_events(
     result: &CommandResult,
     source: crate::chat_engine::ChatSource,
 ) -> anyhow::Result<Vec<i64>> {
-    let fallback = slash_history_result_content(result);
+    let fallback = slash_history_result_content(command_text, result);
     append_slash_history_events(
         session_db,
         session_id,
@@ -341,7 +390,10 @@ pub fn append_slash_history_result_events(
     )
 }
 
-fn slash_history_result_content(result: &CommandResult) -> Option<String> {
+fn slash_history_result_content(command_text: &str, result: &CommandResult) -> Option<String> {
+    if is_loop_create_slash_command(command_text) {
+        return None;
+    }
     if !result.content.trim().is_empty() {
         return Some(result.content.clone());
     }
@@ -705,6 +757,40 @@ mod tests {
         assert!(messages[1].content.contains("**Models** (1)"));
         assert!(messages[1].content.contains("GPT Test"));
         assert!(messages[1].content.contains("(active)"));
+    }
+
+    #[test]
+    fn slash_history_loop_create_hides_slash_prefix_and_result() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sessions.db");
+        let db = crate::session::SessionDB::open(&path).expect("open");
+        let meta = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .expect("session");
+        let result = CommandResult {
+            content: "Loop created.\n\nImmediate first run: queued.".to_string(),
+            action: Some(CommandAction::DisplayOnly),
+        };
+
+        let ids = append_slash_history_result_events(
+            &db,
+            &meta.id,
+            "/loop every 10m: check release notes",
+            &result,
+            crate::chat_engine::ChatSource::Desktop,
+        )
+        .expect("append slash history");
+        assert_eq!(ids.len(), 1);
+
+        let messages = db.load_session_messages(&meta.id).expect("messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "every 10m: check release notes");
+        let meta = messages[0]
+            .attachments_meta
+            .as_deref()
+            .expect("command meta");
+        assert!(meta.contains("\"displayAs\":\"user\""));
+        assert!(meta.contains("\"mode\":\"loop\""));
     }
 
     #[test]

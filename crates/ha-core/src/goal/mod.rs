@@ -396,6 +396,28 @@ pub struct GoalSnapshot {
     pub tasks: Vec<Task>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalWatchdogFinding {
+    pub goal_id: String,
+    pub session_id: String,
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub state: GoalState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stale_secs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_event_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_event_seq: Option<i64>,
+    pub active_workflow_count: usize,
+    pub active_task_count: usize,
+    pub active_background_job_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoalCompletionReport {
@@ -1156,6 +1178,76 @@ impl SessionDB {
         Ok(Some(snapshot))
     }
 
+    pub fn list_goal_watchdog_findings(
+        &self,
+        session_id: &str,
+        stale_secs: i64,
+    ) -> Result<Vec<GoalWatchdogFinding>> {
+        let stale_secs = stale_secs.max(0);
+        let Some(snapshot) = self.active_goal_for_session(session_id)? else {
+            return Ok(Vec::new());
+        };
+        if !goal_runner_should_continue(&snapshot) {
+            return Ok(Vec::new());
+        }
+
+        let active_workflow_count = snapshot
+            .workflow_runs
+            .iter()
+            .filter(|run| goal_watchdog_workflow_blocks_runner(run.state))
+            .count();
+        let active_task_count = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.status == "in_progress")
+            .count();
+        let active_background_job_count =
+            match crate::async_jobs::JobManager::list_active_by_session(session_id) {
+                Ok(jobs) => jobs.len(),
+                Err(_) => return Ok(Vec::new()),
+            };
+
+        if active_workflow_count > 0 || active_task_count > 0 || active_background_job_count > 0 {
+            return Ok(Vec::new());
+        }
+
+        let latest_event = snapshot.events.last();
+        let (last_activity_at, stale_for_secs) = goal_watchdog_last_activity(&snapshot);
+        let Some(stale_for_secs) = stale_for_secs else {
+            return Ok(Vec::new());
+        };
+        if stale_for_secs <= stale_secs {
+            return Ok(Vec::new());
+        }
+
+        let (code, message) = if snapshot.goal.state == GoalState::Evaluating {
+            (
+                "goal_stale_evaluating",
+                "Goal is evaluating but has not recorded recent progress.",
+            )
+        } else {
+            (
+                "goal_no_recent_progress",
+                "Goal should continue but has not recorded recent progress.",
+            )
+        };
+        Ok(vec![GoalWatchdogFinding {
+            goal_id: snapshot.goal.id,
+            session_id: snapshot.goal.session_id,
+            severity: "warning".to_string(),
+            code: code.to_string(),
+            message: message.to_string(),
+            state: snapshot.goal.state,
+            last_activity_at,
+            stale_secs: Some(stale_for_secs),
+            latest_event_kind: latest_event.map(|event| event.kind.clone()),
+            latest_event_seq: latest_event.map(|event| event.seq),
+            active_workflow_count,
+            active_task_count,
+            active_background_job_count,
+        }])
+    }
+
     fn build_goal_budget_snapshot(&self, goal: &Goal) -> Result<GoalBudgetSnapshot> {
         let token_limit = positive_limit(goal.budget_token_limit);
         let time_limit_secs = positive_limit(goal.budget_time_limit_secs);
@@ -1360,6 +1452,41 @@ impl SessionDB {
         let next_snapshot = self
             .goal_snapshot(goal_id, 200)?
             .ok_or_else(|| anyhow!("goal {} not found after evaluation", goal_id))?;
+        emit_goal("goal:updated", &next_snapshot.goal);
+        Ok(next_snapshot)
+    }
+
+    pub fn record_goal_runner_evaluation(
+        &self,
+        goal_id: &str,
+        source: &str,
+        turn_id: Option<&str>,
+        assistant_message_id: Option<i64>,
+    ) -> Result<GoalSnapshot> {
+        let snapshot = self
+            .goal_snapshot(goal_id, 200)?
+            .ok_or_else(|| anyhow!("goal {} not found", goal_id))?;
+        let mut audit = self.build_goal_audit(&snapshot)?;
+        let now = now_rfc3339();
+        audit["evaluatedAt"] = json!(now);
+        audit["evaluatorKind"] = json!("post_turn");
+        audit["source"] = json!(source);
+        audit["turnId"] = turn_id.map(Value::from).unwrap_or(Value::Null);
+        audit["assistantMessageId"] = assistant_message_id.map(Value::from).unwrap_or(Value::Null);
+        let evidence_json = stable_json(&audit)?;
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.execute(
+            "UPDATE goals
+                SET updated_at = ?1,
+                    last_evaluator_result_json = ?2
+             WHERE id = ?3",
+            params![now, evidence_json, goal_id],
+        )?;
+        drop(conn);
+        let _ = self.append_goal_event(goal_id, "goal_runner_evaluated", audit)?;
+        let next_snapshot = self
+            .goal_snapshot(goal_id, 200)?
+            .ok_or_else(|| anyhow!("goal {} not found after runner evaluation", goal_id))?;
         emit_goal("goal:updated", &next_snapshot.goal);
         Ok(next_snapshot)
     }
@@ -2243,17 +2370,32 @@ pub fn maybe_schedule_goal_continuation(
     if matches!(source, crate::chat_engine::ChatSource::Subagent) {
         return Ok(None);
     }
-    let Some(snapshot) = db.active_goal_for_session(session_id)? else {
+    let Some(mut snapshot) = db.active_goal_for_session(session_id)? else {
         return Ok(None);
     };
-    if !goal_runner_should_continue(&snapshot) {
-        return Ok(None);
-    }
     let scheduled_this_turn = snapshot.events.iter().any(|event| {
         event.kind == "goal_auto_continue_scheduled"
             && event.payload.get("turnId").and_then(Value::as_str) == turn_id
     });
     if scheduled_this_turn {
+        return Ok(None);
+    }
+    let evaluated_this_turn = snapshot.events.iter().any(|event| {
+        event.kind == "goal_runner_evaluated"
+            && event.payload.get("turnId").and_then(Value::as_str) == turn_id
+    });
+    if !evaluated_this_turn && goal_runner_should_evaluate(&snapshot) {
+        snapshot = db.record_goal_runner_evaluation(
+            &snapshot.goal.id,
+            source.as_str(),
+            turn_id,
+            assistant_message_id,
+        )?;
+    }
+    if !goal_runner_should_continue(&snapshot) {
+        return Ok(None);
+    }
+    if goal_runner_should_wait_for_background_jobs(db, session_id, &snapshot.goal.id)? {
         return Ok(None);
     }
     let scheduled_for_revision = snapshot
@@ -2316,6 +2458,55 @@ pub fn maybe_schedule_goal_continuation(
     Ok(Some(outcome))
 }
 
+fn goal_runner_should_wait_for_background_jobs(
+    db: &SessionDB,
+    session_id: &str,
+    goal_id: &str,
+) -> Result<bool> {
+    let active_jobs = match crate::async_jobs::JobManager::list_active_by_session(session_id) {
+        Ok(jobs) => jobs,
+        Err(e) => {
+            let _ = db.append_goal_event(
+                goal_id,
+                "goal_auto_continue_waiting_background_jobs",
+                json!({
+                    "reason": "background_jobs_read_failed",
+                    "error": e.to_string(),
+                }),
+            );
+            return Ok(true);
+        }
+    };
+    if active_jobs.is_empty() {
+        return Ok(false);
+    }
+    let _ = db.append_goal_event(
+        goal_id,
+        "goal_auto_continue_waiting_background_jobs",
+        json!({
+            "reason": "active_background_jobs",
+            "activeJobs": active_jobs.iter().take(12).map(|job| {
+                json!({
+                    "jobId": job.job_id,
+                    "kind": job.kind.as_str(),
+                    "status": job.status.as_str(),
+                    "toolName": job.tool_name,
+                })
+            }).collect::<Vec<_>>(),
+            "activeCount": active_jobs.len(),
+        }),
+    );
+    Ok(true)
+}
+
+fn goal_runner_should_evaluate(snapshot: &GoalSnapshot) -> bool {
+    matches!(
+        snapshot.goal.state,
+        GoalState::Active | GoalState::Evaluating | GoalState::Blocked
+    ) && !snapshot.budget.exhausted
+        && snapshot.goal.closure_decision != Some(GoalClosureDecision::AcceptedV1)
+}
+
 fn goal_runner_should_continue(snapshot: &GoalSnapshot) -> bool {
     match snapshot.goal.state {
         GoalState::Active | GoalState::Evaluating => {}
@@ -2344,6 +2535,48 @@ fn goal_runner_should_continue(snapshot: &GoalSnapshot) -> bool {
         .get("status")
         .and_then(Value::as_str);
     audit_status != Some("completed") || snapshot.audit_stale
+}
+
+fn goal_watchdog_workflow_blocks_runner(state: WorkflowRunState) -> bool {
+    matches!(
+        state,
+        WorkflowRunState::AwaitingApproval
+            | WorkflowRunState::Running
+            | WorkflowRunState::AwaitingUser
+            | WorkflowRunState::Paused
+            | WorkflowRunState::Recovering
+    )
+}
+
+fn goal_watchdog_last_activity(snapshot: &GoalSnapshot) -> (Option<String>, Option<i64>) {
+    let now = chrono::Utc::now();
+    let mut latest: Option<(chrono::DateTime<chrono::Utc>, String)> = None;
+    let mut record = |value: &str| {
+        let Some(parsed) = parse_rfc3339_utc(value) else {
+            return;
+        };
+        if latest.as_ref().is_none_or(|(current, _)| parsed > *current) {
+            latest = Some((parsed, value.to_string()));
+        }
+    };
+
+    record(&snapshot.goal.updated_at);
+    for event in &snapshot.events {
+        record(&event.created_at);
+    }
+    for run in &snapshot.workflow_runs {
+        record(&run.updated_at);
+    }
+    for task in &snapshot.tasks {
+        record(&task.updated_at);
+    }
+
+    latest
+        .map(|(at, raw)| {
+            let stale_secs = (now - at).num_seconds().max(0);
+            (Some(raw), Some(stale_secs))
+        })
+        .unwrap_or((None, None))
 }
 
 fn normalize_follow_up_text_key(text: &str) -> String {
@@ -3830,6 +4063,80 @@ mod tests {
         (dir, db)
     }
 
+    fn ensure_wakeup_db_for_tests() -> &'static std::sync::Arc<crate::wakeup::WakeupDB> {
+        if crate::wakeup::get_wakeup_db().is_none() {
+            let path = std::env::temp_dir().join(format!(
+                "ha-goal-wakeup-test-{}.db",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let db =
+                std::sync::Arc::new(crate::wakeup::WakeupDB::open(&path).expect("open wakeup db"));
+            crate::wakeup::set_wakeup_db(db);
+        }
+        crate::wakeup::get_wakeup_db().expect("wakeup db")
+    }
+
+    fn ensure_async_jobs_db_for_goal_tests() -> &'static std::sync::Arc<crate::async_jobs::JobsDB> {
+        if crate::async_jobs::get_async_jobs_db().is_none() {
+            let path = std::env::temp_dir().join(format!(
+                "ha-goal-async-jobs-test-{}.db",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let db = std::sync::Arc::new(
+                crate::async_jobs::JobsDB::open(&path).expect("open async jobs db"),
+            );
+            crate::async_jobs::set_async_jobs_db(db);
+        }
+        crate::async_jobs::get_async_jobs_db().expect("async jobs db")
+    }
+
+    fn insert_goal_background_job(
+        session_id: &str,
+        status: crate::async_jobs::JobStatus,
+    ) -> String {
+        let db = ensure_async_jobs_db_for_goal_tests();
+        let job_id = format!("goal_job_{}", uuid::Uuid::new_v4().simple());
+        let now = chrono::Utc::now().timestamp();
+        let job = crate::async_jobs::BackgroundJob {
+            job_id: job_id.clone(),
+            kind: crate::async_jobs::JobKind::Tool,
+            subagent_run_id: None,
+            group_id: None,
+            session_id: Some(session_id.to_string()),
+            agent_id: Some("ha-main".to_string()),
+            tool_name: crate::tools::TOOL_EXEC.to_string(),
+            tool_call_id: None,
+            args_json: "{}".to_string(),
+            status: crate::async_jobs::JobStatus::Running,
+            result_preview: None,
+            result_path: None,
+            error: None,
+            created_at: now,
+            completed_at: None,
+            injected: true,
+            origin: crate::async_jobs::JobOrigin::Explicit.as_str().to_string(),
+            approval_origin: None,
+            incognito: false,
+            pid: None,
+            cancel_requested: false,
+        };
+        db.insert(&job).expect("insert goal background job");
+        if status == crate::async_jobs::JobStatus::AwaitingApproval {
+            assert!(
+                db.mark_awaiting_approval(&job_id)
+                    .expect("mark awaiting approval"),
+                "inserted job should transition to awaiting approval"
+            );
+        } else {
+            assert_eq!(
+                status,
+                crate::async_jobs::JobStatus::Running,
+                "goal background job helper only supports running/awaiting approval"
+            );
+        }
+        job_id
+    }
+
     fn create_goal_for_session(db: &SessionDB, session_id: &str) -> GoalSnapshot {
         db.create_goal(CreateGoalInput {
             session_id: session_id.to_string(),
@@ -3860,6 +4167,21 @@ mod tests {
             worktree_id: None,
         })
         .expect("create workflow")
+    }
+
+    fn age_goal_activity(db: &SessionDB, goal_id: &str, minutes: i64) {
+        let old = (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339();
+        let conn = db.conn.lock().expect("lock session db");
+        conn.execute(
+            "UPDATE goals SET created_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![old, goal_id],
+        )
+        .expect("age goal");
+        conn.execute(
+            "UPDATE goal_events SET created_at = ?1 WHERE goal_id = ?2",
+            params![old, goal_id],
+        )
+        .expect("age goal events");
     }
 
     fn insert_managed_worktree(
@@ -3912,6 +4234,122 @@ mod tests {
         assert!(err.to_string().contains("incognito"));
     }
 
+    #[test]
+    fn goal_budget_usage_counts_post_goal_turns_and_last_round_tokens() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Measure usage".to_string(),
+                completion_criteria: "Usage is visible".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: Some(80),
+                budget_time_limit_secs: Some(600),
+                budget_turn_limit: Some(3),
+            })
+            .expect("create goal");
+        let started_at = chrono::Utc::now() - chrono::Duration::minutes(10);
+        let completed_at = started_at + chrono::Duration::minutes(5);
+        {
+            let conn = db.conn.lock().expect("lock session db");
+            conn.execute(
+                "UPDATE goals SET created_at = ?1, updated_at = ?1, completed_at = ?2 WHERE id = ?3",
+                params![
+                    started_at.to_rfc3339(),
+                    completed_at.to_rfc3339(),
+                    goal.goal.id
+                ],
+            )
+            .expect("set deterministic goal time");
+        }
+
+        let mut before_goal = NewMessage::assistant("old usage");
+        before_goal.timestamp = (started_at - chrono::Duration::seconds(30)).to_rfc3339();
+        before_goal.tokens_in = Some(999);
+        before_goal.tokens_out = Some(999);
+        db.append_message(&session.id, &before_goal)
+            .expect("append pre-goal message");
+
+        let mut user_one = NewMessage::user("first turn");
+        user_one.timestamp = (started_at + chrono::Duration::seconds(30)).to_rfc3339();
+        db.append_message(&session.id, &user_one)
+            .expect("append first user turn");
+
+        let mut assistant_one = NewMessage::assistant("first answer");
+        assistant_one.timestamp = (started_at + chrono::Duration::seconds(60)).to_rfc3339();
+        assistant_one.tokens_in = Some(100);
+        assistant_one.tokens_in_last = Some(40);
+        assistant_one.tokens_out = Some(10);
+        db.append_message(&session.id, &assistant_one)
+            .expect("append first assistant turn");
+
+        let mut user_two = NewMessage::user("second turn");
+        user_two.timestamp = (started_at + chrono::Duration::seconds(120)).to_rfc3339();
+        db.append_message(&session.id, &user_two)
+            .expect("append second user turn");
+
+        let mut assistant_two = NewMessage::assistant("second answer");
+        assistant_two.timestamp = (started_at + chrono::Duration::seconds(150)).to_rfc3339();
+        assistant_two.tokens_in = Some(20);
+        assistant_two.tokens_out = Some(5);
+        db.append_message(&session.id, &assistant_two)
+            .expect("append second assistant turn");
+
+        let snapshot = db
+            .goal_snapshot(&goal.goal.id, 100)
+            .expect("goal snapshot")
+            .expect("goal exists");
+
+        assert_eq!(
+            snapshot.budget.tokens_used, 75,
+            "usage should prefer tokens_in_last over cumulative tokens_in and exclude pre-goal rows"
+        );
+        assert_eq!(snapshot.budget.turns_used, 2);
+        assert_eq!(snapshot.budget.elapsed_secs, 300);
+        assert_eq!(snapshot.budget.warnings, vec!["tokens".to_string()]);
+        assert!(snapshot.budget.exceeded.is_empty());
+        assert!(snapshot.budget.warning);
+        assert!(!snapshot.budget.exhausted);
+    }
+
+    #[test]
+    fn goal_watchdog_flags_active_goal_without_recent_progress() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        age_goal_activity(&db, &goal.goal.id, 15);
+
+        let findings = db
+            .list_goal_watchdog_findings(&session.id, 60)
+            .expect("watchdog findings");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].goal_id, goal.goal.id);
+        assert_eq!(findings[0].code, "goal_no_recent_progress");
+        assert!(findings[0].stale_secs.is_some_and(|secs| secs >= 60));
+    }
+
+    #[test]
+    fn goal_watchdog_ignores_goal_with_active_workflow() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        age_goal_activity(&db, &goal.goal.id, 15);
+        let workflow = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+        db.transition_workflow_run(&workflow.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start workflow");
+
+        let findings = db
+            .list_goal_watchdog_findings(&session.id, 60)
+            .expect("watchdog findings");
+
+        assert!(findings.is_empty());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn goal_runner_schedules_once_per_turn_and_stops_when_paused() {
         let (_dir, db) = temp_db();
@@ -3948,6 +4386,25 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == "goal_runner_evaluated")
+                .count(),
+            1
+        );
+        let evaluated = db
+            .active_goal_for_session(&session.id)
+            .expect("active goal")
+            .expect("goal after runner evaluation");
+        assert_eq!(
+            evaluated
+                .goal
+                .last_evaluator_result
+                .get("evaluatorKind")
+                .and_then(Value::as_str),
+            Some("post_turn")
+        );
 
         db.pause_goal(&goal.goal.id).expect("pause goal");
         let paused = maybe_schedule_goal_continuation(
@@ -3962,6 +4419,351 @@ mod tests {
         assert!(paused.is_none());
 
         crate::wakeup::purge_for_session(&session.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_runner_persists_continuation_wakeup_for_restart_replay() {
+        let wakeup_db = ensure_wakeup_db_for_tests();
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        crate::wakeup::purge_for_session(&session.id);
+        let goal = create_goal_for_session(&db, &session.id);
+
+        let outcome = maybe_schedule_goal_continuation(
+            &db,
+            &session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Desktop,
+            Some("turn-restart-proof"),
+            Some(4242),
+        )
+        .expect("schedule continuation")
+        .expect("continuation scheduled");
+
+        let pending = wakeup_db.list_pending().expect("list wakeups");
+        let row = pending
+            .iter()
+            .find(|wakeup| wakeup.id == outcome.id)
+            .expect("scheduled wakeup persisted for restart replay");
+        assert_eq!(row.session_id, session.id);
+        assert_eq!(row.agent_id, "ha-main");
+        let note = row.note.as_deref().expect("goal continuation note");
+        assert!(note.contains("<goal-continuation>"));
+        assert!(note.contains(&goal.goal.id));
+        assert!(note.contains("First call `goal_status`"));
+
+        let events = db.list_goal_events(&goal.goal.id, 100).expect("events");
+        let scheduled = events
+            .iter()
+            .find(|event| event.kind == "goal_auto_continue_scheduled")
+            .expect("goal scheduled event");
+        assert_eq!(
+            scheduled.payload.get("wakeupId").and_then(Value::as_str),
+            Some(outcome.id.as_str())
+        );
+        assert_eq!(
+            scheduled
+                .payload
+                .get("goalRevision")
+                .and_then(Value::as_i64),
+            Some(goal.goal.revision)
+        );
+
+        crate::wakeup::purge_for_session(&session.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_runner_waits_for_background_jobs_then_recovers_after_restart_replay() {
+        let wakeup_db = ensure_wakeup_db_for_tests();
+        ensure_async_jobs_db_for_goal_tests();
+        let (_dir, db) = temp_db();
+
+        let running_session = db
+            .create_session("ha-main")
+            .expect("create running job session");
+        crate::wakeup::purge_for_session(&running_session.id);
+        let running_goal = create_goal_for_session(&db, &running_session.id);
+        let running_job =
+            insert_goal_background_job(&running_session.id, crate::async_jobs::JobStatus::Running);
+
+        let awaiting_session = db
+            .create_session("ha-main")
+            .expect("create awaiting approval session");
+        crate::wakeup::purge_for_session(&awaiting_session.id);
+        let awaiting_goal = create_goal_for_session(&db, &awaiting_session.id);
+        let awaiting_job = insert_goal_background_job(
+            &awaiting_session.id,
+            crate::async_jobs::JobStatus::AwaitingApproval,
+        );
+
+        for (session_id, goal_id, turn_id, expected_status) in [
+            (
+                running_session.id.as_str(),
+                running_goal.goal.id.as_str(),
+                "turn-running-before-replay",
+                crate::async_jobs::JobStatus::Running.as_str(),
+            ),
+            (
+                awaiting_session.id.as_str(),
+                awaiting_goal.goal.id.as_str(),
+                "turn-awaiting-before-replay",
+                crate::async_jobs::JobStatus::AwaitingApproval.as_str(),
+            ),
+        ] {
+            let scheduled = maybe_schedule_goal_continuation(
+                &db,
+                session_id,
+                "ha-main",
+                crate::chat_engine::ChatSource::Desktop,
+                Some(turn_id),
+                Some(500),
+            )
+            .expect("goal runner should inspect waiting background job");
+            assert!(
+                scheduled.is_none(),
+                "active background jobs must block auto-continuation scheduling"
+            );
+            let events = db.list_goal_events(goal_id, 100).expect("goal events");
+            let waiting = events
+                .iter()
+                .rev()
+                .find(|event| event.kind == "goal_auto_continue_waiting_background_jobs")
+                .expect("waiting event recorded");
+            assert_eq!(
+                waiting.payload.get("reason").and_then(Value::as_str),
+                Some("active_background_jobs")
+            );
+            assert!(
+                waiting
+                    .payload
+                    .get("activeJobs")
+                    .and_then(Value::as_array)
+                    .is_some_and(|jobs| jobs.iter().any(|job| {
+                        job.get("status").and_then(Value::as_str) == Some(expected_status)
+                    })),
+                "waiting event should expose the active job status"
+            );
+            assert!(!events
+                .iter()
+                .any(|event| event.kind == "goal_auto_continue_scheduled"));
+        }
+
+        crate::async_jobs::JobManager::replay_pending();
+        for job_id in [&running_job, &awaiting_job] {
+            let job = crate::async_jobs::JobManager::get(job_id)
+                .expect("load replayed job")
+                .expect("job exists");
+            assert_eq!(job.status, crate::async_jobs::JobStatus::Interrupted);
+        }
+        assert!(
+            crate::async_jobs::JobManager::list_active_by_session(&running_session.id)
+                .expect("running session active jobs")
+                .is_empty()
+        );
+        assert!(
+            crate::async_jobs::JobManager::list_active_by_session(&awaiting_session.id)
+                .expect("awaiting session active jobs")
+                .is_empty()
+        );
+
+        for (session_id, goal_id, turn_id) in [
+            (
+                running_session.id.as_str(),
+                running_goal.goal.id.as_str(),
+                "turn-running-after-replay",
+            ),
+            (
+                awaiting_session.id.as_str(),
+                awaiting_goal.goal.id.as_str(),
+                "turn-awaiting-after-replay",
+            ),
+        ] {
+            let outcome = maybe_schedule_goal_continuation(
+                &db,
+                session_id,
+                "ha-main",
+                crate::chat_engine::ChatSource::Desktop,
+                Some(turn_id),
+                Some(501),
+            )
+            .expect("goal runner should schedule after replay clears active jobs")
+            .expect("continuation scheduled after replay");
+            assert!(
+                wakeup_db
+                    .list_pending()
+                    .expect("pending wakeups")
+                    .iter()
+                    .any(|wakeup| wakeup.id == outcome.id && wakeup.session_id == session_id),
+                "scheduled continuation must be durable after active jobs are replayed"
+            );
+            let events = db.list_goal_events(goal_id, 100).expect("goal events");
+            assert!(events.iter().any(|event| {
+                event.kind == "goal_auto_continue_scheduled"
+                    && event.payload.get("turnId").and_then(Value::as_str) == Some(turn_id)
+                    && event.payload.get("wakeupId").and_then(Value::as_str)
+                        == Some(outcome.id.as_str())
+            }));
+        }
+
+        crate::wakeup::purge_for_session(&running_session.id);
+        crate::wakeup::purge_for_session(&awaiting_session.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_runner_stop_rules_block_budget_terminal_and_subagent() {
+        let (_dir, db) = temp_db();
+
+        let budget_session = db.create_session("ha-main").expect("create budget session");
+        let budget_goal = db
+            .create_goal(CreateGoalInput {
+                session_id: budget_session.id.clone(),
+                objective: "Respect a small turn budget".to_string(),
+                completion_criteria: "do not schedule after the budget is exhausted".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: Some(1),
+            })
+            .expect("create budget goal");
+        db.append_message(&budget_session.id, &NewMessage::user("consume one turn"))
+            .expect("append budget turn");
+
+        let budget_result = maybe_schedule_goal_continuation(
+            &db,
+            &budget_session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Desktop,
+            Some("turn-budget"),
+            Some(101),
+        )
+        .expect("budget continuation check");
+        assert!(budget_result.is_none());
+        let budget_snapshot = db
+            .goal_snapshot(&budget_goal.goal.id, 100)
+            .expect("budget snapshot")
+            .expect("budget goal exists");
+        assert!(budget_snapshot.budget.exhausted);
+        assert!(!budget_snapshot
+            .events
+            .iter()
+            .any(|event| event.kind == "goal_auto_continue_scheduled"));
+
+        let subagent_session = db
+            .create_session("ha-main")
+            .expect("create subagent session");
+        let subagent_goal = create_goal_for_session(&db, &subagent_session.id);
+        let subagent_result = maybe_schedule_goal_continuation(
+            &db,
+            &subagent_session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Subagent,
+            Some("turn-subagent"),
+            Some(102),
+        )
+        .expect("subagent continuation check");
+        assert!(subagent_result.is_none());
+        let subagent_events = db
+            .list_goal_events(&subagent_goal.goal.id, 100)
+            .expect("subagent goal events");
+        assert!(subagent_events.iter().all(|event| {
+            event.kind != "goal_runner_evaluated" && event.kind != "goal_auto_continue_scheduled"
+        }));
+
+        let done_session = db.create_session("ha-main").expect("create done session");
+        let done_goal = create_goal_for_session(&db, &done_session.id);
+        let done_run = create_workflow(&db, &done_session.id, Some(done_goal.goal.id.clone()));
+        db.transition_workflow_run(&done_run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start done workflow");
+        db.transition_workflow_run(&done_run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete done workflow");
+        let completed = db
+            .goal_snapshot(&done_goal.goal.id, 100)
+            .expect("completed goal snapshot")
+            .expect("completed goal exists");
+        assert_eq!(completed.goal.state, GoalState::Completed);
+        assert_eq!(
+            completed
+                .goal
+                .final_evidence
+                .get("status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+        let done_result = maybe_schedule_goal_continuation(
+            &db,
+            &done_session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Desktop,
+            Some("turn-done"),
+            Some(103),
+        )
+        .expect("completed continuation check");
+        assert!(done_result.is_none());
+
+        crate::wakeup::purge_for_session(&budget_session.id);
+        crate::wakeup::purge_for_session(&subagent_session.id);
+        crate::wakeup::purge_for_session(&done_session.id);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_runner_only_continues_recoverable_blocked_goals() {
+        let (_dir, db) = temp_db();
+
+        let hard_session = db.create_session("ha-main").expect("create hard session");
+        let hard_goal = create_goal_for_session(&db, &hard_session.id);
+        db.transition_goal(
+            &hard_goal.goal.id,
+            GoalState::Blocked,
+            Some("waiting_for_user_input"),
+        )
+        .expect("hard block goal");
+        let hard_result = maybe_schedule_goal_continuation(
+            &db,
+            &hard_session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Desktop,
+            Some("turn-hard-block"),
+            Some(201),
+        )
+        .expect("hard blocked continuation check");
+        assert!(hard_result.is_none());
+        let hard_events = db
+            .list_goal_events(&hard_goal.goal.id, 100)
+            .expect("hard goal events");
+        assert!(!hard_events
+            .iter()
+            .any(|event| event.kind == "goal_auto_continue_scheduled"));
+
+        let soft_session = db.create_session("ha-main").expect("create soft session");
+        let soft_goal = create_goal_for_session(&db, &soft_session.id);
+        db.transition_goal(
+            &soft_goal.goal.id,
+            GoalState::Blocked,
+            Some("goal_evidence_incomplete"),
+        )
+        .expect("soft block goal");
+        let soft_result = maybe_schedule_goal_continuation(
+            &db,
+            &soft_session.id,
+            "ha-main",
+            crate::chat_engine::ChatSource::Desktop,
+            Some("turn-soft-block"),
+            Some(202),
+        )
+        .expect("soft blocked continuation check");
+        assert!(soft_result.is_some());
+        let soft_events = db
+            .list_goal_events(&soft_goal.goal.id, 100)
+            .expect("soft goal events");
+        assert!(soft_events
+            .iter()
+            .any(|event| event.kind == "goal_auto_continue_scheduled"));
+
+        crate::wakeup::purge_for_session(&hard_session.id);
+        crate::wakeup::purge_for_session(&soft_session.id);
     }
 
     #[test]
@@ -4051,6 +4853,60 @@ mod tests {
         assert!(cleared.goal.workflow_template_id.is_none());
         assert!(cleared.goal.workflow_template_version.is_none());
         assert!(cleared.goal.workflow_task_type.is_none());
+    }
+
+    #[test]
+    fn updating_goal_revision_clears_stale_audit_and_evaluator() {
+        let (_dir, db) = temp_db();
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = create_goal_for_session(&db, &session.id);
+        let run = create_workflow(&db, &session.id, Some(goal.goal.id.clone()));
+
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test_start"))
+            .expect("start run");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Completed, Some("test_done"))
+            .expect("complete run and evaluate goal");
+        let completed = db
+            .goal_snapshot(&goal.goal.id, 200)
+            .expect("goal snapshot")
+            .expect("goal after workflow completion");
+        assert_eq!(completed.goal.state, GoalState::Completed);
+        assert_eq!(
+            completed
+                .goal
+                .final_evidence
+                .get("status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            completed
+                .goal
+                .last_evaluator_result
+                .get("status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+
+        let updated = db
+            .update_goal(UpdateGoalInput {
+                goal_id: goal.goal.id.clone(),
+                objective: Some("Ship revised goal mode".to_string()),
+                completion_criteria: Some("[required] revised evidence exists".to_string()),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+            })
+            .expect("update goal");
+
+        assert_eq!(updated.goal.revision, goal.goal.revision + 1);
+        assert_eq!(updated.goal.state, GoalState::Active);
+        assert!(updated.goal.final_summary.is_none());
+        assert_eq!(updated.goal.final_evidence, json!({}));
+        assert_eq!(updated.goal.last_evaluator_result, json!({}));
+        assert!(updated.goal.closure_decision.is_none());
+        assert!(updated.goal.blocked_reason.is_none());
     }
 
     #[test]

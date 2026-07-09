@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use crate::async_jobs::{BackgroundJob, JobKind, JobOrigin, JobStatus, JobsDB};
 use crate::channel::ChannelDB;
 use crate::goal::CreateGoalInput;
+use crate::model_usage::{ModelUsageEvent, KIND_CHAT};
 use crate::permission::SessionMode;
 use crate::provider::{ActiveModel, ApiType, ModelConfig, ProviderConfig};
-use crate::session::SessionDB;
+use crate::session::{NewMessage, SessionDB};
 use crate::subagent::{SubagentRun, SubagentStatus};
 
 use super::{
@@ -18,8 +19,10 @@ use super::{
     runtime::{
         ask_user_tool_args, spawn_agent_tool_args, validation_exit_code, wait_all_tool_args,
     },
-    spawn_workflow_run_if_primary, CreateWorkflowRunInput, StartedOpRecoveryAction,
-    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState, WorkflowRunState,
+    spawn_workflow_run_if_primary, CreateWorkflowRunFromTemplateInput, CreateWorkflowRunInput,
+    ListSavedWorkflowTemplatesInput, SaveWorkflowTemplateInput, SavedWorkflowTemplateScope,
+    StartedOpRecoveryAction, UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowOpState,
+    WorkflowRunState,
 };
 
 fn temp_db() -> (tempfile::TempDir, SessionDB) {
@@ -96,6 +99,62 @@ fn create_run_with_script(db: &SessionDB, script_source: &str) -> (String, Strin
         })
         .expect("create workflow run");
     (session.id, run.id)
+}
+
+#[test]
+fn workflow_watchdog_flags_recoverable_owner() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("mark running");
+    let stale_owner = format!("runtime:pid:{}", u32::MAX);
+    db.claim_workflow_run_for_recovery(&run_id, &stale_owner)
+        .expect("claim recovery")
+        .expect("recovery claim");
+
+    let findings = db
+        .list_workflow_watchdog_findings(&session_id, 300)
+        .expect("watchdog findings");
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].run_id, run_id);
+    assert_eq!(findings[0].code, "workflow_recoverable_owner");
+    assert_eq!(
+        findings[0].primary_owner.as_deref(),
+        Some(stale_owner.as_str())
+    );
+}
+
+#[test]
+fn workflow_watchdog_flags_stale_active_run_with_live_owner() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+    let stale_at = (chrono::Utc::now() - chrono::Duration::minutes(20)).to_rfc3339();
+    let live_owner = format!("runtime:pid:{}", std::process::id());
+    {
+        let conn = db.conn.lock().expect("lock session db");
+        conn.execute(
+            "UPDATE workflow_runs
+                SET state='running', primary_owner=?1, updated_at=?2
+             WHERE id=?3",
+            params![&live_owner, &stale_at, &run_id],
+        )
+        .expect("mark stale run");
+        conn.execute(
+            "UPDATE workflow_events SET created_at=?1 WHERE run_id=?2",
+            params![&stale_at, &run_id],
+        )
+        .expect("mark stale events");
+    }
+
+    let findings = db
+        .list_workflow_watchdog_findings(&session_id, 300)
+        .expect("watchdog findings");
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].run_id, run_id);
+    assert_eq!(findings[0].code, "workflow_no_recent_progress");
+    assert!(findings[0].stale_secs.unwrap_or_default() >= 300);
 }
 
 fn ensure_async_jobs_db() {
@@ -308,6 +367,393 @@ fn workflow_run_survives_db_reopen_and_lists_by_session() {
 }
 
 #[test]
+fn workflow_snapshot_reports_child_agent_usage_by_handle() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("mark running");
+    let completed_handle = uuid::Uuid::new_v4().to_string();
+    let running_handle = uuid::Uuid::new_v4().to_string();
+
+    for (index, handle) in [completed_handle.clone(), running_handle.clone()]
+        .into_iter()
+        .enumerate()
+    {
+        db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+            run_id: run_id.clone(),
+            op_key: format!("main/op#{}(spawnAgent)", index + 1),
+            op_type: "spawnAgent".to_string(),
+            effect_class: WorkflowEffectClass::NonIdempotent,
+            input: json!({
+                "args": {
+                    "action": "spawn",
+                    "task": format!("Agent task {}", index + 1),
+                    "agent_id": "ha-review"
+                }
+            }),
+            child_handle: Some(handle),
+        })
+        .expect("start spawn op");
+    }
+
+    db.insert_subagent_run(&SubagentRun {
+        run_id: completed_handle.clone(),
+        parent_session_id: session_id.clone(),
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-completed".to_string(),
+        task: "Review completed".to_string(),
+        status: SubagentStatus::Completed,
+        result: Some("done".to_string()),
+        error: None,
+        depth: 1,
+        model_used: Some("test-model".to_string()),
+        started_at: "2026-01-01T00:00:00Z".to_string(),
+        finished_at: Some("2026-01-01T00:01:00Z".to_string()),
+        duration_ms: Some(60_000),
+        label: Some("review".to_string()),
+        attachment_count: 0,
+        input_tokens: Some(100),
+        output_tokens: Some(25),
+    })
+    .expect("insert completed subagent");
+    db.insert_subagent_run(&SubagentRun {
+        run_id: running_handle.clone(),
+        parent_session_id: session_id.clone(),
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-running".to_string(),
+        task: "Review running".to_string(),
+        status: SubagentStatus::Running,
+        result: None,
+        error: None,
+        depth: 1,
+        model_used: None,
+        started_at: "2026-01-01T00:02:00Z".to_string(),
+        finished_at: None,
+        duration_ms: None,
+        label: Some("review".to_string()),
+        attachment_count: 0,
+        input_tokens: None,
+        output_tokens: None,
+    })
+    .expect("insert running subagent");
+    db.insert_subagent_run(&SubagentRun {
+        run_id: "unrelated-subagent".to_string(),
+        parent_session_id: session_id,
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-unrelated".to_string(),
+        task: "Unrelated".to_string(),
+        status: SubagentStatus::Completed,
+        result: Some("done".to_string()),
+        error: None,
+        depth: 1,
+        model_used: Some("test-model".to_string()),
+        started_at: "2026-01-01T00:03:00Z".to_string(),
+        finished_at: Some("2026-01-01T00:04:00Z".to_string()),
+        duration_ms: Some(60_000),
+        label: Some("other".to_string()),
+        attachment_count: 0,
+        input_tokens: Some(9_999),
+        output_tokens: Some(9_999),
+    })
+    .expect("insert unrelated subagent");
+
+    let snapshot = db
+        .workflow_run_snapshot(&run_id, 20)
+        .expect("snapshot")
+        .expect("run exists");
+
+    assert_eq!(snapshot.agent_usage.spawned_agents, 2);
+    assert_eq!(snapshot.agent_usage.completed_agents, 1);
+    assert_eq!(snapshot.agent_usage.running_agents, 1);
+    assert_eq!(snapshot.agent_usage.failed_agents, 0);
+    assert_eq!(snapshot.agent_usage.attributed_agents, 1);
+    assert_eq!(snapshot.agent_usage.input_tokens, 100);
+    assert_eq!(snapshot.agent_usage.output_tokens, 25);
+    assert_eq!(snapshot.agent_usage.total_tokens, 125);
+    assert_eq!(
+        snapshot.agent_usage.attribution,
+        "workflow_ops.child_handle=subagent_runs.run_id"
+    );
+}
+
+#[test]
+fn workflow_snapshot_reports_window_usage_without_claiming_strong_cost() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+    for (key, timestamp, input, output) in [
+        ("before", "2026-01-01T00:00:09Z", 999, 999),
+        ("inside", "2026-01-01T00:00:15Z", 40, 10),
+        ("after", "2026-01-01T00:00:21Z", 999, 999),
+    ] {
+        let mut event = ModelUsageEvent::new(KIND_CHAT).with_usage(input, output, 3, 4);
+        event.request_key = Some(format!("workflow-window:{key}"));
+        event.timestamp = Some(timestamp.to_string());
+        event.operation = Some("chat".to_string());
+        event.source = Some("desktop".to_string());
+        event.session_id = Some(session_id.clone());
+        event.agent_id = Some("ha-main".to_string());
+        db.insert_model_usage_event(&event)
+            .expect("insert model usage");
+    }
+
+    let completed_handle = uuid::Uuid::new_v4().to_string();
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("mark running");
+    db.upsert_workflow_op_started(UpsertWorkflowOpInput {
+        run_id: run_id.clone(),
+        op_key: "main/op#1(spawnAgent)".to_string(),
+        op_type: "spawnAgent".to_string(),
+        effect_class: WorkflowEffectClass::NonIdempotent,
+        input: json!({
+            "args": {
+                "action": "spawn",
+                "task": "Agent task",
+                "agent_id": "ha-review"
+            }
+        }),
+        child_handle: Some(completed_handle.clone()),
+    })
+    .expect("start spawn op");
+    db.insert_subagent_run(&SubagentRun {
+        run_id: completed_handle,
+        parent_session_id: session_id.clone(),
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-completed".to_string(),
+        task: "Review completed".to_string(),
+        status: SubagentStatus::Completed,
+        result: Some("done".to_string()),
+        error: None,
+        depth: 1,
+        model_used: Some("test-model".to_string()),
+        started_at: "2026-01-01T00:00:12Z".to_string(),
+        finished_at: Some("2026-01-01T00:00:18Z".to_string()),
+        duration_ms: Some(6_000),
+        label: Some("review".to_string()),
+        attachment_count: 0,
+        input_tokens: Some(100),
+        output_tokens: Some(25),
+    })
+    .expect("insert completed subagent");
+    db.insert_subagent_run(&SubagentRun {
+        run_id: "unrelated-subagent".to_string(),
+        parent_session_id: session_id,
+        parent_agent_id: "ha-main".to_string(),
+        child_agent_id: "ha-review".to_string(),
+        child_session_id: "child-unrelated".to_string(),
+        task: "Unrelated".to_string(),
+        status: SubagentStatus::Completed,
+        result: Some("done".to_string()),
+        error: None,
+        depth: 1,
+        model_used: Some("test-model".to_string()),
+        started_at: "2026-01-01T00:00:12Z".to_string(),
+        finished_at: Some("2026-01-01T00:00:18Z".to_string()),
+        duration_ms: Some(6_000),
+        label: Some("other".to_string()),
+        attachment_count: 0,
+        input_tokens: Some(9_999),
+        output_tokens: Some(9_999),
+    })
+    .expect("insert unrelated subagent");
+
+    {
+        let conn = db.conn.lock().expect("lock db");
+        conn.execute(
+            "UPDATE workflow_runs
+             SET state = 'completed',
+                 created_at = ?1,
+                 updated_at = ?2,
+                 completed_at = ?2
+             WHERE id = ?3",
+            params!["2026-01-01T00:00:10Z", "2026-01-01T00:00:20Z", &run_id],
+        )
+        .expect("fix workflow timestamps");
+    }
+
+    let snapshot = db
+        .workflow_run_snapshot(&run_id, 20)
+        .expect("snapshot")
+        .expect("run exists");
+
+    assert_eq!(snapshot.usage.parent_events, 1);
+    assert_eq!(snapshot.usage.parent_input_tokens, 40);
+    assert_eq!(snapshot.usage.parent_output_tokens, 10);
+    assert_eq!(snapshot.usage.parent_cache_creation_input_tokens, 3);
+    assert_eq!(snapshot.usage.parent_cache_read_input_tokens, 4);
+    assert_eq!(snapshot.usage.parent_total_tokens, 50);
+    assert_eq!(snapshot.usage.agent_input_tokens, 100);
+    assert_eq!(snapshot.usage.agent_output_tokens, 25);
+    assert_eq!(snapshot.usage.agent_total_tokens, 125);
+    assert_eq!(snapshot.usage.total_tokens, 175);
+    assert_eq!(
+        snapshot.usage.attribution,
+        "session_model_usage_between_workflow_run_bounds+workflow_ops.child_handle=subagent_runs.run_id"
+    );
+    assert_eq!(snapshot.usage.parent_injection_turns, 0);
+    assert_eq!(
+        snapshot.usage.parent_injection_attribution,
+        "no_workflow_result_injection_messages"
+    );
+}
+
+#[test]
+fn workflow_snapshot_reports_parent_injection_usage_by_workflow_result_message() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+
+    {
+        let conn = db.conn.lock().expect("lock db");
+        conn.execute(
+            "UPDATE workflow_runs
+             SET state = 'completed',
+                 created_at = ?1,
+                 updated_at = ?2,
+                 completed_at = ?2
+             WHERE id = ?3",
+            params!["2026-01-01T00:00:10Z", "2026-01-01T00:00:30Z", &run_id],
+        )
+        .expect("fix workflow timestamps");
+    }
+
+    let mut unrelated_before = NewMessage::assistant("unrelated answer before injection");
+    unrelated_before.tokens_in_last = Some(500);
+    unrelated_before.tokens_out = Some(50);
+    let unrelated_before_id = db
+        .append_message(&session_id, &unrelated_before)
+        .expect("append unrelated before");
+    let mut unrelated_before_event = ModelUsageEvent::new(KIND_CHAT).with_usage(900, 90, 1, 2);
+    unrelated_before_event.request_key = Some(format!("message:{unrelated_before_id}"));
+    unrelated_before_event.timestamp = Some("2026-01-01T00:00:12Z".to_string());
+    unrelated_before_event.operation = Some("chat".to_string());
+    unrelated_before_event.source = Some("desktop".to_string());
+    unrelated_before_event.session_id = Some(session_id.clone());
+    unrelated_before_event.agent_id = Some("ha-main".to_string());
+    db.insert_model_usage_event(&unrelated_before_event)
+        .expect("insert unrelated before usage");
+
+    let mut final_injection = NewMessage::user("<workflow-result>");
+    final_injection.attachments_meta = Some(
+        json!({
+            "workflow_result": {
+                "run_id": &run_id
+            }
+        })
+        .to_string(),
+    );
+    db.append_message(&session_id, &final_injection)
+        .expect("append final injection");
+
+    let mut final_reply = NewMessage::assistant("handled final workflow result");
+    final_reply.tokens_in = Some(1_000);
+    final_reply.tokens_in_last = Some(40);
+    final_reply.tokens_out = Some(11);
+    let final_reply_id = db
+        .append_message(&session_id, &final_reply)
+        .expect("append final reply");
+    let mut final_reply_event = ModelUsageEvent::new(KIND_CHAT).with_usage(60, 12, 5, 6);
+    final_reply_event.request_key = Some(format!("message:{final_reply_id}"));
+    final_reply_event.timestamp = Some("2026-01-01T00:00:16Z".to_string());
+    final_reply_event.operation = Some("chat".to_string());
+    final_reply_event.source = Some("desktop".to_string());
+    final_reply_event.session_id = Some(session_id.clone());
+    final_reply_event.agent_id = Some("ha-main".to_string());
+    db.insert_model_usage_event(&final_reply_event)
+        .expect("insert final reply usage");
+
+    let mut milestone_injection = NewMessage::user("<workflow-milestone>");
+    milestone_injection.attachments_meta = Some(
+        json!({
+            "workflow_result": {
+                "run_id": format!("{}:workflow-event:7", run_id)
+            }
+        })
+        .to_string(),
+    );
+    db.append_message(&session_id, &milestone_injection)
+        .expect("append milestone injection");
+
+    let mut milestone_reply = NewMessage::assistant("handled milestone workflow result");
+    milestone_reply.tokens_in_last = Some(30);
+    milestone_reply.tokens_out = Some(7);
+    let milestone_reply_id = db
+        .append_message(&session_id, &milestone_reply)
+        .expect("append milestone reply");
+    let mut milestone_reply_event = ModelUsageEvent::new(KIND_CHAT).with_usage(33, 8, 0, 4);
+    milestone_reply_event.request_key = Some(format!("message:{milestone_reply_id}"));
+    milestone_reply_event.timestamp = Some("2026-01-01T00:00:18Z".to_string());
+    milestone_reply_event.operation = Some("chat".to_string());
+    milestone_reply_event.source = Some("desktop".to_string());
+    milestone_reply_event.session_id = Some(session_id.clone());
+    milestone_reply_event.agent_id = Some("ha-main".to_string());
+    db.insert_model_usage_event(&milestone_reply_event)
+        .expect("insert milestone reply usage");
+
+    db.append_message(&session_id, &NewMessage::user("human next turn"))
+        .expect("append human next turn");
+
+    let mut unrelated_after = NewMessage::assistant("unrelated answer after next turn");
+    unrelated_after.tokens_in_last = Some(700);
+    unrelated_after.tokens_out = Some(70);
+    let unrelated_after_id = db
+        .append_message(&session_id, &unrelated_after)
+        .expect("append unrelated after");
+    let mut unrelated_after_event = ModelUsageEvent::new(KIND_CHAT).with_usage(800, 80, 3, 4);
+    unrelated_after_event.request_key = Some(format!("message:{unrelated_after_id}"));
+    unrelated_after_event.timestamp = Some("2026-01-01T00:00:25Z".to_string());
+    unrelated_after_event.operation = Some("chat".to_string());
+    unrelated_after_event.source = Some("desktop".to_string());
+    unrelated_after_event.session_id = Some(session_id.clone());
+    unrelated_after_event.agent_id = Some("ha-main".to_string());
+    db.insert_model_usage_event(&unrelated_after_event)
+        .expect("insert unrelated after usage");
+
+    let snapshot = db
+        .workflow_run_snapshot(&run_id, 20)
+        .expect("snapshot")
+        .expect("run exists");
+
+    assert_eq!(
+        snapshot.usage.parent_events, 4,
+        "legacy window usage still sees all parent provider events in run bounds"
+    );
+    assert_eq!(snapshot.usage.parent_injection_turns, 2);
+    assert_eq!(
+        snapshot.usage.parent_injection_messages, 4,
+        "two workflow injection user rows plus their assistant replies"
+    );
+    assert_eq!(
+        snapshot.usage.parent_injection_input_tokens, 70,
+        "message usage prefers tokens_in_last over cumulative tokens_in"
+    );
+    assert_eq!(snapshot.usage.parent_injection_output_tokens, 18);
+    assert_eq!(snapshot.usage.parent_injection_total_tokens, 88);
+    assert_eq!(snapshot.usage.parent_injection_provider_events, 2);
+    assert_eq!(snapshot.usage.parent_injection_provider_input_tokens, 93);
+    assert_eq!(snapshot.usage.parent_injection_provider_output_tokens, 20);
+    assert_eq!(
+        snapshot
+            .usage
+            .parent_injection_provider_cache_creation_input_tokens,
+        5
+    );
+    assert_eq!(
+        snapshot
+            .usage
+            .parent_injection_provider_cache_read_input_tokens,
+        10
+    );
+    assert_eq!(snapshot.usage.parent_injection_provider_total_tokens, 113);
+    assert_eq!(
+        snapshot.usage.parent_injection_attribution,
+        "workflow_result_message_boundary+model_usage_events.request_key=message_id"
+    );
+}
+
+#[test]
 fn workflow_run_rejects_incognito_sessions() {
     let (_dir, db) = temp_db();
     let session = db
@@ -330,6 +776,91 @@ fn workflow_run_rejects_incognito_sessions() {
         })
         .expect_err("incognito must be rejected");
     assert!(err.to_string().contains("incognito"));
+}
+
+#[test]
+fn completed_workflow_run_can_be_saved_and_reused_as_template() {
+    let (_dir, db) = temp_db();
+    let (session_id, run_id) = create_run(&db);
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("start workflow run");
+    db.transition_workflow_run(&run_id, WorkflowRunState::Completed, Some("test"))
+        .expect("complete workflow run");
+
+    let template = db
+        .save_workflow_template_from_run(SaveWorkflowTemplateInput {
+            source_run_id: run_id.clone(),
+            name: "Reusable review".to_string(),
+            description: Some("save completed workflow".to_string()),
+            scope: SavedWorkflowTemplateScope::User,
+            project_id: None,
+            explicit_save_consent: true,
+        })
+        .expect("save workflow template");
+    assert_eq!(template.source_run_id.as_deref(), Some(run_id.as_str()));
+    assert_eq!(template.scope, SavedWorkflowTemplateScope::User);
+    assert!(template.enabled);
+
+    let listed = db
+        .list_saved_workflow_templates(ListSavedWorkflowTemplatesInput {
+            project_id: None,
+            include_disabled: false,
+            limit: Some(10),
+        })
+        .expect("list saved workflow templates");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, template.id);
+
+    let derived = db
+        .create_workflow_run_from_template(CreateWorkflowRunFromTemplateInput {
+            session_id,
+            template_id: template.id.clone(),
+            budget: None,
+            goal_id: None,
+            goal_criterion_id: None,
+            worktree_id: None,
+        })
+        .expect("create workflow run from template");
+    assert_eq!(
+        derived.origin.as_deref(),
+        Some(format!("template:{}", template.id).as_str())
+    );
+    assert_eq!(derived.script_hash, template.script_hash);
+    assert_eq!(derived.state, WorkflowRunState::Draft);
+}
+
+#[test]
+fn saving_workflow_template_requires_completed_run_and_consent() {
+    let (_dir, db) = temp_db();
+    let (_session_id, run_id) = create_run(&db);
+
+    let err = db
+        .save_workflow_template_from_run(SaveWorkflowTemplateInput {
+            source_run_id: run_id.clone(),
+            name: "Draft template".to_string(),
+            description: None,
+            scope: SavedWorkflowTemplateScope::User,
+            project_id: None,
+            explicit_save_consent: true,
+        })
+        .expect_err("draft run must not be saved");
+    assert!(err.to_string().contains("only completed workflow runs"));
+
+    db.transition_workflow_run(&run_id, WorkflowRunState::Running, Some("test"))
+        .expect("start workflow run");
+    db.transition_workflow_run(&run_id, WorkflowRunState::Completed, Some("test"))
+        .expect("complete workflow run");
+    let err = db
+        .save_workflow_template_from_run(SaveWorkflowTemplateInput {
+            source_run_id: run_id,
+            name: "No consent".to_string(),
+            description: None,
+            scope: SavedWorkflowTemplateScope::User,
+            project_id: None,
+            explicit_save_consent: false,
+        })
+        .expect_err("explicit consent is required");
+    assert!(err.to_string().contains("explicit user consent"));
 }
 
 #[test]
@@ -1229,6 +1760,7 @@ export default async function main(workflow) {
     let report = runtime
         .block_on(recover_pending_workflow_runs(db.clone(), "test-owner"))
         .expect("recover workflows");
+    assert_eq!(report.owner, "test-owner");
     assert_eq!(report.attempted, 1);
     assert_eq!(report.recovered, 1);
     assert!(report.errors.is_empty());
@@ -1244,11 +1776,13 @@ export default async function main(workflow) {
     assert_eq!(tasks.len(), 1, "recovery replay must not duplicate task");
     assert_eq!(tasks[0].id, existing_task.id);
     assert_eq!(tasks[0].status, "completed");
-    assert!(db
-        .list_workflow_events(&run_id, 20)
-        .expect("list events")
-        .iter()
-        .any(|event| event.event_type == "run_recovery_claimed"));
+    let events = db.list_workflow_events(&run_id, 20).expect("list events");
+    assert!(events.iter().any(|event| {
+        event.event_type == "run_recovery_claimed"
+            && event.payload.get("owner").and_then(Value::as_str) == Some("test-owner")
+            && event.payload.get("fromState").and_then(Value::as_str) == Some("running")
+            && event.payload.get("toState").and_then(Value::as_str) == Some("recovering")
+    }));
 }
 
 #[test]

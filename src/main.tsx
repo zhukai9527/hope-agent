@@ -32,6 +32,22 @@ void i18nReady.finally(async () => {
     windowType === "workflow-smoke" && import.meta.env.DEV
       ? (await import("./dev/WorkflowSmokeWindow.tsx")).default
       : null
+  const LoopSmokeWindow =
+    windowType === "loop-smoke" && import.meta.env.DEV
+      ? (await import("./dev/LoopSmokeWindow.tsx")).default
+      : null
+  const GoalSmokeWindow =
+    windowType === "goal-smoke" && import.meta.env.DEV
+      ? (await import("./dev/GoalSmokeWindow.tsx")).default
+      : null
+  const WorkspaceSmokeWindow =
+    windowType === "workspace-smoke" && import.meta.env.DEV
+      ? (await import("./dev/WorkspaceSmokeWindow.tsx")).default
+      : null
+  const ChatInputSmokeWindow =
+    windowType === "chat-input-smoke" && import.meta.env.DEV
+      ? (await import("./dev/ChatInputSmokeWindow.tsx")).default
+      : null
 
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
@@ -43,6 +59,14 @@ void i18nReady.finally(async () => {
         <FileBrowserDetachedWindow />
       ) : WorkflowSmokeWindow ? (
         <WorkflowSmokeWindow />
+      ) : LoopSmokeWindow ? (
+        <LoopSmokeWindow />
+      ) : GoalSmokeWindow ? (
+        <GoalSmokeWindow />
+      ) : WorkspaceSmokeWindow ? (
+        <WorkspaceSmokeWindow />
+      ) : ChatInputSmokeWindow ? (
+        <ChatInputSmokeWindow />
       ) : (
         <App />
       )}

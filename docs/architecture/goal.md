@@ -1,6 +1,6 @@
 # Goal 控制平面
 
-> 返回 [文档索引](../README.md) | 更新时间：2026-07-07
+> 返回 [文档索引](../README.md) | 更新时间：2026-07-08
 
 Goal 是长任务的顶层完成语义：**我要最终达成什么，完成标准是什么，哪些证据证明已经完成**。它位于 Execution Mode 与 Workflow 之上，适用于通用长任务；coding 只是当前最强的使用场景。
 
@@ -20,14 +20,14 @@ Goal 不直接执行工具，不替代 Workflow，也不表示重复调度。Wor
 
 | 层 | 代码 | 责任 |
 | --- | --- | --- |
-| 核心模型 | `crates/ha-core/src/goal/mod.rs` | Goal/GoalEvent/GoalLink 类型、状态机、建表、CRUD、criteria parser、审计器、closure decision。 |
+| 核心模型 | `crates/ha-core/src/goal/mod.rs` | Goal/GoalEvent/GoalLink 类型、状态机、建表、CRUD、criteria parser、审计器、closure decision、Goal Watchdog 只读诊断。 |
 | Agent Goal 工具 | `crates/ha-core/src/tools/goal.rs`、`tools/definitions/goal_tools.rs` | 模型侧 Goal Runtime：状态读取、checkpoint、通用证据、审计、完成请求、阻塞请求。 |
 | Chat Engine 集成 | `crates/ha-core/src/chat_engine/engine.rs` | 成功回合后根据 active Goal 状态排自动 continuation wakeup。 |
 | Workflow 集成 | `crates/ha-core/src/workflow/db.rs` | `workflow_runs.goal_id`、自动绑定 active Goal、终态后自动 link + audit。 |
 | 斜杠命令 | `crates/ha-core/src/slash_commands/handlers/goal.rs` | `/goal` 文本控制面。 |
 | Tauri owner API | `src-tauri/src/commands/goal.rs` | 桌面 owner 平面命令。 |
 | HTTP owner API | `crates/ha-server/src/routes/goal.rs` | Server/Web owner 平面端点。 |
-| GUI | `src/components/chat/workspace/useGoal.ts`、`WorkspacePanel.tsx`、`ChatInput.tsx` | Workspace 独立 Goal section、Goal detail、closure packet、输入框目标模式、composer 上方 active Goal 状态条、创建/更新/暂停/恢复/清除/评估/关闭取舍、证据摘要。 |
+| GUI | `src/components/chat/workspace/useGoal.ts`、`WorkspacePanel.tsx`、`ChatInput.tsx` | Workspace 独立 Goal section、Goal detail、closure packet、输入框目标模式、composer 上方 active Goal 状态条、创建/更新/暂停/恢复/清除/评估/关闭取舍、证据摘要、Goal Watchdog amber 提示。 |
 | 消息完成反馈 | `src/components/chat/message/MessageBubble.tsx` | 从 `goal_finish_request` 工具结果提取 `GoalCompletionReport`，在最终 assistant 总结下方、文件附件上方显示“目标已达成 + 耗时 + tokens”。 |
 
 红线：
@@ -39,6 +39,7 @@ Goal 不直接执行工具，不替代 Workflow，也不表示重复调度。Wor
 - `label` 只用于展示；Goal 与 Workflow 的关系以 `goal_id` / `goal_links` 为准。
 - Goal 更新必须走 owner 平面 `update_goal` 或 `/goal <objective>`；更新 objective、completion criteria 或 domain workflow 绑定后 `revision += 1`，清空旧 final audit / closure decision，并让 `blocked` / `evaluating` 回到 `active`，避免旧审计结论污染新目标。
 - `goal_finish_request` 是唯一 agent-side 自动关闭入口：它会重跑/校验当前 revision 的 final audit，只有 `status=completed` 且 evidence 未 stale 时才写 `accepted_v1` closure decision。模型不能绕过 audit 直接关闭 Goal。
+- Goal Watchdog 是 owner-plane 只读诊断；它不排 wakeup、不修改 Goal、不自动恢复、不批准权限，也不把 active workflow/task/background job 下的等待误报成 runner stuck。
 
 ## 2.1 Goal v3 Runtime Contract
 
@@ -75,11 +76,14 @@ Agent 工具面：
 Goal Runner 复用 `wakeup` 自调度与 parent-injection 管线，而不是在 chat engine 内递归重入：
 
 1. `run_chat_engine` 在 assistant 最终消息写入 DB、stream lifecycle 完成、`ChatTurnStatus=Completed` 后调用 `maybe_schedule_goal_continuation`。
-2. 若存在 active Goal 且仍需推进，排一个 10 秒 wakeup。wakeup 会等前台空闲，通过共享注入管线发送 `<goal-continuation>` note，让模型开启下一轮。
-3. continuation note 要求模型先调用 `goal_status`，再决定继续执行、`goal_finish_request` 或 `goal_block_request`。
-4. 同一个 `turn_id` 只会排一次；同一 Goal revision 最多排 20 次，超过后写 `goal_auto_continue_halted`，避免无限自激活。
-5. `paused` / `completed` / `failed` / `cancelled` / 真实 blocker / budget exhausted 不排续跑。
-6. `goal_evidence_incomplete` 和 `goal_blocked_by_evidence` 属于“继续补证据”的 open 状态，runner 可以继续排续跑。
+2. Runner 先运行一次 deterministic post-turn evaluator：写 `last_evaluator_result_json`，追加 `goal_runner_evaluated` timeline event，记录 `status`、`summary`、`missing`、`blockers`、`nextEvidenceNeeded`、`turnId`、`assistantMessageId`、`source`。这一步不直接把 Goal 改成 `completed` / `blocked`，避免把普通进行中的目标误染成终态；正式 closure 仍必须走 `goal_finish_request` / final audit。
+3. 若存在 active Goal 且仍需推进，排一个 10 秒 wakeup。wakeup 会等前台空闲，通过共享注入管线发送 `<goal-continuation>` note，让模型开启下一轮。
+4. continuation note 要求模型先调用 `goal_status`，再决定继续执行、`goal_finish_request` 或 `goal_block_request`；`goal_status` 会返回 `latestEvaluator`，让模型知道上一轮后置检查的结果和下一步证据需求。
+5. 同一个 `turn_id` 只会排一次；同一 Goal revision 最多排 20 次，超过后写 `goal_auto_continue_halted`，避免无限自激活。
+6. `paused` / `completed` / `failed` / `cancelled` / 真实 blocker / budget exhausted 不排续跑；用户中断的 turn 在 chat engine 层不会进入 runner，因为只有 `ChatTurnStatus::Completed` 才会调用 `maybe_schedule_goal_continuation`。
+7. 若当前会话存在 active background job（`queued` / `running` / `cancelling` / `awaiting_approval`，包括后台工具、subagent projection、approval parked job），runner 只保留 post-turn evaluator 记录，写 `goal_auto_continue_waiting_background_jobs`，不额外排自激活；等待后台 job 完成注入或用户处理后再由下一轮继续，避免和长任务/审批互相踩踏。
+8. `goal_evidence_incomplete` 和 `goal_blocked_by_evidence` 属于“继续补证据”的 open 状态，runner 可以继续排续跑。
+9. Stop-rule 回归测试锁住核心边界：同一 turn 去重、暂停停止、turn budget exhausted 停止、subagent 不触发主 Goal、completed final audit 停止、不可恢复 blocked 停止、可恢复 evidence-blocked 继续；`goal_block_request` 工具级测试锁住“同 fingerprint 重复 3 次才 block”和“明确需要用户/外部状态立即 block”。
 
 这个设计继承现有 wakeup 的稳定性：
 
@@ -87,6 +91,26 @@ Goal Runner 复用 `wakeup` 自调度与 parent-injection 管线，而不是在 
 - 重启恢复：非 incognito wakeup 可持久化并 replay。
 - 会话删除/无痕焚毁：统一由 wakeup/session cleanup 清理。
 - UI 体验：当前 turn 先完成、显示结果，再短延迟自动继续，避免用户看到同步递归导致的卡死。
+
+V3.6 起，`goal_runner_persists_continuation_wakeup_for_restart_replay` 锁住 active Goal restart 的 durable 前半链：`maybe_schedule_goal_continuation` 成功后，`goal_auto_continue_scheduled` event 的 `wakeupId` 必须对应一条 pending wakeup row，row 内保留 `<goal-continuation>` note、session、agent 和 goal id。`goal_runner_waits_for_background_jobs_then_recovers_after_restart_replay` 进一步锁住等待后台任务 / 审批 parked job 的恢复边界：runner 在 `running` / `awaiting_approval` active background job 存在时只写 `goal_auto_continue_waiting_background_jobs`、不排 continuation；启动恢复经 `async_jobs::JobManager::replay_pending()` 把不可恢复 active job 标为 `interrupted` 后，下一轮可以重新排出 durable continuation wakeup。该组测试证明重启前状态足以被 `wakeup::replay_pending()` re-arm，且后台等待态不会永久卡住 Goal Runner；真实跨进程重启、真实注入和 GUI 长跑仍归 V3.6 strict proof route。
+
+V3.6 的 Goal restart/resume 验收口径与 Workflow 一致，采用 durable conservative recovery：Goal 自身、completion criteria、evidence、pending wakeup、background job 等状态必须持久可读；重启后不允许静默完成或静默丢失，也不允许自动重跑无法证明幂等的外部动作。若被系统杀掉的后台命令无法透明续跑，可以记录 `interrupted` 并让 Goal Runner、final audit 或 watchdog 把目标维持在继续推进、阻塞待处理或等待审批的用户可行动状态。透明续跑 OS 进程和自动安全重试是后续增强，不作为 V3 关闭的必要条件。
+
+### 2.2.1 Goal Watchdog
+
+`SessionDB::list_goal_watchdog_findings(session_id, stale_secs)` 是 V3.6 高可用专项的只读诊断面，用于发现“Goal 按 runner 规则仍应继续，但最近没有活动”的状态。
+
+判定流程：
+
+1. 只检查当前 session 的 active / pending closure Goal；没有 Goal 返回空。
+2. 先复用 `goal_runner_should_continue(snapshot)`，因此 `paused` / `completed` / `failed` / `cancelled` / 真实不可恢复 blocker / budget exhausted / accepted v1 都不会被标记。
+3. 若 Goal 关联的 workflow run 处于 `awaiting_approval` / `running` / `awaiting_user` / `paused` / `recovering`，或有 `in_progress` task，或当前 session 有 active background job，则返回空；这些状态本身已经在 Workflow / Task / Background Job 面板可观察，不能重复报 Goal stuck。
+4. 最近活动时间取 Goal `updated_at`、所有 Goal event `created_at`、关联 workflow run `updated_at`、session task `updated_at` 的最大值。
+5. 最近活动超过 `stale_secs`（默认 300 秒）时返回一条 `GoalWatchdogFinding`：
+   - `goal_no_recent_progress`：Goal 仍应继续但无新进展。
+   - `goal_stale_evaluating`：Goal 处于 evaluating 且无新进展。
+
+Tauri / HTTP / GUI 均暴露这个读模型。Workspace 的 Goal section 会用 amber “有目标需要确认”提示和“评估”动作暴露问题；该动作只是调用 `evaluate_goal`，不会自动续跑或修复。
 
 ## 2.3 Completion Report 与 GUI Footer
 
@@ -105,6 +129,8 @@ Goal Runner 复用 `wakeup` 自调度与 parent-injection 管线，而不是在 
 | `generatedAt` | 报告生成时间。 |
 
 GUI 从 `goal_finish_request` 的 tool result 解析 `GoalCompletionReport`，在最终 assistant 总结下方、文件附件上方渲染“已在 X 内达成目标 · Y tokens”。这条 completion note 是产品层生成的完成说明，而不是模型正文的一部分：精确 token usage 通常要等最终 assistant 消息落库后才可用，因此 GUI 会在 report 的 `tokensUsed` 为 0 时用最终消息的 `lastInputTokens + outputTokens` 兜底，避免模型猜测或输出 stale usage。
+
+Goal budget / completion usage 由 `build_goal_budget_snapshot` 统一派生：只统计 Goal `created_at` 之后的 session messages，turn 数只按 user message 计数，token 数按每条消息 `tokens_in_last` 优先、缺失时回退 `tokens_in`，再加 `tokens_out`；`completed_at` 存在时用它固定 elapsed，否则用当前时间。V3.6 的 `goal_budget_usage_counts_post_goal_turns_and_last_round_tokens` 锁住这个口径，防止把 Goal 创建前的历史 token 算入当前目标，或把累计 input token 误当最后一轮 usage。
 
 ## 3. 数据模型
 
@@ -128,7 +154,7 @@ Goal 数据落在 `sessions.db`，跟随 session 级联删除。
 | `final_summary` | 最近一次 final audit 摘要。 |
 | `final_evidence_json` | 最近一次 audit 的结构化结果。 |
 | `blocked_reason` | `blocked` 原因。 |
-| `last_evaluator_result_json` | 最近 evaluator 原始结果，当前实现与 `final_evidence_json` 同步。 |
+| `last_evaluator_result_json` | 最近 evaluator 原始结果。`goal_finish_request` / manual final audit 会与 `final_evidence_json` 同步；post-turn runner evaluator 只更新此字段并写 `goal_runner_evaluated`，不改变 final audit closure gate。 |
 | `closure_decision` | 用户关闭取舍：`accepted_v1` / `needs_strict_evidence` / `cancelled` / `superseded`。为空表示尚未确认。 |
 | `closure_reason` | 用户取舍说明。 |
 | `closed_at` | 目标真正关闭的时间；`needs_strict_evidence` 不写 `closed_at`，因为目标仍需继续补证据。 |
@@ -306,6 +332,7 @@ Tauri 与 HTTP 保持对齐：
 | Tauri command | HTTP |
 | --- | --- |
 | `get_active_goal` | `GET /api/sessions/{sessionId}/goal` |
+| `list_goal_watchdog_findings` | `GET /api/sessions/{sessionId}/goal/watchdog?staleSecs=300` |
 | `create_goal` | `POST /api/sessions/{sessionId}/goal` |
 | `get_goal` | `GET /api/goals/{goalId}` |
 | `update_goal` | `PATCH /api/goals/{goalId}` |
@@ -328,7 +355,7 @@ EventBus：
 | `goal:event(kind='goal_closure_decided')` | 用户接受 v1、要求严格证据、取消或替代目标。 |
 | `goal:event(kind='goal_follow_up_added')` | 用户从输入框或 Workspace 把非阻塞后续项加入 durable follow-up pool。 |
 
-前端 `useGoal` 监听 Goal 与 Workflow 事件，并做 250ms debounce refresh。
+前端 `useGoal` 监听 Goal 与 Workflow 事件，并做 250ms debounce refresh；每次刷新 active Goal 时会 best-effort 同步 `list_goal_watchdog_findings`，诊断读取失败只清空提示，不影响 Goal 主状态展示。
 
 ## 8. 用户入口
 
@@ -346,7 +373,7 @@ EventBus：
 /goal clear
 ```
 
-`/goal` 返回 markdown 状态卡，包含目标、完成标准、workflow 数、task 完成数、final audit 和 blocked reason。Slash history 中 `/goal ...` 的用户行以 Goal 模式气泡展示：保留原始 command metadata，但气泡正文不显示 `/goal` 前缀。
+`/goal` / `/goal status` 返回简洁 markdown 状态卡，而不是内部命令帮助：显示 state、revision、required criteria 进度、耗时、tokens、turns、workflow/task/evidence 数、closure 状态、objective、逐条 required criteria 状态，以及 latest evaluator 的 status / reason / missing / blockers / next evidence。Slash history 中 `/goal ...` 的用户行以 Goal 模式气泡展示：保留原始 command metadata，但气泡正文不显示 `/goal` 前缀。
 
 ### GUI
 
@@ -371,7 +398,8 @@ Workspace 内有独立 Goal section；Goal 不再藏在 Workflow 区域里：
 输入框也有一等 Goal 入口：
 
 - `+` 菜单 / toolbar 中的“目标”进入目标模式。
-- 目标模式发送无 active Goal 时等价于 `/goal <objective>` 创建目标；有 active Goal 时会展示操作分段：更新当前目标、替代目标、追加必须项、追加可选项、追加后续项。
+- 草稿新会话的首条目标消息不提前创建空会话：前端把 `initialGoal` 放进 chat start payload，后端在 auto-create session 后、prompt preflight 通过后、模型 turn 启动前创建 durable Goal。这样首个 assistant 回合已经能看到 Active Goal system section，历史里只显示一条普通 Goal badge 用户气泡，不显示 `/goal` 前缀，也不会先出现空白会话。
+- 已有会话中，目标模式发送无 active Goal 时等价于 `/goal <objective>` 创建目标并 pass-through 启动正常模型 turn；有 active Goal 时会展示操作分段：更新当前目标、替代目标、追加必须项、追加可选项、追加后续项。
 - “更新当前目标”沿用 `/goal <objective>` 的 owner 路径；“替代目标”先把旧目标记录为 `superseded` closure decision，再创建新目标；“追加必须/可选”把输入追加到 completion criteria；“追加后续”调用 `append_goal_follow_up` 写入 durable follow-up pool，不阻塞当前 Goal 关闭。
 - 控制词只有在完整参数精确等于 `status` / `pause` / `resume` / `evaluate` / `clear` 等时才作为命令，较长文本一律按目标正文处理。
 - 渲染用户消息时不显示 `/goal` 字符，而是在气泡内展示 Goal 模式标记。

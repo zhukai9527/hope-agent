@@ -146,6 +146,17 @@ fn compact_goal_status(snapshot: &GoalSnapshot) -> Value {
             "blockers": goal.final_evidence.get("blockers").cloned().unwrap_or(Value::Null),
             "nextEvidenceNeeded": goal.final_evidence.get("nextEvidenceNeeded").cloned().unwrap_or(Value::Null),
         },
+        "latestEvaluator": {
+            "kind": goal.last_evaluator_result.get("evaluatorKind").and_then(Value::as_str),
+            "source": goal.last_evaluator_result.get("source").and_then(Value::as_str),
+            "evaluatedAt": goal.last_evaluator_result.get("evaluatedAt").and_then(Value::as_str),
+            "status": goal.last_evaluator_result.get("status").and_then(Value::as_str),
+            "summary": goal.last_evaluator_result.get("summary").and_then(Value::as_str),
+            "blockedReason": goal.last_evaluator_result.get("blockedReason").and_then(Value::as_str),
+            "missing": goal.last_evaluator_result.get("missing").cloned().unwrap_or(Value::Null),
+            "blockers": goal.last_evaluator_result.get("blockers").cloned().unwrap_or(Value::Null),
+            "nextEvidenceNeeded": goal.last_evaluator_result.get("nextEvidenceNeeded").cloned().unwrap_or(Value::Null),
+        },
         "criteria": {
             "items": snapshot.criteria_items,
             "requiredMissing": required_missing,
@@ -481,4 +492,116 @@ pub(crate) async fn tool_goal_block_request(args: &Value, ctx: &ToolExecContext)
         "blockedReason": blocked.goal.blocked_reason,
         "blockRequestSeq": event.seq,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::goal::CreateGoalInput;
+    use crate::tools::SessionDbHandle;
+
+    fn parse_tool_json(output: String) -> Value {
+        serde_json::from_str(&output).expect("tool output should be valid json")
+    }
+
+    fn setup_goal_tool_context() -> (
+        tempfile::TempDir,
+        Arc<SessionDB>,
+        String,
+        String,
+        ToolExecContext,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Arc::new(SessionDB::open(&dir.path().join("sessions.db")).expect("open db"));
+        let session = db.create_session("ha-main").expect("create session");
+        let goal = db
+            .create_goal(CreateGoalInput {
+                session_id: session.id.clone(),
+                objective: "Finish a durable goal".to_string(),
+                completion_criteria: "block only after repeated proof".to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })
+            .expect("create goal");
+        let ctx = ToolExecContext {
+            session_id: Some(session.id.clone()),
+            session_db: Some(SessionDbHandle(db.clone())),
+            ..Default::default()
+        };
+        (dir, db, session.id, goal.goal.id, ctx)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_block_request_requires_repeated_same_blocker_before_blocking() {
+        let (_dir, db, _session_id, goal_id, ctx) = setup_goal_tool_context();
+        let args = json!({
+            "reason": "The same external signal is still unavailable",
+            "attempted": ["checked local state"],
+            "fingerprint": "same-missing-signal",
+        });
+
+        let first = parse_tool_json(tool_goal_block_request(&args, &ctx).await);
+        assert_eq!(
+            first.get("status").and_then(Value::as_str),
+            Some("recorded")
+        );
+        assert_eq!(first.get("repeatCount").and_then(Value::as_i64), Some(1));
+
+        let second = parse_tool_json(tool_goal_block_request(&args, &ctx).await);
+        assert_eq!(
+            second.get("status").and_then(Value::as_str),
+            Some("recorded")
+        );
+        assert_eq!(second.get("repeatCount").and_then(Value::as_i64), Some(2));
+
+        let third = parse_tool_json(tool_goal_block_request(&args, &ctx).await);
+        assert_eq!(third.get("status").and_then(Value::as_str), Some("blocked"));
+        assert_eq!(third.get("state").and_then(Value::as_str), Some("blocked"));
+
+        let snapshot = db
+            .goal_snapshot(&goal_id, 100)
+            .expect("goal snapshot")
+            .expect("goal exists");
+        assert_eq!(snapshot.goal.state, GoalState::Blocked);
+        assert_eq!(
+            snapshot.goal.blocked_reason.as_deref(),
+            Some("The same external signal is still unavailable")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn goal_block_request_blocks_immediately_for_user_or_external_waits() {
+        let (_dir, db, _session_id, goal_id, ctx) = setup_goal_tool_context();
+        let output = parse_tool_json(
+            tool_goal_block_request(
+                &json!({
+                    "reason": "Need the user to choose a rollout target",
+                    "attempted": ["listed safe rollout options"],
+                    "needsUserInput": true,
+                }),
+                &ctx,
+            )
+            .await,
+        );
+        assert_eq!(
+            output.get("status").and_then(Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(output.get("state").and_then(Value::as_str), Some("blocked"));
+
+        let snapshot = db
+            .goal_snapshot(&goal_id, 100)
+            .expect("goal snapshot")
+            .expect("goal exists");
+        assert_eq!(snapshot.goal.state, GoalState::Blocked);
+    }
 }

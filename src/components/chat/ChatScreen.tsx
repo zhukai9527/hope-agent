@@ -38,7 +38,9 @@ import type { CommandResult } from "./slash-commands/types"
 import {
   goalSlashCommandDisplay,
   isGoalUpsertSlashCommand,
+  parseGoalObjectiveAndCriteria,
 } from "./goalSlashCommand"
+import { isLoopCreateSlashCommand, loopSlashCommandDisplay } from "./loopSlashCommand"
 import type { AgentConfig } from "@/components/settings/types"
 import ApprovalDialog from "@/components/chat/ApprovalDialog"
 import ChatSidebar from "@/components/chat/ChatSidebar"
@@ -318,6 +320,16 @@ function goalTurnPrompt(visibleGoalText: string): string {
   ].join("\n")
 }
 
+function slashCommandDisplay(commandText: string): {
+  content: string
+  mode?: "goal" | "loop"
+} {
+  if (/^\/loop(?=\s|$)/i.test(commandText.trim())) {
+    return loopSlashCommandDisplay(commandText)
+  }
+  return goalSlashCommandDisplay(commandText)
+}
+
 type BrowserExtensionRequiredPayload = {
   requirement?: string
   reason?: string
@@ -572,7 +584,6 @@ export default function ChatScreen({
   // Workspace 面板：聚合任务进度 / 碰到的文件 / 引用来源。首次有内容时自动
   // 展开一次，用户关闭后本会话不再自动弹（dismissedRef 跟踪，仿 browser 面板）。
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false)
-  const [workspaceLoopCreateRequest, setWorkspaceLoopCreateRequest] = useState(0)
   const workspacePanelDismissedRef = useRef(false)
   const preserveWorkspaceOnSessionSwitchRef = useRef(false)
 
@@ -1884,11 +1895,12 @@ export default function ChatScreen({
         action?.type === "recapCard" ||
         action?.type === "skillFork" ||
         action?.type === "compact"
-      const shouldAppendResultContent = result.content && !actionRendersResult
+      const suppressLoopCreateResult = isLoopCreateSlashCommand(result._slashCommandText)
+      const shouldAppendResultContent = result.content && !actionRendersResult && !suppressLoopCreateResult
       const slashHistoryMessages: Message[] = []
       if (shouldShowSlashHistory && result._slashCommandText) {
         const now = new Date().toISOString()
-        const commandDisplay = goalSlashCommandDisplay(result._slashCommandText)
+        const commandDisplay = slashCommandDisplay(result._slashCommandText)
         slashHistoryMessages.push(
           makeClientEventMessage({
             content: commandDisplay.content,
@@ -2228,6 +2240,23 @@ export default function ChatScreen({
         toast.error(t("chat.goalMode.incognito", "无痕会话不持久化目标"))
         return false
       }
+      if (!currentSessionId) {
+        const parsed = parseGoalObjectiveAndCriteria(trimmed)
+        const initialObjective = parsed.objective || trimmed
+        const initialCriteria = parsed.completionCriteria.trim()
+        const promptGoalText = initialCriteria
+          ? `${initialObjective}\n\nCompletion criteria:\n${initialCriteria}`
+          : initialObjective
+        void stream.handleSend(goalTurnPrompt(promptGoalText), {
+          displayText: trimmed,
+          goalTrigger: true,
+          initialGoal: {
+            objective: initialObjective,
+            completionCriteria: initialCriteria || undefined,
+          },
+        })
+        return true
+      }
       const sid = await ensureWorkflowSession()
       if (!sid) return false
       const activeGoal = chatGoal.snapshot?.goal ?? null
@@ -2316,11 +2345,49 @@ export default function ChatScreen({
     [
       chatGoal,
       draftIncognito,
+      currentSessionId,
       ensureWorkflowSession,
       handleCommandAction,
       incognitoEnabled,
       session.currentAgentId,
       stream,
+      t,
+    ],
+  )
+
+  const handleLoopModeSubmit = useCallback(
+    async (prompt: string): Promise<boolean> => {
+      const trimmed = prompt.trim()
+      if (!trimmed) return false
+      if (incognitoEnabled || draftIncognito) {
+        toast.error(t("chat.loopMode.incognito", "无痕会话不持久化持续推进"))
+        return false
+      }
+      const sid = await ensureWorkflowSession()
+      if (!sid) return false
+      const commandText = `/loop ${trimmed}`
+      try {
+        const result = await getTransport().call<CommandResult>("execute_slash_command", {
+          sessionId: sid,
+          agentId: session.currentAgentId,
+          commandText,
+        })
+        result._slashCommandText = commandText
+        result._sessionId = sid
+        await handleCommandAction(result)
+        return true
+      } catch (e) {
+        logger.error("ui", "ChatScreen::loopModeSubmit", "Failed to create loop from composer", e)
+        toast.error(e instanceof Error ? e.message : String(e))
+        return false
+      }
+    },
+    [
+      draftIncognito,
+      ensureWorkflowSession,
+      handleCommandAction,
+      incognitoEnabled,
+      session.currentAgentId,
       t,
     ],
   )
@@ -2540,11 +2607,6 @@ export default function ChatScreen({
     setShowWorkspacePanel(true)
     showRightPanelByUser("workspace")
   }, [showRightPanelByUser])
-
-  const openLoopCreateFromComposer = useCallback(() => {
-    openWorkspacePanel()
-    setWorkspaceLoopCreateRequest((value) => value + 1)
-  }, [openWorkspacePanel])
 
   const openBackgroundJobsPanel = useCallback(
     (opts?: { activate?: boolean }) => {
@@ -2850,6 +2912,45 @@ export default function ChatScreen({
       runningCount: workflowTitleBarRuns.runs.filter(isRunning).length,
     }
   }, [workflowTitleBarRuns.activeCount, workflowTitleBarRuns.runs])
+  const workflowInputProgress = useMemo(() => {
+	    const visibleStates = new Set<WorkflowRun["state"]>([
+	      "awaiting_approval",
+	      "awaiting_user",
+	      "blocked",
+	      "failed",
+	      "running",
+	      "recovering",
+	      "paused",
+	    ])
+    const priority = (run: WorkflowRun) => {
+      switch (run.state) {
+        case "awaiting_approval":
+        case "awaiting_user":
+        case "blocked":
+        case "failed":
+          return 0
+	        case "running":
+	        case "recovering":
+	          return 1
+	        case "paused":
+	          return 2
+	        default:
+	          return 9
+	      }
+    }
+    const candidates = workflowTitleBarRuns.runs
+      .filter((run) => visibleStates.has(run.state))
+      .slice()
+      .sort((a, b) => {
+        const byPriority = priority(a) - priority(b)
+        if (byPriority !== 0) return byPriority
+        return Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt)
+      })
+    return {
+      run: candidates[0] ?? null,
+      count: candidates.length,
+    }
+  }, [workflowTitleBarRuns.runs])
 
   const handleToggleFilesPanel = useCallback(() => {
     if (showFilesPanel) {
@@ -3329,6 +3430,7 @@ export default function ChatScreen({
                       goalSnapshot={chatGoal.snapshot}
                       goalLoading={chatGoal.loading}
                       onGoalModeSubmit={handleGoalModeSubmit}
+                      onLoopModeSubmit={handleLoopModeSubmit}
                       onGoalUpdate={handleGoalUpdate}
                       onPauseGoal={() => runGoalControlAction("pause_goal")}
                       onResumeGoal={() => runGoalControlAction("resume_goal")}
@@ -3336,7 +3438,8 @@ export default function ChatScreen({
                       onEvaluateGoal={() => runGoalControlAction("evaluate_goal")}
                       taskProgressSnapshot={taskProgressSnapshot}
                       onOpenWorkspace={openWorkspacePanel}
-                      onOpenLoopCreate={openLoopCreateFromComposer}
+                      workflowProgressRun={workflowInputProgress.run}
+                      workflowProgressCount={workflowInputProgress.count}
                       workspacePanelVisible={workspacePanelVisibleInRightPanel}
                       executionState={
                         session.currentSessionId
@@ -3535,7 +3638,6 @@ export default function ChatScreen({
                 onBackgroundJobExpandedChange={handleBackgroundJobExpandedChange}
                 onOpenBackgroundJobs={openBackgroundJobsPanel}
                 onViewSubagentSession={setSubagentPreviewSessionId}
-                openLoopCreateRequest={workspaceLoopCreateRequest}
                 onEnsureSession={ensureWorkflowSession}
                 draftWorkflowMode={draftWorkflowMode}
                 onDraftWorkflowModeChange={setDraftWorkflowMode}

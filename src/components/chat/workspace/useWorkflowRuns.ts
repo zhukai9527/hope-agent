@@ -71,6 +71,79 @@ export interface WorkflowRunSnapshot {
   run: WorkflowRun
   ops: WorkflowOp[]
   events: WorkflowEvent[]
+  agentUsage?: WorkflowAgentUsageSnapshot | null
+  usage?: WorkflowRunUsageSnapshot | null
+}
+
+export interface WorkflowAgentUsageSnapshot {
+  spawnedAgents: number
+  completedAgents: number
+  runningAgents: number
+  failedAgents: number
+  attributedAgents: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  attribution: string
+}
+
+export interface WorkflowRunUsageSnapshot {
+  parentEvents: number
+  parentInputTokens: number
+  parentOutputTokens: number
+  parentCacheCreationInputTokens: number
+  parentCacheReadInputTokens: number
+  parentTotalTokens: number
+  parentInjectionTurns: number
+  parentInjectionMessages: number
+  parentInjectionInputTokens: number
+  parentInjectionOutputTokens: number
+  parentInjectionTotalTokens: number
+  parentInjectionProviderEvents: number
+  parentInjectionProviderInputTokens: number
+  parentInjectionProviderOutputTokens: number
+  parentInjectionProviderCacheCreationInputTokens: number
+  parentInjectionProviderCacheReadInputTokens: number
+  parentInjectionProviderTotalTokens: number
+  parentInjectionAttribution: string
+  agentInputTokens: number
+  agentOutputTokens: number
+  agentTotalTokens: number
+  totalTokens: number
+  attribution: string
+}
+
+export interface WorkflowWatchdogFinding {
+  runId: string
+  sessionId: string
+  severity: string
+  code: string
+  message: string
+  state: WorkflowRunState
+  primaryOwner?: string | null
+  lastActivityAt?: string | null
+  staleSecs?: number | null
+  latestEventType?: string | null
+  latestEventSeq?: number | null
+}
+
+export type SavedWorkflowTemplateScope = "user" | "project"
+
+export interface SavedWorkflowTemplate {
+  id: string
+  name: string
+  description?: string | null
+  scope: SavedWorkflowTemplateScope
+  projectId?: string | null
+  kind: string
+  executionMode: string
+  scriptHash: string
+  scriptSource: string
+  budget: unknown
+  sourceRunId?: string | null
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export interface WorkflowGateIssue {
@@ -103,6 +176,7 @@ export interface WorkflowScriptPreview {
 
 export interface WorkflowRunsState {
   runs: WorkflowRun[]
+  watchdogFindings: WorkflowWatchdogFinding[]
   activeCount: number
   loading: boolean
   error: string | null
@@ -137,6 +211,7 @@ export function useWorkflowRuns(
 ): WorkflowRunsState {
   const { incognito = false, turnActive = false, disabled = false } = opts
   const [runs, setRuns] = useState<WorkflowRun[]>([])
+  const [watchdogFindings, setWatchdogFindings] = useState<WorkflowWatchdogFinding[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reqRef = useRef(0)
@@ -146,6 +221,7 @@ export function useWorkflowRuns(
     (fetchOpts: { clear?: boolean } = {}) => {
       if (disabled) {
         reqRef.current += 1
+        setWatchdogFindings([])
         setLoading(false)
         setError(null)
         return
@@ -153,6 +229,7 @@ export function useWorkflowRuns(
       if (!sessionId || incognito) {
         reqRef.current += 1
         setRuns([])
+        setWatchdogFindings([])
         setLoading(false)
         setError(null)
         return
@@ -171,12 +248,32 @@ export function useWorkflowRuns(
           if (reqRef.current !== req) return
           setRuns(Array.isArray(next) ? next : [])
           setLoading(false)
+          getTransport()
+            .call<WorkflowWatchdogFinding[]>("list_workflow_watchdog_findings", {
+              sessionId,
+              staleSecs: 300,
+            })
+            .then((findings) => {
+              if (reqRef.current !== req) return
+              setWatchdogFindings(Array.isArray(findings) ? findings : [])
+            })
+            .catch((e) => {
+              if (reqRef.current !== req) return
+              logger.warn(
+                "ui",
+                "useWorkflowRuns",
+                "Failed to load workflow watchdog findings",
+                e,
+              )
+              setWatchdogFindings([])
+            })
         })
         .catch((e) => {
           if (reqRef.current !== req) return
           const message = e instanceof Error ? e.message : String(e)
           logger.error("ui", "useWorkflowRuns", "Failed to load workflow runs", e)
           setError(message)
+          setWatchdogFindings([])
           setLoading(false)
         })
     },
@@ -273,6 +370,7 @@ export function useWorkflowRuns(
 
   return {
     runs,
+    watchdogFindings,
     activeCount,
     loading,
     error,

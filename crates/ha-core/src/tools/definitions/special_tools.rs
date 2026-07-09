@@ -220,7 +220,7 @@ pub fn get_tool_search_tool() -> ToolDefinition {
 pub fn get_workflow_tool() -> ToolDefinition {
     ToolDefinition {
         name: TOOL_WORKFLOW.into(),
-        description: "Create, inspect, trace, and control observable durable workflow runs. Use this only when Workflow Mode is enabled. The assistant writes workflow scripts itself when orchestration helps; do not ask the user to provide a script or enter a coding-only mode first. Workflows are not coding-only: use them for substantial research, writing, data, connector, operations, knowledge, or coding tasks where durable, inspectable orchestration improves reliability. Use action=create to start a dynamic JavaScript workflow, action=list/status/trace to monitor runs, action=control to pause/resume/cancel a run, and action=followup to repair or continue from an existing run. The model must not approve user permissions; approval remains with the user.".into(),
+        description: "Create, inspect, trace, and control observable durable workflow runs. Use this only when Workflow Mode is enabled. The assistant writes workflow scripts itself when orchestration helps; do not ask the user to provide a script or enter a coding-only mode first. Workflows are not coding-only: use them for substantial research, writing, data, connector, operations, knowledge, or coding tasks where durable, inspectable orchestration improves reliability. Use action=create to start a dynamic JavaScript workflow, action=list/status/trace to monitor runs, action=control to pause/resume/cancel a run, and action=followup to repair or continue from an existing run. Include sizeGuideline when creating/following up so the user and later model turns understand intended workflow scale. The model must not approve user permissions; approval remains with the user.".into(),
         tier: ToolTier::Core {
             subclass: CoreSubclass::Meta,
         },
@@ -251,6 +251,11 @@ pub fn get_workflow_tool() -> ToolDefinition {
                 "budget": {
                     "type": "object",
                     "description": "Optional run budget, for example `{ \"maxScriptSecs\": 900, \"maxOps\": 64, \"maxOutputTokens\": 20000 }`. Required for `executionMode: \"autonomous\"`."
+                },
+                "sizeGuideline": {
+                    "type": "string",
+                    "enum": ["unrestricted", "small", "medium", "large"],
+                    "description": "Advisory workflow scale for action=create/followup. This helps users and future model turns understand intent, but it does not bypass runtime caps, budgets, approval, or safety. Use small for a few bounded steps, medium for normal multi-step orchestration, large for broad fan-out/migrations/verification, and unrestricted only when the user explicitly wants exhaustive/Ultracode-style coverage and budgets still bound execution."
                 },
                 "runImmediately": {
                     "type": "boolean",
@@ -608,6 +613,7 @@ mod tests {
             .expect("workflow properties");
         assert!(properties.contains_key("action"));
         assert!(properties.contains_key("script"));
+        assert!(properties.contains_key("sizeGuideline"));
         assert!(properties.contains_key("runId"));
         assert!(properties.contains_key("command"));
         assert!(

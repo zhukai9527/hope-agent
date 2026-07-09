@@ -12,7 +12,7 @@ export type LoopRunState =
   | "failed"
   | "cancelled"
   | "skipped"
-export type LoopTriggerKind = "interval" | "cron" | "condition" | "event"
+export type LoopTriggerKind = "interval" | "cron" | "condition" | "event" | "dynamic"
 export type LoopExecutionStrategy = "continue" | "workflow"
 export type LoopProgressState =
   | "progressed"
@@ -73,8 +73,26 @@ export interface LoopRun {
   noProgressReason?: string | null
   schedulingDecision?: string | null
   trace: unknown
+  usage?: LoopRunUsageSnapshot | null
   startedAt: string
   finishedAt?: string | null
+}
+
+export interface LoopRunUsageSnapshot {
+  messageCount: number
+  userTurns: number
+  assistantMessages: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  attribution: string
+  providerEvents?: number
+  providerInputTokens?: number
+  providerOutputTokens?: number
+  providerCacheCreationInputTokens?: number
+  providerCacheReadInputTokens?: number
+  providerTotalTokens?: number
+  providerAttribution?: string
 }
 
 export interface LoopSnapshot {
@@ -82,8 +100,22 @@ export interface LoopSnapshot {
   runs: LoopRun[]
 }
 
+export interface LoopWatchdogFinding {
+  loopId: string
+  sessionId: string
+  severity: string
+  code: "loop_cron_missing" | "loop_due_not_claimed" | "loop_run_maybe_interrupted" | string
+  message: string
+  nextRunAt?: string | null
+  overdueSecs?: number | null
+  cronStatus?: string | null
+  latestRunId?: string | null
+  latestRunState?: string | null
+}
+
 export interface LoopSchedulesState {
   schedules: LoopSchedule[]
+  watchdogFindings: LoopWatchdogFinding[]
   activeCount: number
   loading: boolean
   error: string | null
@@ -107,6 +139,7 @@ export function useLoopSchedules(
 ): LoopSchedulesState {
   const { incognito = false, turnActive = false, disabled = false } = opts
   const [schedules, setSchedules] = useState<LoopSchedule[]>([])
+  const [watchdogFindings, setWatchdogFindings] = useState<LoopWatchdogFinding[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reqRef = useRef(0)
@@ -116,6 +149,7 @@ export function useLoopSchedules(
     (fetchOpts: { clear?: boolean } = {}) => {
       if (disabled) {
         reqRef.current += 1
+        setWatchdogFindings([])
         setLoading(false)
         setError(null)
         return
@@ -123,6 +157,7 @@ export function useLoopSchedules(
       if (!sessionId || incognito) {
         reqRef.current += 1
         setSchedules([])
+        setWatchdogFindings([])
         setLoading(false)
         setError(null)
         return
@@ -130,19 +165,42 @@ export function useLoopSchedules(
       const req = ++reqRef.current
       setLoading(true)
       setError(null)
-      if (fetchOpts.clear) setSchedules([])
+      if (fetchOpts.clear) {
+        setSchedules([])
+        setWatchdogFindings([])
+      }
       getTransport()
         .call<LoopSchedule[]>("list_loop_schedules", { sessionId })
         .then((next) => {
           if (reqRef.current !== req) return
           setSchedules(Array.isArray(next) ? next : [])
           setLoading(false)
+          getTransport()
+            .call<LoopWatchdogFinding[]>("list_loop_watchdog_findings", {
+              sessionId,
+              graceSecs: 120,
+            })
+            .then((findings) => {
+              if (reqRef.current !== req) return
+              setWatchdogFindings(Array.isArray(findings) ? findings : [])
+            })
+            .catch((e) => {
+              if (reqRef.current !== req) return
+              logger.error(
+                "ui",
+                "useLoopSchedules",
+                "Failed to load loop watchdog findings",
+                e,
+              )
+              setWatchdogFindings([])
+            })
         })
         .catch((e) => {
           if (reqRef.current !== req) return
           const message = e instanceof Error ? e.message : String(e)
           logger.error("ui", "useLoopSchedules", "Failed to load loop schedules", e)
           setError(message)
+          setWatchdogFindings([])
           setLoading(false)
         })
     },
@@ -201,7 +259,14 @@ export function useLoopSchedules(
   }, [activeCount, disabled, fetchSchedules, incognito, sessionId])
 
   return useMemo(
-    () => ({ schedules, activeCount, loading, error, refresh: fetchSchedules }),
-    [activeCount, error, fetchSchedules, loading, schedules],
+    () => ({
+      schedules,
+      watchdogFindings,
+      activeCount,
+      loading,
+      error,
+      refresh: fetchSchedules,
+    }),
+    [activeCount, error, fetchSchedules, loading, schedules, watchdogFindings],
   )
 }

@@ -207,6 +207,17 @@ describe("parseSessionMessages user attachments", () => {
     expect(isUserAlignedMessage(msg)).toBe(true)
   })
 
+  test("renders loop slash events as user-aligned loop messages", () => {
+    const msg = {
+      role: "event",
+      content: "every 10m: check release blockers",
+      slashEvent: { kind: "command", displayAs: "user", mode: "loop" },
+    } satisfies Message
+
+    expect(isCenteredSystemMessage(msg)).toBe(false)
+    expect(isUserAlignedMessage(msg)).toBe(true)
+  })
+
   test("restores channel user attachments from object-shaped metadata", () => {
     const parsed = parseSessionMessages([
       sessionMessage({

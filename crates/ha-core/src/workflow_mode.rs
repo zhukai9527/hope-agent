@@ -65,6 +65,7 @@ const WORKFLOW_MODE_ON_PROMPT: &str = concat!(
     "- Decision rule: create a workflow when the request has multiple dependent steps, broad search or comparison, connector/file evidence, long-running work, independent verification, recoverable background execution, or a user-visible audit trail. Stay inline for tiny, conversational, or single obvious actions.\n",
     "- Use workflows for general domains too: research, writing, data analysis, meeting prep, inbox/project ops, knowledge curation, connector action review, and coding all share the same durable control plane.\n",
     "- You may call `workflow` with `action=create` when deterministic multi-step orchestration, fan-out, independent review, research sweeps, migration planning, or long-running verification would make the work more complete, observable, or recoverable.\n",
+    "- When creating or following up a workflow, set `sizeGuideline` as an advisory scale: `small` for a few bounded steps, `medium` for normal multi-step orchestration, `large` for broad fan-out/migration/verification, and `unrestricted` only when the user explicitly wants exhaustive coverage. This is not a permission or budget bypass; runtime caps still apply.\n",
     "- You may call `workflow` with `action=list`, `action=status`, or `action=trace` to inspect visible workflow runs, understand blockers, read bounded trace events, and decide what to tell the user next.\n",
     "- You may call `workflow` with `action=control` to pause, resume, or cancel a visible run when that matches the user's intent or recovery needs. You cannot approve permissions or external actions; ask the user instead.\n",
     "- Use `workflow` with `action=followup` to create a repair or continuation workflow from a prior run when the trace shows a bounded next phase.\n",
@@ -84,6 +85,7 @@ const WORKFLOW_MODE_ULTRACODE_PROMPT: &str = concat!(
     "- Treat substantial user requests as workflow candidates by default. Decide and create the durable workflow yourself when orchestration improves outcome quality, observability, or recovery.\n",
     "- Do not wait for the user to ask for a workflow explicitly; the user has already enabled this mode. Only stay inline for tiny, conversational, or already-verified work.\n",
     "- Use `workflow` with `action=create` by default for every substantive task where parallel readers, independent designers, adversarial verifiers, broad search, or staged migration can improve quality.\n",
+    "- Prefer `sizeGuideline: \"large\"` for substantial Ultracode workflows and reserve `unrestricted` for explicitly exhaustive tasks with clear budgets; the guideline is advisory and never weakens runtime caps or approvals.\n",
     "- Use `workflow` with `action=status` or `action=trace` before summarizing, repairing, or declaring a workflow outcome if a run is active or recently changed.\n",
     "- Solo inline work is appropriate only for conversational, tiny, or already-verified mechanical turns.\n",
     "- Prefer multi-phase orchestration: understand -> design -> implement/check -> adversarial review -> synthesize. Keep each workflow phase observable and bounded.\n",
@@ -101,6 +103,7 @@ mod tests {
     fn workflow_mode_prompt_uses_runtime_host_api_contract() {
         let prompt = WorkflowMode::On.system_prompt_section().unwrap();
         assert!(prompt.contains("workflow` with `action=create"));
+        assert!(prompt.contains("set `sizeGuideline` as an advisory scale"));
         assert!(prompt.contains("workflow` with `action=status"));
         assert!(prompt.contains("You cannot approve permissions"));
         assert!(prompt.contains("Do not ask the user to write a workflow script"));

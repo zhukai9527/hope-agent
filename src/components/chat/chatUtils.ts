@@ -676,7 +676,7 @@ export function parseSessionMessages(
               kind: slash.kind,
               command: typeof slash.command === "string" ? slash.command : undefined,
               displayAs: slash.displayAs === "user" ? "user" : undefined,
-              mode: slash.mode === "goal" ? "goal" : undefined,
+              mode: slash.mode === "goal" || slash.mode === "loop" ? slash.mode : undefined,
             }
           }
         } catch {

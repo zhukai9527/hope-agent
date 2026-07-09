@@ -143,8 +143,25 @@ export interface GoalSnapshot {
   tasks: Task[]
 }
 
+export interface GoalWatchdogFinding {
+  goalId: string
+  sessionId: string
+  severity: string
+  code: "goal_no_recent_progress" | "goal_stale_evaluating" | string
+  message: string
+  state: GoalState
+  lastActivityAt?: string | null
+  staleSecs?: number | null
+  latestEventKind?: string | null
+  latestEventSeq?: number | null
+  activeWorkflowCount: number
+  activeTaskCount: number
+  activeBackgroundJobCount: number
+}
+
 export interface GoalStateSnapshot {
   snapshot: GoalSnapshot | null
+  watchdogFindings: GoalWatchdogFinding[]
   loading: boolean
   error: string | null
   refresh: () => void
@@ -168,6 +185,7 @@ export function useGoal(
 ): GoalStateSnapshot {
   const { incognito = false, disabled = false } = opts
   const [snapshot, setSnapshot] = useState<GoalSnapshot | null>(null)
+  const [watchdogFindings, setWatchdogFindings] = useState<GoalWatchdogFinding[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reqRef = useRef(0)
@@ -176,6 +194,8 @@ export function useGoal(
   const fetchGoal = useCallback(() => {
     if (disabled) {
       reqRef.current += 1
+      setSnapshot(null)
+      setWatchdogFindings([])
       setLoading(false)
       setError(null)
       return
@@ -183,6 +203,7 @@ export function useGoal(
     if (!sessionId || incognito) {
       reqRef.current += 1
       setSnapshot(null)
+      setWatchdogFindings([])
       setLoading(false)
       setError(null)
       return
@@ -190,11 +211,25 @@ export function useGoal(
     const req = ++reqRef.current
     setLoading(true)
     setError(null)
-    getTransport()
+    const transport = getTransport()
+    transport
       .call<GoalSnapshot | null>("get_active_goal", { sessionId })
-      .then((next) => {
+      .then(async (next) => {
+        if (reqRef.current !== req) return
+        let nextFindings: GoalWatchdogFinding[] = []
+        if (next) {
+          try {
+            nextFindings = await transport.call<GoalWatchdogFinding[]>(
+              "list_goal_watchdog_findings",
+              { sessionId, staleSecs: 300 },
+            )
+          } catch (e) {
+            logger.warn("ui", "useGoal", "Failed to load goal watchdog findings", e)
+          }
+        }
         if (reqRef.current !== req) return
         setSnapshot(next)
+        setWatchdogFindings(Array.isArray(nextFindings) ? nextFindings : [])
         setLoading(false)
       })
       .catch((e) => {
@@ -202,9 +237,15 @@ export function useGoal(
         const message = e instanceof Error ? e.message : String(e)
         logger.error("ui", "useGoal", "Failed to load active goal", e)
         setError(message)
+        setWatchdogFindings([])
         setLoading(false)
       })
   }, [disabled, incognito, sessionId])
+
+  const setSnapshotFromOwner = useCallback((next: GoalSnapshot | null) => {
+    setSnapshot(next)
+    setWatchdogFindings([])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -250,11 +291,12 @@ export function useGoal(
   return useMemo(
     () => ({
       snapshot,
+      watchdogFindings,
       loading,
       error,
       refresh: fetchGoal,
-      setSnapshot,
+      setSnapshot: setSnapshotFromOwner,
     }),
-    [error, fetchGoal, loading, snapshot],
+    [error, fetchGoal, loading, setSnapshotFromOwner, snapshot, watchdogFindings],
   )
 }

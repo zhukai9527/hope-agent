@@ -1896,6 +1896,12 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
     tools.push(super::goal_tools::get_goal_finish_request_tool());
     tools.push(super::goal_tools::get_goal_block_request_tool());
 
+    // ── Loop Runtime (session-scoped durable recurrence control, always available) ──
+    tools.push(super::loop_tools::get_loop_status_tool());
+    tools.push(super::loop_tools::get_loop_reschedule_tool());
+    tools.push(super::loop_tools::get_loop_stop_tool());
+    tools.push(super::loop_tools::get_loop_record_progress_tool());
+
     // ── Self-Update (Meta tier — always eager so model can suggest upgrades) ──
     tools.push(super::update_tools::get_app_update_tool());
 

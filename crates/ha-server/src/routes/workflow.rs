@@ -1,4 +1,4 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,6 +16,99 @@ pub async fn list_workflow_runs(
     Ok(Json(
         session_db()?.list_workflow_runs_for_session(&session_id, 100)?,
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkflowWatchdogQuery {
+    #[serde(default)]
+    pub stale_secs: Option<i64>,
+}
+
+pub async fn list_workflow_watchdog_findings(
+    Path(session_id): Path<String>,
+    Query(query): Query<ListWorkflowWatchdogQuery>,
+) -> Result<Json<Vec<ha_core::workflow::WorkflowWatchdogFinding>>, AppError> {
+    Ok(Json(session_db()?.list_workflow_watchdog_findings(
+        &session_id,
+        query.stale_secs.unwrap_or(300),
+    )?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListSavedWorkflowTemplatesBody {
+    pub project_id: Option<String>,
+    pub include_disabled: Option<bool>,
+    pub limit: Option<usize>,
+}
+
+pub async fn list_saved_workflow_templates(
+    Json(body): Json<ListSavedWorkflowTemplatesBody>,
+) -> Result<Json<Vec<ha_core::workflow::SavedWorkflowTemplate>>, AppError> {
+    Ok(Json(session_db()?.list_saved_workflow_templates(
+        ha_core::workflow::ListSavedWorkflowTemplatesInput {
+            project_id: body.project_id,
+            include_disabled: body.include_disabled.unwrap_or(false),
+            limit: body.limit,
+        },
+    )?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWorkflowTemplateFromRunBody {
+    pub input: ha_core::workflow::SaveWorkflowTemplateInput,
+}
+
+pub async fn save_workflow_template_from_run(
+    Json(body): Json<SaveWorkflowTemplateFromRunBody>,
+) -> Result<Json<ha_core::workflow::SavedWorkflowTemplate>, AppError> {
+    session_db()?
+        .save_workflow_template_from_run(body.input)
+        .map(Json)
+        .map_err(|e| AppError::bad_request(e.to_string()))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkflowRunFromTemplateBody {
+    pub input: ha_core::workflow::CreateWorkflowRunFromTemplateInput,
+    pub run_immediately: Option<bool>,
+}
+
+pub async fn create_workflow_run_from_template(
+    Json(body): Json<CreateWorkflowRunFromTemplateBody>,
+) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {
+    let db = session_db()?;
+    let template = db
+        .get_saved_workflow_template(&body.input.template_id)?
+        .ok_or_else(|| AppError::not_found("saved workflow template not found"))?;
+    let parsed_mode = ha_core::execution_mode::ExecutionMode::from_str(&template.execution_mode)
+        .ok_or_else(|| AppError::bad_request("Invalid execution mode"))?;
+    let run_now = body.run_immediately.unwrap_or(false);
+    if run_now {
+        ha_core::workflow::ensure_workflow_launcher_primary()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+    }
+    ha_core::workflow::ensure_workflow_script_can_create(
+        &db,
+        &body.input.session_id,
+        &template.script_source,
+        Some(parsed_mode.as_str()),
+    )
+    .map_err(|e| AppError::bad_request(e.to_string()))?;
+    let run = db
+        .create_workflow_run_from_template(body.input)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    if run_now {
+        ha_core::workflow::spawn_workflow_run_if_primary(
+            db.clone(),
+            run.id.clone(),
+            workflow_owner("template"),
+        );
+    }
+    Ok(Json(run))
 }
 
 #[derive(Debug, Deserialize)]

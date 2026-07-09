@@ -4,9 +4,10 @@ use axum::Json;
 use super::helpers::parse_file_upload;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use ha_core::agent::Attachment;
 use ha_core::chat_engine::{ChatEngineParams, EventSink, NoopEventSink};
@@ -25,6 +26,14 @@ use crate::AppContext;
 // `JSON.stringify(remainingArgs)`. Frontend code uses camelCase keys
 // throughout (`sessionId`, `agentId`, `requestId`, ...), so the matching
 // HTTP body structs MUST accept camelCase to deserialize successfully.
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitialGoalRequest {
+    pub objective: String,
+    #[serde(default)]
+    pub completion_criteria: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +78,10 @@ pub struct ChatRequest {
     /// normal user bubble with the Goal badge.
     #[serde(default)]
     pub goal_trigger: Option<bool>,
+    /// First-turn Goal creation payload. Only honored when the chat request
+    /// auto-creates a new session; ignored for existing sessions.
+    #[serde(default)]
+    pub initial_goal: Option<InitialGoalRequest>,
     /// Structured payload for plan inline-comment messages. Stamped into
     /// `attachments_meta = {"plan_comment": {...}}` for the desktop GUI to
     /// render PlanCommentBubble. IM channels ignore it. (Mirrors the Tauri
@@ -144,6 +157,121 @@ pub struct ChatResponse {
     /// no stream was opened).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+}
+
+struct ChatCancelRegistrationGuard {
+    registry: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    session_id: String,
+    cancel: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl ChatCancelRegistrationGuard {
+    fn new(
+        registry: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+        session_id: String,
+        cancel: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            registry,
+            session_id,
+            cancel,
+            armed: true,
+        }
+    }
+
+    fn release(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut cancels) = self.registry.write() {
+            let should_remove = cancels
+                .get(&self.session_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &self.cancel));
+            if should_remove {
+                cancels.remove(&self.session_id);
+            }
+        }
+        self.armed = false;
+    }
+}
+
+impl Drop for ChatCancelRegistrationGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+struct HttpChatTurnDropFinalizer {
+    db: Arc<session::SessionDB>,
+    session_id: String,
+    turn_id: String,
+    armed: bool,
+}
+
+impl HttpChatTurnDropFinalizer {
+    fn new(db: Arc<session::SessionDB>, session_id: String, turn_id: String) -> Self {
+        Self {
+            db,
+            session_id,
+            turn_id,
+            armed: true,
+        }
+    }
+
+    fn finish_if_open(
+        &mut self,
+        status: session::ChatTurnStatus,
+        interrupt_reason: Option<session::ChatTurnInterruptReason>,
+        error: Option<&str>,
+    ) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+
+        let turn = match self.db.get_chat_turn(&self.turn_id) {
+            Ok(Some(turn)) if !turn.status.is_terminal() => turn,
+            _ => return,
+        };
+        let stream_id = turn.stream_id.clone();
+        match self
+            .db
+            .finish_chat_turn_once(&self.turn_id, status, interrupt_reason, error, None)
+        {
+            Ok(true) => {
+                ha_core::chat_engine::stream_broadcast::broadcast_stream_end(
+                    &self.session_id,
+                    stream_id.as_deref(),
+                    Some(&self.turn_id),
+                    Some(status),
+                    interrupt_reason,
+                    error,
+                );
+                ha_core::chat_engine::active_turn::force_release(&self.session_id, &self.turn_id);
+            }
+            Ok(false) => {}
+            Err(err) => {
+                ha_core::app_warn!(
+                    "chat",
+                    "http_turn_finalizer",
+                    "failed to finalize dropped HTTP chat turn {}: {}",
+                    self.turn_id,
+                    err
+                );
+            }
+        }
+    }
+}
+
+impl Drop for HttpChatTurnDropFinalizer {
+    fn drop(&mut self) {
+        self.finish_if_open(
+            session::ChatTurnStatus::Interrupted,
+            Some(session::ChatTurnInterruptReason::RuntimeCancel),
+            Some("chat request dropped before completion"),
+        );
+    }
 }
 
 fn validate_http_mention_attachment(session_id: &str, file_path: &str) -> Result<(), AppError> {
@@ -274,6 +402,26 @@ pub async fn chat(
         .map(str::trim)
         .filter(|pid| !pid.is_empty())
         .map(str::to_owned);
+    let auto_create_session = existing_session_id.is_none();
+    if auto_create_session
+        && body
+            .initial_goal
+            .as_ref()
+            .is_some_and(|goal| goal.objective.trim().is_empty())
+    {
+        return Err(AppError::bad_request(
+            "Initial goal objective must not be empty",
+        ));
+    }
+    if auto_create_session
+        && body.initial_goal.is_some()
+        && body.incognito.unwrap_or(false)
+        && project_id.is_none()
+    {
+        return Err(AppError::bad_request(
+            "Cannot create a durable goal for an incognito session",
+        ));
+    }
     let agent_id = if let Some(id) = explicit_agent_id {
         id
     } else if let Some(session_id) = existing_session_id {
@@ -431,6 +579,28 @@ pub async fn chat(
         }
     };
 
+    if new_session_created {
+        if let Some(goal) = body.initial_goal.as_ref() {
+            db.create_goal(ha_core::goal::CreateGoalInput {
+                session_id: sid.clone(),
+                objective: goal.objective.trim().to_string(),
+                completion_criteria: goal
+                    .completion_criteria
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+                domain: None,
+                workflow_template_id: None,
+                workflow_template_version: None,
+                workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
+            })?;
+        }
+    }
+
     // KB sidebar chat: promote the freshly-created session into a knowledge
     // thread now that preflight has passed (mirrors the Tauri command). Doing it
     // in the auto-create block left a hidden `kind=Knowledge` zombie + thread row
@@ -472,6 +642,8 @@ pub async fn chat(
         None,
         user_message_id,
     )?;
+    let mut turn_drop_finalizer =
+        HttpChatTurnDropFinalizer::new(db.clone(), sid.clone(), turn_id.clone());
 
     // Auto-generate fallback title from first user message (prefer display text so titles read naturally).
     let _ = session::ensure_first_message_title(&db, &sid, &effective_prompt);
@@ -574,6 +746,8 @@ pub async fn chat(
             .map_err(|_| AppError::internal("chat cancel registry lock poisoned"))?;
         cancels.insert(sid.clone(), cancel.clone());
     }
+    let mut cancel_registration_guard =
+        ChatCancelRegistrationGuard::new(ctx.chat_cancels.clone(), sid.clone(), cancel.clone());
 
     // HTTP stream delivery uses `/ws/events` via `chat:stream_delta`; the
     // EventBus bridge performs the HTTP attachment URL rewrite there.
@@ -620,14 +794,18 @@ pub async fn chat(
 
     let result = ha_core::chat_engine::run_chat_engine(engine_params).await;
 
-    // Clean up per-session cancel flag
-    {
-        let mut cancels = ctx
-            .chat_cancels
-            .write()
-            .map_err(|_| AppError::internal("chat cancel registry lock poisoned"))?;
-        cancels.remove(&sid);
+    if let Err(error) = &result {
+        turn_drop_finalizer.finish_if_open(
+            session::ChatTurnStatus::Failed,
+            Some(session::ChatTurnInterruptReason::Unknown),
+            Some(&format!(
+                "chat engine returned before finalizing turn: {error}"
+            )),
+        );
+    } else {
+        turn_drop_finalizer.finish_if_open(session::ChatTurnStatus::Completed, None, None);
     }
+    cancel_registration_guard.release();
 
     let result = result.map_err(AppError::internal)?;
 

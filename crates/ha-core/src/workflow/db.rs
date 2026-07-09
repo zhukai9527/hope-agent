@@ -1,17 +1,41 @@
 use anyhow::{anyhow, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use chrono::{DateTime, Utc};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-use crate::session::SessionDB;
+use crate::session::{MessageRole, SessionDB};
 
 use super::events;
 use super::types::{
-    CreateWorkflowRunInput, PendingWorkflowMilestoneInjection, StartedOpRecoveryAction,
-    UpsertWorkflowOpInput, WorkflowEffectClass, WorkflowEvent, WorkflowOp, WorkflowOpState,
-    WorkflowRun, WorkflowRunSnapshot, WorkflowRunState,
+    CreateWorkflowRunFromTemplateInput, CreateWorkflowRunInput, ListSavedWorkflowTemplatesInput,
+    PendingWorkflowMilestoneInjection, SaveWorkflowTemplateInput, SavedWorkflowTemplate,
+    SavedWorkflowTemplateScope, StartedOpRecoveryAction, UpsertWorkflowOpInput,
+    WorkflowAgentUsageSnapshot, WorkflowEffectClass, WorkflowEvent, WorkflowOp, WorkflowOpState,
+    WorkflowRun, WorkflowRunSnapshot, WorkflowRunState, WorkflowRunUsageSnapshot,
+    WorkflowWatchdogFinding,
 };
 
 const EVENT_PAYLOAD_MAX_BYTES: usize = 64 * 1024;
+const SAVED_WORKFLOW_TEMPLATE_LIMIT_DEFAULT: usize = 50;
+const SAVED_WORKFLOW_TEMPLATE_LIMIT_MAX: usize = 200;
+const SAVED_WORKFLOW_TEMPLATE_NAME_MAX_CHARS: usize = 120;
+const SAVED_WORKFLOW_TEMPLATE_DESCRIPTION_MAX_CHARS: usize = 1000;
+
+#[derive(Debug, Clone, Default)]
+struct WorkflowParentInjectionUsageSnapshot {
+    turns: i64,
+    messages: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    total_tokens: i64,
+    provider_events: i64,
+    provider_input_tokens: i64,
+    provider_output_tokens: i64,
+    provider_cache_creation_input_tokens: i64,
+    provider_cache_read_input_tokens: i64,
+    provider_total_tokens: i64,
+    attribution: String,
+}
 
 pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -81,7 +105,30 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_workflow_ops_state
             ON workflow_ops(state);
         CREATE INDEX IF NOT EXISTS idx_workflow_events_run_seq
-            ON workflow_events(run_id, seq);",
+            ON workflow_events(run_id, seq);
+
+        CREATE TABLE IF NOT EXISTS saved_workflow_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            scope TEXT NOT NULL,
+            project_id TEXT,
+            kind TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            script_hash TEXT NOT NULL,
+            script_source TEXT NOT NULL,
+            budget_json TEXT NOT NULL DEFAULT '{}',
+            source_run_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (source_run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_saved_workflow_templates_scope_updated
+            ON saved_workflow_templates(scope, project_id, enabled, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_saved_workflow_templates_source_run
+            ON saved_workflow_templates(source_run_id);",
     )?;
     if conn
         .prepare("SELECT parent_run_id FROM workflow_runs LIMIT 1")
@@ -434,6 +481,145 @@ impl SessionDB {
         collect_rows(rows)
     }
 
+    pub fn save_workflow_template_from_run(
+        &self,
+        input: SaveWorkflowTemplateInput,
+    ) -> Result<SavedWorkflowTemplate> {
+        if !input.explicit_save_consent {
+            return Err(anyhow!(
+                "saving a workflow template requires explicit user consent"
+            ));
+        }
+        let name = normalize_saved_template_name(&input.name)?;
+        let description = normalize_saved_template_description(input.description.as_deref());
+        let run = self
+            .get_workflow_run(&input.source_run_id)?
+            .ok_or_else(|| anyhow!("workflow run not found: {}", input.source_run_id))?;
+        if run.state != WorkflowRunState::Completed {
+            return Err(anyhow!(
+                "only completed workflow runs can be saved as templates; run {} is {}",
+                run.id,
+                run.state.as_str()
+            ));
+        }
+        let project_id = self.resolve_saved_workflow_template_project_id(
+            &run.session_id,
+            input.scope,
+            input.project_id.as_deref(),
+        )?;
+        let now = now_rfc3339();
+        let id = format!("wft_{}", uuid::Uuid::new_v4().simple());
+        let budget_json = stable_json(&run.budget)?;
+        {
+            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+            conn.execute(
+                "INSERT INTO saved_workflow_templates (
+                    id, name, description, scope, project_id, kind, execution_mode,
+                    script_hash, script_source, budget_json, source_run_id, enabled,
+                    created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, ?12, ?12)",
+                params![
+                    id,
+                    name,
+                    description,
+                    input.scope.as_str(),
+                    project_id,
+                    run.kind,
+                    run.execution_mode,
+                    run.script_hash,
+                    run.script_source,
+                    budget_json,
+                    run.id,
+                    now
+                ],
+            )?;
+        }
+        self.get_saved_workflow_template(&id)?
+            .ok_or_else(|| anyhow!("saved workflow template {} was not persisted", id))
+    }
+
+    pub fn list_saved_workflow_templates(
+        &self,
+        input: ListSavedWorkflowTemplatesInput,
+    ) -> Result<Vec<SavedWorkflowTemplate>> {
+        let limit = input
+            .limit
+            .unwrap_or(SAVED_WORKFLOW_TEMPLATE_LIMIT_DEFAULT)
+            .clamp(1, SAVED_WORKFLOW_TEMPLATE_LIMIT_MAX);
+        let project_id = normalize_optional(input.project_id.as_deref());
+        let mut clauses = Vec::new();
+        let mut values: Vec<String> = Vec::new();
+        if !input.include_disabled {
+            clauses.push("enabled = 1".to_string());
+        }
+        if let Some(project_id) = project_id {
+            clauses.push("(scope = 'user' OR (scope = 'project' AND project_id = ?))".to_string());
+            values.push(project_id.to_string());
+        } else {
+            clauses.push("scope = 'user'".to_string());
+        }
+        let where_sql = format!("WHERE {}", clauses.join(" AND "));
+        values.push(limit.to_string());
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, name, description, scope, project_id, kind, execution_mode,
+                    script_hash, script_source, budget_json, source_run_id, enabled,
+                    created_at, updated_at
+             FROM saved_workflow_templates
+             {where_sql}
+             ORDER BY updated_at DESC, created_at DESC
+             LIMIT ?"
+        ))?;
+        let rows = stmt.query_map(params_from_iter(values.iter()), row_to_saved_template)?;
+        collect_rows(rows)
+    }
+
+    pub fn get_saved_workflow_template(
+        &self,
+        template_id: &str,
+    ) -> Result<Option<SavedWorkflowTemplate>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        conn.query_row(
+            "SELECT id, name, description, scope, project_id, kind, execution_mode,
+                    script_hash, script_source, budget_json, source_run_id, enabled,
+                    created_at, updated_at
+             FROM saved_workflow_templates
+             WHERE id = ?1",
+            params![template_id],
+            row_to_saved_template,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn create_workflow_run_from_template(
+        &self,
+        input: CreateWorkflowRunFromTemplateInput,
+    ) -> Result<WorkflowRun> {
+        let template = self
+            .get_saved_workflow_template(&input.template_id)?
+            .ok_or_else(|| anyhow!("saved workflow template not found: {}", input.template_id))?;
+        if !template.enabled {
+            return Err(anyhow!(
+                "saved workflow template {} is disabled",
+                template.id
+            ));
+        }
+        self.ensure_saved_workflow_template_visible_to_session(&template, &input.session_id)?;
+        self.create_workflow_run(CreateWorkflowRunInput {
+            session_id: input.session_id,
+            kind: template.kind,
+            execution_mode: template.execution_mode,
+            script_source: template.script_source,
+            budget: input.budget.unwrap_or(template.budget),
+            parent_run_id: None,
+            origin: Some(format!("template:{}", template.id)),
+            goal_id: input.goal_id,
+            goal_criterion_id: input.goal_criterion_id,
+            worktree_id: input.worktree_id,
+        })
+    }
+
     pub fn workflow_run_snapshot(
         &self,
         run_id: &str,
@@ -444,7 +630,195 @@ impl SessionDB {
         };
         let ops = self.list_workflow_ops(run_id)?;
         let events = self.list_workflow_events(run_id, event_limit)?;
-        Ok(Some(WorkflowRunSnapshot { run, ops, events }))
+        let agent_usage = self.workflow_agent_usage_snapshot(run_id)?;
+        let usage = self.workflow_run_usage_snapshot(&run, &agent_usage)?;
+        Ok(Some(WorkflowRunSnapshot {
+            run,
+            ops,
+            events,
+            agent_usage,
+            usage,
+        }))
+    }
+
+    pub fn workflow_agent_usage_snapshot(
+        &self,
+        run_id: &str,
+    ) -> Result<WorkflowAgentUsageSnapshot> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let mut snapshot = conn.query_row(
+            "SELECT
+                COUNT(DISTINCT wo.child_handle),
+                COALESCE(SUM(CASE WHEN sr.status = 'completed' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN sr.status IN ('queued','spawning','running') THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN sr.status IN ('error','timeout','killed') THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN sr.input_tokens IS NOT NULL OR sr.output_tokens IS NOT NULL THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(sr.input_tokens), 0),
+                COALESCE(SUM(sr.output_tokens), 0)
+             FROM workflow_ops wo
+             LEFT JOIN subagent_runs sr ON sr.run_id = wo.child_handle
+             WHERE wo.run_id = ?1
+               AND wo.op_type = 'spawnAgent'
+               AND wo.child_handle IS NOT NULL
+               AND wo.child_handle != ''",
+            params![run_id],
+            |row| {
+                let input_tokens = row.get::<_, i64>(5)?;
+                let output_tokens = row.get::<_, i64>(6)?;
+                Ok(WorkflowAgentUsageSnapshot {
+                    spawned_agents: row.get(0)?,
+                    completed_agents: row.get(1)?,
+                    running_agents: row.get(2)?,
+                    failed_agents: row.get(3)?,
+                    attributed_agents: row.get(4)?,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens: input_tokens.saturating_add(output_tokens),
+                    attribution: "workflow_ops.child_handle=subagent_runs.run_id".to_string(),
+                })
+            },
+        )?;
+        if snapshot.spawned_agents == 0 {
+            snapshot.attribution = "no_spawn_agent_ops".to_string();
+        }
+        Ok(snapshot)
+    }
+
+    pub fn workflow_run_usage_snapshot(
+        &self,
+        run: &WorkflowRun,
+        agent_usage: &WorkflowAgentUsageSnapshot,
+    ) -> Result<WorkflowRunUsageSnapshot> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let window_end = run
+            .completed_at
+            .clone()
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        let parent_injection_usage =
+            workflow_parent_injection_usage_snapshot_with_conn(&conn, run)?;
+        let mut snapshot = conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(cache_creation_input_tokens), 0),
+                COALESCE(SUM(cache_read_input_tokens), 0)
+             FROM model_usage_events
+             WHERE session_id = ?1
+               AND timestamp >= ?2
+               AND timestamp <= ?3",
+            params![&run.session_id, &run.created_at, window_end],
+            |row| {
+                let parent_input_tokens = row.get::<_, i64>(1)?;
+                let parent_output_tokens = row.get::<_, i64>(2)?;
+                let parent_total_tokens = parent_input_tokens.saturating_add(parent_output_tokens);
+                let agent_input_tokens = agent_usage.input_tokens;
+                let agent_output_tokens = agent_usage.output_tokens;
+                let agent_total_tokens = agent_usage.total_tokens;
+                Ok(WorkflowRunUsageSnapshot {
+                    parent_events: row.get(0)?,
+                    parent_input_tokens,
+                    parent_output_tokens,
+                    parent_cache_creation_input_tokens: row.get(3)?,
+                    parent_cache_read_input_tokens: row.get(4)?,
+                    parent_total_tokens,
+                    parent_injection_turns: parent_injection_usage.turns,
+                    parent_injection_messages: parent_injection_usage.messages,
+                    parent_injection_input_tokens: parent_injection_usage.input_tokens,
+                    parent_injection_output_tokens: parent_injection_usage.output_tokens,
+                    parent_injection_total_tokens: parent_injection_usage.total_tokens,
+                    parent_injection_provider_events: parent_injection_usage.provider_events,
+                    parent_injection_provider_input_tokens: parent_injection_usage
+                        .provider_input_tokens,
+                    parent_injection_provider_output_tokens: parent_injection_usage
+                        .provider_output_tokens,
+                    parent_injection_provider_cache_creation_input_tokens:
+                        parent_injection_usage.provider_cache_creation_input_tokens,
+                    parent_injection_provider_cache_read_input_tokens: parent_injection_usage
+                        .provider_cache_read_input_tokens,
+                    parent_injection_provider_total_tokens: parent_injection_usage
+                        .provider_total_tokens,
+                    parent_injection_attribution: parent_injection_usage.attribution.clone(),
+                    agent_input_tokens,
+                    agent_output_tokens,
+                    agent_total_tokens,
+                    total_tokens: parent_total_tokens.saturating_add(agent_total_tokens),
+                    attribution: "session_model_usage_between_workflow_run_bounds+workflow_ops.child_handle=subagent_runs.run_id".to_string(),
+                })
+            },
+        )?;
+        snapshot.attribution = match (snapshot.parent_events > 0, agent_usage.spawned_agents > 0) {
+            (true, true) => {
+                "session_model_usage_between_workflow_run_bounds+workflow_ops.child_handle=subagent_runs.run_id"
+            }
+            (true, false) => "session_model_usage_between_workflow_run_bounds",
+            (false, true) => "workflow_ops.child_handle=subagent_runs.run_id",
+            (false, false) => "no_parent_usage_rows_or_spawn_agent_ops",
+        }
+        .to_string();
+        Ok(snapshot)
+    }
+
+    pub fn list_workflow_watchdog_findings(
+        &self,
+        session_id: &str,
+        stale_secs: i64,
+    ) -> Result<Vec<WorkflowWatchdogFinding>> {
+        let stale_secs = stale_secs.max(0);
+        let now = Utc::now();
+        let runs = self.list_workflow_runs_for_session(session_id, 100)?;
+        let mut findings = Vec::new();
+
+        for run in runs {
+            if !matches!(
+                run.state,
+                WorkflowRunState::Running | WorkflowRunState::Recovering
+            ) {
+                continue;
+            }
+
+            let latest_event = self.list_workflow_events(&run.id, 1)?.into_iter().next();
+            let (last_activity_at, stale_for_secs) =
+                workflow_last_activity(&run, latest_event.as_ref(), &now);
+
+            if workflow_run_owner_recoverable(run.state, run.primary_owner.as_deref()) {
+                findings.push(WorkflowWatchdogFinding {
+                    run_id: run.id,
+                    session_id: run.session_id,
+                    severity: "warning".to_string(),
+                    code: "workflow_recoverable_owner".to_string(),
+                    message:
+                        "Workflow is active but its runtime owner is missing or no longer alive."
+                            .to_string(),
+                    state: run.state.as_str().to_string(),
+                    primary_owner: run.primary_owner,
+                    last_activity_at,
+                    stale_secs: stale_for_secs,
+                    latest_event_type: latest_event.as_ref().map(|event| event.event_type.clone()),
+                    latest_event_seq: latest_event.as_ref().map(|event| event.seq),
+                });
+                continue;
+            }
+
+            if stale_for_secs.is_some_and(|secs| secs > stale_secs) {
+                findings.push(WorkflowWatchdogFinding {
+                    run_id: run.id,
+                    session_id: run.session_id,
+                    severity: "warning".to_string(),
+                    code: "workflow_no_recent_progress".to_string(),
+                    message: "Workflow is still active but has not recorded recent progress."
+                        .to_string(),
+                    state: run.state.as_str().to_string(),
+                    primary_owner: run.primary_owner,
+                    last_activity_at,
+                    stale_secs: stale_for_secs,
+                    latest_event_type: latest_event.as_ref().map(|event| event.event_type.clone()),
+                    latest_event_seq: latest_event.as_ref().map(|event| event.seq),
+                });
+            }
+        }
+
+        Ok(findings)
     }
 
     pub fn transition_workflow_run(
@@ -1147,6 +1521,259 @@ impl SessionDB {
         }
         Ok(())
     }
+
+    fn resolve_saved_workflow_template_project_id(
+        &self,
+        session_id: &str,
+        scope: SavedWorkflowTemplateScope,
+        requested_project_id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let requested_project_id = normalize_optional(requested_project_id);
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let row: Option<(i64, Option<String>)> = conn
+            .query_row(
+                "SELECT incognito, project_id FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (incognito, session_project_id) =
+            row.ok_or_else(|| anyhow!("Session not found: {}", session_id))?;
+        if incognito != 0 {
+            return Err(anyhow!(
+                "Cannot save durable workflow template for incognito session {}",
+                session_id
+            ));
+        }
+        match scope {
+            SavedWorkflowTemplateScope::User => Ok(None),
+            SavedWorkflowTemplateScope::Project => {
+                let Some(session_project_id) = session_project_id else {
+                    return Err(anyhow!(
+                        "project-scoped workflow templates require a project session"
+                    ));
+                };
+                if let Some(requested_project_id) = requested_project_id {
+                    if requested_project_id != session_project_id {
+                        return Err(anyhow!(
+                            "workflow template project {} does not match session project {}",
+                            requested_project_id,
+                            session_project_id
+                        ));
+                    }
+                }
+                Ok(Some(session_project_id))
+            }
+        }
+    }
+
+    fn ensure_saved_workflow_template_visible_to_session(
+        &self,
+        template: &SavedWorkflowTemplate,
+        session_id: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let row: Option<(i64, Option<String>)> = conn
+            .query_row(
+                "SELECT incognito, project_id FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (incognito, session_project_id) =
+            row.ok_or_else(|| anyhow!("Session not found: {}", session_id))?;
+        if incognito != 0 {
+            return Err(anyhow!(
+                "Cannot create durable workflow run from template for incognito session {}",
+                session_id
+            ));
+        }
+        if template.scope == SavedWorkflowTemplateScope::Project
+            && template.project_id.as_deref() != session_project_id.as_deref()
+        {
+            return Err(anyhow!(
+                "workflow template {} is scoped to project {:?}; session {} belongs to {:?}",
+                template.id,
+                template.project_id,
+                session_id,
+                session_project_id
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn workflow_parent_injection_usage_snapshot_with_conn(
+    conn: &Connection,
+    run: &WorkflowRun,
+) -> Result<WorkflowParentInjectionUsageSnapshot> {
+    let escaped_run_id = escape_sql_like_literal(&run.id);
+    let final_result_pattern = format!("%\"workflow_result\"%\"run_id\":\"{}\"%", escaped_run_id);
+    let milestone_pattern = format!(
+        "%\"workflow_result\"%\"run_id\":\"{}:workflow-event:%",
+        escaped_run_id
+    );
+    let mut stmt = conn.prepare(
+        "SELECT id
+         FROM messages
+         WHERE session_id = ?1
+           AND role = ?2
+           AND (
+                attachments_meta LIKE ?3 ESCAPE '\\'
+                OR attachments_meta LIKE ?4 ESCAPE '\\'
+           )
+         ORDER BY id ASC",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            &run.session_id,
+            MessageRole::User.as_str(),
+            final_result_pattern,
+            milestone_pattern,
+        ],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let mut trigger_message_ids = collect_rows(rows)?;
+    trigger_message_ids.sort_unstable();
+    trigger_message_ids.dedup();
+
+    let mut snapshot = WorkflowParentInjectionUsageSnapshot {
+        attribution: "no_workflow_result_injection_messages".to_string(),
+        ..Default::default()
+    };
+    if trigger_message_ids.is_empty() {
+        return Ok(snapshot);
+    }
+
+    snapshot.turns = trigger_message_ids.len() as i64;
+    for trigger_message_id in trigger_message_ids {
+        let next_user_message_id = conn
+            .query_row(
+                "SELECT id
+                 FROM messages
+                 WHERE session_id = ?1
+                   AND role = ?2
+                   AND id > ?3
+                 ORDER BY id ASC
+                 LIMIT 1",
+                params![
+                    &run.session_id,
+                    MessageRole::User.as_str(),
+                    trigger_message_id,
+                ],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let upper_bound = next_user_message_id.unwrap_or(i64::MAX);
+        let message_usage = conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(
+                    CASE
+                        WHEN COALESCE(tokens_in_last, tokens_in, 0) > 0
+                        THEN COALESCE(tokens_in_last, tokens_in, 0)
+                        ELSE 0
+                    END
+                ), 0),
+                COALESCE(SUM(
+                    CASE
+                        WHEN COALESCE(tokens_out, 0) > 0 THEN tokens_out
+                        ELSE 0
+                    END
+                ), 0)
+             FROM messages
+             WHERE session_id = ?1
+               AND id >= ?2
+               AND id < ?3
+               AND role IN (?4, ?5)",
+            params![
+                &run.session_id,
+                trigger_message_id,
+                upper_bound,
+                MessageRole::User.as_str(),
+                MessageRole::Assistant.as_str(),
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        let provider_usage = conn.query_row(
+            "SELECT
+                COUNT(u.id),
+                COALESCE(SUM(u.input_tokens), 0),
+                COALESCE(SUM(u.output_tokens), 0),
+                COALESCE(SUM(u.cache_creation_input_tokens), 0),
+                COALESCE(SUM(u.cache_read_input_tokens), 0)
+             FROM messages m
+             JOIN model_usage_events u ON u.request_key = ('message:' || m.id)
+             WHERE m.session_id = ?1
+               AND m.id >= ?2
+               AND m.id < ?3
+               AND m.role = ?4
+               AND u.kind = ?5",
+            params![
+                &run.session_id,
+                trigger_message_id,
+                upper_bound,
+                MessageRole::Assistant.as_str(),
+                crate::model_usage::KIND_CHAT,
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+
+        snapshot.messages = snapshot.messages.saturating_add(message_usage.0);
+        snapshot.input_tokens = snapshot.input_tokens.saturating_add(message_usage.1);
+        snapshot.output_tokens = snapshot.output_tokens.saturating_add(message_usage.2);
+        snapshot.provider_events = snapshot.provider_events.saturating_add(provider_usage.0);
+        snapshot.provider_input_tokens = snapshot
+            .provider_input_tokens
+            .saturating_add(provider_usage.1);
+        snapshot.provider_output_tokens = snapshot
+            .provider_output_tokens
+            .saturating_add(provider_usage.2);
+        snapshot.provider_cache_creation_input_tokens = snapshot
+            .provider_cache_creation_input_tokens
+            .saturating_add(provider_usage.3);
+        snapshot.provider_cache_read_input_tokens = snapshot
+            .provider_cache_read_input_tokens
+            .saturating_add(provider_usage.4);
+    }
+    snapshot.total_tokens = snapshot.input_tokens.saturating_add(snapshot.output_tokens);
+    snapshot.provider_total_tokens = snapshot
+        .provider_input_tokens
+        .saturating_add(snapshot.provider_output_tokens);
+    snapshot.attribution = if snapshot.provider_events > 0 {
+        "workflow_result_message_boundary+model_usage_events.request_key=message_id".to_string()
+    } else {
+        "workflow_result_message_boundary".to_string()
+    };
+    Ok(snapshot)
+}
+
+fn escape_sql_like_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
@@ -1175,6 +1802,27 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkflowRun> {
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
         completed_at: row.get(21)?,
+    })
+}
+
+fn row_to_saved_template(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedWorkflowTemplate> {
+    let scope: String = row.get(3)?;
+    let budget_json: String = row.get(9)?;
+    Ok(SavedWorkflowTemplate {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        scope: parse_saved_template_scope_sql(&scope)?,
+        project_id: row.get(4)?,
+        kind: row.get(5)?,
+        execution_mode: row.get(6)?,
+        script_hash: row.get(7)?,
+        script_source: row.get(8)?,
+        budget: json_from_sql(&budget_json)?,
+        source_run_id: row.get(10)?,
+        enabled: row.get::<_, i64>(11)? != 0,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -1290,6 +1938,29 @@ fn workflow_owner_claim_target_state(
     }
 }
 
+fn workflow_last_activity(
+    run: &WorkflowRun,
+    latest_event: Option<&WorkflowEvent>,
+    now: &DateTime<Utc>,
+) -> (Option<String>, Option<i64>) {
+    let run_updated = DateTime::parse_from_rfc3339(&run.updated_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .ok();
+    let event_created = latest_event
+        .and_then(|event| DateTime::parse_from_rfc3339(&event.created_at).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    let last = match (run_updated, event_created) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    (
+        last.map(|dt| dt.to_rfc3339()),
+        last.map(|dt| (*now - dt).num_seconds().max(0)),
+    )
+}
+
 fn parse_run_state(value: &str) -> Result<WorkflowRunState> {
     WorkflowRunState::from_str(value).ok_or_else(|| anyhow!("unknown workflow run state: {value}"))
 }
@@ -1324,6 +1995,16 @@ fn parse_effect_class_sql(value: &str) -> rusqlite::Result<WorkflowEffectClass> 
     })
 }
 
+fn parse_saved_template_scope_sql(value: &str) -> rusqlite::Result<SavedWorkflowTemplateScope> {
+    SavedWorkflowTemplateScope::from_str(value).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            format!("unknown saved workflow template scope: {value}").into(),
+        )
+    })
+}
+
 fn json_from_sql(value: &str) -> rusqlite::Result<Value> {
     serde_json::from_str(value).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, err.into())
@@ -1352,4 +2033,25 @@ fn blake3_hex(bytes: &[u8]) -> String {
 
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+fn normalize_optional(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn clamp_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn normalize_saved_template_name(value: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(anyhow!("saved workflow template name must not be empty"));
+    }
+    Ok(clamp_chars(value, SAVED_WORKFLOW_TEMPLATE_NAME_MAX_CHARS))
+}
+
+fn normalize_saved_template_description(value: Option<&str>) -> Option<String> {
+    normalize_optional(value)
+        .map(|value| clamp_chars(value, SAVED_WORKFLOW_TEMPLATE_DESCRIPTION_MAX_CHARS))
 }

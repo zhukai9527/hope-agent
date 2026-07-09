@@ -1,6 +1,8 @@
 use crate::commands::CmdError;
 use ha_core::workflow::{
-    CreateWorkflowRunInput, WorkflowRun, WorkflowRunSnapshot, WorkflowScriptPreview,
+    CreateWorkflowRunFromTemplateInput, CreateWorkflowRunInput, ListSavedWorkflowTemplatesInput,
+    SaveWorkflowTemplateInput, SavedWorkflowTemplate, WorkflowRun, WorkflowRunSnapshot,
+    WorkflowScriptPreview, WorkflowWatchdogFinding,
 };
 use serde_json::{json, Value};
 
@@ -17,6 +19,87 @@ pub async fn list_workflow_runs(
         .session_db
         .list_workflow_runs_for_session(&session_id, 100)
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_workflow_watchdog_findings(
+    session_id: String,
+    stale_secs: Option<i64>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<WorkflowWatchdogFinding>, CmdError> {
+    app_state
+        .session_db
+        .list_workflow_watchdog_findings(&session_id, stale_secs.unwrap_or(300))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_saved_workflow_templates(
+    project_id: Option<String>,
+    include_disabled: Option<bool>,
+    limit: Option<usize>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<SavedWorkflowTemplate>, CmdError> {
+    app_state
+        .session_db
+        .list_saved_workflow_templates(ListSavedWorkflowTemplatesInput {
+            project_id,
+            include_disabled: include_disabled.unwrap_or(false),
+            limit,
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_workflow_template_from_run(
+    input: SaveWorkflowTemplateInput,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<SavedWorkflowTemplate, CmdError> {
+    app_state
+        .session_db
+        .save_workflow_template_from_run(input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_workflow_run_from_template(
+    input: CreateWorkflowRunFromTemplateInput,
+    run_immediately: Option<bool>,
+    app_state: tauri::State<'_, crate::AppState>,
+) -> Result<WorkflowRun, CmdError> {
+    let template = app_state
+        .session_db
+        .get_saved_workflow_template(&input.template_id)?
+        .ok_or_else(|| {
+            CmdError::msg(format!(
+                "Saved workflow template not found: {}",
+                input.template_id
+            ))
+        })?;
+    let parsed_mode = ha_core::execution_mode::ExecutionMode::from_str(&template.execution_mode)
+        .ok_or_else(|| CmdError::msg("Invalid execution mode"))?;
+    let run_now = run_immediately.unwrap_or(false);
+    if run_now {
+        ha_core::workflow::ensure_workflow_launcher_primary().map_err(CmdError::from)?;
+    }
+    ha_core::workflow::ensure_workflow_script_can_create(
+        &app_state.session_db,
+        &input.session_id,
+        &template.script_source,
+        Some(parsed_mode.as_str()),
+    )?;
+    let run = app_state
+        .session_db
+        .create_workflow_run_from_template(input)
+        .map_err(CmdError::from)?;
+    if run_now {
+        ha_core::workflow::spawn_workflow_run_if_primary(
+            app_state.session_db.clone(),
+            run.id.clone(),
+            workflow_owner("template"),
+        );
+    }
+    Ok(run)
 }
 
 #[tauri::command]

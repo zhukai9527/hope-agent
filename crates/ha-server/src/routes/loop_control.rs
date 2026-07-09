@@ -1,8 +1,8 @@
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::Json;
 use ha_core::loop_control::{
-    CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopSnapshot, LoopState,
-    LoopTriggerKind, UpdateLoopSchedulePolicyInput,
+    CreateLoopScheduleInput, LoopExecutionStrategy, LoopSchedule, LoopSnapshot, LoopTriggerKind,
+    LoopWatchdogFinding, UpdateLoopSchedulePolicyInput,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,6 +16,24 @@ pub async fn list_loop_schedules(
     Ok(Json(
         session_db()?.list_loop_schedules_for_session_with_cron(cron_db()?, &session_id, 100)?,
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListLoopWatchdogQuery {
+    #[serde(default)]
+    pub grace_secs: Option<i64>,
+}
+
+pub async fn list_loop_watchdog_findings(
+    Path(session_id): Path<String>,
+    Query(query): Query<ListLoopWatchdogQuery>,
+) -> Result<Json<Vec<LoopWatchdogFinding>>, AppError> {
+    Ok(Json(session_db()?.list_loop_watchdog_findings(
+        cron_db()?,
+        &session_id,
+        query.grace_secs.unwrap_or(120),
+    )?))
 }
 
 pub async fn get_loop_schedule(
@@ -138,36 +156,8 @@ pub async fn update_loop_schedule_policy(
 }
 
 pub async fn run_loop_schedule_now(Path(loop_id): Path<String>) -> Result<Json<Value>, AppError> {
-    if !ha_core::runtime_lock::is_primary() {
-        return Err(AppError::bad_request(
-            "run-now is unavailable on this instance: scheduled jobs only run on the primary",
-        ));
-    }
-    let schedule = session_db()?
-        .get_loop_schedule(&loop_id)?
-        .ok_or_else(|| AppError::not_found("Loop schedule not found"))?;
-    if schedule.state.is_terminal() {
-        return Err(AppError::bad_request(format!(
-            "loop schedule {} is {}",
-            schedule.id,
-            schedule.state.as_str()
-        )));
-    }
-    if schedule.state != LoopState::Active {
-        return Err(AppError::bad_request(format!(
-            "loop schedule {} must be active before run-now; current state is {}",
-            schedule.id,
-            schedule.state.as_str()
-        )));
-    }
-    let job = cron_db()?
-        .get_job(&schedule.cron_job_id)?
-        .ok_or_else(|| AppError::not_found("Cron job not found"))?;
-    let cdb = cron_db()?.clone();
-    let sdb = session_db()?.clone();
-    tokio::spawn(async move {
-        ha_core::cron::execute_job_public(&cdb, &sdb, &job).await;
-    });
+    ha_core::loop_control::spawn_loop_schedule_run_now(cron_db()?, session_db()?, &loop_id)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(json!({ "scheduled": true })))
 }
 

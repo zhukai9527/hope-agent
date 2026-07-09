@@ -24,9 +24,14 @@ import type {
 } from "@/lib/transport"
 import type { BackgroundJobSnapshot } from "@/types/background-jobs"
 import WorkspacePanel from "./WorkspacePanel"
-import type { GoalSnapshot } from "./useGoal"
-import type { LoopSchedule, LoopSnapshot } from "./useLoopSchedules"
-import type { WorkflowRun, WorkflowRunSnapshot, WorkflowScriptPreview } from "./useWorkflowRuns"
+import type { GoalSnapshot, GoalWatchdogFinding } from "./useGoal"
+import type { LoopSchedule, LoopSnapshot, LoopWatchdogFinding } from "./useLoopSchedules"
+import type {
+  WorkflowRun,
+  WorkflowRunSnapshot,
+  WorkflowScriptPreview,
+  WorkflowWatchdogFinding,
+} from "./useWorkflowRuns"
 
 const envMock = vi.hoisted(() => ({
   state: {
@@ -234,6 +239,14 @@ async function clickSectionHeader(title: string) {
   fireEvent.click(header ?? buttons[0])
 }
 
+async function openWorkflowCreateComposer() {
+  await clickSectionHeader("工作流")
+  const createToggle = await screen.findByRole("button", { name: "新建工作流" })
+  if (createToggle.getAttribute("aria-expanded") !== "true") {
+    fireEvent.click(createToggle)
+  }
+}
+
 function clickLastNamedButton(name: string) {
   const buttons = screen.getAllByRole("button", { name })
   fireEvent.click(buttons[buttons.length - 1])
@@ -357,6 +370,44 @@ function workflowRun(patch: Partial<WorkflowRun> = {}): WorkflowRun {
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:01:00Z",
     completedAt: null,
+    ...patch,
+  }
+}
+
+function workflowWatchdogFinding(
+  patch: Partial<WorkflowWatchdogFinding> = {},
+): WorkflowWatchdogFinding {
+  return {
+    runId: "wf-1",
+    sessionId: "s1",
+    severity: "warning",
+    code: "workflow_no_recent_progress",
+    message: "Workflow is still active but has not recorded recent progress.",
+    state: "running",
+    primaryOwner: `runtime:pid:${Number.MAX_SAFE_INTEGER}`,
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    staleSecs: 600,
+    latestEventType: "run_runtime_launch",
+    latestEventSeq: 2,
+    ...patch,
+  }
+}
+
+function goalWatchdogFinding(patch: Partial<GoalWatchdogFinding> = {}): GoalWatchdogFinding {
+  return {
+    goalId: "goal-auto",
+    sessionId: "s1",
+    severity: "warning",
+    code: "goal_no_recent_progress",
+    message: "Goal should continue but has not recorded recent progress.",
+    state: "active",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    staleSecs: 600,
+    latestEventKind: "goal_runner_evaluated",
+    latestEventSeq: 2,
+    activeWorkflowCount: 0,
+    activeTaskCount: 0,
+    activeBackgroundJobCount: 0,
     ...patch,
   }
 }
@@ -491,6 +542,22 @@ function loopSnapshot(patch: Partial<LoopSnapshot> = {}): LoopSnapshot {
         finishedAt: "2026-01-01T00:04:05Z",
       },
     ],
+    ...patch,
+  }
+}
+
+function loopWatchdogFinding(patch: Partial<LoopWatchdogFinding> = {}): LoopWatchdogFinding {
+  return {
+    loopId: "loop-1",
+    sessionId: "s1",
+    severity: "warning",
+    code: "loop_due_not_claimed",
+    message: "Loop is past its scheduled run time but no active loop run is recorded.",
+    nextRunAt: "2026-01-01T00:10:00Z",
+    overdueSecs: 600,
+    cronStatus: "active",
+    latestRunId: "lrun-1",
+    latestRunState: "succeeded",
     ...patch,
   }
 }
@@ -1625,8 +1692,10 @@ describe("WorkspacePanel goal section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByText("Goal"))
-    fireEvent.change(screen.getByPlaceholderText("例如：完整实现 Goal 模式，并通过针对性检查"), {
+    const goalButtons = await screen.findAllByRole("button", { name: /目标/ })
+    const goalCreateToggle = goalButtons.find((button) => button.getAttribute("aria-expanded") === "false")
+    fireEvent.click(goalCreateToggle ?? goalButtons[goalButtons.length - 1])
+    fireEvent.change(screen.getByPlaceholderText("例如：完整实现目标模式，并通过针对性检查"), {
       target: { value: "调研新版浏览器自动化能力并整理风险" },
     })
     fireEvent.change(screen.getByPlaceholderText(/每行一个标准/), {
@@ -1636,7 +1705,7 @@ describe("WorkspacePanel goal section", () => {
     fireEvent.pointerDown(domainSelect, { button: 0, ctrlKey: false, pointerType: "mouse" })
     const templateOptions = await screen.findAllByText("Research brief")
     fireEvent.click(templateOptions[templateOptions.length - 1])
-    fireEvent.click(screen.getByRole("button", { name: "创建 Goal" }))
+    fireEvent.click(screen.getByRole("button", { name: "创建目标" }))
 
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith("create_goal", {
@@ -1670,7 +1739,7 @@ describe("WorkspacePanel goal section", () => {
 
     await clickTextButton("Ship isolated worktree")
 
-    expect(screen.getByText("Worktrees")).toBeTruthy()
+    expect(screen.getByText("工作树")).toBeTruthy()
     expect(screen.getByText("feature-goal")).toBeTruthy()
     expect(screen.getByText("/repo-worktrees/wt_goal")).toBeTruthy()
     expect(screen.getByText("main · abcdef12")).toBeTruthy()
@@ -1705,6 +1774,37 @@ describe("WorkspacePanel goal section", () => {
     expect(screen.getByText("connector")).toBeTruthy()
     expect(screen.getByText("92%")).toBeTruthy()
     expect(screen.getByText("main/op#1(evidence.record)")).toBeTruthy()
+  })
+
+  it("surfaces goal watchdog findings with a manual evaluation action", async () => {
+    const snapshot = goalSnapshotWithWorkflowTemplate()
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(snapshot)
+      if (name === "list_goal_watchdog_findings")
+        return Promise.resolve([goalWatchdogFinding({ goalId: snapshot.goal.id })])
+      if (name === "evaluate_goal") return Promise.resolve(snapshot)
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? [])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickSectionHeader("目标")
+    expect(await screen.findByText("有目标需要确认")).toBeTruthy()
+    expect(screen.getByText("目标一段时间没有新进展，已等待 10m")).toBeTruthy()
+    expect(screen.getAllByText("需确认").length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole("button", { name: "评估" })[0])
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("evaluate_goal", {
+        goalId: snapshot.goal.id,
+      })
+    })
   })
 
   it("shows closure packet criteria counts and accepts v1 with follow-up items", async () => {
@@ -1754,9 +1854,9 @@ describe("WorkspacePanel goal section", () => {
 
     expect(screen.getByText("关闭取舍")).toBeTruthy()
     expect(screen.getAllByText("Workflow evidence is reviewed").length).toBeGreaterThan(0)
-    expect(screen.getByText("Workflow 1")).toBeTruthy()
-    expect(screen.getByText("Loop 1")).toBeTruthy()
-    expect(screen.getByText("Evidence 1")).toBeTruthy()
+    expect(screen.getAllByText("工作流").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("任务").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("证据").length).toBeGreaterThan(0)
     expect(screen.getAllByText("manual screenshot smoke").length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getByRole("button", { name: "复制摘要" }))
@@ -2457,7 +2557,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("待采样").length).toBeGreaterThan(0)
     expect(screen.getByText("还没有交付产物需要守门")).toBeTruthy()
     expect(screen.getByText("还没有外部动作需要守门")).toBeTruthy()
-    expect(screen.getByText("还没有连接器 E2E 样本需要验收")).toBeTruthy()
+    expect(screen.getByText("还没有连接器端到端样本需要验收")).toBeTruthy()
     expect(screen.queryByText("样本有事故")).toBeNull()
     expect(screen.queryByText("阻塞样本")).toBeNull()
     expect(screen.queryByText("不可验收")).toBeNull()
@@ -2550,21 +2650,21 @@ describe("WorkspacePanel workflow section", () => {
       "控制面组成：workflow 1/2 · loop 1/1 · campaign 0/0 · connector 0",
     )
     expect(acceptanceReport).toContain("跨天覆盖：1/2 天")
-    expect(acceptanceReport).toContain("连接器 E2E evidence：0（执行 0 / 复核 0）")
+    expect(acceptanceReport).toContain("连接器端到端 evidence：0（执行 0 / 复核 0）")
     expect(acceptanceReport).toContain(
-      "Gate 快照：export=missing · connector=missing · e2e=missing · operational=failed · soak=failed",
+      "守门快照：交付=missing · 连接器=missing · 端到端=missing · 运行=failed · 长跑=failed",
     )
     expect(acceptanceReport).toContain("Evidence IDs：无")
     expect(acceptanceReport).toContain("## 复核协议")
     expect(acceptanceReport).toContain(
       "只有验收结论为“可验收”时，当前样本才可作为最终验收证据",
     )
-    expect(acceptanceReport).toContain("连接器 E2E 必须来自测试账号或沙箱数据")
+    expect(acceptanceReport).toContain("连接器端到端（E2E）必须来自测试账号或沙箱数据")
     expect(acceptanceReport).toContain("## 守门状态")
     expect(acceptanceReport).toContain("验收结论：不可验收 - 长跑审计仍有事故需要收口。")
     expect(acceptanceReport).toContain("交付守门：未评估")
     expect(acceptanceReport).toContain("运行稳定性：阻塞 (failed)")
-    expect(acceptanceReport).toContain("workflow_failed_residue=failed")
+    expect(acceptanceReport).toContain("workflow failed residue=失败")
     expect(acceptanceReport).toContain("## 最近证据")
     expect(acceptanceReport).toContain("暂无 evidence")
     expect(acceptanceReport).toContain("## 长跑审计")
@@ -2575,7 +2675,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(acceptanceReport).toContain("## 验收矩阵")
     expect(acceptanceReport).toContain("[待补] Campaign 样本：缺通过的 Campaign item")
     expect(acceptanceReport).toContain("证据：Campaign item 使用 deterministic trace pack 或真实 agent 样本。")
-    expect(acceptanceReport).toContain("[待扩展] 连接器 E2E：当前会话未观察外部动作")
+    expect(acceptanceReport).toContain("[待扩展] 连接器端到端（E2E）：当前会话未观察外部动作")
     expect(acceptanceReport).toContain("证据：使用测试账号或沙箱数据，避免真实用户生产账号。")
 
     const evidenceRequirement = screen.getByText("缺来源/草稿/决策证据")
@@ -2649,7 +2749,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(acceptancePlanContent).toContain(
       "控制面组成：workflow 1/2 · loop 1/1 · campaign 0/0 · connector 0",
     )
-    expect(acceptancePlanContent).toContain("控制面：记录 3 · 已排空 2 · Connector E2E 0")
+    expect(acceptancePlanContent).toContain("控制面：记录 3 · 已排空 2 · 连接器端到端 0")
     expect(acceptancePlanContent).toContain("跨天覆盖：1/2 天")
     expect(acceptancePlanContent).toContain("连接器复核：执行 0 · 复核 0")
     expect(acceptancePlanContent).toContain("复核协议：")
@@ -2676,9 +2776,8 @@ describe("WorkspacePanel workflow section", () => {
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "查看稳定性" }))
     expect(await screen.findByText("运行稳定性")).toBeTruthy()
-    expect(screen.getByText("workflow_failed_residue")).toBeTruthy()
+    expect(screen.getByText("workflow failed residue")).toBeTruthy()
     expect(screen.getAllByText("最长").length).toBeGreaterThan(0)
     expect(screen.getByText("稳定性建议")).toBeTruthy()
     const operationalRecommendation = screen
@@ -2700,7 +2799,7 @@ describe("WorkspacePanel workflow section", () => {
         activeForm: "正在处理运行稳定性建议",
       })
     })
-    const operationalCheck = screen.getByText("workflow_failed_residue")
+    const operationalCheck = screen.getByText("workflow failed residue")
     const operationalCheckRow = operationalCheck.parentElement
     expect(operationalCheckRow).toBeTruthy()
     fireEvent.click(
@@ -2710,12 +2809,11 @@ describe("WorkspacePanel workflow section", () => {
       expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
         sessionId: "s1",
         content:
-          "处理运行稳定性缺口：workflow_failed_residue（1）- A workflow run failed in the active window.",
-        activeForm: "正在处理运行稳定性缺口：workflow_failed_residue",
+          "处理运行稳定性缺口：workflow failed residue（1）- A workflow run failed in the active window.",
+        activeForm: "正在处理运行稳定性缺口：workflow failed residue",
       })
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "查看长跑" }))
     expect(await screen.findByText("长跑审计")).toBeTruthy()
     expect(screen.getByText("最近时间线")).toBeTruthy()
     expect(screen.getAllByText("Workflow failed").length).toBeGreaterThan(1)
@@ -2772,6 +2870,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     expect(await screen.findByText("真实样本验收")).toBeTruthy()
     expect(screen.getByText("样本新鲜")).toBeTruthy()
     expect(screen.getByText("8d 前，超过 24h")).toBeTruthy()
@@ -2848,6 +2947,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     expect(await screen.findByText("Primary source reviewed")).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "复制验收报告" }))
 
@@ -2973,6 +3073,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     expect(await screen.findByText("真实样本验收")).toBeTruthy()
     expect(screen.getByText("0% · 0/8")).toBeTruthy()
     expect(screen.getByText("守门通过")).toBeTruthy()
@@ -3001,14 +3102,12 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     expect((await screen.findAllByText("需处理")).length).toBeGreaterThan(0)
-    expect(screen.getByText("2 个守门")).toBeTruthy()
 
-    fireEvent.click(screen.getByRole("button", { name: "查看交付" }))
     expect(await screen.findByText("交付守门")).toBeTruthy()
     expect(screen.getByText("产物已复核")).toBeTruthy()
 
-    fireEvent.click(screen.getByRole("button", { name: "查看外部动作" }))
     expect(await screen.findByText("外部动作守门")).toBeTruthy()
     expect(screen.getByText("用户明确批准")).toBeTruthy()
   })
@@ -3356,7 +3455,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     await clickSectionHeader("通用任务工作台")
-    expect((await screen.findAllByText("连接器 E2E")).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText("连接器端到端")).length).toBeGreaterThan(0)
     expect(screen.getByText("执行结果")).toBeTruthy()
     expect(screen.getByText("执行后复核")).toBeTruthy()
     expect(screen.getByText("外部动作还缺端到端执行与复核样本。")).toBeTruthy()
@@ -3370,15 +3469,15 @@ describe("WorkspacePanel workflow section", () => {
       expect(transportMock.call).toHaveBeenCalledWith("create_session_task", {
         sessionId: "s1",
         content:
-          "处理连接器 E2E 缺口：执行结果（0）- The connector action has not produced an execution result yet.",
-        activeForm: "正在处理连接器 E2E 缺口：执行结果",
+          "处理连接器端到端（E2E）缺口：执行结果（0）- The connector action has not produced an execution result yet.",
+        activeForm: "正在处理连接器端到端（E2E）缺口：执行结果",
       })
     })
 
     const e2eEvaluationsBeforeRefresh = transportMock.call.mock.calls.filter(
       ([name]) => name === "evaluate_domain_connector_e2e_gate",
     ).length
-    fireEvent.click(screen.getByRole("button", { name: "刷新连接器 E2E" }))
+    fireEvent.click(screen.getByRole("button", { name: "刷新连接器端到端（E2E）" }))
     await waitFor(() => {
       const e2eEvaluations = transportMock.call.mock.calls.filter(
         ([name]) => name === "evaluate_domain_connector_e2e_gate",
@@ -3443,7 +3542,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     await clickSectionHeader("通用任务工作台")
-    expect((await screen.findAllByText("连接器 E2E")).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText("连接器端到端")).length).toBeGreaterThan(0)
     expect(screen.getByText("下一步：记录执行结果")).toBeTruthy()
     expect(
       (screen.getByRole("button", { name: "记录复核" }) as HTMLButtonElement).disabled,
@@ -3561,6 +3660,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     const taskButtons = await screen.findAllByRole("button", { name: "转任务" })
     fireEvent.click(taskButtons[0])
 
@@ -3607,7 +3707,8 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("domain:research")).toBeTruthy()
+    await clickSectionHeader("工作流")
+    expect((await screen.findAllByText("domain:research")).length).toBeGreaterThan(0)
     await clickSectionHeader("持续推进")
     fireEvent.click(screen.getByRole("button", { name: "查看工作流" }))
 
@@ -3617,7 +3718,33 @@ describe("WorkspacePanel workflow section", () => {
   })
 
   it("expands loop run history with workflow trace context", async () => {
-    const snapshot = loopSnapshot()
+    const snapshot = loopSnapshot({
+      runs: [
+        {
+          ...loopSnapshot().runs[0],
+          schedulingDecision: "dynamic_reschedule_600s",
+          trace: {
+            workflowRunId: "wf-loop",
+            templateId: "research-brief",
+            templateVersion: "1.0.0",
+            dynamicDecision: {
+              action: "reschedule",
+              delaySecs: 600,
+              reason: "CI is still running",
+            },
+          },
+          usage: {
+            messageCount: 3,
+            userTurns: 1,
+            assistantMessages: 2,
+            inputTokens: 60,
+            outputTokens: 15,
+            totalTokens: 75,
+            attribution: "session_messages_between_loop_run_bounds",
+          },
+        },
+      ],
+    })
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "list_workflow_runs") return Promise.resolve([])
       if (name === "list_loop_schedules") return Promise.resolve([snapshot.schedule])
@@ -3643,6 +3770,10 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("#1")).toBeTruthy()
     expect(screen.getByText("成功")).toBeTruthy()
     expect(screen.getByText("research-brief@1.0.0")).toBeTruthy()
+    expect(screen.getByText(/本轮 Token/)).toBeTruthy()
+    expect(screen.getByText(/75 · 输入 60 \/ 输出 15/)).toBeTruthy()
+    expect(screen.getByText(/10m 后继续/)).toBeTruthy()
+    expect(screen.getByText(/CI is still running/)).toBeTruthy()
     expect(screen.getByText("workflow launched")).toBeTruthy()
   })
 
@@ -3704,6 +3835,38 @@ describe("WorkspacePanel workflow section", () => {
     })
   })
 
+  it("surfaces loop watchdog findings with a direct recovery action", async () => {
+    const schedule = loopSchedule({
+      prompt: "Keep checking CI until it passes",
+      nextRunAt: "2026-01-01T00:10:00Z",
+    })
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([schedule])
+      if (name === "list_loop_watchdog_findings")
+        return Promise.resolve([loopWatchdogFinding({ loopId: schedule.id })])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve(args ?? {})
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickSectionHeader("持续推进")
+    expect(await screen.findByText("有持续推进需要确认")).toBeTruthy()
+    expect(screen.getByText("到点后还未开始，已延迟 10m")).toBeTruthy()
+
+    fireEvent.click(screen.getAllByRole("button", { name: "立即运行" })[0])
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("run_loop_schedule_now", {
+        loopId: schedule.id,
+      })
+    })
+  })
+
   it("creates event-triggered loops from the persistent progress center", async () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
       if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
@@ -3735,6 +3898,47 @@ describe("WorkspacePanel workflow section", () => {
           filters: { workflowState: "completed" },
           debounceSecs: 30,
         },
+        executionStrategy: "continue",
+        goalId: "goal-auto",
+        goalCriterionId: undefined,
+        maxRuns: null,
+        maxRuntimeSecs: null,
+        tokenBudget: null,
+        maxNoProgressRuns: 3,
+        maxFailures: 3,
+        backoffSecs: 300,
+      })
+    })
+  })
+
+  it("creates dynamic self-paced loops from the persistent progress center", async () => {
+    transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
+      if (name === "get_active_goal") return Promise.resolve(goalSnapshotWithWorkflowTemplate())
+      if (name === "list_workflow_runs") return Promise.resolve([])
+      if (name === "list_loop_schedules") return Promise.resolve([])
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      if (name === "create_loop_schedule") return Promise.resolve(args ?? {})
+      return Promise.resolve([])
+    })
+
+    renderPanel({
+      workingDir: { path: "/repo", source: "session", exists: true, name: "repo" },
+      git: null,
+    })
+
+    await clickSectionHeader("持续推进")
+    clickLastNamedButton("新建持续推进")
+    fireEvent.click(await screen.findByRole("button", { name: "模型自定" }))
+    fireEvent.change(screen.getByLabelText("回退间隔"), { target: { value: "25m" } })
+    fireEvent.click(screen.getByRole("button", { name: "创建持续推进" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("create_loop_schedule", {
+        sessionId: "s1",
+        prompt: "",
+        triggerKind: "dynamic",
+        triggerSpec: { fallbackSecs: 1500 },
         executionStrategy: "continue",
         goalId: "goal-auto",
         goalCriterionId: undefined,
@@ -3827,6 +4031,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("工作流")
     expect(await screen.findByText("准备开始工作流运行")).toBeTruthy()
     expect(screen.getByText("已设置")).toBeTruthy()
 
@@ -3848,7 +4053,8 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    expect(await screen.findByText("Execution Mode")).toBeTruthy()
+    await clickSectionHeader("工作流")
+    expect(await screen.findByText("执行模式")).toBeTruthy()
 
     fireEvent.click(screen.getByText("深入"))
 
@@ -3878,7 +4084,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
 
     const script = `export default async function main(workflow) {
   const task = await workflow.task.create({ title: "Run" });
@@ -3887,7 +4093,7 @@ describe("WorkspacePanel workflow section", () => {
   await workflow.finish({ summary: "done", verification: ["pnpm typecheck"], residualRisk: [] });
 }`
     fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
-    fireEvent.change(screen.getByLabelText("Script"), { target: { value: script } })
+    fireEvent.change(screen.getByLabelText("脚本"), { target: { value: script } })
     fireEvent.click(screen.getByRole("switch"))
 
     expect((screen.getByRole("button", { name: "创建并运行" }) as HTMLButtonElement).disabled).toBe(
@@ -3940,7 +4146,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
     fireEvent.change(screen.getByLabelText("从目标开始"), {
       target: { value: "修复设置页保存 Provider 后没有刷新状态的问题" },
     })
@@ -4004,7 +4210,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
     expect((await screen.findAllByText("Research brief")).length).toBeGreaterThan(0)
 
     fireEvent.change(screen.getByLabelText("从目标开始"), {
@@ -4068,7 +4274,7 @@ describe("WorkspacePanel workflow section", () => {
       },
     )
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
     expect(screen.getByText("预检时会自动创建并切换到一个新会话")).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText("从目标开始"), {
@@ -4128,6 +4334,7 @@ describe("WorkspacePanel workflow section", () => {
       },
     )
 
+    await clickSectionHeader("工作流")
     const enableWorkflowButton = (await screen.findAllByRole("button")).find((button) =>
       button.textContent?.includes("模型按需编排"),
     )
@@ -4153,7 +4360,7 @@ describe("WorkspacePanel workflow section", () => {
 
     renderPanel(null)
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
     expect(
       screen.getByText("当前会话未设置工作目录；目标草稿会先创建为待启动，设置目录后再运行。"),
     ).toBeTruthy()
@@ -4213,9 +4420,9 @@ describe("WorkspacePanel workflow section", () => {
 
     renderPanel(null)
 
-    fireEvent.click(await screen.findByRole("button", { name: "新建工作流" }))
+    await openWorkflowCreateComposer()
     fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
-    fireEvent.change(screen.getByLabelText("Script"), {
+    fireEvent.change(screen.getByLabelText("脚本"), {
       target: {
         value:
           "export default async function main(workflow) { await workflow.task.create({ title: 'x' }); }",
@@ -4245,7 +4452,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(await screen.findByText("当前焦点：等待授权")).toBeTruthy()
     expect(screen.queryByText("需要批准后继续")).toBeNull()
     expect(await screen.findByText("下一步：确认授权")).toBeTruthy()
-    expect(screen.getAllByRole("button", { name: "查看 Trace" }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole("button", { name: /查看\s*轨迹/ }).length).toBeGreaterThan(0)
     expect(await screen.findByText("授权清单")).toBeTruthy()
     expect(screen.getAllByText("调用").length).toBeGreaterThan(0)
     expect(screen.getAllByText("需批准").length).toBeGreaterThan(0)
@@ -4260,6 +4467,30 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("等待批准")).toBeTruthy()
     expect(screen.getAllByText("待处理").length).toBeGreaterThan(0)
     expect(screen.getByText("最近信号")).toBeTruthy()
+  })
+
+  it("surfaces workflow watchdog findings without hiding run details", async () => {
+    const run = workflowRun({ state: "running", kind: "coding.long-task" })
+    const snapshot = workflowSnapshot(run)
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "list_workflow_watchdog_findings")
+        return Promise.resolve([workflowWatchdogFinding({ runId: run.id })])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    expect(await screen.findByText("有工作流需要确认")).toBeTruthy()
+    expect(screen.getByText("运行中但没有新进展，已等待 10m")).toBeTruthy()
+    expect(screen.getAllByText("需确认").length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }))
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("get_workflow_run", { runId: run.id })
+    })
   })
 
   it("shows granted approval history in the workflow overview", async () => {
@@ -4380,7 +4611,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(await screen.findByText("运行位置 · wt-run")).toBeTruthy()
     expect(await screen.findByText("/repo-worktrees/wt-run")).toBeTruthy()
     expect(screen.getAllByText("运行位置已绑定").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("Trace").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("轨迹").length).toBeGreaterThan(0)
   })
 
   it("surfaces the active workflow focus and jumps to the relevant detail tab", async () => {
@@ -4427,10 +4658,10 @@ describe("WorkspacePanel workflow section", () => {
 
     expect(await screen.findByText("当前焦点：正在执行 targeted-validation")).toBeTruthy()
     expect(await screen.findByText("下一步：观察运行进度")).toBeTruthy()
-    const validationTab = screen.getByRole("tab", { name: /Validation/ })
+    const validationTab = screen.getByRole("tab", { name: /验证/ })
     expect(validationTab.getAttribute("aria-selected")).toBe("false")
 
-    fireEvent.click(screen.getAllByRole("button", { name: "查看 Validation" })[0])
+    fireEvent.click(screen.getAllByRole("button", { name: /查看\s*验证/ })[0])
 
     expect(validationTab.getAttribute("aria-selected")).toBe("true")
   })
@@ -4583,6 +4814,188 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getAllByText("预算用量").length).toBeGreaterThan(0)
   })
 
+  it("shows reliable workflow run summary metrics without estimating unattributed token cost", async () => {
+    const run = workflowRun({
+      state: "completed",
+      completedAt: "2026-01-01T00:06:00Z",
+      updatedAt: "2026-01-01T00:06:00Z",
+      budget: {
+        maxScriptSecs: 180,
+        maxOps: 24,
+        maxOutputTokens: 10000,
+        sizeGuideline: "large",
+      },
+    })
+    const snapshot = workflowSnapshot(run)
+    snapshot.events.push(
+      {
+        id: 3,
+        runId: run.id,
+        seq: 3,
+        eventType: "workflow_phase_started",
+        payload: { phaseKey: "observe", label: "Observe" },
+        createdAt: "2026-01-01T00:01:00Z",
+      },
+      {
+        id: 4,
+        runId: run.id,
+        seq: 4,
+        eventType: "workflow_phase_completed",
+        payload: { phaseKey: "observe", summary: "Done" },
+        createdAt: "2026-01-01T00:03:00Z",
+      },
+      {
+        id: 5,
+        runId: run.id,
+        seq: 5,
+        eventType: "workflow_checkpoint",
+        payload: { title: "Checkpoint", summary: "Looks good" },
+        createdAt: "2026-01-01T00:04:00Z",
+      },
+      {
+        id: 6,
+        runId: run.id,
+        seq: 6,
+        eventType: "workflow_report",
+        payload: { title: "Report", summary: "Ready", needsUser: false },
+        createdAt: "2026-01-01T00:05:00Z",
+      },
+      {
+        id: 7,
+        runId: run.id,
+        seq: 7,
+        eventType: "workflow_milestone_injection_requested",
+        payload: { sourceEventSeq: 6, sourceEventType: "workflow_report" },
+        createdAt: "2026-01-01T00:05:10Z",
+      },
+      {
+        id: 8,
+        runId: run.id,
+        seq: 8,
+        eventType: "workflow_milestone_injection_delivered",
+        payload: { sourceEventSeq: 6, sourceEventType: "workflow_report" },
+        createdAt: "2026-01-01T00:05:20Z",
+      },
+      {
+        id: 9,
+        runId: run.id,
+        seq: 9,
+        eventType: "run_runtime_result",
+        payload: { status: "ok", finalState: "completed" },
+        createdAt: "2026-01-01T00:06:00Z",
+      },
+    )
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByText("coding.feature"))
+
+    expect(await screen.findByText("运行摘要")).toBeTruthy()
+    expect(screen.getByText("6m")).toBeTruthy()
+    expect(screen.getAllByText("1/1").length).toBeGreaterThan(0)
+    expect(screen.getByText("大")).toBeTruthy()
+    expect(screen.getByText("3m · 24 步 · 10.0k Token")).toBeTruthy()
+    expect(screen.getByText("Token/成本等待工作流运行归因接入；当前不估算。")).toBeTruthy()
+  })
+
+  it("shows attributed workflow sub-agent token usage without claiming full cost", async () => {
+    const run = workflowRun({
+      state: "completed",
+      completedAt: "2026-01-01T00:06:00Z",
+      updatedAt: "2026-01-01T00:06:00Z",
+    })
+    const snapshot = workflowSnapshot(run)
+    snapshot.agentUsage = {
+      spawnedAgents: 2,
+      completedAgents: 1,
+      runningAgents: 0,
+      failedAgents: 1,
+      attributedAgents: 1,
+      inputTokens: 100,
+      outputTokens: 25,
+      totalTokens: 125,
+      attribution: "workflow_ops.child_handle=subagent_runs.run_id",
+    }
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByText("coding.feature"))
+
+    expect(await screen.findByText("子代理 Token")).toBeTruthy()
+    expect(screen.getByText("125 · 1/2 个 Agent")).toBeTruthy()
+    expect(
+      screen.getByText("仅统计本工作流关联子代理用量；完整成本仍等待运行归因。"),
+    ).toBeTruthy()
+  })
+
+  it("shows workflow window token usage without claiming provider-level cost", async () => {
+    const run = workflowRun({
+      state: "completed",
+      completedAt: "2026-01-01T00:06:00Z",
+      updatedAt: "2026-01-01T00:06:00Z",
+    })
+    const snapshot = workflowSnapshot(run)
+    snapshot.usage = {
+      parentEvents: 1,
+      parentInputTokens: 40,
+      parentOutputTokens: 10,
+      parentCacheCreationInputTokens: 0,
+      parentCacheReadInputTokens: 0,
+      parentTotalTokens: 50,
+      parentInjectionTurns: 0,
+      parentInjectionMessages: 0,
+      parentInjectionInputTokens: 0,
+      parentInjectionOutputTokens: 0,
+      parentInjectionTotalTokens: 0,
+      parentInjectionProviderEvents: 0,
+      parentInjectionProviderInputTokens: 0,
+      parentInjectionProviderOutputTokens: 0,
+      parentInjectionProviderCacheCreationInputTokens: 0,
+      parentInjectionProviderCacheReadInputTokens: 0,
+      parentInjectionProviderTotalTokens: 0,
+      parentInjectionAttribution: "no_workflow_result_injection_messages",
+      agentInputTokens: 100,
+      agentOutputTokens: 25,
+      agentTotalTokens: 125,
+      totalTokens: 175,
+      attribution:
+        "session_model_usage_between_workflow_run_bounds+workflow_ops.child_handle=subagent_runs.run_id",
+    }
+    transportMock.call.mockImplementation((name: string) => {
+      if (name === "list_workflow_runs") return Promise.resolve([run])
+      if (name === "get_workflow_run") return Promise.resolve(snapshot)
+      if (name === "get_execution_mode") return Promise.resolve({ mode: "guarded" })
+      if (name === "get_background_job") return Promise.resolve(null)
+      return Promise.resolve([])
+    })
+
+    renderPanel(null)
+
+    fireEvent.click(await screen.findByText("coding.feature"))
+
+    expect(await screen.findByText("窗口 Token")).toBeTruthy()
+    expect(screen.getByText("175 · 父会话 50 / 子代理 125")).toBeTruthy()
+    expect(
+      screen.getByText(
+        "窗口 Token = 父会话运行窗口 + 本工作流关联子代理；工作流注入回合另有强关联口径；不是 provider 级完整成本。",
+      ),
+    ).toBeTruthy()
+  })
+
   it("confirms before cancelling a workflow run", async () => {
     const run = workflowRun({ state: "running" })
     const snapshot = workflowSnapshot(run)
@@ -4602,7 +5015,7 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "取消" })[0])
 
     expect(screen.getByText("取消这个工作流运行？")).toBeTruthy()
-    expect(screen.getByText(/已有 trace 会保留/)).toBeTruthy()
+    expect(screen.getByText(/已有轨迹会保留/)).toBeTruthy()
     expect(transportMock.call).not.toHaveBeenCalledWith("cancel_workflow_run", expect.anything())
 
     fireEvent.click(screen.getByRole("button", { name: "确认取消" }))
@@ -4818,7 +5231,7 @@ describe("WorkspacePanel workflow section", () => {
     })
     const objective = screen.getByLabelText("从目标开始") as HTMLTextAreaElement
     fireEvent.click(screen.getByRole("button", { name: /高级脚本/ }))
-    const script = screen.getByLabelText("Script") as HTMLTextAreaElement
+    const script = screen.getByLabelText("脚本") as HTMLTextAreaElement
     expect(objective.value).toContain("继续修复失败的工作流运行 wf-1")
     expect(objective.value).toContain("expected value to be true")
     expect(script.value).toContain("expected value to be true")

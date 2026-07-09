@@ -76,9 +76,9 @@ Workspace 必须保持四个概念清晰：
 
 | 概念 | 用户语义 | Workspace 展示 |
 | --- | --- | --- |
-| Goal | 最终要达成什么、完成标准是什么、证据是否足够。 | 独立 Goal section；显示 active Goal、criteria、revision、audit、closure、evidence 和编辑/评估/关闭操作。 |
-| Workflow | 一次具体、可观察、可恢复、可审批的动态执行 run。 | 独立 Workflow section；显示 Workflow Mode、run list/detail、审批、失败恢复、trace、create/run/pause/resume/cancel。 |
-| Loop | 按时间、事件或条件持续触发同一任务策略。 | 独立 Loop section；显示 schedule、trigger、run history、policy、progress guard、暂停/恢复/停止/run now。 |
+| Goal | 最终要达成什么、完成标准是什么、证据是否足够。 | 独立 Goal section；显示 active Goal、criteria、revision、audit、closure、evidence、Goal Watchdog amber 确认和编辑/评估/关闭操作。 |
+| Workflow | 一次具体、可观察、可恢复、可审批的动态执行 run。 | 独立 Workflow section；显示 Workflow Mode、run list/detail、审批、失败恢复、trace、Workflow Watchdog amber 确认、create/run/pause/resume/cancel。 |
+| Loop | 按时间、事件或条件持续触发同一任务策略。 | 独立 Loop section；显示 schedule、trigger、run history、policy、progress guard、Loop Watchdog amber 确认、暂停/恢复/停止/run now。 |
 | Task | Goal / Workflow / Loop 执行过程中产生的用户可见进度叶子。 | 只在 Progress 聚合展示数量、完成状态和当前进度；大量 task 不应改变顶层控制面语义。 |
 
 Goal / Workflow 执行过程中可以创建和完成很多 Task。Task 的增长不应让 Workspace 自动展开所有专家区，也不应把 Goal 或 Workflow 误判为失败；只有 Task failure 被对应控制面写成 blocking evidence、failed run 或 needs-user 状态时，才进入异常展示。
@@ -91,6 +91,7 @@ Goal / Workflow 执行过程中可以创建和完成很多 Task。Task 的增长
 - active Goal / active Workflow / active Loop 可以自动展开对应主 section。
 - Advanced Diagnostics section 只有在 danger / error / focus request / 用户显式展开时自动打开。
 - Domain Task Workbench 不因 Workflow Mode 开启而自动变红；它只反映真实 artifact / connector / quality guard 状态。
+- Goal / Workflow / Loop Watchdog 只表示“需要确认或恢复入口可见”，默认使用 amber，不自动等同失败；只有对应控制面明确 failed/blocked/danger 时才升级红色。
 - Incognito 下 durable 控制面 section 必须 fail closed 或只显示不可用说明，不落持久化数据。
 
 颜色语义：
@@ -150,8 +151,27 @@ UI 验收底线：
 - 典型桌面宽度和窄屏宽度不能横向溢出。
 - 输入框工具栏不允许因按钮增多而换行或互相覆盖；空间不足时优先收纳进 `+` 菜单。
 - hover tooltip / button shadow 不能被父容器裁切。
+- 模型选择、Workflow Mode、权限、沙箱和 `+` 菜单的浮层必须在窄屏可见。二级菜单不得固定向右越出视口；`ModelPicker` 在右侧空间不足时把模型/温度二级菜单改为向上展开。
 - 工作台 section 内容可内部滚动，但外层右侧面板不能出现不可控横向滚动。
 - 默认空状态不能呈现成大面积红色。
+
+Dev-only GUI smoke：
+
+- 开发环境支持 `?window=workspace-smoke`，入口在 `src/main.tsx`，实现为 `src/dev/WorkspaceSmokeWindow.tsx`。
+- 该 smoke 复用真实 `WorkspacePanel`，用固定 fixture 覆盖 active Goal、running Workflow、dynamic Loop、Task 进度、后台任务、输出/来源、Domain Evidence、运行稳定性、长跑审计、交付守门、外部动作守门和连接器端到端（E2E）。
+- 它只作为可重复的人工/浏览器 GUI smoke 入口，用来检查默认状态故事、高级诊断展开、窄/宽响应式布局和 popover/tooltip 裁剪；不替代真实 Tauri 桌面长跑、连接器 E2E、restart/resume 或 V3 strict proof route。
+- 开发环境也支持 `?window=chat-input-smoke`，入口在 `src/main.tsx`，实现为 `src/dev/ChatInputSmokeWindow.tsx`。该 smoke 复用真实 `ChatInput`，用固定 fixture 覆盖 active Goal、Task progress、Workflow Mode、模型选择、权限、沙箱、工作目录、上下文用量、目标模式和 `+` 收纳菜单；用于复现输入框窄/宽布局、菜单裁剪和模式状态条，不替代真实 Tauri 桌面验收。
+
+V3 strict proof audit：
+
+- `node scripts/v3-strict-proof-audit.mjs` 是 V3 关闭前的证据包审计入口。它扫描仓库 architecture 文档、外部 V3 Plans、deterministic evidence 截图和严格证据 manifest，输出 Markdown 或 `--json` 结构化报告。
+- 退出码 `0` 表示 required strict proof artifacts 都存在且 manifest 校验通过；退出码 `2` 表示仍有 V3 closure blocker。该脚本故意不会把 deterministic substitute 当成 strict proof。
+- 严格证据只认外部 Plans 下的 `v3-strict-proof-evidence.json`：每个关闭项必须有 `status: "passed"`、允许的 `evidenceKind`、必需 coverage label、可解析 `performedAt` 和存在于 Plans 目录内的 artifact 路径。文件名匹配只用于 deterministic substitute 和展示上下文，不能满足 strict proof。
+- 模板文件是 `v3-strict-proof-evidence.template.json`，用于记录真实验收后如何填写；模板或 pending 条目不会让审计通过。采集辅助入口是 `node scripts/v3-strict-proof-record.mjs --requirement <name>`：它默认只创建 pending 条目和 artifact 骨架，标记 `passed` 必须显式 `--confirm-reviewed`，artifact 必须已存在，且 artifact 内 `Required Coverage` / `Reviewer Decision` checklist 必须全部勾选；最终是否关闭仍由 audit 脚本决定。
+- 快速状态入口是 `node scripts/v3-strict-proof-record.mjs --list`，下一项入口是 `--next`，机器可读入口是 `--list --json`，退出码门禁是 `--check-ready`（ready 返回 `0`，仍有 open blocker 返回 `2`）。`summary.remaining == 0` / `--check-ready` 只表示五个 strict proof artifact 已按 record 脚本口径准备完毕，最终关闭仍必须以 audit 脚本退出码 `0` 为准。
+- 五个 strict proof requirement 的顺序、coverage、允许证据类型和 reviewer decision 文案以 `scripts/v3-strict-proof-requirements.mjs` 为单一来源；`record` 和 `audit` 都必须引用它，避免“状态列表已 ready 但最终 audit 失败”的定义漂移。
+- `--write <path>` 可把最新报告写入外部 Plans，例如 `v3-strict-proof-audit-latest.md`。当前 required strict proof 包括真实 restart/resume matrix、真实 wall-clock soak、真实或沙箱 connector read-back、Tauri desktop manual GUI smoke，以及 Hope / Claude Code / Codex 对比评测证据。
+- 2026-07-09 V3 关闭证据已归档到外部 Plans 的 `11-agent-control-plane-v3-claude-parity/`：5 个 required strict proof 全部 `passed`，最终 audit `14/14 passed`、`blockers=0`。其中 connector read-back 采用 GitHub sandbox branch create/read/delete/reset 路线；Google Drive OAuth scope 失败作为 recovery evidence 保留，不算通过证据。
 
 ## 8. 归档与后续
 

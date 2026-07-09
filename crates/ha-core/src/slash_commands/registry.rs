@@ -382,8 +382,13 @@ pub fn all_commands() -> Vec<SlashCommandDef> {
             description_key: "slashCommands.loop.description".into(),
             has_args: true,
             args_optional: true,
-            arg_placeholder: Some("[every|until|status|pause|resume|stop]".into()),
+            arg_placeholder: Some(
+                "[interval] <prompt> | <prompt> | status/pause/resume/stop".into(),
+            ),
             arg_options: Some(vec![
+                "5m check CI".into(),
+                "check CI every 5m".into(),
+                "check CI and address review comments".into(),
                 "every".into(),
                 "until".into(),
                 "status".into(),

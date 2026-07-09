@@ -24,7 +24,7 @@ export const CHAT_INPUT_TOOLBAR_ITEM_GAP_PX = 4
 export const CHAT_INPUT_TOOLBAR_GROUP_WIDTH_FALLBACKS = {
   addActions: 108,
   overflowTrigger: 32,
-  semanticModes: 260,
+  semanticModes: 336,
   sandbox: 146,
   permission: 131,
 } as const

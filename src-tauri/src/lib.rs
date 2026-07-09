@@ -847,6 +847,7 @@ pub fn run() {
             // Goals (top-level completion criteria and evidence)
             commands::goal::get_active_goal,
             commands::goal::get_goal,
+            commands::goal::list_goal_watchdog_findings,
             commands::goal::create_goal,
             commands::goal::update_goal,
             commands::goal::pause_goal,
@@ -857,6 +858,7 @@ pub fn run() {
             commands::goal::append_goal_follow_up,
             // Loop schedules (Phase 2.9 real recurrence control plane)
             commands::loop_control::list_loop_schedules,
+            commands::loop_control::list_loop_watchdog_findings,
             commands::loop_control::get_loop_schedule,
             commands::loop_control::create_loop_schedule,
             commands::loop_control::update_loop_schedule_policy,
@@ -962,6 +964,10 @@ pub fn run() {
             commands::worktree::handoff_managed_worktree,
             // Workflow runs (durable, domain-neutral dynamic orchestration)
             commands::workflow::list_workflow_runs,
+            commands::workflow::list_workflow_watchdog_findings,
+            commands::workflow::list_saved_workflow_templates,
+            commands::workflow::save_workflow_template_from_run,
+            commands::workflow::create_workflow_run_from_template,
             commands::workflow::get_workflow_run,
             commands::workflow::preview_workflow_script,
             commands::workflow::create_workflow_run,
