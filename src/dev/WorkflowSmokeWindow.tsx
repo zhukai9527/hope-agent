@@ -246,8 +246,10 @@ function sessionArtifacts(): SessionArtifacts {
         origin: "message",
       },
     ],
+    browser: [],
     filesTruncated: false,
     sourcesTruncated: false,
+    browserTruncated: false,
   }
 }
 

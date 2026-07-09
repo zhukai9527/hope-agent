@@ -806,7 +806,9 @@
       "collapse": "Runtuhkan panel kanan",
       "expand": "Kembangkan panel kanan",
       "switch": "Tukar panel kanan"
-    }
+    },
+    "visionBridgeEngaged": "Model utama tidak dapat melihat imej, jadi {{model}} menerangkannya bagi pihaknya.",
+    "visionBridgeUnavailable": "Model penglihatan tidak dapat menerangkan imej itu, jadi ia diabaikan."
   },
   "codexAuth": {
     "expiredDescription": "Token OAuth Codex anda tidak lagi sah. Sila log masuk semula untuk meneruskan.",
@@ -1418,6 +1420,19 @@
           "memory_reembed": "Embed semula memori"
         }
       }
+    },
+    "usageKind": {
+      "all": "Semua penggunaan",
+      "chat": "Sembang",
+      "side_query": "Pertanyaan sampingan",
+      "embedding": "Pembenaman",
+      "stt": "Ucapan ke teks",
+      "judge": "Penilaian",
+      "summarize": "Ringkasan",
+      "web_search": "Carian web",
+      "image_generation": "Penjanaan imej",
+      "provider_test": "Ujian pembekal",
+      "vision": "Penglihatan"
     }
   },
   "fileActions": {
@@ -5121,7 +5136,11 @@
     "permLoading": "Menyemak kebenaran...",
     "uiEffects": "Animasi latar belakang",
     "uiEffectsDesc": "Dayakan pautan latar belakang semua cuaca dan kesan cuaca",
-    "uiEffectsToggle": "Hidupkan kesan"
+    "uiEffectsToggle": "Hidupkan kesan",
+    "visionBridgeModel": "Model jambatan penglihatan",
+    "visionBridgeModelDesc": "Hanya digunakan apabila model utama tidak dapat melihat imej. Model berasingan menukar imej menjadi penerangan teks supaya perbualan boleh diteruskan.",
+    "visionBridgeModelClear": "Matikan jambatan penglihatan",
+    "selectVisionBridgeModel": "Pilih model penglihatan"
   },
   "shortcuts": {
     "actionOpenSettings": "Buka tetapan",

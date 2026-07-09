@@ -28,6 +28,7 @@ import {
   Database,
   Eye,
   EyeOff,
+  ExternalLink,
   FileText,
   Files,
   FolderGit2,
@@ -175,6 +176,7 @@ import type { TaskProgressSnapshot } from "@/components/chat/tasks/taskProgress"
 import type { PlanModeState } from "@/components/chat/plan-mode/usePlanMode"
 import type { SessionFileEntry } from "./useSessionFileChanges"
 import type { SessionUrlSource } from "./useSessionUrlSources"
+import type { SessionBrowserActivity } from "./useSessionBrowserActivity"
 import { useWorkspaceArtifacts } from "./useWorkspaceArtifacts"
 import { useWorkspaceEnvironment } from "./useWorkspaceEnvironment"
 import { useScrollPagedRender } from "./useScrollPagedRender"
@@ -284,6 +286,8 @@ interface WorkspacePanelProps {
   onBackgroundJobExpandedChange?: (jobId: string, expanded: boolean) => void
   /** R4:打开独立「后台任务」面板（完整列表和单项管理在那里处理）。 */
   onOpenBackgroundJobs?: () => void
+  /** 切到实时 BrowserPanel。工作台里的浏览器活动行用它查看当前画面。 */
+  onOpenBrowserPanel?: () => void
   /** 打开子 agent 实时会话弹层，不切换当前主会话。 */
   onViewSubagentSession?: (sessionId: string) => void
   /** 从输入框或其它全局入口请求打开「持续推进」创建器。 */
@@ -489,6 +493,111 @@ function SourceRow({ source }: { source: SessionUrlSource }) {
           </span>
         )}
       </button>
+    </IconTip>
+  )
+}
+
+function browserActivityLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  activity: SessionBrowserActivity,
+): string {
+  const op = activity.op
+  switch (activity.action) {
+    case "navigate":
+      return t("workspace.browserAction.navigate", "导航")
+    case "tabs":
+      if (op === "new") return t("workspace.browserAction.newTab", "新标签")
+      if (op === "claim") return t("workspace.browserAction.claim", "接管")
+      if (op === "select") return t("workspace.browserAction.select", "切换")
+      if (op === "close") return t("workspace.browserAction.close", "关闭")
+      return t("workspace.browserAction.tabs", "标签页")
+    case "act":
+      return op
+        ? t("workspace.browserAction.actWithOp", "{{op}}", { op })
+        : t("workspace.browserAction.act", "操作")
+    case "snapshot":
+      if (op === "screenshot" || op === "image")
+        return t("workspace.browserAction.screenshot", "截图")
+      if (op === "pdf") return t("workspace.browserAction.pdf", "PDF")
+      return t("workspace.browserAction.snapshot", "快照")
+    case "observe":
+      return t("workspace.browserAction.observe", "观察")
+    case "control":
+      if (op === "scroll") return t("workspace.browserAction.scroll", "滚动")
+      if (op === "evaluate") return t("workspace.browserAction.evaluate", "脚本")
+      if (op === "wait_for") return t("workspace.browserAction.wait", "等待")
+      return t("workspace.browserAction.control", "控制")
+    case "profile":
+      return t("workspace.browserAction.profile", "浏览器")
+    case "status":
+      return t("workspace.browserAction.status", "状态")
+  }
+}
+
+function BrowserActivityRow({
+  activity,
+  onOpenBrowserPanel,
+}: {
+  activity: SessionBrowserActivity
+  onOpenBrowserPanel?: () => void
+}) {
+  const { t } = useTranslation()
+  const faviconUrl = useSafeFavicon(activity.url ?? "")
+  const label = browserActivityLabel(t, activity)
+  const title = activity.title || (activity.url ? domainOf(activity.url) : label)
+  const subtitle = activity.url || activity.targetId || activity.backend || ""
+  const time = activity.at ? new Date(activity.at).toLocaleTimeString() : ""
+
+  return (
+    <IconTip label={subtitle || title}>
+      <div className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-secondary/45">
+        {faviconUrl ? (
+          <img
+            src={faviconUrl}
+            alt=""
+            className="h-3.5 w-3.5 shrink-0 rounded-[3px] bg-background/70 object-contain"
+          />
+        ) : (
+          <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left"
+          onClick={onOpenBrowserPanel}
+          disabled={!onOpenBrowserPanel}
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-medium text-foreground/90">{title}</span>
+            <span className="inline-flex shrink-0 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {label}
+            </span>
+          </div>
+          {subtitle ? (
+            <div className="truncate pt-0.5 text-[10px] text-muted-foreground/70">{subtitle}</div>
+          ) : null}
+        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {activity.backend ? (
+            <span className="rounded bg-secondary/70 px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+              {activity.backend}
+            </span>
+          ) : null}
+          {time ? <span className="text-[10px] text-muted-foreground/60">{time}</span> : null}
+          {activity.url ? (
+            <IconTip label={t("chat.browserPanel.openExternal")}>
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  if (activity.url) openExternalUrl(activity.url)
+                }}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            </IconTip>
+          ) : null}
+        </div>
+      </div>
     </IconTip>
   )
 }
@@ -21457,6 +21566,7 @@ export default function WorkspacePanel({
   backgroundJobExpansionOverrides,
   onBackgroundJobExpandedChange,
   onOpenBackgroundJobs,
+  onOpenBrowserPanel,
   onViewSubagentSession,
   openLoopCreateRequest = 0,
   onEnsureSession,
@@ -21465,11 +21575,8 @@ export default function WorkspacePanel({
   onClose,
 }: WorkspacePanelProps) {
   const { t } = useTranslation()
-  const { files, sources, filesTruncated, sourcesTruncated } = useWorkspaceArtifacts(
-    sessionId,
-    messages,
-    { incognito, turnActive },
-  )
+  const { files, sources, browser, filesTruncated, sourcesTruncated, browserTruncated } =
+    useWorkspaceArtifacts(sessionId, messages, { incognito, turnActive })
   const ownedWorkflowRunsState = useWorkflowRuns(sessionId, {
     incognito,
     turnActive,
@@ -21520,6 +21627,11 @@ export default function WorkspacePanel({
     hasMore: hasMoreSources,
     setSentinel: setSourcesSentinel,
   } = useScrollPagedRender(sources, { step: RENDER_STEP, resetKey: sessionId })
+  const {
+    visible: visibleBrowser,
+    hasMore: hasMoreBrowser,
+    setSentinel: setBrowserSentinel,
+  } = useScrollPagedRender(browser, { step: RENDER_STEP, resetKey: sessionId })
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
@@ -21632,6 +21744,7 @@ export default function WorkspacePanel({
           onViewSubagentSession={onViewSubagentSession}
         />
 
+        {/* 输出 — 本会话碰到的文件(读 + 改),定高内部滚动 + 滚动增量渲染。 */}
         <WorkspaceSection
           title={t("workspace.sectionOutput", "输出")}
           count={files.length}
@@ -21656,6 +21769,7 @@ export default function WorkspacePanel({
           )}
         </WorkspaceSection>
 
+        {/* 来源 — web_search 命中 + 正文链接,定高内部滚动 + 滚动增量渲染。 */}
         <WorkspaceSection
           title={t("workspace.sectionSources", "来源")}
           count={sources.length}
@@ -21674,6 +21788,33 @@ export default function WorkspacePanel({
           )}
         </WorkspaceSection>
 
+        {/* 浏览器 — 本会话浏览器工具活动。实时画面仍在 BrowserPanel。 */}
+        <WorkspaceSection
+          title={t("workspace.sectionBrowser", "浏览器")}
+          count={browser.length}
+          icon={Monitor}
+        >
+          {browser.length > 0 ? (
+            <div className="max-h-[40vh] space-y-0.5 overflow-y-auto pr-0.5">
+              {visibleBrowser.map((activity, index) => (
+                <BrowserActivityRow
+                  key={
+                    activity.callId ??
+                    `${activity.at ?? index}:${activity.action}:${activity.op ?? ""}:${activity.url ?? ""}`
+                  }
+                  activity={activity}
+                  onOpenBrowserPanel={onOpenBrowserPanel}
+                />
+              ))}
+              {hasMoreBrowser && <div ref={setBrowserSentinel} className="h-px" />}
+              {browserTruncated && <TruncatedNote />}
+            </div>
+          ) : (
+            <EmptyHint>{t("workspace.emptyBrowser", "还没有浏览器活动")}</EmptyHint>
+          )}
+        </WorkspaceSection>
+
+        {/* 知识空间 — 挂载的库(读/写)+ 本会话笔记活动。 */}
         <KnowledgeSection
           sessionId={sessionId}
           projectId={project?.id ?? sessionMeta?.projectId ?? null}

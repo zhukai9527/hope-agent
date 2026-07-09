@@ -157,8 +157,10 @@ function sessionArtifacts(): SessionArtifacts {
   return {
     files: [],
     sources: [],
+    browser: [],
     filesTruncated: false,
     sourcesTruncated: false,
+    browserTruncated: false,
   }
 }
 

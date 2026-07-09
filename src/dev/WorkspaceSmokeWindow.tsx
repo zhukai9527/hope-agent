@@ -738,8 +738,10 @@ function sessionArtifacts(): SessionArtifacts {
         origin: "web_search",
       },
     ],
+    browser: [],
     filesTruncated: false,
     sourcesTruncated: false,
+    browserTruncated: false,
   }
 }
 
