@@ -258,6 +258,48 @@ fn rewrite_user_attachment_items_for_http(
     }
 }
 
+fn rewrite_artifact_sources_for_http(
+    session_id: &str,
+    artifacts: &mut ha_core::session::SessionArtifacts,
+    api_key: Option<&str>,
+) {
+    let attachments_dir = match ha_core::paths::attachments_dir(session_id) {
+        Ok(dir) => dir,
+        Err(_) => return,
+    };
+    let canonical_attachments_dir = attachments_dir.canonicalize().ok();
+
+    for source in &mut artifacts.sources {
+        if source.kind != "attachment" || source.attachment_kind.as_deref() == Some("quote") {
+            continue;
+        }
+        let Some(local_path) = source.local_path.take() else {
+            continue;
+        };
+        let path = PathBuf::from(local_path.trim());
+        let is_inside_session_dir = canonical_attachments_dir
+            .as_ref()
+            .and_then(|dir| path.canonicalize().ok().map(|p| p.starts_with(dir)))
+            .unwrap_or(false);
+        if !is_inside_session_dir {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let mut url = format!(
+            "/api/attachments/{}/{}",
+            percent_encode_url_segment(session_id),
+            percent_encode_url_segment(filename)
+        );
+        if let Some(key) = api_key {
+            url.push_str("?token=");
+            url.push_str(&percent_encode_query_value(key));
+        }
+        source.url = Some(url);
+    }
+}
+
 fn collect_authorized_session_file_paths(messages: &[SessionMessage]) -> HashSet<String> {
     let mut paths = HashSet::new();
     for msg in messages {
@@ -861,10 +903,12 @@ pub async fn get_session_artifacts(
     State(ctx): State<Arc<AppContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ha_core::session::SessionArtifacts>, AppError> {
-    let artifacts = ctx
+    let session_id = id.clone();
+    let mut artifacts = ctx
         .session_db
         .run(move |db| ha_core::session::aggregate_session_artifacts(db, &id))
         .await?;
+    rewrite_artifact_sources_for_http(&session_id, &mut artifacts, ctx.api_key.as_deref());
     Ok(Json(artifacts))
 }
 
@@ -1443,6 +1487,47 @@ mod tests {
 
             assert!(rewritten[0].get("path").is_none());
             assert!(rewritten[0].get("url").is_none());
+        });
+    }
+
+    #[test]
+    fn rewrites_artifact_attachment_sources_for_http() {
+        let root = tempfile::tempdir().expect("tempdir");
+        with_ha_data_dir(root.path(), || {
+            let session_id = "s-http";
+            let saved = ha_core::attachments::save_attachment_bytes(
+                Some(session_id),
+                "report.pdf",
+                b"report",
+            )
+            .expect("save session attachment");
+            let mut artifacts = ha_core::session::SessionArtifacts {
+                files: Vec::new(),
+                sources: vec![ha_core::session::UrlSource {
+                    kind: "attachment".to_string(),
+                    url: None,
+                    origin: "user_attachment".to_string(),
+                    name: Some("report.pdf".to_string()),
+                    mime_type: Some("application/pdf".to_string()),
+                    size_bytes: Some(6),
+                    attachment_kind: Some("file".to_string()),
+                    local_path: Some(saved),
+                    quote_path: None,
+                    quote_lines: None,
+                    quote_content: None,
+                }],
+                browser: Vec::new(),
+                files_truncated: false,
+                sources_truncated: false,
+                browser_truncated: false,
+            };
+
+            rewrite_artifact_sources_for_http(session_id, &mut artifacts, Some("key"));
+
+            assert!(artifacts.sources[0].local_path.is_none());
+            let url = artifacts.sources[0].url.as_deref().expect("url");
+            assert!(url.starts_with("/api/attachments/s-http/"));
+            assert!(url.ends_with("_report.pdf?token=key"));
         });
     }
 

@@ -360,11 +360,13 @@ function sourceMediaItem(source: Extract<SessionUrlSource, { kind: "attachment" 
 function attachmentSourceTarget(
   source: Extract<SessionUrlSource, { kind: "attachment" }>,
 ): PreviewTarget | null {
-  const path = source.attachmentKind === "quote" ? source.quotePath : source.localPath
-  if (path) {
+  if (source.attachmentKind === "quote") {
+    return null
+  }
+  if (source.localPath) {
     return {
       kind: "path",
-      path,
+      path: source.localPath,
       name: source.name,
       mime: source.mimeType,
     }
