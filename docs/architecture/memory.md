@@ -5,6 +5,30 @@
 
 记忆系统基于 **SQLite + FTS5 + sqlite-vec** 构建混合检索引擎，为 AI 助手提供跨会话的长期记忆能力。支持 unicode61 关键词检索、trigram 字面片段检索与向量近似最近邻（ANN）检索，通过 RRF（Reciprocal Rank Fusion）融合排序。记忆可由用户手动保存、Agent 自动提取，或通过文件批量导入。记忆支持 **三级作用域**（Global / Agent / Project），项目级记忆在所属会话间共享但与其他项目隔离。
 
+## 最终设计定位：Memory OS
+
+下一代记忆系统不是单一“向量库”或“聊天摘要”功能，而是一套本地优先的 **Memory OS**：它把用户能看懂的记忆体验、可审计的结构化事实、跨源召回、离线固化、外部 provider 同步和高可用治理放在同一套边界内。调研 OpenClaw、Hermes Agent、Mem0、Zep / Graphiti、Letta / LangMem、Supermemory 与 ChatGPT Memory 后，本系统保留 Hope Agent 的本地 SQLite / claim / evidence 作为默认真相源，吸收竞品的 Active recall、Dreaming consolidation、temporal graph、provider adapter、profile / RAG 统一心智和普通用户管理体验，但不把用户最终纠错权交给自动化或外部服务。
+
+六层职责如下：
+
+| 层 | 职责 | 当前落点 |
+|---|---|---|
+| UI | 让普通用户看见、修改、忘记和解释“AI 记住了什么” | Memory Center、Answer Memory Chips、Review Inbox、Health / Backup / Import |
+| Policy | 统一处理 scope、隐私、置信度、salience、时效和用户控制 | incognito / memory off fail-closed、Project > Agent > Global、Lucid Review |
+| Retrieval | 统一跨源候选预算和可观测 trace | `used_memory_refs`、`retrieval_planner`、`source_fusion_v2` |
+| Stores | 保存不同类型的长期资产 | Core Memory、legacy memories、claims、evidence、profiles、episodes、procedures、graph projection |
+| Consolidation | 在聊天热路径外整理和治理长期记忆 | 自动提取、dedup、Dreaming、Profile synthesis、graph-first Deep Resolver |
+| Providers | 可选连接外部记忆生态 | Mem0、Zep / Graphiti、Supermemory、Honcho、Hindsight、OpenViking、Custom Hope Sync v1 |
+
+关键设计决策：
+
+- **本地真相源优先**：本地 core memory、legacy memory、claim、evidence 和审计日志始终可独立工作；外部 provider 只是 additive sync，不得替代本地 safety policy，也不得让远端失败阻断本地读写、召回、Dreaming 或用户纠错。
+- **普通用户简单，高级用户可调**：默认界面只暴露“自动学习 / 先审核 / 仅手动 / 关闭”“待确认”“本次用了什么记忆”“忘记 / 修改 / 只在项目中使用”等自然动作；高级配置折叠在 Active Memory、Retrieval Planner、Embedding、Hybrid Search、Dreaming、Provider、Backup / Health 和诊断报告里。
+- **用户纠错权高于自动治理**：Deep Resolver 可以做确定性过期、graph-first 近重复合并和高置信冲突入 Review Inbox，但自动流程永不 destructively supersede 用户事实；manual correction / user confirmed evidence 拥有最高权重。
+- **召回可解释但不反向改写 prompt**：Retrieval Planner 负责 `used_memory_refs` 和 trace 的 canonical dedup、排序、预算与诊断；已经注入或被选中的 ref 不得被它重排或丢弃，candidate 也不得反向改变已构造完成的 prompt。
+- **隐私与作用域 fail-closed**：incognito、memory off、IM / Knowledge opt-in、scope 隔离和 provider 出站策略优先于所有智能召回；不确定时宁可跳过记忆，也不跨边界泄漏。
+- **可恢复、可迁移、可诊断**：备份 bundle、structured restore、Health、repair、snapshot、审计分页、诊断复制和真实规模 benchmark 都是记忆资产长期可用性的组成部分，不是 UI 附属功能。
+
 ## 数据模型
 
 ### MemoryEntry

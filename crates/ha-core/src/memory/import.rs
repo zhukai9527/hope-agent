@@ -900,7 +900,7 @@ The user wants Chinese replies.
 The user is upgrading Hope Agent's memory system.
 
 ## References
-> The user uses docs/plan/memory-next-generation-plan.md as the planning source.
+> The user archived the memory-system research plan in iCloud Plans.
 "#,
         )
         .expect("parse");
@@ -921,7 +921,7 @@ The user is upgrading Hope Agent's memory system.
         let entries = parse_import_markdown(
             r#"- Preference: The user likes calm direct answers.
 - Project: The user is planning a memory-system upgrade.
-- Reference: The user tracks the work in docs/plan.
+- Reference: The user tracks the archived memory-system plan.
 "#,
         )
         .expect("parse");
