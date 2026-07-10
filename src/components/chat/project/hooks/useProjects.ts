@@ -22,6 +22,7 @@ import type {
 export interface UseProjectsReturn {
   projects: ProjectMeta[]
   loading: boolean
+  loaded: boolean
   error: string | null
   reloadProjects: () => Promise<void>
   createProject: (input: CreateProjectInput) => Promise<Project | null>
@@ -46,6 +47,7 @@ export function useProjects(
 
   const [projects, setProjects] = useState<ProjectMeta[]>([])
   const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Keep the latest args in a ref so the EventBus handler always reloads
@@ -71,11 +73,13 @@ export function useProjects(
       })
       if (seq !== reloadSeqRef.current) return
       setProjects(Array.isArray(data) ? data : [])
+      setLoaded(true)
     } catch (e) {
       if (seq !== reloadSeqRef.current) return
       const msg = e instanceof Error ? e.message : String(e)
       logger.warn("chat", "useProjects", "reloadProjects failed", msg)
       setError(msg)
+      setLoaded(true)
     } finally {
       if (seq === reloadSeqRef.current) setLoading(false)
     }
@@ -215,6 +219,7 @@ export function useProjects(
   return {
     projects,
     loading,
+    loaded,
     error,
     reloadProjects,
     createProject,

@@ -20,6 +20,12 @@ import { parsePayload } from "@/lib/transport"
 import { logger } from "@/lib/logger"
 import { cn } from "@/lib/utils"
 import {
+  knowledgeJobsActionOperation,
+  knowledgeJobsErrorDetail,
+  knowledgeJobsErrorToast,
+  type KnowledgeJobsErrorToast,
+} from "./knowledgeJobsFeedback"
+import {
   isLocalModelJobActive,
   localModelJobPercent,
   LOCAL_MODEL_JOB_EVENTS,
@@ -82,6 +88,7 @@ export default function KnowledgeJobsButton() {
   const [jobs, setJobs] = useState<LocalModelJobSnapshot[]>([])
   const [open, setOpen] = useState(false)
   const [actioning, setActioning] = useState<Record<string, boolean>>({})
+  const [loadError, setLoadError] = useState<KnowledgeJobsErrorToast | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
 
   const upsert = useCallback((job: LocalModelJobSnapshot) => {
@@ -99,10 +106,12 @@ export default function KnowledgeJobsButton() {
     try {
       const list = await getTransport().call<LocalModelJobSnapshot[]>("local_model_job_list")
       setJobs(list.filter((j) => j.kind === KNOWLEDGE_JOB_KIND))
+      setLoadError(null)
     } catch (e) {
       logger.warn("knowledge", "KnowledgeJobsButton::refresh", "Failed to load jobs", e)
+      setLoadError(knowledgeJobsErrorToast("loadJobs", t, e))
     }
-  }, [])
+  }, [t])
 
   // Initial load + live updates. setState here runs inside async/event callbacks,
   // never synchronously in the effect body (no cascading render).
@@ -160,7 +169,11 @@ export default function KnowledgeJobsButton() {
           setJobs((prev) => prev.filter((j) => j.jobId !== jobId))
         }
       } catch (e) {
-        toast.error(String(e))
+        const failureToast = knowledgeJobsErrorToast(knowledgeJobsActionOperation(action), t, e)
+        toast.error(
+          failureToast.title,
+          failureToast.description ? { description: failureToast.description } : undefined,
+        )
       } finally {
         setActioning((prev) => {
           const next = { ...prev }
@@ -169,7 +182,7 @@ export default function KnowledgeJobsButton() {
         })
       }
     },
-    [upsert],
+    [t, upsert],
   )
 
   return (
@@ -208,6 +221,17 @@ export default function KnowledgeJobsButton() {
             )}
           </div>
           <div className="max-h-[360px] overflow-y-auto p-2">
+            {loadError ? (
+              <div className="mb-2 rounded-md border border-destructive/25 bg-destructive/10 p-2 text-[11px] text-destructive">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {loadError.title}
+                </div>
+                {loadError.description ? (
+                  <div className="mt-1 leading-relaxed">{loadError.description}</div>
+                ) : null}
+              </div>
+            ) : null}
             {sorted.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-8 text-center">
                 <Activity className="h-6 w-6 text-muted-foreground/70" />
@@ -318,7 +342,11 @@ function JobRow({
         </div>
       )}
 
-      {job.error && <p className="mt-1.5 break-words text-[11px] text-destructive">{job.error}</p>}
+      {job.error && (
+        <p className="mt-1.5 break-words text-[11px] text-destructive">
+          {knowledgeJobsErrorDetail(job.error) ?? job.error}
+        </p>
+      )}
 
       <div className="mt-2 flex justify-end gap-1.5">
         {active && (

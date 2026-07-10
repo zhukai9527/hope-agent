@@ -1627,6 +1627,7 @@ pub(crate) async fn tool_knowledge_recall(args: &Value, ctx: &ToolExecContext) -
             let mq = crate::memory::MemorySearchQuery {
                 query: q,
                 types: type_filter,
+                sources: None,
                 scope: None,
                 agent_id,
                 limit: Some(limit),

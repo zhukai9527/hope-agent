@@ -6,28 +6,36 @@ use crate::memory;
 pub async fn memory_add(entry: memory::NewMemory) -> Result<i64, CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.add(entry).map_err(Into::into)
+    let id = backend.add(entry)?;
+    memory::emit_memory_changed("add", Some(id), None);
+    Ok(id)
 }
 
 #[tauri::command]
 pub async fn memory_update(id: i64, content: String, tags: Vec<String>) -> Result<(), CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.update(id, &content, &tags).map_err(Into::into)
+    backend.update(id, &content, &tags)?;
+    memory::emit_memory_changed("update", Some(id), None);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn memory_toggle_pin(id: i64, pinned: bool) -> Result<(), CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.toggle_pin(id, pinned).map_err(Into::into)
+    backend.toggle_pin(id, pinned)?;
+    memory::emit_memory_changed(if pinned { "pin" } else { "unpin" }, Some(id), None);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn memory_delete(id: i64) -> Result<(), CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.delete(id).map_err(Into::into)
+    backend.delete(id)?;
+    memory::emit_memory_changed("delete", Some(id), None);
+    Ok(())
 }
 
 #[tauri::command]
@@ -35,6 +43,13 @@ pub async fn memory_get(id: i64) -> Result<Option<memory::MemoryEntry>, CmdError
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
     backend.get(id).map_err(Into::into)
+}
+
+/// Read-only schema metadata for the owner UI filters. Maps to
+/// `GET /api/claims/schema`.
+#[tauri::command]
+pub async fn claim_schema_metadata() -> Result<memory::claims::ClaimSchemaMetadata, CmdError> {
+    Ok(memory::claims::claim_schema_metadata())
 }
 
 /// List structured claims (next-gen Dreaming, read-only). Optional scope
@@ -47,6 +62,11 @@ pub async fn claim_list(
     scope_id: Option<String>,
     status: Option<String>,
     claim_type: Option<String>,
+    confidence_source: Option<String>,
+    evidence_class: Option<String>,
+    evidence_source_type: Option<String>,
+    query: Option<String>,
+    sort: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<memory::claims::ClaimRecord>, CmdError> {
@@ -55,6 +75,44 @@ pub async fn claim_list(
         scope,
         status,
         claim_type,
+        confidence_source,
+        evidence_class,
+        evidence_source_type,
+        query,
+        sort,
+        limit,
+        offset,
+    })
+    .map_err(Into::into)
+}
+
+/// Page structured claims with an exact count for the same filters. Maps to
+/// `GET /api/claims/page`; the older `claim_list` array command stays for
+/// compatibility.
+#[tauri::command]
+pub async fn claim_list_page(
+    scope_type: Option<String>,
+    scope_id: Option<String>,
+    status: Option<String>,
+    claim_type: Option<String>,
+    confidence_source: Option<String>,
+    evidence_class: Option<String>,
+    evidence_source_type: Option<String>,
+    query: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<memory::claims::ClaimListPage, CmdError> {
+    let scope = memory::claims::parse_claim_scope(scope_type.as_deref(), scope_id.as_deref())?;
+    memory::claims::list_claims_page(memory::claims::ClaimListFilter {
+        scope,
+        status,
+        claim_type,
+        confidence_source,
+        evidence_class,
+        evidence_source_type,
+        query,
+        sort,
         limit,
         offset,
     })
@@ -66,6 +124,64 @@ pub async fn claim_list(
 #[tauri::command]
 pub async fn claim_get(id: String) -> Result<Option<memory::claims::ClaimDetail>, CmdError> {
     memory::claims::get_claim(&id).map_err(Into::into)
+}
+
+/// Read-only entity context graph around one claim. Owner-plane helper; not
+/// exposed to agent tools.
+#[tauri::command]
+pub async fn claim_graph(
+    id: String,
+    limit: Option<usize>,
+) -> Result<memory::claims::ClaimGraphProjection, CmdError> {
+    memory::claims::claim_graph(&id, limit).map_err(Into::into)
+}
+
+/// List conflicting claims for one claim: same scope/type/subject/predicate,
+/// different object, and effective-active or needs_review. Owner-plane helper
+/// for Review Inbox; not exposed to agent tools.
+#[tauri::command]
+pub async fn claim_conflicts(
+    id: String,
+    limit: Option<usize>,
+) -> Result<Vec<memory::claims::ClaimRecord>, CmdError> {
+    memory::claims::list_claim_conflicts(&id, limit).map_err(Into::into)
+}
+
+/// Bounded conflict details for Review Inbox evidence matrix. Owner-plane
+/// helper; not exposed to agent tools.
+#[tauri::command]
+pub async fn claim_conflict_details(
+    id: String,
+    limit: Option<usize>,
+) -> Result<Vec<memory::claims::ClaimDetail>, CmdError> {
+    memory::claims::list_claim_conflict_details(&id, limit).map_err(Into::into)
+}
+
+/// Batch conflict counts for Review Inbox list grouping. Owner-plane helper;
+/// not exposed to agent tools.
+#[tauri::command]
+pub async fn claim_conflict_summaries(
+    ids: Vec<String>,
+) -> Result<Vec<memory::claims::ClaimConflictSummary>, CmdError> {
+    memory::claims::list_claim_conflict_summaries(&ids).map_err(Into::into)
+}
+
+/// Batch evidence trust counts for claim list rows. Owner-plane helper; not
+/// exposed to agent tools.
+#[tauri::command]
+pub async fn claim_evidence_summaries(
+    ids: Vec<String>,
+) -> Result<Vec<memory::claims::ClaimEvidenceSummary>, CmdError> {
+    memory::claims::list_claim_evidence_summaries(&ids).map_err(Into::into)
+}
+
+/// Batch Review Inbox risk summaries for claim list rows. Owner-plane helper;
+/// not exposed to agent tools.
+#[tauri::command]
+pub async fn claim_review_summaries(
+    ids: Vec<String>,
+) -> Result<Vec<memory::claims::ClaimReviewSummary>, CmdError> {
+    memory::claims::list_claim_review_summaries(&ids).map_err(Into::into)
 }
 
 /// User correction (Lucid Review, design §5.2 §5.3): partial-update one claim —
@@ -145,19 +261,83 @@ pub async fn memory_backfill_apply() -> Result<memory::claims::BackfillApplyResu
 pub async fn memory_list(
     scope: Option<memory::MemoryScope>,
     types: Option<Vec<memory::MemoryType>>,
+    sources: Option<Vec<String>>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<memory::MemoryEntry>, CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
     backend
-        .list(
+        .list_filtered(
             scope.as_ref(),
             types.as_deref(),
+            sources.as_deref(),
             limit.unwrap_or(50),
             offset.unwrap_or(0),
         )
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_history(
+    limit: Option<usize>,
+    offset: Option<usize>,
+    query: Option<String>,
+    actions: Option<Vec<memory::MemoryHistoryAction>>,
+    memory_types: Option<Vec<memory::MemoryType>>,
+    sources: Option<Vec<String>>,
+) -> Result<Vec<memory::MemoryHistoryRecord>, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    backend
+        .history_filtered(&memory::MemoryHistoryQuery {
+            query,
+            actions,
+            memory_types,
+            sources,
+            limit,
+            offset,
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_history_page(
+    limit: Option<usize>,
+    offset: Option<usize>,
+    query: Option<String>,
+    actions: Option<Vec<memory::MemoryHistoryAction>>,
+    memory_types: Option<Vec<memory::MemoryType>>,
+    sources: Option<Vec<String>>,
+) -> Result<memory::MemoryHistoryListResponse, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    backend
+        .history_filtered_page(&memory::MemoryHistoryQuery {
+            query,
+            actions,
+            memory_types,
+            sources,
+            limit,
+            offset,
+        })
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_audit_page(
+    limit: Option<usize>,
+    offset: Option<usize>,
+    query: Option<String>,
+    action: Option<String>,
+) -> Result<memory::MemoryAuditPageResponse, CmdError> {
+    memory::memory_audit_page(memory::MemoryAuditPageQuery {
+        query,
+        action,
+        limit,
+        offset,
+    })
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -170,10 +350,138 @@ pub async fn memory_search(
 }
 
 #[tauri::command]
-pub async fn memory_count(scope: Option<memory::MemoryScope>) -> Result<usize, CmdError> {
+pub async fn memory_count(
+    scope: Option<memory::MemoryScope>,
+    sources: Option<Vec<String>>,
+) -> Result<usize, CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.count(scope.as_ref()).map_err(Into::into)
+    backend
+        .count_filtered(scope.as_ref(), sources.as_deref())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_episode_add(
+    episode: memory::NewMemoryEpisode,
+) -> Result<memory::MemoryEpisodeRecord, CmdError> {
+    let record = memory::add_episode(episode)?;
+    memory::emit_memory_changed("episode_add", None, Some(1));
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn memory_episode_list_page(
+    query: memory::MemoryEpisodeQuery,
+) -> Result<memory::MemoryEpisodeListPage, CmdError> {
+    memory::list_episodes_page(query).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_episode_get(
+    id: String,
+) -> Result<Option<memory::MemoryEpisodeRecord>, CmdError> {
+    memory::get_episode(&id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_episode_update(
+    id: String,
+    patch: memory::MemoryEpisodePatch,
+) -> Result<Option<memory::MemoryEpisodeRecord>, CmdError> {
+    let record = memory::update_episode(&id, patch)?;
+    if record.is_some() {
+        memory::emit_memory_changed("episode_update", None, Some(1));
+    }
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn memory_episode_archive(id: String) -> Result<bool, CmdError> {
+    let changed = memory::archive_episode(&id)?;
+    if changed {
+        memory::emit_memory_changed("episode_archive", None, Some(1));
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn memory_episode_restore(id: String) -> Result<bool, CmdError> {
+    let changed = memory::restore_episode(&id)?;
+    if changed {
+        memory::emit_memory_changed("episode_restore", None, Some(1));
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_add(
+    procedure: memory::NewMemoryProcedure,
+) -> Result<memory::MemoryProcedureRecord, CmdError> {
+    let record = memory::add_procedure(procedure)?;
+    memory::emit_memory_changed("procedure_add", None, Some(1));
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn memory_episode_promote_procedure(
+    id: String,
+    options: Option<memory::PromoteEpisodeOptions>,
+) -> Result<memory::MemoryProcedureRecord, CmdError> {
+    let record = memory::promote_episode_to_procedure(&id, options.unwrap_or_default())?;
+    memory::emit_memory_changed("procedure_add", None, Some(1));
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_list_page(
+    query: memory::MemoryProcedureQuery,
+) -> Result<memory::MemoryProcedureListPage, CmdError> {
+    memory::list_procedures_page(query).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_get(
+    id: String,
+) -> Result<Option<memory::MemoryProcedureRecord>, CmdError> {
+    memory::get_procedure(&id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_update(
+    id: String,
+    patch: memory::MemoryProcedurePatch,
+) -> Result<Option<memory::MemoryProcedureRecord>, CmdError> {
+    let record = memory::update_procedure(&id, patch)?;
+    if record.is_some() {
+        memory::emit_memory_changed("procedure_update", None, Some(1));
+    }
+    Ok(record)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_archive(id: String) -> Result<bool, CmdError> {
+    let changed = memory::archive_procedure(&id)?;
+    if changed {
+        memory::emit_memory_changed("procedure_archive", None, Some(1));
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn memory_procedure_restore(id: String) -> Result<bool, CmdError> {
+    let changed = memory::restore_procedure(&id)?;
+    if changed {
+        memory::emit_memory_changed("procedure_restore", None, Some(1));
+    }
+    Ok(changed)
+}
+
+#[tauri::command]
+pub async fn memory_experience_history_page(
+    query: memory::MemoryExperienceHistoryQuery,
+) -> Result<memory::MemoryExperienceHistoryListPage, CmdError> {
+    memory::list_experience_history_page(query).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -181,6 +489,157 @@ pub async fn memory_export(scope: Option<memory::MemoryScope>) -> Result<String,
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
     backend.export_markdown(scope.as_ref()).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_backup_export() -> Result<memory::MemoryBackupBundle, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    memory::export_backup_bundle(backend.as_ref()).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_backup_export_encrypted(
+    passphrase: String,
+) -> Result<memory::MemoryEncryptedBackupBundle, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    memory::export_encrypted_backup_bundle(backend.as_ref(), &passphrase).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_backup_export_archive(output_path: String) -> Result<String, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let archive = memory::export_backup_archive(backend.as_ref())?;
+    ha_core::platform::write_atomic(std::path::Path::new(&output_path), &archive)?;
+    Ok(output_path)
+}
+
+#[tauri::command]
+pub async fn memory_backup_preview(
+    content: String,
+    passphrase: Option<String>,
+) -> Result<memory::MemoryBackupImportPreview, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    memory::preview_backup_bundle_with_passphrase(backend.as_ref(), &content, passphrase.as_deref())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_backup_preview_archive(
+    data: Vec<u8>,
+) -> Result<memory::MemoryBackupImportPreview, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    memory::preview_backup_archive(backend.as_ref(), &data).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_backup_restore_legacy(
+    content: String,
+    options: Option<memory::MemoryBackupRestoreOptions>,
+    passphrase: Option<String>,
+) -> Result<memory::MemoryBackupRestoreResult, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let result = memory::restore_backup_legacy_memories_with_passphrase(
+        backend.as_ref(),
+        &content,
+        options.unwrap_or_default(),
+        passphrase.as_deref(),
+    )?;
+    if result.import_result.created > 0 {
+        memory::emit_memory_changed(
+            "backup_restore_legacy",
+            None,
+            Some(result.import_result.created),
+        );
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn memory_backup_restore_legacy_archive(
+    data: Vec<u8>,
+    options: Option<memory::MemoryBackupRestoreOptions>,
+) -> Result<memory::MemoryBackupRestoreResult, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let result = memory::restore_backup_legacy_memories_from_archive(
+        backend.as_ref(),
+        &data,
+        options.unwrap_or_default(),
+    )?;
+    if result.import_result.created > 0 {
+        memory::emit_memory_changed(
+            "backup_restore_legacy",
+            None,
+            Some(result.import_result.created),
+        );
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn memory_backup_restore_structured(
+    content: String,
+    options: Option<memory::MemoryBackupStructuredRestoreOptions>,
+    passphrase: Option<String>,
+) -> Result<memory::MemoryBackupStructuredRestoreResult, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let result = memory::restore_backup_structured_memory_with_passphrase(
+        backend.as_ref(),
+        &content,
+        options.unwrap_or_default(),
+        passphrase.as_deref(),
+    )?;
+    if result.restored_claims > 0 {
+        memory::emit_claim_changed(
+            "backup_restore_structured",
+            None,
+            Some(result.restored_claims),
+        );
+    }
+    if result.restored_profile_snapshots > 0 {
+        memory::emit_memory_changed(
+            "backup_restore_profile",
+            None,
+            Some(result.restored_profile_snapshots),
+        );
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn memory_backup_restore_structured_archive(
+    data: Vec<u8>,
+    options: Option<memory::MemoryBackupStructuredRestoreOptions>,
+) -> Result<memory::MemoryBackupStructuredRestoreResult, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let result = memory::restore_backup_structured_memory_from_archive(
+        backend.as_ref(),
+        &data,
+        options.unwrap_or_default(),
+    )?;
+    if result.restored_claims > 0 {
+        memory::emit_claim_changed(
+            "backup_restore_structured",
+            None,
+            Some(result.restored_claims),
+        );
+    }
+    if result.restored_profile_snapshots > 0 {
+        memory::emit_memory_changed(
+            "backup_restore_profile",
+            None,
+            Some(result.restored_profile_snapshots),
+        );
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -203,7 +662,9 @@ pub async fn memory_find_similar(
 pub async fn memory_delete_batch(ids: Vec<i64>) -> Result<usize, CmdError> {
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.delete_batch(&ids).map_err(Into::into)
+    let deleted = backend.delete_batch(&ids)?;
+    memory::emit_memory_changed("delete_batch", None, Some(deleted));
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -221,7 +682,31 @@ pub async fn memory_import(
     let entries = memory::parse_import(&content, &format)?;
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
-    backend.import_entries(entries, dedup).map_err(Into::into)
+    let result = backend.import_entries(entries, dedup)?;
+    if result.created > 0 {
+        memory::emit_memory_changed("import", None, Some(result.created));
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn memory_import_preview(
+    content: String,
+    format: String,
+    limit: Option<usize>,
+    dedup: Option<bool>,
+) -> Result<memory::MemoryImportPreview, CmdError> {
+    if let Some(backend) = get_memory_backend() {
+        Ok(memory::preview_import_with_backend(
+            backend.as_ref(),
+            &content,
+            &format,
+            limit,
+            dedup.unwrap_or(false),
+        ))
+    } else {
+        Ok(memory::preview_import(&content, &format, limit))
+    }
 }
 
 #[tauri::command]
@@ -241,6 +726,46 @@ pub async fn memory_stats(
     let backend =
         get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
     backend.stats(scope.as_ref()).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_health() -> Result<memory::MemoryHealth, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    backend.health().map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_repair(
+    action: memory::MemoryRepairAction,
+) -> Result<memory::MemoryRepairReport, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let report = backend.repair(action)?;
+    memory::emit_memory_changed("repair", None, None);
+    Ok(report)
+}
+
+#[tauri::command]
+pub async fn memory_db_snapshot_restore_preview(
+    snapshot_path: String,
+) -> Result<memory::MemoryDbSnapshotRestorePreview, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    backend
+        .db_snapshot_restore_preview(&snapshot_path)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn memory_db_snapshot_restore(
+    snapshot_path: String,
+) -> Result<memory::MemoryDbSnapshotRestoreReport, CmdError> {
+    let backend =
+        get_memory_backend().ok_or_else(|| CmdError::msg("Memory backend not initialized"))?;
+    let report = backend.db_snapshot_restore(&snapshot_path)?;
+    memory::emit_memory_changed("db_snapshot_restore", None, None);
+    Ok(report)
 }
 
 #[tauri::command]
@@ -287,6 +812,61 @@ pub async fn save_memory_budget_config(config: memory::MemoryBudgetConfig) -> Re
         Ok(())
     })
     .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_external_memory_providers_config(
+) -> Result<memory::ExternalMemoryProvidersConfig, CmdError> {
+    Ok(ha_core::config::cached_config().memory_providers.clone())
+}
+
+#[tauri::command]
+pub async fn get_external_memory_providers_preflight(
+) -> Result<memory::ExternalMemoryProviderPreflightReport, CmdError> {
+    Ok(memory::get_external_memory_provider_preflight())
+}
+
+#[tauri::command]
+pub async fn run_external_memory_provider_sync(
+) -> Result<memory::ExternalMemoryProviderSyncReport, CmdError> {
+    Ok(memory::run_external_memory_provider_sync().await)
+}
+
+#[tauri::command]
+pub async fn get_external_memory_provider_credential_status(
+    provider_id: String,
+) -> Result<memory::ExternalMemoryProviderCredentialStatus, CmdError> {
+    memory::get_external_memory_provider_credential_status(&provider_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_external_memory_provider_credentials(
+    provider_id: String,
+    mut credentials: memory::ExternalMemoryProviderCredentialInput,
+) -> Result<memory::ExternalMemoryProviderCredentialStatus, CmdError> {
+    if credentials.provider_id != provider_id {
+        return Err(CmdError::from(anyhow::anyhow!(
+            "provider id and credential body must match"
+        )));
+    }
+    credentials.provider_id = provider_id;
+    memory::save_external_memory_provider_credentials(credentials)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn clear_external_memory_provider_credentials(
+    provider_id: String,
+) -> Result<(), CmdError> {
+    memory::clear_external_memory_provider_credentials(&provider_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_external_memory_providers_config(
+    config: memory::ExternalMemoryProvidersConfig,
+) -> Result<(), CmdError> {
+    memory::save_external_memory_providers_config(config, "settings-ui").map_err(Into::into)
 }
 
 #[tauri::command]
@@ -493,7 +1073,7 @@ pub async fn get_global_memory_md() -> Result<Option<String>, CmdError> {
 #[tauri::command]
 pub async fn save_global_memory_md(content: String) -> Result<(), CmdError> {
     let path = crate::paths::root_dir()?.join("memory.md");
-    std::fs::write(&path, content).map_err(Into::into)
+    ha_core::platform::write_atomic(&path, content.as_bytes()).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -510,5 +1090,5 @@ pub async fn get_agent_memory_md(id: String) -> Result<Option<String>, CmdError>
 pub async fn save_agent_memory_md(id: String, content: String) -> Result<(), CmdError> {
     let dir = crate::paths::agent_dir(&id)?;
     let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(dir.join("memory.md"), content).map_err(Into::into)
+    ha_core::platform::write_atomic(&dir.join("memory.md"), content.as_bytes()).map_err(Into::into)
 }
