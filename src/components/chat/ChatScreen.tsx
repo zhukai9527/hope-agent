@@ -1247,7 +1247,7 @@ export default function ChatScreen({
     (enabled: boolean) => {
       if (session.currentSessionId) return
       // Project + incognito are mutually exclusive — a project draft can't go
-      // incognito (the toggle is also grayed via incognitoDisabledReason).
+      // incognito (the title-bar toggle is hidden via incognitoDisabledReason).
       if (draftProjectId) return
       setDraftIncognito(enabled)
       // Incognito = zero KB (D10). Drop any staged attaches so they can't ride
@@ -1532,6 +1532,14 @@ export default function ChatScreen({
     onSandboxModeSynced: handleSandboxModeSynced,
     parentInjectionDeltasViaChatStream: true,
   })
+
+  const setProjectWelcomeInput = stream.setInput
+  const handleProjectWelcomeSuggestion = useCallback(
+    (prompt: string) => {
+      setProjectWelcomeInput(prompt)
+    },
+    [setProjectWelcomeInput],
+  )
 
   useEffect(() => {
     incognitoComposerStateRef.current = {
@@ -2869,6 +2877,10 @@ export default function ChatScreen({
                 sessionId={session.currentSessionId}
                 incognito={incognitoEnabled}
                 heroComposer={heroComposerActive}
+                projectName={currentProject?.name ?? null}
+                onProjectSuggestion={
+                  currentProject ? handleProjectWelcomeSuggestion : undefined
+                }
                 pendingScrollIntent={session.pendingScrollIntent}
                 onScrollTargetHandled={session.clearPendingScrollIntent}
                 pendingQuestionGroup={planMode.pendingQuestionGroup}
@@ -2937,7 +2949,13 @@ export default function ChatScreen({
                   >
                     {heroComposerActive && (
                       <div className="mb-5 sm:mb-6">
-                        <ChatWelcomeHero incognito={incognitoEnabled} />
+                        <ChatWelcomeHero
+                          incognito={incognitoEnabled}
+                          projectName={currentProject?.name ?? null}
+                          onProjectSuggestion={
+                            currentProject ? handleProjectWelcomeSuggestion : undefined
+                          }
+                        />
                       </div>
                     )}
                     <ChatInput
