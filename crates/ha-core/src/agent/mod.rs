@@ -1056,42 +1056,35 @@ impl AssistantAgent {
             &scopes,
             &crate::memory::dreaming::ContextPackOptions::default(),
         );
-        let pinned_claims_rendered = crate::system_prompt::pinned_memory_layer_would_render(
+        let rendered_pinned_sources = crate::system_prompt::rendered_pinned_memory_sources(
             definition.memory_md.as_deref(),
             definition.global_memory_md.as_deref(),
             &memory_budget,
             &pack,
         );
-        let mut refs: Vec<active_memory::UsedMemoryRef> = if pinned_claims_rendered {
-            pack.source_digest
-                .iter()
-                .map(|source| active_memory::UsedMemoryRef {
-                    kind: "claim".to_string(),
-                    id: source.claim_id.clone(),
-                    source_type: source.claim_type.clone(),
-                    scope: static_memory_scope_label(
-                        &source.scope_type,
-                        source.scope_id.as_deref(),
-                    ),
-                    origin: match source.section.as_str() {
-                        "pinned" => "pinned_memory".to_string(),
-                        other => format!("context_pack:{other}"),
-                    },
-                    role: "injected".to_string(),
-                    preview: source.preview.clone(),
-                    path: None,
-                    line: None,
-                    col: None,
-                    heading_path: None,
-                    block_id: None,
-                    score: None,
-                    confidence: None,
-                    salience: None,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let mut refs: Vec<active_memory::UsedMemoryRef> = rendered_pinned_sources
+            .iter()
+            .map(|source| active_memory::UsedMemoryRef {
+                kind: "claim".to_string(),
+                id: source.claim_id.clone(),
+                source_type: source.claim_type.clone(),
+                scope: static_memory_scope_label(&source.scope_type, source.scope_id.as_deref()),
+                origin: match source.section.as_str() {
+                    "pinned" => "pinned_memory".to_string(),
+                    other => format!("context_pack:{other}"),
+                },
+                role: "injected".to_string(),
+                preview: source.preview.clone(),
+                path: None,
+                line: None,
+                col: None,
+                heading_path: None,
+                block_id: None,
+                score: None,
+                confidence: None,
+                salience: None,
+            })
+            .collect();
 
         let memory_entries: Vec<crate::memory::MemoryEntry> = crate::get_memory_backend()
             .and_then(|b| {

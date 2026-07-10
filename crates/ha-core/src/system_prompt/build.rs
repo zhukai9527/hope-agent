@@ -3,7 +3,7 @@ use super::constants::{
     HUMAN_IN_THE_LOOP_GUIDANCE, MARKDOWN_PATH_LINKS_GUIDANCE, MAX_FILE_CHARS, MEMORY_GUIDELINES,
     SOUL_EMBODIMENT_GUIDANCE, TOOL_CALL_NARRATION_GUIDANCE,
 };
-use super::helpers::truncate;
+use super::helpers::{truncate, truncate_retained_ranges};
 use super::sections::*;
 use super::working_dir_instructions::collect_working_dir_instructions;
 use crate::agent_config::AgentDefinition;
@@ -502,18 +502,18 @@ pub(crate) fn sqlite_memory_budget_after_static_layers(
     remaining.min(budget.sqlite_sections.total())
 }
 
-/// Whether the Dreaming Context Pack's `## Pinned Memory` layer would actually
-/// fit into the same static memory budget used by [`build_memory_section`].
-/// Trace code uses this to avoid reporting pinned-claim refs that were only
-/// candidates but never entered the prompt.
-pub(crate) fn pinned_memory_layer_would_render(
+/// Return only the Context Pack sources whose complete bullet lines survive the
+/// exact static-memory budget and head/tail truncation used by
+/// [`build_memory_section`]. Partial lines fail closed: trace code must never
+/// report a claim as injected when the model did not receive its complete line.
+pub(crate) fn rendered_pinned_memory_sources(
     agent_memory_md: Option<&str>,
     global_memory_md: Option<&str>,
     budget: &MemoryBudgetConfig,
     context_pack: &crate::memory::dreaming::MemoryContextPack,
-) -> bool {
+) -> Vec<crate::memory::dreaming::SourceRef> {
     if budget.total_chars == 0 {
-        return false;
+        return Vec::new();
     }
     let mut remaining = budget.total_chars.saturating_sub(MEMORY_GUIDELINES.len());
     debit_core_memory_layer(
@@ -528,12 +528,40 @@ pub(crate) fn pinned_memory_layer_would_render(
         "## Core Memory (Global)\n\n",
         budget.core_memory_file_chars,
     );
-    core_memory_layer_would_render(
+    let md = context_pack.pinned_claims_md.as_str();
+    let Some(body_cap) = core_memory_layer_body_cap(
         remaining,
-        Some(context_pack.pinned_claims_md.as_str()),
+        Some(md),
         "## Pinned Memory\n\n",
         PINNED_CLAIMS_CHARS,
-    )
+    ) else {
+        return Vec::new();
+    };
+    let retained_ranges = truncate_retained_ranges(md, body_cap);
+    let mut cursor = 0;
+    let mut rendered = Vec::new();
+
+    for source in context_pack
+        .source_digest
+        .iter()
+        .filter(|source| source.section == "pinned")
+    {
+        let rendered_line = format!("- {}\n", source.preview);
+        let Some(relative_start) = md[cursor..].find(&rendered_line) else {
+            continue;
+        };
+        let start = cursor + relative_start;
+        let end = start + rendered_line.len();
+        cursor = end;
+        if retained_ranges
+            .iter()
+            .any(|&(range_start, range_end)| start >= range_start && end <= range_end)
+        {
+            rendered.push(source.clone());
+        }
+    }
+
+    rendered
 }
 
 /// Append one heading + truncated body + trailer block, debiting `remaining`.
@@ -549,15 +577,12 @@ fn push_core_memory_layer(
     let Some(md) = md.filter(|s| !s.trim().is_empty()) else {
         return;
     };
-    if *remaining == 0 {
-        return;
-    }
     const TRAILER: &str = "\n\n";
     let overhead = heading.len() + TRAILER.len();
-    let body_cap = per_layer_cap.min(remaining.saturating_sub(overhead));
-    if body_cap == 0 {
+    let Some(body_cap) = core_memory_layer_body_cap(*remaining, Some(md), heading, per_layer_cap)
+    else {
         return;
-    }
+    };
     let chunk = truncate(md, body_cap);
     out.push_str(heading);
     out.push_str(&chunk);
@@ -565,25 +590,23 @@ fn push_core_memory_layer(
     *remaining = remaining.saturating_sub(chunk.len() + overhead);
 }
 
-fn core_memory_layer_would_render(
+fn core_memory_layer_body_cap(
     remaining: usize,
     md: Option<&str>,
     heading: &str,
     per_layer_cap: usize,
-) -> bool {
-    let Some(md) = md.filter(|s| !s.trim().is_empty()) else {
-        return false;
-    };
+) -> Option<usize> {
+    let _md = md.filter(|s| !s.trim().is_empty())?;
     if remaining == 0 {
-        return false;
+        return None;
     }
     const TRAILER: &str = "\n\n";
     let overhead = heading.len() + TRAILER.len();
     let body_cap = per_layer_cap.min(remaining.saturating_sub(overhead));
     if body_cap == 0 {
-        return false;
+        return None;
     }
-    !truncate(md, body_cap).is_empty()
+    Some(body_cap)
 }
 
 fn debit_core_memory_layer(
@@ -839,27 +862,62 @@ mod memory_section_tests {
         assert!(out.contains("## Memory Guidelines"));
     }
 
+    fn pinned_source(id: &str, preview: &str) -> crate::memory::dreaming::SourceRef {
+        crate::memory::dreaming::SourceRef {
+            claim_id: id.to_string(),
+            scope_type: "global".to_string(),
+            scope_id: None,
+            claim_type: "preference".to_string(),
+            section: "pinned".to_string(),
+            preview: preview.to_string(),
+        }
+    }
+
     #[test]
-    fn pinned_memory_trace_helper_matches_budget_pressure() {
+    fn pinned_memory_trace_only_returns_complete_rendered_lines() {
+        let previews = [
+            "first-claim-1234567890",
+            "second-claim-123456789",
+            "third-claim-1234567890",
+        ];
         let pack = crate::memory::dreaming::MemoryContextPack {
-            pinned_claims_md: "- User prefers concise answers".to_string(),
-            source_digest: Vec::new(),
+            pinned_claims_md: previews
+                .iter()
+                .map(|preview| format!("- {preview}\n"))
+                .collect(),
+            source_digest: previews
+                .iter()
+                .enumerate()
+                .map(|(index, preview)| pinned_source(&format!("c{}", index + 1), preview))
+                .collect(),
         };
         let budget = MemoryBudgetConfig::default();
-        assert!(pinned_memory_layer_would_render(None, None, &budget, &pack));
+        let all_sources = rendered_pinned_memory_sources(None, None, &budget, &pack);
+        assert_eq!(
+            all_sources
+                .iter()
+                .map(|source| source.claim_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c1", "c2", "c3"]
+        );
 
+        let first_line_len = format!("- {}\n", previews[0]).len();
+        let body_cap = first_line_len * 2;
+        let pinned_overhead = "## Pinned Memory\n\n".len() + "\n\n".len();
         let tight_budget = MemoryBudgetConfig {
-            total_chars: MEMORY_GUIDELINES.len() + 10,
+            total_chars: MEMORY_GUIDELINES.len() + pinned_overhead + body_cap,
             core_memory_file_chars: 8_000,
             sqlite_entry_max_chars: 500,
             sqlite_sections: SqliteSectionBudgets::default(),
         };
-        assert!(!pinned_memory_layer_would_render(
-            None,
-            None,
-            &tight_budget,
-            &pack
-        ));
+        let rendered_sources = rendered_pinned_memory_sources(None, None, &tight_budget, &pack);
+        assert_eq!(
+            rendered_sources
+                .iter()
+                .map(|source| source.claim_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c1"]
+        );
     }
 
     #[test]
