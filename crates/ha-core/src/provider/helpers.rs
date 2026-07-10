@@ -171,6 +171,252 @@ fn push_model_if_available(
     chain.push(model);
 }
 
+/// Find a ProviderConfig by provider_id from the providers slice.
+/// Only returns enabled providers.
+pub fn find_provider<'a>(
+    providers: &'a [ProviderConfig],
+    provider_id: &str,
+) -> Option<&'a ProviderConfig> {
+    providers.iter().find(|p| p.id == provider_id && p.enabled)
+}
+
+// ── Helper: Create built-in Codex provider ────────────────────────
+
+// ── Auth Profile Key Merge ────────────────────────────────────────
+
+/// Merge incoming auth profiles with existing ones, preserving real API keys
+/// when the incoming key appears to be masked (contains "..." or is "****").
+///
+/// Used by update_provider to avoid overwriting keys with masked values.
+pub fn merge_profile_keys(existing: &[AuthProfile], incoming: &[AuthProfile]) -> Vec<AuthProfile> {
+    incoming
+        .iter()
+        .map(|inc| {
+            if is_masked_key(&inc.api_key) {
+                // Find matching existing profile by ID and use its key
+                if let Some(prev) = existing.iter().find(|e| e.id == inc.id) {
+                    AuthProfile {
+                        api_key: prev.api_key.clone(),
+                        ..inc.clone()
+                    }
+                } else {
+                    inc.clone()
+                }
+            } else {
+                inc.clone()
+            }
+        })
+        .collect()
+}
+
+/// Check if an API key value looks like a masked display string.
+pub fn is_masked_key(key: &str) -> bool {
+    key.contains("...") || key == "****"
+}
+
+/// Default built-in Codex model list. Kept in sync with
+/// [`crate::agent::config::get_codex_models`] (same IDs, richer shape).
+///
+/// New entries added here are auto-merged into any user's existing Codex
+/// provider by [`ensure_codex_provider`], so老用户升级后无需重新登录也能拿到新模型。
+fn default_codex_models() -> Vec<ModelConfig> {
+    vec![
+        ModelConfig {
+            id: "gpt-5.6-sol".into(),
+            name: "GPT-5.6 Sol".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.6-terra".into(),
+            name: "GPT-5.6 Terra".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.6-luna".into(),
+            name: "GPT-5.6 Luna".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.5".into(),
+            name: "GPT-5.5".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.4".into(),
+            name: "GPT-5.4".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.3-codex".into(),
+            name: "GPT-5.3 Codex".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.3-codex-spark".into(),
+            name: "GPT-5.3 Codex Spark".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.2".into(),
+            name: "GPT-5.2".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.2-codex".into(),
+            name: "GPT-5.2 Codex".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.1".into(),
+            name: "GPT-5.1".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.1-codex-max".into(),
+            name: "GPT-5.1 Codex Max".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+        ModelConfig {
+            id: "gpt-5.1-codex-mini".into(),
+            name: "GPT-5.1 Codex Mini".into(),
+            input_types: vec!["text".into()],
+            context_window: 200_000,
+            max_tokens: 16384,
+            reasoning: true,
+            thinking_style: None,
+            cost_input: 0.0,
+            cost_output: 0.0,
+        },
+    ]
+}
+
+/// Create or update the built-in Codex provider with OAuth token info.
+/// Returns the provider ID.
+///
+/// When a Codex provider already exists, any default models missing from the
+/// user's local `models` list are appended (preserving existing entries and
+/// order). This keeps老用户登录过后本地 config.json 的模型列表，随升级自动跟上新增 Codex 模型。
+pub fn ensure_codex_provider(config: &mut AppConfig) -> String {
+    let defaults = default_codex_models();
+
+    if let Some(existing) = config
+        .providers
+        .iter_mut()
+        .find(|p| p.api_type == ApiType::Codex)
+    {
+        let mut added: Vec<String> = Vec::new();
+        for m in &defaults {
+            if !existing.models.iter().any(|x| x.id == m.id) {
+                added.push(m.id.clone());
+                existing.models.push(m.clone());
+            }
+        }
+        // Reorder so the canonical default order (latest first, e.g. gpt-5.5)
+        // leads the picker. Older configs appended new models to the tail,
+        // burying the newest model at the bottom; this lifts the defaults to the
+        // front while keeping any non-default extras in their original order.
+        existing.models.sort_by_key(|m| {
+            defaults
+                .iter()
+                .position(|d| d.id == m.id)
+                .unwrap_or(usize::MAX)
+        });
+        if !added.is_empty() {
+            crate::app_info!(
+                "provider",
+                "ensure_codex",
+                "Backfilled missing Codex default models into existing provider: {}",
+                added.join(", ")
+            );
+        }
+        return existing.id.clone();
+    }
+
+    let provider = ProviderConfig {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "ChatGPT (Codex)".into(),
+        api_type: ApiType::Codex,
+        base_url: ApiType::Codex.default_base_url().into(),
+        api_key: String::new(), // OAuth, no API key
+        auth_profiles: Vec::new(),
+        models: defaults,
+        enabled: true,
+        user_agent: super::types::default_user_agent(),
+        thinking_style: ThinkingStyle::default(),
+        allow_private_network: false,
+    };
+
+    let id = provider.id.clone();
+    config.providers.push(provider);
+    id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,250 +666,4 @@ mod tests {
         assert!(chain.0.is_none());
         assert!(chain.1.is_empty());
     }
-}
-
-/// Find a ProviderConfig by provider_id from the providers slice.
-/// Only returns enabled providers.
-pub fn find_provider<'a>(
-    providers: &'a [ProviderConfig],
-    provider_id: &str,
-) -> Option<&'a ProviderConfig> {
-    providers.iter().find(|p| p.id == provider_id && p.enabled)
-}
-
-// ── Helper: Create built-in Codex provider ────────────────────────
-
-// ── Auth Profile Key Merge ────────────────────────────────────────
-
-/// Merge incoming auth profiles with existing ones, preserving real API keys
-/// when the incoming key appears to be masked (contains "..." or is "****").
-///
-/// Used by update_provider to avoid overwriting keys with masked values.
-pub fn merge_profile_keys(existing: &[AuthProfile], incoming: &[AuthProfile]) -> Vec<AuthProfile> {
-    incoming
-        .iter()
-        .map(|inc| {
-            if is_masked_key(&inc.api_key) {
-                // Find matching existing profile by ID and use its key
-                if let Some(prev) = existing.iter().find(|e| e.id == inc.id) {
-                    AuthProfile {
-                        api_key: prev.api_key.clone(),
-                        ..inc.clone()
-                    }
-                } else {
-                    inc.clone()
-                }
-            } else {
-                inc.clone()
-            }
-        })
-        .collect()
-}
-
-/// Check if an API key value looks like a masked display string.
-pub fn is_masked_key(key: &str) -> bool {
-    key.contains("...") || key == "****"
-}
-
-/// Default built-in Codex model list. Kept in sync with
-/// [`crate::agent::config::get_codex_models`] (same IDs, richer shape).
-///
-/// New entries added here are auto-merged into any user's existing Codex
-/// provider by [`ensure_codex_provider`], so老用户升级后无需重新登录也能拿到新模型。
-fn default_codex_models() -> Vec<ModelConfig> {
-    vec![
-        ModelConfig {
-            id: "gpt-5.6-sol".into(),
-            name: "GPT-5.6 Sol".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.6-terra".into(),
-            name: "GPT-5.6 Terra".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.6-luna".into(),
-            name: "GPT-5.6 Luna".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.5".into(),
-            name: "GPT-5.5".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.4".into(),
-            name: "GPT-5.4".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.3-codex".into(),
-            name: "GPT-5.3 Codex".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.3-codex-spark".into(),
-            name: "GPT-5.3 Codex Spark".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.2".into(),
-            name: "GPT-5.2".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.2-codex".into(),
-            name: "GPT-5.2 Codex".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.1".into(),
-            name: "GPT-5.1".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.1-codex-max".into(),
-            name: "GPT-5.1 Codex Max".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-        ModelConfig {
-            id: "gpt-5.1-codex-mini".into(),
-            name: "GPT-5.1 Codex Mini".into(),
-            input_types: vec!["text".into()],
-            context_window: 200_000,
-            max_tokens: 16384,
-            reasoning: true,
-            thinking_style: None,
-            cost_input: 0.0,
-            cost_output: 0.0,
-        },
-    ]
-}
-
-/// Create or update the built-in Codex provider with OAuth token info.
-/// Returns the provider ID.
-///
-/// When a Codex provider already exists, any default models missing from the
-/// user's local `models` list are appended (preserving existing entries and
-/// order). This keeps老用户登录过后本地 config.json 的模型列表，随升级自动跟上新增 Codex 模型。
-pub fn ensure_codex_provider(config: &mut AppConfig) -> String {
-    let defaults = default_codex_models();
-
-    if let Some(existing) = config
-        .providers
-        .iter_mut()
-        .find(|p| p.api_type == ApiType::Codex)
-    {
-        let mut added: Vec<String> = Vec::new();
-        for m in &defaults {
-            if !existing.models.iter().any(|x| x.id == m.id) {
-                added.push(m.id.clone());
-                existing.models.push(m.clone());
-            }
-        }
-        // Reorder so the canonical default order (latest first, e.g. gpt-5.5)
-        // leads the picker. Older configs appended new models to the tail,
-        // burying the newest model at the bottom; this lifts the defaults to the
-        // front while keeping any non-default extras in their original order.
-        existing.models.sort_by_key(|m| {
-            defaults
-                .iter()
-                .position(|d| d.id == m.id)
-                .unwrap_or(usize::MAX)
-        });
-        if !added.is_empty() {
-            crate::app_info!(
-                "provider",
-                "ensure_codex",
-                "Backfilled missing Codex default models into existing provider: {}",
-                added.join(", ")
-            );
-        }
-        return existing.id.clone();
-    }
-
-    let provider = ProviderConfig {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "ChatGPT (Codex)".into(),
-        api_type: ApiType::Codex,
-        base_url: ApiType::Codex.default_base_url().into(),
-        api_key: String::new(), // OAuth, no API key
-        auth_profiles: Vec::new(),
-        models: defaults,
-        enabled: true,
-        user_agent: super::types::default_user_agent(),
-        thinking_style: ThinkingStyle::default(),
-        allow_private_network: false,
-    };
-
-    let id = provider.id.clone();
-    config.providers.push(provider);
-    id
 }
