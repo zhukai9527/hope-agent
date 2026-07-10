@@ -1188,7 +1188,7 @@ export default function MemoryListView({
                 className="mr-auto gap-1.5"
               >
                 <Copy className="h-3.5 w-3.5" />
-                {t("common.copy")}
+                {t("chat.copy")}
               </Button>
             )}
             <Button variant="ghost" onClick={closeImportPreview} disabled={importApplyLoading}>
@@ -1608,7 +1608,7 @@ export default function MemoryListView({
                 className="mr-auto gap-1.5"
               >
                 <Copy className="h-3.5 w-3.5" />
-                {t("common.copy")}
+                {t("chat.copy")}
               </Button>
             )}
             {backupPreview?.valid && backupPreview.legacyImportCandidates > 0 && (

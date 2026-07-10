@@ -316,7 +316,7 @@ export default function ImportFromAIDialog({
                   onClick={() => void handleCopyPreviewDiagnostics()}
                 >
                   <Copy className="h-3.5 w-3.5" />
-                  {t("common.copy")}
+                  {t("chat.copy")}
                 </Button>
               </div>
             </div>

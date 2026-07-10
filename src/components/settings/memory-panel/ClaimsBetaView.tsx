@@ -3702,7 +3702,7 @@ export default function ClaimsBetaView({ focus }: ClaimsBetaViewProps) {
             {hasLongRationale ? (
               <details>
                 <summary className="cursor-pointer truncate">
-                  {rationalePreview} · {t("common.details")}
+                  {rationalePreview} · {t("chat.details")}
                 </summary>
                 <div className="mt-1 whitespace-pre-wrap break-words leading-relaxed">
                   {rationale}
