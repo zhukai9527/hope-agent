@@ -2096,7 +2096,11 @@
     "backgroundJobFailed": "فشلت المهمة الخلفية",
     "backgroundJobFallback": "انتهت إحدى المهام الخلفية",
     "backgroundJobToggle": "إشعار عند انتهاء المهام الخلفية",
-    "backgroundJobDesc": "إظهار إشعار على سطح المكتب عند انتهاء مهمة خلفية بينما تكون النافذة في الخلفية"
+    "backgroundJobDesc": "إظهار إشعار على سطح المكتب عند انتهاء مهمة خلفية بينما تكون النافذة في الخلفية",
+    "knowledgeScanComplete": "اكتمل فحص مساحة المعرفة",
+    "knowledgeScanFailed": "فشل فحص مساحة المعرفة",
+    "knowledgeImportComplete": "اكتمل استيراد مساحة المعرفة",
+    "knowledgeImportFailed": "فشل استيراد مساحة المعرفة جزئيًا"
   },
   "onboarding": {
     "channels": {
@@ -7207,9 +7211,9 @@
     "reindexing": "جارٍ إعادة الفهرسة…",
     "reindexDone": "تمت إعادة بناء الفهرس",
     "jobs": {
-      "tooltip": "مهام إعادة البناء",
-      "title": "مهام إعادة البناء",
-      "empty": "لا توجد مهام إعادة بناء بعد.",
+      "tooltip": "نشاط مساحة المعرفة",
+      "title": "نشاط مساحة المعرفة",
+      "empty": "لا يوجد نشاط بعد.",
       "loadFailed": "تعذر تحميل مهام إعادة البناء",
       "cancelFailed": "تعذر إلغاء مهمة إعادة البناء",
       "retryFailed": "تعذر إعادة محاولة مهمة إعادة البناء",
@@ -7218,9 +7222,24 @@
       "kindReembed": "إعادة تضمين المتجهات",
       "fts": "فهرس النص الكامل",
       "result": "تمت إعادة بناء {{notes}} ملاحظة · {{kbs}} مساحة",
-      "emptyHint": "أعد فهرسة مساحة أو بدّل نموذج التضمين، وسيظهر التقدم هنا.",
+      "emptyHint": "اربط مساحة أو أعد فهرستها، أو استورد ملفات، وسيظهر التقدم هنا.",
       "model": "النموذج: {{name}}",
-      "errorDetail": "التفاصيل: {{error}}"
+      "errorDetail": "التفاصيل: {{error}}",
+      "kindImport": "استيراد المصادر",
+      "space": "المساحة: {{name}}",
+      "progressFiles": "{{done}} / {{total}} ملف",
+      "progressItems": "{{done}} / {{total}} مصدر",
+      "resultOk": "أُعيدت فهرسة {{notes}} ملاحظة",
+      "resultPartial": "أُعيدت فهرسة {{notes}} ملاحظة · تم تخطي {{failed}}",
+      "importResultOk": "تم استيراد {{imported}} مصدر",
+      "importResultPartial": "تم استيراد {{imported}} · فشل {{failed}}",
+      "importStatus": {
+        "running": "قيد التنفيذ",
+        "completed": "مكتمل",
+        "failed": "فشل",
+        "cancelled": "أُلغي",
+        "timed_out": "انتهت المهلة"
+      }
     },
     "maintenance": {
       "tooltip": "الصيانة",
@@ -7502,6 +7521,13 @@
       "openQuestionsPlaceholder": "ملاحظة مع الأسئلة المفتوحة",
       "mocPlaceholder": "MOCs/Conversation Filings.md",
       "createNotePlaceholder": "Filed Conversations/example.md"
+    },
+    "emptyState": {
+      "scanning": "جارٍ فحص هذه المساحة…",
+      "scanFailed": "فشل الفحص",
+      "emptyExternal": "لا توجد ملاحظات ماركداون في هذا المجلد بعد.",
+      "emptyInternal": "هذه المساحة فارغة.",
+      "importFiles": "استيراد ملفات"
     }
   },
   "backgroundJobs": {
