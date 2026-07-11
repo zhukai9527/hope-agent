@@ -334,6 +334,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   set_permission_mode: { method: "POST", path: "/api/chat/permission-mode" },
   set_sandbox_mode: { method: "POST", path: "/api/chat/sandbox-mode" },
   respond_to_approval: { method: "POST", path: "/api/chat/approval" },
+  list_pending_approvals: { method: "GET", path: "/api/chat/approvals/pending" },
   save_attachment: { method: "POST", path: "/api/chat/attachment" },
   list_builtin_tools: { method: "GET", path: "/api/chat/tools" },
 
@@ -2229,7 +2230,7 @@ export class HttpTransport implements Transport {
           this.dispatchEvent(TRANSPORT_EVENT_RESYNC_REQUIRED, {
             reason: "lagged",
             ...(envelope.payload && typeof envelope.payload === "object"
-              ? envelope.payload as Record<string, unknown>
+              ? (envelope.payload as Record<string, unknown>)
               : {}),
           })
         }

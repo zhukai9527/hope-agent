@@ -1081,6 +1081,17 @@ pub async fn stop_chat(
         out
     };
 
+    // Approval waits are separate oneshots and do not wake merely because the
+    // chat cancel flag changed. Resolve them before returning from Stop so a
+    // stale prompt can never authorize post-stop execution.
+    if let Some(sid) = body.session_id.as_deref() {
+        if stopped || body.turn_id.is_none() {
+            tools::deny_pending_for_session(sid, tools::ApprovalResolutionSource::UserStop).await;
+        }
+    } else {
+        tools::deny_all_pending(tools::ApprovalResolutionSource::UserStop).await;
+    }
+
     for (sid, turn_id, source) in watchdog_turns {
         ha_core::chat_engine::spawn_user_stop_watchdog(
             ctx.session_db.clone(),
@@ -1249,6 +1260,12 @@ pub async fn respond_to_approval_body(
     .await
     .map_err(|e| AppError::gone(e.to_string()))?;
     Ok(Json(json!({ "approved": true })))
+}
+
+/// `GET /api/chat/approvals/pending` — authoritative recovery snapshot for
+/// owner UIs after renderer reloads or WebSocket event gaps.
+pub async fn list_pending_approvals() -> Result<Json<Vec<tools::ApprovalRequest>>, AppError> {
+    Ok(Json(tools::list_pending_approval_requests().await))
 }
 
 /// `POST /api/chat/attachment` — persist an uploaded attachment (multipart/form-data).
