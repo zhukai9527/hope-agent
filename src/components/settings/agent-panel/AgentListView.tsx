@@ -2,17 +2,10 @@ import { useState, useEffect } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  AlertCircle,
-  ArrowLeft,
-  Bot,
-  ChevronRight,
-  Download,
-  Plus,
-  RefreshCw,
-} from "lucide-react"
+import { AlertCircle, ArrowLeft, Bot, ChevronRight, Download, Plus, RefreshCw } from "lucide-react"
 import type { AgentSummary, AgentConfig } from "./types"
 import { DEFAULT_PERSONALITY } from "./types"
 import { isMainAgent } from "@/types/tools"
@@ -49,6 +42,7 @@ function AgentCreateView({
 
     try {
       const config: AgentConfig = {
+        enabled: true,
         name: name.trim() || trimmedId,
         description: null,
         emoji: null,
@@ -71,7 +65,7 @@ function AgentCreateView({
           model: null,
         },
       }
-      await getTransport().call("save_agent_config_cmd", { id: trimmedId, config })
+      await getTransport().call("save_agent_config_cmd", { id: trimmedId, config, create: true })
       window.dispatchEvent(new Event("agents-changed"))
       onCreated(trimmedId)
     } catch (e) {
@@ -160,7 +154,7 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
   async function reload() {
     setLoading(true)
     try {
-      const list = await getTransport().call<AgentSummary[]>("list_agents")
+      const list = await getTransport().call<AgentSummary[]>("list_all_agents")
       setAgents(list)
       setListError(null)
     } catch (e) {
@@ -202,23 +196,9 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
         <span>{t("settings.agentNew")}</span>
       </Button>
 
-      {/* Import from OpenClaw button */}
-      <Button
-        variant="ghost"
-        className="h-auto w-full justify-start gap-2 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground mb-3 hover:bg-secondary/60 hover:text-foreground"
-        onClick={() => setImportOpen(true)}
-      >
-        <Download className="h-4 w-4" />
-        <span>{t("settings.openclawImportBtn")}</span>
-      </Button>
+      <OpenClawImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={reload} />
 
-      <OpenClawImportDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-        onImported={reload}
-      />
-
-      <div className="border-t border-border mb-4" />
+      <div className="border-t border-border mb-4 mt-3" />
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -249,7 +229,9 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
           <div className="text-center py-12">
             <Bot className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">{t("settings.agentNoAgents")}</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">{t("settings.agentNoAgentsHint")}</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              {t("settings.agentNoAgentsHint")}
+            </p>
           </div>
         )
       ) : (
@@ -261,9 +243,7 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
                 {listError.title}
               </div>
               {listError.description && (
-                <div className="mt-1 break-all text-muted-foreground">
-                  {listError.description}
-                </div>
+                <div className="mt-1 break-all text-muted-foreground">{listError.description}</div>
               )}
             </div>
           )}
@@ -271,7 +251,10 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
             <Button
               key={agent.id}
               variant="ghost"
-              className="group h-auto w-full justify-start gap-3 rounded-lg px-3 py-2.5 text-sm font-normal text-foreground hover:bg-secondary/60"
+              className={cn(
+                "group h-auto w-full justify-start gap-3 rounded-lg px-3 py-2.5 text-sm font-normal text-foreground hover:bg-secondary/60",
+                agent.enabled === false && "opacity-60",
+              )}
               onClick={() => onEditAgent(agent.id)}
             >
               <AgentAvatarBadge agent={agent} size="lg" />
@@ -283,6 +266,11 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
                   {isMainAgent(agent.id) && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground font-medium">
                       {t("settings.agentDefault")}
+                    </span>
+                  )}
+                  {agent.enabled === false && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {t("agentLifecycle.disabled")}
                     </span>
                   )}
                 </div>
@@ -299,6 +287,18 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
 
       <div className="mt-6 border-t border-border pt-4">
         <DefaultAgentSection agents={agents} loading={loading} />
+      </div>
+
+      <div className="mt-6 border-t border-border/60 pt-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
+          onClick={() => setImportOpen(true)}
+        >
+          <Download className="h-3.5 w-3.5" />
+          <span>{t("settings.openclawImportBtn")}</span>
+        </Button>
       </div>
     </div>
   )

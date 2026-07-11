@@ -445,6 +445,8 @@ pub async fn chat(
         };
         ha_core::agent::resolver::resolve_default_agent_id(project.as_ref(), None)
     };
+    ha_core::agent_lifecycle::ensure_agent_runnable(&agent_id)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     // Resolve or create session
     let mut new_session_created = false;

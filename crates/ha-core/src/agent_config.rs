@@ -8,6 +8,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
+    /// Lifecycle gate. Disabled Agents remain editable and keep their data,
+    /// but cannot be selected for new executions.
+    #[serde(default = "crate::default_true")]
+    pub enabled: bool,
+
     /// Display name
     #[serde(default = "default_name")]
     pub name: String,
@@ -69,6 +74,7 @@ fn default_name() -> String {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             name: default_name(),
             description: None,
             emoji: None,
@@ -876,6 +882,7 @@ pub struct AgentDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct AgentSummary {
     pub id: String,
+    pub enabled: bool,
     pub name: String,
     pub description: Option<String>,
     pub emoji: Option<String>,

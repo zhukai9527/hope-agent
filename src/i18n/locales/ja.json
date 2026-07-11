@@ -1,4 +1,16 @@
 {
+  "agentLifecycle": {
+    "activeWorkBlocked": "Deletion is blocked while {{count}} Agent task(s) are still active.",
+    "deleteDescription": "Routing references will move to the replacement Agent. Historical conversations and structured memories are retained, while Agent files are moved to the recoverable trash.",
+    "deleteTitle": "Delete Agent safely",
+    "disabled": "Disabled",
+    "enabled": "Enabled",
+    "history": "Historical conversations",
+    "memories": "Retained memories",
+    "replacement": "Replacement Agent",
+    "retentionNotice": "This operation creates a configuration backup. Agent configuration, Home, and Plans are moved to trash instead of being permanently erased.",
+    "routes": "Routing references"
+  },
   "about": {
     "badge": "日々の仕事のためのデスクトップAI",
     "closing": "機能チェックリストとして設計していません。長く使っても、役に立ち、信頼でき、邪魔にならないことを目指して設計しています。",
@@ -5529,7 +5541,7 @@
       "skillCount_one": "{{count}} 件の skill",
       "skillCount_other": "{{count}} 件の skill",
       "tooltip": {
-        "distinguishOnboarding": "旧 OpenClaw ユーザーデータの移行は、ステップ 2 の『Import OpenClaw』を使用してください。"
+        "distinguishUserDataImport": "旧 OpenClaw ユーザーデータを移行するには、「設定 → Agents → OpenClaw からインポート」を開いてください。"
       },
       "warning": {
         "openclaw": "OpenClaw の skill は外部 CLI（gh, 1password, tmux など）に依存することが多く、未インストール時は呼び出しに失敗する可能性があります。",

@@ -301,6 +301,22 @@ impl SessionDB {
         Ok(runs)
     }
 
+    /// Count queued or active runs involving an Agent on either side.
+    pub fn count_nonterminal_subagent_runs_for_agent(&self, agent_id: &str) -> Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM subagent_runs
+             WHERE status IN ('queued','spawning','running')
+               AND (parent_agent_id=?1 OR child_agent_id=?1)",
+            params![agent_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     /// Collect the transitive set of subagent CHILD session ids descended from
     /// `root_session_id` (walking `subagent_runs.parent_session_id →
     /// child_session_id`). Session delete/purge calls this BEFORE the cascade

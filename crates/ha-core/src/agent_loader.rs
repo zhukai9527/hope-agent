@@ -345,8 +345,17 @@ fn read_optional_md(dir: &Path, filename: &str) -> Result<Option<String>> {
 
 // ── List Agents ──────────────────────────────────────────────────
 
-/// List all available agents from ~/.hope-agent/agents/
+/// List runnable agents from ~/.hope-agent/agents/.
 pub fn list_agents() -> Result<Vec<AgentSummary>> {
+    Ok(list_all_agents()?
+        .into_iter()
+        .filter(|agent| agent.enabled)
+        .collect())
+}
+
+/// Owner-plane list including disabled Agents so they remain editable and can
+/// be re-enabled or deleted safely.
+pub fn list_all_agents() -> Result<Vec<AgentSummary>> {
     let agents_dir = paths::agents_dir()?;
     if !agents_dir.exists() {
         return Ok(Vec::new());
@@ -389,6 +398,7 @@ pub fn list_agents() -> Result<Vec<AgentSummary>> {
 
         summaries.push(AgentSummary {
             id,
+            enabled: config.enabled,
             name: config.name,
             description: config.description,
             emoji: config.emoji,
@@ -482,8 +492,20 @@ pub fn list_agent_ids() -> Result<std::collections::HashSet<String>> {
 
 // ── Save Agent Config ────────────────────────────────────────────
 
-/// Save agent.json for the given agent ID. Creates the directory if needed.
+/// Save agent.json for an existing Agent, or create a never-before-seen id.
+/// Lifecycle coordination prevents stale writes from resurrecting an Agent
+/// after a successful delete.
 pub fn save_agent_config(id: &str, config: &AgentConfig) -> Result<()> {
+    crate::agent_lifecycle::save_agent_config(id, config, false)
+}
+
+/// Explicit creation path. Unlike an ordinary save this may intentionally
+/// reuse an id deleted earlier in the same process.
+pub fn create_agent_config(id: &str, config: &AgentConfig) -> Result<()> {
+    crate::agent_lifecycle::save_agent_config(id, config, true)
+}
+
+pub(crate) fn save_agent_config_unlocked(id: &str, config: &AgentConfig) -> Result<()> {
     let dir = paths::agent_dir(id)?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("agent.json");
@@ -589,6 +611,10 @@ pub fn patch_agent_model_defaults(id: &str, patch: AgentModelDefaultsPatch) -> R
 
 /// Save a markdown file for the given agent.
 pub fn save_agent_markdown(id: &str, file: &str, content: &str) -> Result<()> {
+    crate::agent_lifecycle::save_agent_markdown(id, file, content)
+}
+
+pub(crate) fn save_agent_markdown_unlocked(id: &str, file: &str, content: &str) -> Result<()> {
     // Validate filename to prevent path traversal
     match file {
         AGENT_MD | PERSONA_MD | TOOLS_MD | AGENTS_MD | IDENTITY_MD | SOUL_MD => {}
@@ -685,18 +711,4 @@ pub fn render_persona_to_soul_md(id: &str) -> Result<String> {
     }
 
     Ok(out)
-}
-
-// ── Delete Agent ─────────────────────────────────────────────────
-
-/// Delete an agent directory. Refuses to delete the main agent.
-pub fn delete_agent(id: &str) -> Result<()> {
-    if id == DEFAULT_AGENT_ID {
-        anyhow::bail!("Cannot delete the default agent");
-    }
-    let dir = paths::agent_dir(id)?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
-    }
-    Ok(())
 }

@@ -144,6 +144,7 @@ export interface SkillStatusEntry {
 
 export interface AgentSummary {
   id: string
+  enabled?: boolean
   name: string
   description?: string | null
   emoji?: string | null
@@ -297,6 +298,7 @@ export interface PersonalityConfig {
 export type AsyncToolPolicy = "model-decide" | "always-background" | "never-background"
 
 export interface AgentConfig {
+  enabled?: boolean
   name: string
   description?: string | null
   emoji?: string | null

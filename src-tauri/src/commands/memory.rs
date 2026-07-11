@@ -1260,11 +1260,8 @@ pub async fn get_agent_memory_md(id: String) -> Result<Option<String>, CmdError>
 
 #[tauri::command]
 pub async fn save_agent_memory_md(id: String, content: String) -> Result<(), CmdError> {
-    let dir = crate::paths::agent_dir(&id)?;
     ha_core::blocking::run_blocking(move || {
-        let _ = std::fs::create_dir_all(&dir);
-        ha_core::platform::write_atomic(&dir.join("memory.md"), content.as_bytes())
-            .map_err(Into::into)
+        ha_core::agent_lifecycle::save_agent_memory_md(&id, &content).map_err(Into::into)
     })
     .await
 }

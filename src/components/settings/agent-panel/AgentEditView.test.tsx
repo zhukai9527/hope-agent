@@ -114,6 +114,7 @@ afterEach(() => {
 })
 
 const agentConfig = {
+  enabled: true,
   name: "Research agent",
   description: null,
   emoji: null,
@@ -168,5 +169,88 @@ describe("AgentEditView", () => {
       }),
     )
     expect(screen.queryByText(/agent-save-secret/)).toBeNull()
+  })
+
+  it("previews dependencies and requires a replacement before deletion", async () => {
+    transportMock.call.mockImplementation(async (command: string) => {
+      if (command === "get_agent_config") return structuredClone(agentConfig)
+      if (command === "get_agent_markdown") return ""
+      if (command === "get_skills") return []
+      if (command === "list_builtin_tools") return []
+      if (command === "get_available_models") return []
+      if (command === "list_agents") return [{ id: "ha-main", name: "Hope", enabled: true }]
+      if (command === "preview_agent_delete") {
+        return {
+          agentId: "agent-1",
+          agentName: "Research agent",
+          enabled: true,
+          isMain: false,
+          references: {
+            globalConfig: 1,
+            projects: 2,
+            cronJobs: 1,
+            otherAgentConfigs: 0,
+            historicalSessions: 3,
+            historicalSubagentRuns: 0,
+            historicalTeams: 0,
+            agentMemories: 4,
+          },
+          activeWork: {
+            agentRuns: 0,
+            foregroundSessions: 0,
+            subagentRuns: 0,
+            teams: 0,
+            cronRuns: 0,
+            backgroundJobs: 0,
+          },
+          hasHomeDir: true,
+          hasPlanDir: true,
+          blockers: [],
+        }
+      }
+      if (command === "delete_agent") return { trashPath: "/trash/agent-1" }
+      return null
+    })
+
+    const onBack = vi.fn()
+    render(<AgentEditView agentId="agent-1" onBack={onBack} />)
+
+    expect(await screen.findByText("Research agent")).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: "common.delete" }))
+    expect(await screen.findByText("agentLifecycle.deleteTitle")).toBeTruthy()
+
+    const deleteButtons = screen.getAllByRole("button", { name: "common.delete" })
+    fireEvent.click(deleteButtons[deleteButtons.length - 1])
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("delete_agent", {
+        id: "agent-1",
+        replacementAgentId: "ha-main",
+      })
+    })
+    expect(onBack).toHaveBeenCalled()
+  })
+
+  it("can disable a non-main Agent without deleting its data", async () => {
+    transportMock.call.mockImplementation(async (command: string) => {
+      if (command === "get_agent_config") return structuredClone(agentConfig)
+      if (command === "get_agent_markdown") return ""
+      if (command === "get_skills") return []
+      if (command === "list_builtin_tools") return []
+      if (command === "get_available_models") return []
+      return null
+    })
+
+    render(<AgentEditView agentId="agent-1" onBack={vi.fn()} />)
+
+    expect(await screen.findByText("Research agent")).toBeTruthy()
+    fireEvent.click(screen.getByRole("switch", { name: "provider.disable" }))
+
+    await waitFor(() => {
+      expect(transportMock.call).toHaveBeenCalledWith("set_agent_enabled", {
+        id: "agent-1",
+        enabled: false,
+      })
+    })
   })
 })

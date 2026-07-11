@@ -241,6 +241,8 @@ pub async fn chat(
             None => state.current_agent_id.lock().await.clone(),
         },
     };
+    ha_core::agent_lifecycle::ensure_agent_runnable(&current_agent_id)
+        .map_err(|e| CmdError::msg(e.to_string()))?;
     let mut new_session_created: Option<String> = None;
     let sid = match session_id {
         Some(id) if !id.is_empty() => id,
