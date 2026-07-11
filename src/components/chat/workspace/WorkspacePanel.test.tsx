@@ -831,6 +831,7 @@ function managedWorktree(patch: Partial<ManagedWorktree> = {}): ManagedWorktree 
     repoRoot: "/repo",
     sourceWorkingDir: "/repo",
     path: "/repo-worktrees/wt-repair",
+    pathSource: "builtin",
     baseRef: "main",
     baseBranch: "main",
     baseSha: "abcdef123456",

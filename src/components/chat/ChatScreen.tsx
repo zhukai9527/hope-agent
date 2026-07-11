@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { getTransport } from "@/lib/transport-provider"
-import { parsePayload } from "@/lib/transport"
+import { parsePayload, TRANSPORT_EVENT_RESYNC_REQUIRED } from "@/lib/transport"
 import { save } from "@tauri-apps/plugin-dialog"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
@@ -139,6 +139,11 @@ import { chatKnowledgeReferenceAttachErrorToast } from "./chatKnowledgeReference
 import ProjectDialog from "./project/ProjectDialog"
 import ProjectOverviewDialog from "./project/ProjectOverviewDialog"
 import {
+  createLocalProjectRuntimeDraft,
+  ProjectSessionDraftBar,
+  type ProjectRuntimeDraft,
+} from "./project/ProjectSessionDraftBar"
+import {
   CHAT_DISPLAY_MODE_EVENT,
   normalizeChatDisplayMode,
   readChatDisplayModePreference,
@@ -157,6 +162,11 @@ import {
 } from "./sidebar/types"
 import { generateClientId, getLatestUserTurnKey } from "./chatScrollKeys"
 import type { Project, ProjectMeta } from "@/types/project"
+import type {
+  ProjectBootstrapProgressEvent,
+  ProjectBootstrapRun,
+  ProjectSessionBootstrapInput,
+} from "@/lib/transport"
 import type { KbDraftAttachment } from "@/types/knowledge"
 import type { ChatFocusTarget } from "@/components/chat/chatFocus"
 import {
@@ -759,6 +769,13 @@ export default function ChatScreen({
   // into the new session via the `chat` command's `projectId` on first send, then
   // cleared once the real session meta catches up (see the transition effect).
   const [draftProjectId, setDraftProjectId] = useState<string | null>(null)
+  const [draftProjectRuntime, setDraftProjectRuntime] = useState<ProjectRuntimeDraft>(() =>
+    createLocalProjectRuntimeDraft(),
+  )
+  const [projectBootstrapProgress, setProjectBootstrapProgress] = useState<{
+    stage: string
+    error: string | null
+  } | null>(null)
 
   // Plan mode state (declared early so useChatStream can access it)
   const [planModeState, setPlanModeState] = useState<
@@ -1034,6 +1051,8 @@ export default function ChatScreen({
       setDraftKbAttachments([])
       setDraftWorkingDir(null)
       setDraftProjectId(projectId)
+      setDraftProjectRuntime(createLocalProjectRuntimeDraft())
+      setProjectBootstrapProgress(null)
       await handleNewChat(agentId)
     },
     [projects, handleNewChat],
@@ -1048,6 +1067,8 @@ export default function ChatScreen({
       // only fires on draft→materialized, not draft→draft).
       setDraftWorkingDir(null)
       setDraftProjectId(null)
+      setDraftProjectRuntime(createLocalProjectRuntimeDraft())
+      setProjectBootstrapProgress(null)
       await handleNewChat(agentId)
     },
     [handleNewChat],
@@ -1181,6 +1202,88 @@ export default function ChatScreen({
     }
     await handleStartNewChat(currentAgentId)
   }, [currentAgentId, effectiveProjectId, handleNewChatInProject, handleStartNewChat])
+
+  const handleProjectRuntimeDraftChange = useCallback((next: ProjectRuntimeDraft) => {
+    setDraftProjectRuntime((previous) => ({
+      ...next,
+      requestId:
+        next.baseRef
+          ? next.requestId || previous.requestId || generateClientId()
+          : "",
+    }))
+    setProjectBootstrapProgress(null)
+  }, [])
+
+  const draftProjectBootstrap = useMemo<ProjectSessionBootstrapInput | null>(() => {
+    if (
+      !draftProjectId ||
+      !draftProjectRuntime.baseRef ||
+      !draftProjectRuntime.requestId
+    ) {
+      return null
+    }
+    return {
+      requestId: draftProjectRuntime.requestId,
+      launchMode: draftProjectRuntime.launchMode,
+      baseRef: draftProjectRuntime.baseRef,
+      includeLocalChanges: draftProjectRuntime.includeLocalChanges,
+    }
+  }, [draftProjectId, draftProjectRuntime])
+
+  useEffect(() => {
+    if (!draftProjectRuntime.requestId) return
+    const requestId = draftProjectRuntime.requestId
+    const transport = getTransport()
+    const applyProgress = (event: ProjectBootstrapProgressEvent) => {
+      if (event.requestId !== requestId) return
+      const failed =
+        event.status === "failed" ||
+        event.status === "cancelled" ||
+        event.status === "interrupted"
+      setProjectBootstrapProgress({
+        stage: event.stage,
+        error: failed ? event.message || t("chat.projectRuntime.prepareFailed", "工作树准备失败") : null,
+      })
+      if (failed) {
+        // A failed request id is durable and cannot be replayed. Keep the
+        // selected branch but mint a fresh id for the user's next Send.
+        setDraftProjectRuntime((current) =>
+          current.requestId === requestId
+            ? { ...current, requestId: generateClientId() }
+            : current,
+        )
+      }
+    }
+    const unlisten = transport.listen("project:bootstrap_progress", (raw) => {
+      const event = parsePayload<ProjectBootstrapProgressEvent>(raw)
+      if (event) applyProgress(event)
+    })
+    const recover = () => {
+      void transport
+        .call<ProjectBootstrapRun | null>("get_project_bootstrap_run", { requestId })
+        .then((run) => {
+          if (!run) return
+          applyProgress({
+            requestId: run.id,
+            status: run.status,
+            stage: run.stage,
+            sessionId: run.sessionId,
+            worktreeId: run.worktreeId,
+            message: run.errorMessage,
+            errorCode: run.errorCode,
+          })
+        })
+        .catch(() => undefined)
+    }
+    // The HTTP event socket can reconnect after progress frames were missed.
+    // Re-read the durable run both now and whenever that socket reconnects.
+    recover()
+    const unlistenReconnect = transport.listen(TRANSPORT_EVENT_RESYNC_REQUIRED, recover)
+    return () => {
+      unlisten()
+      unlistenReconnect()
+    }
+  }, [draftProjectRuntime.requestId, t])
 
   /**
    * Title-bar agent switch handler. Backend rejects the switch when the
@@ -1383,6 +1486,8 @@ export default function ChatScreen({
       materializedProjectDraftSessionIdRef.current === nextSessionId
     ) {
       setDraftProjectId(null)
+      setDraftProjectRuntime(createLocalProjectRuntimeDraft())
+      setProjectBootstrapProgress(null)
       materializedProjectDraftSessionIdRef.current = null
     }
   }, [session.currentSessionId, currentSessionMeta, draftProjectId])
@@ -1870,6 +1975,15 @@ export default function ChatScreen({
     incognitoEnabled,
     draftWorkingDir,
     draftProjectId,
+    draftProjectBootstrap,
+    onProjectBootstrapFailure: (message) => {
+      setProjectBootstrapProgress({ stage: "failed", error: message })
+      setDraftProjectRuntime((current) =>
+        current.baseRef
+          ? { ...current, requestId: generateClientId() }
+          : current,
+      )
+    },
     draftKbAttachments,
     onSandboxModeSynced: handleSandboxModeSynced,
     parentInjectionDeltasViaChatStream: true,
@@ -3763,6 +3877,35 @@ export default function ChatScreen({
                         />
                       </div>
                     )}
+                    {!session.currentSessionId && currentProject && !incognitoEnabled ? (
+                      <ProjectSessionDraftBar
+                        project={currentProject}
+                        projects={projects}
+                        draft={draftProjectRuntime}
+                        disabled={session.loading}
+                        progressStage={projectBootstrapProgress?.stage ?? null}
+                        progressError={projectBootstrapProgress?.error ?? null}
+                        onDraftChange={handleProjectRuntimeDraftChange}
+                        onSelectProject={(projectId, defaultAgentId) => {
+                          void handleNewChatInProject(projectId, defaultAgentId)
+                        }}
+                        onRemoveProject={() => {
+                          void handleStartNewChat(currentAgentId)
+                        }}
+                        onRetry={() => {
+                          setProjectBootstrapProgress(null)
+                          window.setTimeout(() => {
+                            void stream.handleSend()
+                          }, 0)
+                        }}
+                        onUseLocal={() => {
+                          handleProjectRuntimeDraftChange({
+                            ...draftProjectRuntime,
+                            launchMode: "local",
+                          })
+                        }}
+                      />
+                    ) : null}
                     <ChatInput
                       input={stream.input}
                       onInputChange={stream.setInput}
@@ -3780,7 +3923,11 @@ export default function ChatScreen({
                             : undefined,
                         )
                       }
-                      sendDisabled={session.historyLoading}
+                      sendDisabled={
+                        session.historyLoading ||
+                        (draftProjectRuntime.launchMode === "worktree" &&
+                          (!draftProjectBootstrap || session.loading))
+                      }
                       loading={session.loading}
                       availableModels={availableModels}
                       activeModel={activeModel}
@@ -3913,6 +4060,8 @@ export default function ChatScreen({
                 onActiveIndexChange={diffPanel.setActiveIndex}
                 onClose={diffPanel.closeDiff}
                 onPreviewFile={filePreview.openPreview}
+                gitContext={diffPanel.gitContext}
+                onGitSnapshotChange={diffPanel.replaceGitDiff}
                 embedded
               />
             </RightPanelShell>
@@ -4049,6 +4198,7 @@ export default function ChatScreen({
                 messages={session.messages}
                 contextUsageOverride={contextUsage}
                 onOpenDiff={diffPanel.openDiff}
+                onOpenGitDiff={diffPanel.openGitDiff}
                 onPreviewFile={filePreview.openPreview}
                 sessionId={session.currentSessionId}
                 sessionMeta={currentSessionMeta}

@@ -135,6 +135,7 @@ import type {
   ReviewRunSnapshot,
   ReviewSeverity,
   ReviewVerdict,
+  SessionGitDiffSnapshot,
   VerificationRisk,
   VerificationRunSnapshot,
   VerificationStep,
@@ -189,6 +190,8 @@ import { sessionSourceKey, type SessionUrlSource } from "./useSessionUrlSources"
 import type { SessionBrowserActivity } from "./useSessionBrowserActivity"
 import { useWorkspaceArtifacts } from "./useWorkspaceArtifacts"
 import { useWorkspaceEnvironment } from "./useWorkspaceEnvironment"
+import { GitControlCard } from "./GitControlCard"
+import { useSessionGitControl } from "./useSessionGitControl"
 import { useScrollPagedRender } from "./useScrollPagedRender"
 import { useSessionKnowledge } from "./useSessionKnowledge"
 import { useManagedWorktrees } from "./useManagedWorktrees"
@@ -266,6 +269,8 @@ interface WorkspacePanelProps {
   contextUsageOverride?: ContextUsageInfo | null
   /** 改写类文件「查看 diff」→ 右侧 diff 面板。 */
   onOpenDiff: (payload: FileChangeMetadata | FileChangesMetadata) => void
+  /** 仓库真实 staged / unstaged diff → 右侧 diff 面板。 */
+  onOpenGitDiff?: (snapshot: SessionGitDiffSnapshot, sessionId: string) => void
   /** 预览文件 → 右侧预览面板（与下挂文件 / Markdown 链接同一策略）。 */
   onPreviewFile?: (target: PreviewTarget) => void
   /** 当前会话 id,后端聚合 + 文件作用域解析都需要它。 */
@@ -1441,6 +1446,7 @@ function EnvironmentSection({
   planState = "off",
   turnActive,
   onOpenDiff,
+  onOpenGitDiff = () => {},
 }: {
   sessionId?: string | null
   sessionMeta?: SessionMeta | null
@@ -1451,6 +1457,7 @@ function EnvironmentSection({
   planState?: PlanModeState
   turnActive?: boolean
   onOpenDiff?: (payload: FileChangeMetadata | FileChangesMetadata) => void
+  onOpenGitDiff: (snapshot: SessionGitDiffSnapshot, sessionId: string) => void
 }) {
   const { t } = useTranslation()
   const [gitDiffLoading, setGitDiffLoading] = useState(false)
@@ -1488,6 +1495,7 @@ function EnvironmentSection({
     turnActive,
   })
   const managedWorktrees = managedWorktreesState.worktrees
+  const gitControl = useSessionGitControl(sessionId, turnActive)
   const activeManagedWorktree =
     managedWorktrees.find((wt) => wt.state !== "archived" && wt.path === workingDir) ?? null
   const [worktreeActionKey, setWorktreeActionKey] = useState<string | null>(null)
@@ -1587,7 +1595,20 @@ function EnvironmentSection({
       icon={Cpu}
       meta={<StatusPill label={statusLabel} tone={status.tone} loading={env.loading} />}
     >
-      <div className="space-y-0.5">
+      {sessionId && git ? (
+        <GitControlCard
+          sessionId={sessionId}
+          state={gitControl}
+          managedWorktrees={managedWorktrees}
+          onOpenGitDiff={onOpenGitDiff}
+        />
+      ) : null}
+
+      <details className="mt-2 rounded-lg border border-border/45 bg-secondary/10">
+        <summary className="cursor-pointer select-none px-2.5 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
+          {t("workspace.environment.details", "详细信息")}
+        </summary>
+        <div className="space-y-0.5 border-t border-border/45 p-1.5">
         <EnvRow
           icon={Monitor}
           label={t("workspace.environment.version", "版本")}
@@ -1775,7 +1796,8 @@ function EnvironmentSection({
             value={t("workspace.environment.nonGit", "非 Git 工作目录")}
           />
         ) : null}
-      </div>
+        </div>
+      </details>
     </WorkspaceSection>
   )
 }
@@ -1951,6 +1973,8 @@ function managedWorktreeStateLabel(
       return t("workspace.worktree.stateArchived", "Archived")
     case "handoff":
       return t("workspace.worktree.stateHandoff", "Handoff")
+    case "bootstrap_failed":
+      return t("workspace.worktree.stateBootstrapFailed", "Bootstrap failed")
   }
 }
 
@@ -18907,7 +18931,9 @@ function goalWorktreeEvidenceFromItem(item: GoalEvidenceItem): GoalWorktreeEvide
 }
 
 function parseManagedWorktreeState(value: string | null): ManagedWorktree["state"] {
-  return value === "archived" || value === "handoff" ? value : "active"
+  return value === "archived" || value === "handoff" || value === "bootstrap_failed"
+    ? value
+    : "active"
 }
 
 function goalWorktreeDirtySnapshotFromMetadata(
@@ -22192,6 +22218,7 @@ export default function WorkspacePanel({
   messages,
   contextUsageOverride,
   onOpenDiff,
+  onOpenGitDiff = () => {},
   onPreviewFile,
   sessionId,
   sessionMeta,
@@ -22315,6 +22342,7 @@ export default function WorkspacePanel({
           planState={planState}
           turnActive={turnActive}
           onOpenDiff={onOpenDiff}
+          onOpenGitDiff={onOpenGitDiff}
         />
 
         <GoalWorkspaceSection

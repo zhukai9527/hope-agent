@@ -1,6 +1,6 @@
 # Managed Worktree 控制平面
 
-> 返回 [文档索引](../README.md) | 更新时间：2026-07-04
+> 返回 [文档索引](../README.md) | 更新时间：2026-07-11
 
 Managed Worktree 是 Hope Agent 的 durable 隔离执行环境。它不是普通 `git worktree` 命令的薄包装，而是一个带持久状态、owner API、GUI 控制、Workflow 绑定、Subagent 隔离和 Hook 扩展点的控制平面。
 
@@ -32,6 +32,7 @@ session working dir
 | 层 | 代码 | 责任 |
 | --- | --- | --- |
 | 核心控制面 | `crates/ha-core/src/worktree.rs` | 表结构、创建、归档、恢复、交接、`.worktreeinclude` 复制、EventBus。 |
+| 项目首轮 Bootstrap | `crates/ha-core/src/project_bootstrap.rs` | 首次发送前校验、幂等记录、进度事件、取消与启动恢复。 |
 | 路径 | `crates/ha-core/src/paths.rs` | `worktrees_dir()` 返回 `~/.hope-agent/worktrees`。 |
 | Hooks | `crates/ha-core/src/hooks/*` | `WorktreeCreate` 阻断/替换默认创建；`WorktreeRemove` 观察清理。 |
 | Workflow | `crates/ha-core/src/workflow/{types,db,runtime}.rs` | `workflow_runs.worktree_id`，运行时自动 restore 并覆盖 execution cwd。 |
@@ -52,11 +53,12 @@ session working dir
 | `child_session_id` | 可选；subagent child session。 |
 | `workflow_run_id` | 可选；workflow 反向绑定。`create_workflow_run(worktreeId)` 会在该字段为空时回填 run id。 |
 | `purpose` | `manual` / `workflow` / `subagent`。 |
-| `state` | `active` / `archived` / `handoff`。 |
+| `state` | `active` / `archived` / `handoff`；Hook 自定义路径启动清理失败时为 `bootstrap_failed`。 |
 | `label` | 展示标签，不作为身份。 |
 | `repo_root` | 源仓库根目录。 |
 | `source_working_dir` | 创建时的源 cwd。 |
 | `path` | managed worktree 绝对路径。 |
+| `path_source` | `builtin` / `hook`；清理策略不能靠路径猜测。 |
 | `base_ref` / `base_branch` / `base_sha` | 创建基线。 |
 | `git_branch` | worktree 当前分支；默认 detached。 |
 | `dirty_snapshot_json` | 归档时的变更快照。 |
@@ -74,6 +76,26 @@ session working dir
 6. 无 hook 时执行 `git worktree add --detach <path> <base_sha>`。
 7. 复制 `.worktreeinclude` 中 git-ignored 文件，以及 `AGENTS.override.md`。
 8. 写 `managed_worktrees` 行并 emit `worktree:created`。
+
+### 项目首轮 Bootstrap
+
+项目草稿首条消息可携带 `ProjectSessionBootstrapInput`。分支选择与运行位置正交：`local` 和 `worktree` 都可选择后端 Git 信息接口返回的 `refs/heads/*` 或 `refs/remotes/*`。`local` 选择当前分支时保留现有未提交改动；选择其他本地分支时仅在工作区干净的情况下执行 `git switch`；选择 remote-tracking 分支时仅在工作区干净的情况下创建本地 tracking branch。不会自动 stash、reset 或丢弃改动。`worktree` 将 ref 解析为固定 SHA 后创建 detached managed worktree，并在进入 Chat Engine 前把临时 session 的 `working_dir` 绑定到该路径。初始化绑定保持 `active`，不标记为后续用户动作 `handoff`。
+
+`project_bootstrap_runs` 与 `requestId` 提供持久状态、查询和重复请求保护。`requestId` 限定为字母、数字、`-`、`_`，临时目录为 `~/.hope-agent/bootstrap/<request-id>/`。准备阶段通过 `project:bootstrap_progress` 广播 `resolving_git`、`snapshotting`、`creating_worktree`、`copying_changes`、`binding_session`、`ready`；首轮接管后转换为 `chatting` / `completed` 并发 `project:bootstrap_completed`。失败或取消会在模型调用前删除无消息临时 session、清理内建 Worktree 和 Bootstrap 临时目录。应用重启时只由 primary 把遗留运行标记为 `interrupted` 并执行 Git-aware 清理，secondary 打开数据库不得改动运行态。
+
+选择当前本地分支且 HEAD 与已解析 `baseRef` SHA 一致时，可以复制未提交内容：tracked 内容由 `git diff --binary HEAD --` 捕获并以 `git apply --binary` 应用，非忽略 untracked 文件由 NUL 分隔 manifest 复制；staged 状态不保留。所有路径都必须 canonical containment 校验，symlink、HEAD 变化、patch 冲突或部分复制失败会阻止首轮启动。ignored 文件仍仅由 `.worktreeinclude` 控制，`AGENTS.override.md` 延续特殊复制规则。选择其他本地或远端分支时不携带源工作区改动。
+
+首版项目草稿控制面只提供“本地处理 / 新工作树”和起始分支，不包含命名环境、Setup script、环境变量、Actions 或云端运行。
+
+## Session Git 控制面
+
+工作台 Git 卡和 DiffPanel 统一调用 `crates/ha-core/src/git_control.rs`。所有入口只接受 `sessionId`，再通过 `WorkspaceScope::for_session` 解析 effective working directory；客户端不能传 cwd 或 patch。Tauri 的 `commands/git_control.rs` 与 server 的 `routes/git_control.rs` 只是薄适配，HTTP 写操作继续受 `filesystem.allow_remote_writes=false` 默认闸门保护。
+
+Git snapshot 同时返回 checkout root、HEAD/branch/detached、revision、local 与 remote-tracking branches、remotes、worktrees、dirty/status、ahead/behind、最近提交、active location 和 capability。Diff 分 `unstaged` / `staged` / `all`；hunk ID 由后端对 revision、路径和后端重新生成的 patch 内容计算，mutation 时再次匹配，前端不提交任意 patch。stage / unstage / discard 支持 all、file、hunk；binary、rename、submodule、untracked 与 conflict 按能力降为文件级，discard 必须显式确认。
+
+分支、commit、push、PR 和 Handoff 使用 `git_operation_runs` 持久化 `requestId`、阶段、HEAD、结果和错误。事件为 `session:git_progress`、`session:git_changed`、`session:git_completed`。仓库写操作用 `~/.hope-agent/git-locks/<git-common-dir-hash>.lock` 做跨进程短锁；仓库身份和锁基于 `git rev-parse --git-common-dir`，因此 Local 与 linked Worktree 共享同一把锁，而实际 diff/patch 始终在各自 checkout root 执行。Git/gh 子进程禁用终端提示并有超时；不自动 fetch、stash、pull、rebase，也不提供 force push。
+
+安全 Handoff 的快照位于 `~/.hope-agent/git-operations/<request-id>/`，分别保存 staged patch、unstaged patch、untracked manifest/内容和 metadata。目标必须属于同一 Git common dir 且干净；源 checkout 不得有冲突或 untracked symlink。先完整捕获和校验，再移动 branch ownership、应用 staged/index 与 unstaged/worktree 内容，fingerprint 一致后才更新 Session working dir。失败会按 metadata 恢复源并清理目标；启动 reconciler 将遗留运行标为 `interrupted`，不会自动继续 commit、push、PR 或 Handoff。
 
 ### 恢复
 
@@ -179,3 +201,4 @@ Workflow 创建面板有“运行位置”选择：
 - Workflow 绑定 worktree 不可用时必须 fail closed/block，不能静默改用父目录。
 - Worktree 的 Goal evidence 只能描述执行环境与交接状态，不能替代 validation / review / workflow completion。
 - `.worktreeinclude` 只复制 git ignored 文件；跳过 symlink，不覆盖 git 语义。
+- Bootstrap 临时文件只能写入 Hope 数据目录；Hook 自定义路径失败清理只允许 `git worktree remove`，禁止对任意路径递归删除。
