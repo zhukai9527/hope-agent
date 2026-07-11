@@ -17,16 +17,16 @@ pub async fn handle_goal(
     let sid = session_id.ok_or("No active session")?;
     let trimmed = args.trim();
     if trimmed.is_empty() || matches!(trimmed, "status" | "show") {
-        return render_active_goal(session_db, sid);
+        return render_active_goal(session_db, sid).await;
     }
 
     match parse_goal_request(trimmed) {
-        GoalRequest::Show => render_active_goal(session_db, sid),
+        GoalRequest::Show => render_active_goal(session_db, sid).await,
         GoalRequest::Help => Ok(display_only(goal_usage())),
-        GoalRequest::Transition(command) => transition_active_goal(session_db, sid, command),
+        GoalRequest::Transition(command) => transition_active_goal(session_db, sid, command).await,
         GoalRequest::Upsert(raw) => {
             exit_plan_for_goal_upsert(sid).await?;
-            upsert_goal(session_db, sid, raw)?;
+            upsert_goal(session_db, sid, raw).await?;
             let result = CommandResult {
                 content: "Goal updated. Starting a normal model turn for the active goal."
                     .to_string(),
@@ -86,83 +86,98 @@ async fn exit_plan_for_goal_upsert(sid: &str) -> Result<(), String> {
     }
 }
 
-fn upsert_goal(session_db: &Arc<SessionDB>, sid: &str, raw: &str) -> Result<CommandResult, String> {
+async fn upsert_goal(
+    session_db: &Arc<SessionDB>,
+    sid: &str,
+    raw: &str,
+) -> Result<CommandResult, String> {
     let (objective, completion_criteria) = parse_goal_create_args(raw);
     if objective.trim().is_empty() && completion_criteria.trim().is_empty() {
         return Err(goal_usage());
     }
+    let db = session_db.clone();
+    let sid = sid.to_string();
+    crate::blocking::run_blocking(move || {
+        if let Some(snapshot) = db
+            .active_goal_for_session(&sid)
+            .map_err(|e| e.to_string())?
+        {
+            let next = db
+                .update_goal(UpdateGoalInput {
+                    goal_id: snapshot.goal.id,
+                    objective: (!objective.trim().is_empty()).then_some(objective),
+                    completion_criteria: (!completion_criteria.trim().is_empty())
+                        .then_some(completion_criteria),
+                    domain: None,
+                    workflow_template_id: None,
+                    workflow_template_version: None,
+                    workflow_task_type: None,
+                })
+                .map_err(|e| e.to_string())?;
+            return Ok(display_only(goal_upsert_summary(&next)));
+        }
 
-    if let Some(snapshot) = session_db
-        .active_goal_for_session(sid)
-        .map_err(|e| e.to_string())?
-    {
-        let next = session_db
-            .update_goal(UpdateGoalInput {
-                goal_id: snapshot.goal.id,
-                objective: (!objective.trim().is_empty()).then_some(objective),
-                completion_criteria: (!completion_criteria.trim().is_empty())
-                    .then_some(completion_criteria),
+        if objective.trim().is_empty() {
+            return Err(goal_usage());
+        }
+        let snapshot = db
+            .create_goal(CreateGoalInput {
+                session_id: sid,
+                objective,
+                completion_criteria,
                 domain: None,
                 workflow_template_id: None,
                 workflow_template_version: None,
                 workflow_task_type: None,
+                budget_token_limit: None,
+                budget_time_limit_secs: None,
+                budget_turn_limit: None,
             })
             .map_err(|e| e.to_string())?;
-        return Ok(display_only(goal_upsert_summary(&next)));
-    }
-
-    if objective.trim().is_empty() {
-        return Err(goal_usage());
-    }
-    let snapshot = session_db
-        .create_goal(CreateGoalInput {
-            session_id: sid.to_string(),
-            objective,
-            completion_criteria,
-            domain: None,
-            workflow_template_id: None,
-            workflow_template_version: None,
-            workflow_task_type: None,
-            budget_token_limit: None,
-            budget_time_limit_secs: None,
-            budget_turn_limit: None,
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(display_only(goal_upsert_summary(&snapshot)))
+        Ok(display_only(goal_upsert_summary(&snapshot)))
+    })
+    .await
 }
 
-fn transition_active_goal(
+async fn transition_active_goal(
     session_db: &Arc<SessionDB>,
     sid: &str,
     command: GoalCommand,
 ) -> Result<CommandResult, String> {
-    let snapshot = session_db
-        .active_goal_for_session(sid)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| {
-            "No active goal for this session. Use `/goal <objective> --criteria <criteria>`."
-                .to_string()
-        })?;
-    let next = match command {
-        GoalCommand::Pause => session_db.pause_goal(&snapshot.goal.id),
-        GoalCommand::Resume => session_db.resume_goal(&snapshot.goal.id),
-        GoalCommand::Clear => session_db.clear_goal(&snapshot.goal.id),
-        GoalCommand::Evaluate => session_db.evaluate_goal(&snapshot.goal.id),
-        GoalCommand::Accept => session_db.close_goal(CloseGoalInput {
-            goal_id: snapshot.goal.id,
-            decision: GoalClosureDecision::AcceptedV1,
-            reason: Some("User accepted the current audit and remaining risk.".to_string()),
-            follow_up_items: final_audit_follow_up_texts(&snapshot.goal.final_evidence),
-        }),
-        GoalCommand::Strict => session_db.close_goal(CloseGoalInput {
-            goal_id: snapshot.goal.id,
-            decision: GoalClosureDecision::NeedsStrictEvidence,
-            reason: Some("User requested stricter evidence before closing the goal.".to_string()),
-            follow_up_items: Vec::new(),
-        }),
-    }
-    .map_err(|e| e.to_string())?;
-    Ok(display_only(render_goal_snapshot(&next)))
+    let db = session_db.clone();
+    let sid = sid.to_string();
+    crate::blocking::run_blocking(move || {
+        let snapshot = db
+            .active_goal_for_session(&sid)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| {
+                "No active goal for this session. Use `/goal <objective> --criteria <criteria>`."
+                    .to_string()
+            })?;
+        let next = match command {
+            GoalCommand::Pause => db.pause_goal(&snapshot.goal.id),
+            GoalCommand::Resume => db.resume_goal(&snapshot.goal.id),
+            GoalCommand::Clear => db.clear_goal(&snapshot.goal.id),
+            GoalCommand::Evaluate => db.evaluate_goal(&snapshot.goal.id),
+            GoalCommand::Accept => db.close_goal(CloseGoalInput {
+                goal_id: snapshot.goal.id,
+                decision: GoalClosureDecision::AcceptedV1,
+                reason: Some("User accepted the current audit and remaining risk.".to_string()),
+                follow_up_items: final_audit_follow_up_texts(&snapshot.goal.final_evidence),
+            }),
+            GoalCommand::Strict => db.close_goal(CloseGoalInput {
+                goal_id: snapshot.goal.id,
+                decision: GoalClosureDecision::NeedsStrictEvidence,
+                reason: Some(
+                    "User requested stricter evidence before closing the goal.".to_string(),
+                ),
+                follow_up_items: Vec::new(),
+            }),
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(display_only(render_goal_snapshot(&next)))
+    })
+    .await
 }
 
 fn final_audit_follow_up_texts(final_evidence: &Value) -> Vec<String> {
@@ -195,13 +210,21 @@ fn final_audit_follow_up_texts(final_evidence: &Value) -> Vec<String> {
     texts
 }
 
-fn render_active_goal(session_db: &Arc<SessionDB>, sid: &str) -> Result<CommandResult, String> {
-    match session_db.active_goal_for_session(sid).map_err(|e| e.to_string())? {
-        Some(snapshot) => Ok(display_only(render_goal_snapshot(&snapshot))),
-        None => Ok(display_only(
-            "No active goal for this session.\n\nUse `/goal <objective> --criteria <completion criteria>` to create one.",
-        )),
-    }
+async fn render_active_goal(
+    session_db: &Arc<SessionDB>,
+    sid: &str,
+) -> Result<CommandResult, String> {
+    let db = session_db.clone();
+    let sid = sid.to_string();
+    crate::blocking::run_blocking(move || {
+        match db.active_goal_for_session(&sid).map_err(|e| e.to_string())? {
+            Some(snapshot) => Ok(display_only(render_goal_snapshot(&snapshot))),
+            None => Ok(display_only(
+                "No active goal for this session.\n\nUse `/goal <objective> --criteria <completion criteria>` to create one.",
+            )),
+        }
+    })
+    .await
 }
 
 fn parse_goal_create_args(raw: &str) -> (String, String) {

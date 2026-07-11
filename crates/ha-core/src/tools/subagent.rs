@@ -334,7 +334,10 @@ async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
         (None, Vec::new(), false)
     };
 
-    let attachments = parse_subagent_files(args)?;
+    let attachments = {
+        let args = args.clone();
+        crate::blocking::run_blocking(move || parse_subagent_files(&args)).await?
+    };
 
     let session_db = get_session_db()?;
     let cancel_registry = get_cancel_registry()?;
@@ -636,7 +639,10 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
         model_override: Option<String>,
         attachments: Vec<crate::agent::Attachment>,
     }
-    let shared_attachments = parse_subagent_files(args)?;
+    let shared_attachments = {
+        let args = args.clone();
+        crate::blocking::run_blocking(move || parse_subagent_files(&args)).await?
+    };
     let mut parsed: Vec<BatchTask> = Vec::with_capacity(tasks.len());
     for task_def in tasks {
         let task = task_def
@@ -662,7 +668,11 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
         )
         .await;
         let mut attachments = shared_attachments.clone();
-        attachments.extend(parse_subagent_files(task_def)?);
+        let task_files = {
+            let task_def = task_def.clone();
+            crate::blocking::run_blocking(move || parse_subagent_files(&task_def)).await?
+        };
+        attachments.extend(task_files);
         parsed.push(BatchTask {
             task: task.to_string(),
             agent_id: child_agent_id,
