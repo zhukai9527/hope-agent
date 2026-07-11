@@ -7,6 +7,14 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import ChatTitleBar from "./ChatTitleBar"
 import type { SessionMeta } from "@/types/chat"
 
+const transportMock = vi.hoisted(() => ({
+  call: vi.fn(() => Promise.resolve("full")),
+}))
+
+vi.mock("@/lib/transport-provider", () => ({
+  getTransport: () => transportMock,
+}))
+
 vi.mock("react-i18next", () => ({
   initReactI18next: {
     type: "3rdParty",
@@ -73,6 +81,7 @@ function renderTitleBar(props: Partial<React.ComponentProps<typeof ChatTitleBar>
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  transportMock.call.mockImplementation(() => Promise.resolve("full"))
 })
 
 describe("ChatTitleBar working directory affordances", () => {
