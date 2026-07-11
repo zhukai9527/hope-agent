@@ -160,7 +160,6 @@ impl SessionDB {
             CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role);
             CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from_session_id);
 
             -- Sub-agent runs
             CREATE TABLE IF NOT EXISTS subagent_runs (
@@ -408,6 +407,10 @@ impl SessionDB {
         if !has_forked_from_message_id {
             conn.execute_batch("ALTER TABLE sessions ADD COLUMN forked_from_message_id INTEGER;")?;
         }
+        // Keep this index after both ALTER migrations. `CREATE TABLE IF NOT
+        // EXISTS` does not add columns to an existing database, so creating the
+        // index in the bootstrap batch would make old databases fail before
+        // they can reach these migrations.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from_session_id);",
         )?;
@@ -5701,6 +5704,13 @@ mod tests {
                 .is_ok(),
             "expected workflow_mode column to be added during migration"
         );
+        assert!(
+            conn.prepare(
+                "SELECT forked_from_session_id, forked_from_message_id FROM sessions LIMIT 1"
+            )
+            .is_ok(),
+            "expected session fork columns to be added before their index"
+        );
 
         let mut stmt = conn
             .prepare("PRAGMA index_list(sessions)")
@@ -5715,6 +5725,13 @@ mod tests {
                 .iter()
                 .any(|index| index == "idx_sessions_pinned_at"),
             "expected pinned_at index after migration, got {:?}",
+            indexes
+        );
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index == "idx_sessions_forked_from"),
+            "expected fork lineage index after migration, got {:?}",
             indexes
         );
 
