@@ -859,7 +859,12 @@ pub async fn run_review_for_session(
     session_id: String,
     input: RunReviewInput,
 ) -> Result<ReviewRunSnapshot> {
-    let run = db.create_review_run(&input, &session_id)?;
+    let run = {
+        let db = db.clone();
+        let input = input.clone();
+        let sid = session_id.clone();
+        db.run(move |db| db.create_review_run(&input, &sid)).await?
+    };
     let result = run_review_inner(db.clone(), &session_id, &input).await;
     match result {
         Ok((ctx, mut candidates)) => {
@@ -876,9 +881,15 @@ pub async fn run_review_for_session(
                 );
             }
             let summary = review_summary(&stats);
-            db.complete_review_run(&run.id, &summary, stats, candidates)
+            let run_id = run.id.clone();
+            db.run(move |db| db.complete_review_run(&run_id, &summary, stats, candidates))
+                .await
         }
-        Err(err) => db.fail_review_run(&run.id, &err.to_string()),
+        Err(err) => {
+            let run_id = run.id.clone();
+            let msg = err.to_string();
+            db.run(move |db| db.fail_review_run(&run_id, &msg)).await
+        }
     }
 }
 
@@ -912,20 +923,35 @@ async fn run_review_inner(
             focus.matches(path)
         });
     }
-    let workspace_root = db
-        .get_session(session_id)?
-        .and_then(|meta| effective_working_dir_for_meta(&meta))
-        .and_then(|path| workspace_root_for_path(Path::new(&path)));
+    let workspace_root = {
+        let db = db.clone();
+        let sid = session_id.to_string();
+        db.run(move |db| -> Result<Option<String>> {
+            Ok(db
+                .get_session(&sid)?
+                .and_then(|meta| effective_working_dir_for_meta(&meta))
+                .and_then(|path| workspace_root_for_path(Path::new(&path))))
+        })
+        .await?
+    };
     let mut changed = changed_files_from_diff(diff);
     if focus.is_active() {
         changed.retain(|file| focus.matches(&file.path));
     }
-    let ide_context = input.ide_context.clone().or_else(|| {
-        db.get_session_ide_context(session_id)
-            .ok()
-            .flatten()
-            .map(|snapshot| snapshot.context)
-    });
+    let ide_context = match input.ide_context.clone() {
+        Some(ctx) => Some(ctx),
+        None => {
+            let db = db.clone();
+            let sid = session_id.to_string();
+            db.run(move |db| {
+                db.get_session_ide_context(&sid)
+                    .ok()
+                    .flatten()
+                    .map(|snapshot| snapshot.context)
+            })
+            .await
+        }
+    };
     let mut ctx = ReviewContext {
         changed,
         diagnostics,

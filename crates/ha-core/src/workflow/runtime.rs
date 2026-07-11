@@ -1048,8 +1048,18 @@ pub async fn cancel_workflow_run_with_children(
     db: Arc<SessionDB>,
     run_id: &str,
 ) -> Result<WorkflowRun> {
-    let run = db.cancel_workflow_run(run_id)?;
-    let child_refs = workflow_child_task_refs(&db, run_id)?;
+    let (run, child_refs) = {
+        let db = db.clone();
+        let run_id = run_id.to_string();
+        db.run(
+            move |db| -> Result<(WorkflowRun, Vec<(RuntimeTaskKind, String)>)> {
+                let run = db.cancel_workflow_run(&run_id)?;
+                let child_refs = workflow_child_task_refs(db, &run_id)?;
+                Ok((run, child_refs))
+            },
+        )
+        .await?
+    };
     let mut results = Vec::new();
     for (kind, id) in child_refs {
         let kind_label = kind.as_str();
@@ -1065,13 +1075,19 @@ pub async fn cancel_workflow_run_with_children(
         }
     }
     if !results.is_empty() {
-        let _ = db.append_workflow_event(
-            run_id,
-            "run_child_cancel_requested",
-            json!({
-                "children": results,
-            }),
-        );
+        let db = db.clone();
+        let run_id = run_id.to_string();
+        let _ = db
+            .run(move |db| {
+                db.append_workflow_event(
+                    &run_id,
+                    "run_child_cancel_requested",
+                    json!({
+                        "children": results,
+                    }),
+                )
+            })
+            .await;
     }
     Ok(run)
 }

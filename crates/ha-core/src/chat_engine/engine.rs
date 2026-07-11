@@ -543,13 +543,27 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         return Err("No model configured for chat execution".to_string());
     }
 
-    crate::session_title::maybe_schedule_autonomous_start(
-        db.clone(),
-        session_id.clone(),
-        agent_id.clone(),
-        model_chain[0].clone(),
-        providers.clone(),
-    );
+    {
+        // `maybe_schedule_autonomous_start` runs synchronous SessionDB reads
+        // (title classification + goal-fallback repair) before spawning the
+        // title task; route it through the blocking pool so it never pins the
+        // async worker on the per-turn hot path (see `crate::blocking`).
+        let title_db = db.clone();
+        let title_session_id = session_id.clone();
+        let title_agent_id = agent_id.clone();
+        let title_model = model_chain[0].clone();
+        let title_providers = providers.clone();
+        crate::blocking::run_blocking(move || {
+            crate::session_title::maybe_schedule_autonomous_start(
+                title_db,
+                title_session_id,
+                title_agent_id,
+                title_model,
+                title_providers,
+            )
+        })
+        .await;
+    }
 
     // Resolve the Plan-mode bundle once at turn start. Spawn-supplied
     // overrides win (their child sessions have backend `plan_mode = Off`

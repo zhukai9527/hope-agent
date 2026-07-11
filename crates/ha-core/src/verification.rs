@@ -811,20 +811,37 @@ pub async fn plan_verification_for_session(
     session_id: String,
     input: PlanVerificationInput,
 ) -> Result<VerificationRunSnapshot> {
-    let run = db.create_verification_run(&input, &session_id, VerificationRunState::Planned)?;
+    let run = {
+        let db = db.clone();
+        let input = input.clone();
+        let sid = session_id.clone();
+        db.run(move |db| db.create_verification_run(&input, &sid, VerificationRunState::Planned))
+            .await?
+    };
     let selected = match select_verification_for_session(db.clone(), &session_id, &input).await {
         Ok(selected) => selected,
-        Err(err) => return db.fail_verification_run(&run.id, &err.to_string()),
+        Err(err) => {
+            let run_id = run.id.clone();
+            let msg = err.to_string();
+            return db
+                .run(move |db| db.fail_verification_run(&run_id, &msg))
+                .await;
+        }
     };
-    let steps = db.insert_verification_steps(&run, &selected)?;
-    let stats = verification_plan_stats(&steps, None, &input.focus_paths);
-    let summary = verification_plan_summary(&stats);
-    let snapshot = db.finalize_verification_plan(&run.id, &summary, stats)?;
-    Ok(VerificationRunSnapshot {
-        run: snapshot.run,
-        steps: snapshot.steps,
-        events: snapshot.events,
+    let focus_paths = input.focus_paths.clone();
+    let plan_run = run.clone();
+    db.run(move |db| {
+        let steps = db.insert_verification_steps(&plan_run, &selected)?;
+        let stats = verification_plan_stats(&steps, None, &focus_paths);
+        let summary = verification_plan_summary(&stats);
+        let snapshot = db.finalize_verification_plan(&plan_run.id, &summary, stats)?;
+        Ok(VerificationRunSnapshot {
+            run: snapshot.run,
+            steps: snapshot.steps,
+            events: snapshot.events,
+        })
     })
+    .await
 }
 
 pub async fn run_verification_for_session(
@@ -832,15 +849,40 @@ pub async fn run_verification_for_session(
     session_id: String,
     input: PlanVerificationInput,
 ) -> Result<VerificationRunSnapshot> {
-    let run = db.create_verification_run(&input, &session_id, VerificationRunState::Running)?;
+    let run = {
+        let db = db.clone();
+        let input = input.clone();
+        let sid = session_id.clone();
+        db.run(move |db| db.create_verification_run(&input, &sid, VerificationRunState::Running))
+            .await?
+    };
     let selected = match select_verification_for_session(db.clone(), &session_id, &input).await {
         Ok(selected) => selected,
-        Err(err) => return db.fail_verification_run(&run.id, &err.to_string()),
+        Err(err) => {
+            let run_id = run.id.clone();
+            let msg = err.to_string();
+            return db
+                .run(move |db| db.fail_verification_run(&run_id, &msg))
+                .await;
+        }
     };
-    let inserted = db.insert_verification_steps(&run, &selected)?;
-    let snapshot = db
-        .verification_run_snapshot(&run.id, 100)?
-        .ok_or_else(|| anyhow!("verification run {} not found after start", run.id))?;
+    let (inserted, snapshot) = {
+        let db = db.clone();
+        let run_c = run.clone();
+        let selected_c = selected.clone();
+        db.run(
+            move |db| -> Result<(Vec<VerificationStep>, VerificationRunSnapshot)> {
+                let inserted = db.insert_verification_steps(&run_c, &selected_c)?;
+                let snapshot = db
+                    .verification_run_snapshot(&run_c.id, 100)?
+                    .ok_or_else(|| {
+                        anyhow!("verification run {} not found after start", run_c.id)
+                    })?;
+                Ok((inserted, snapshot))
+            },
+        )
+        .await?
+    };
     let bg_db = db.clone();
     let bg_run_id = run.id.clone();
     let focus_paths = normalize_focus_paths(&input.focus_paths);
@@ -854,7 +896,11 @@ pub async fn run_verification_for_session(
         )
         .await
         {
-            let _ = bg_db.fail_verification_run(&bg_run_id, &err.to_string());
+            let fail_msg = err.to_string();
+            let fail_run_id = bg_run_id.clone();
+            let _ = bg_db
+                .run(move |db| db.fail_verification_run(&fail_run_id, &fail_msg))
+                .await;
             app_warn!(
                 "verification",
                 "run_failed",
@@ -883,49 +929,75 @@ async fn execute_verification_steps(
             continue;
         };
         if !step.auto_run {
-            let _ = db.update_verification_step_completed(
-                &step.id,
-                VerificationStepState::Skipped,
-                None,
-                Some(format!(
-                    "Skipped by policy: `{}` is a gated suggestion. Run it explicitly only if the user asks for broader validation.",
-                    step.command
-                )),
-                Some(0),
-            )?;
+            let db2 = db.clone();
+            let step_id = step.id.clone();
+            let note = format!(
+                "Skipped by policy: `{}` is a gated suggestion. Run it explicitly only if the user asks for broader validation.",
+                step.command
+            );
+            let _ = db2
+                .run(move |db| {
+                    db.update_verification_step_completed(
+                        &step_id,
+                        VerificationStepState::Skipped,
+                        None,
+                        Some(note),
+                        Some(0),
+                    )
+                })
+                .await?;
             continue;
         }
-        db.update_verification_step_started(&step.id)?;
+        {
+            let db2 = db.clone();
+            let step_id = step.id.clone();
+            db2.run(move |db| db.update_verification_step_started(&step_id))
+                .await?;
+        }
         let result = run_verification_command(selected_step).await;
+        let db2 = db.clone();
+        let step_id = step.id.clone();
         match result {
             Ok(result) => {
-                db.update_verification_step_completed(
-                    &step.id,
-                    result.state,
-                    result.exit_code,
-                    Some(result.output_preview),
-                    Some(result.duration_ms),
-                )?;
+                db2.run(move |db| {
+                    db.update_verification_step_completed(
+                        &step_id,
+                        result.state,
+                        result.exit_code,
+                        Some(result.output_preview),
+                        Some(result.duration_ms),
+                    )
+                })
+                .await?;
             }
             Err(err) => {
-                db.update_verification_step_completed(
-                    &step.id,
-                    VerificationStepState::Failed,
-                    Some(-1),
-                    Some(
-                        crate::truncate_utf8(&err.to_string(), VERIFICATION_OUTPUT_PREVIEW_CHARS)
-                            .to_string(),
-                    ),
-                    None,
-                )?;
+                let preview =
+                    crate::truncate_utf8(&err.to_string(), VERIFICATION_OUTPUT_PREVIEW_CHARS)
+                        .to_string();
+                db2.run(move |db| {
+                    db.update_verification_step_completed(
+                        &step_id,
+                        VerificationStepState::Failed,
+                        Some(-1),
+                        Some(preview),
+                        None,
+                    )
+                })
+                .await?;
             }
         }
     }
-    let steps = db.list_verification_steps_for_run(&run_id)?;
+    let steps = {
+        let db2 = db.clone();
+        let run_id = run_id.clone();
+        db2.run(move |db| db.list_verification_steps_for_run(&run_id))
+            .await?
+    };
     let failed = steps.iter().any(|step| step.state.is_failure());
     let stats = verification_plan_stats(&steps, Some(failed), &focus_paths);
     let summary = verification_run_summary(&stats);
-    db.complete_verification_run(&run_id, &summary, stats, failed)?;
+    db.run(move |db| db.complete_verification_run(&run_id, &summary, stats, failed))
+        .await?;
     Ok(())
 }
 
@@ -935,11 +1007,13 @@ async fn select_verification_for_session(
     input: &PlanVerificationInput,
 ) -> Result<Vec<SelectedVerificationStep>> {
     let ctx = build_selection_context(db, session_id, input).await?;
-    let mut selected = select_verification_steps(&ctx);
     let max = input
         .max_commands
         .unwrap_or(MAX_VERIFICATION_STEPS)
         .clamp(1, MAX_VERIFICATION_STEPS);
+    // `select_verification_steps` walks up the tree reading Cargo.toml files
+    // from disk for each changed file — route the CPU + fs work off the worker.
+    let mut selected = crate::blocking::run_blocking(move || select_verification_steps(&ctx)).await;
     if selected.len() > max {
         selected.truncate(max);
     }
@@ -952,21 +1026,38 @@ async fn build_selection_context(
     input: &PlanVerificationInput,
 ) -> Result<SelectionContext> {
     let focus = FocusFilter::from_paths(&input.focus_paths);
-    let meta = db
-        .get_session(session_id)?
-        .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
-    let workspace_root = effective_working_dir_for_meta(&meta)
-        .ok_or_else(|| anyhow!("session {session_id} has no working directory"))?;
-    let workspace_root = PathBuf::from(workspace_root)
-        .canonicalize()
-        .context("resolve workspace root")?;
+    let workspace_root = {
+        let db = db.clone();
+        let sid = session_id.to_string();
+        db.run(move |db| -> Result<PathBuf> {
+            let meta = db
+                .get_session(&sid)?
+                .ok_or_else(|| anyhow!("session not found: {sid}"))?;
+            let workspace_root = effective_working_dir_for_meta(&meta)
+                .ok_or_else(|| anyhow!("session {sid} has no working directory"))?;
+            PathBuf::from(workspace_root)
+                .canonicalize()
+                .context("resolve workspace root")
+        })
+        .await?
+    };
     let diff = {
         let db = db.clone();
         let sid = session_id.to_string();
         tokio::task::spawn_blocking(move || load_session_git_diff(&db, &sid)).await??
     };
-    let repo_root = repo_root_for_path(&workspace_root);
-    let policy = read_policy_hints(&workspace_root);
+    // `repo_root_for_path` spawns a `git rev-parse` subprocess and
+    // `read_policy_hints` reads AGENTS.md / CLAUDE.md from disk — route both
+    // through the blocking pool (see `crate::blocking`).
+    let (repo_root, policy) = {
+        let workspace_root = workspace_root.clone();
+        crate::blocking::run_blocking(move || {
+            let repo_root = repo_root_for_path(&workspace_root);
+            let policy = read_policy_hints(&workspace_root);
+            (repo_root, policy)
+        })
+        .await
+    };
     let mut changed_files = changed_files_from_diff(diff, &workspace_root, repo_root.as_deref());
     if focus.is_active() {
         changed_files.retain(|file| focus.matches(&file.path, &file.rel_path));
