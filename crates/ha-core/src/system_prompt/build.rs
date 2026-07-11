@@ -62,6 +62,57 @@ pub fn build(
     execution_mode: ExecutionMode,
     workflow_mode: crate::workflow_mode::WorkflowMode,
 ) -> String {
+    let session_meta = crate::session::lookup_session_meta(session_id);
+    let active_goal = if incognito {
+        None
+    } else {
+        session_id.and_then(|sid| crate::get_session_db()?.active_goal_for_session(sid).ok()?)
+    };
+    build_with_resolved_session(
+        definition,
+        model,
+        provider,
+        memory_entries,
+        memory_budget,
+        profile_snapshot,
+        context_pack,
+        agent_home,
+        project,
+        session_id,
+        incognito,
+        session_working_dir,
+        channel_info,
+        permission_mode,
+        execution_mode,
+        workflow_mode,
+        active_goal.as_ref(),
+        session_meta.as_ref().map(|meta| meta.sandbox_mode),
+    )
+}
+
+/// Build from session state already resolved by the caller. Chat-engine turns
+/// use this path so isolated eval/headless databases cannot accidentally read
+/// goal or sandbox state from the process-global session database.
+pub(crate) fn build_with_resolved_session(
+    definition: &AgentDefinition,
+    model: Option<&str>,
+    provider: Option<&str>,
+    memory_entries: &[MemoryEntry],
+    memory_budget: &MemoryBudgetConfig,
+    profile_snapshot: Option<&str>,
+    context_pack: Option<&crate::memory::dreaming::MemoryContextPack>,
+    agent_home: Option<&str>,
+    project: Option<&Project>,
+    session_id: Option<&str>,
+    incognito: bool,
+    session_working_dir: Option<&str>,
+    channel_info: Option<&crate::session::ChannelSessionInfo>,
+    permission_mode: SessionMode,
+    execution_mode: ExecutionMode,
+    workflow_mode: crate::workflow_mode::WorkflowMode,
+    active_goal: Option<&crate::goal::GoalSnapshot>,
+    session_sandbox_mode: Option<crate::permission::SandboxMode>,
+) -> String {
     let mut sections: Vec<String> = Vec::new();
 
     let os = std::env::consts::OS;
@@ -235,7 +286,7 @@ pub fn build(
         sections.push(section.to_string());
     }
 
-    if let Some(section) = build_active_goal_section(session_id, incognito) {
+    if let Some(section) = build_active_goal_section(active_goal, incognito) {
         sections.push(section);
     }
 
@@ -330,14 +381,12 @@ pub fn build(
     }
 
     // ⑪ Sandbox mode (conditionally injected)
-    let sandbox_mode = session_id
-        .and_then(|sid| crate::session::lookup_session_meta(Some(sid)).map(|m| m.sandbox_mode))
-        .unwrap_or_else(|| {
-            definition
-                .config
-                .capabilities
-                .effective_default_sandbox_mode()
-        });
+    let sandbox_mode = session_sandbox_mode.unwrap_or_else(|| {
+        definition
+            .config
+            .capabilities
+            .effective_default_sandbox_mode()
+    });
     if sandbox_mode.enabled() {
         let sandbox_config = crate::sandbox::load_sandbox_config().unwrap_or_default();
         sections.push(build_sandbox_mode_section(sandbox_mode, &sandbox_config));
@@ -705,14 +754,14 @@ fn build_incognito_section() -> String {
         .to_string()
 }
 
-fn build_active_goal_section(session_id: Option<&str>, incognito: bool) -> Option<String> {
+fn build_active_goal_section(
+    active_goal: Option<&crate::goal::GoalSnapshot>,
+    incognito: bool,
+) -> Option<String> {
     if incognito {
         return None;
     }
-    let session_id = session_id?;
-    let db = crate::get_session_db()?;
-    let snapshot = db.active_goal_for_session(session_id).ok()??;
-    Some(render_active_goal_section(&snapshot))
+    active_goal.map(render_active_goal_section)
 }
 
 fn render_active_goal_section(snapshot: &crate::goal::GoalSnapshot) -> String {

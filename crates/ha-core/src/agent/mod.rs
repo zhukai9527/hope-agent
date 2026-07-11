@@ -2830,11 +2830,12 @@ impl AssistantAgent {
         let model_owned = model.to_string();
         let provider_owned = provider.to_string();
         let (bundle, lsp_suffix) = crate::blocking::run_blocking(move || {
-            let bundle = config::build_system_prompt_bundle_with_session(
+            let bundle = config::build_system_prompt_bundle_with_session_db(
                 &agent_id,
                 &model_owned,
                 &provider_owned,
                 session_id.as_deref(),
+                session_db.as_deref(),
             );
             let lsp = if incognito {
                 None
