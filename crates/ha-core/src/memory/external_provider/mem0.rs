@@ -8,11 +8,11 @@ use crate::memory::{ExternalMemoryProviderConfig, MemoryEntry};
 
 use super::http::{client as external_http_client, send_json, validated_endpoint};
 use super::{
-    content_fingerprint, import_external_memory_for_review, load_local_memory_snapshot,
-    load_sync_ledger, persist_sync_ledger, resolve_external_memory_provider_credentials,
-    ExternalMemoryAdapterSyncFailure, ExternalMemoryAdapterSyncOutcome,
-    ExternalMemoryProviderAdapter, ExternalMemoryProviderCredentials,
-    ExternalMemoryProviderSyncLedger,
+    content_fingerprint, finish_sync_with_ledger_checkpoint, import_external_memory_for_review,
+    load_local_memory_snapshot, load_sync_ledger_async, persist_sync_ledger_async,
+    resolve_external_memory_provider_credentials_async, ExternalMemoryAdapterSyncFailure,
+    ExternalMemoryAdapterSyncOutcome, ExternalMemoryProviderAdapter,
+    ExternalMemoryProviderCredentials, ExternalMemoryProviderSyncLedger,
 };
 
 pub(super) static MEM0_ADAPTER: Mem0Adapter = Mem0Adapter;
@@ -58,7 +58,8 @@ async fn sync_mem0(
     provider: &ExternalMemoryProviderConfig,
 ) -> std::result::Result<ExternalMemoryAdapterSyncOutcome, ExternalMemoryAdapterSyncFailure> {
     let mut outcome = ExternalMemoryAdapterSyncOutcome::default();
-    let (credentials, _) = resolve_external_memory_provider_credentials(&provider.id)
+    let (credentials, _) = resolve_external_memory_provider_credentials_async(&provider.id)
+        .await
         .map_err(|error| failure(outcome.clone(), error))?
         .ok_or_else(|| failure(outcome.clone(), anyhow!("provider credentials are missing")))?;
     let protocol =
@@ -74,35 +75,39 @@ async fn sync_mem0(
         .await
         .map_err(|error| failure(outcome.clone(), error))?;
     let client = external_http_client().map_err(|error| failure(outcome.clone(), error))?;
-    let mut ledger =
-        load_sync_ledger(&provider.id).map_err(|error| failure(outcome.clone(), error))?;
+    let mut ledger = load_sync_ledger_async(&provider.id)
+        .await
+        .map_err(|error| failure(outcome.clone(), error))?;
 
-    if provider.sync_policy.imports_external_memory() {
-        pull_memories(
-            provider,
-            &credentials,
-            protocol,
-            &endpoint,
-            &client,
-            &mut ledger,
-            &mut outcome,
-        )
-        .await?;
+    let sync_result = async {
+        if provider.sync_policy.imports_external_memory() {
+            pull_memories(
+                provider,
+                &credentials,
+                protocol,
+                &endpoint,
+                &client,
+                &mut ledger,
+                &mut outcome,
+            )
+            .await?;
+        }
+        if provider.sync_policy.sends_local_memory() {
+            push_memories(
+                provider,
+                &credentials,
+                protocol,
+                &endpoint,
+                &client,
+                &mut ledger,
+                &mut outcome,
+            )
+            .await?;
+        }
+        Ok(())
     }
-    if provider.sync_policy.sends_local_memory() {
-        push_memories(
-            provider,
-            &credentials,
-            protocol,
-            &endpoint,
-            &client,
-            &mut ledger,
-            &mut outcome,
-        )
-        .await?;
-    }
-
-    Ok(outcome)
+    .await;
+    finish_sync_with_ledger_checkpoint(&provider.id, &ledger, outcome, sync_result).await
 }
 
 async fn pull_memories(
@@ -135,6 +140,7 @@ async fn pull_memories(
             ledger,
             outcome,
         )
+        .await
         .map_err(|error| failure(outcome.clone(), error))?;
     }
 
@@ -286,7 +292,8 @@ async fn push_memories(
                 outcome.exported_memory_count += 1;
             }
         }
-        persist_sync_ledger(&provider.id, ledger)
+        persist_sync_ledger_async(&provider.id, ledger)
+            .await
             .map_err(|error| failure(outcome.clone(), error))?;
     }
     Ok(())
