@@ -105,13 +105,25 @@ pub(crate) async fn spawn_subagent_with_run_id(
     };
 
     // 4. Create isolated session (linked to parent)
-    let child_session =
-        session_db.create_session_with_parent(&params.agent_id, Some(&params.parent_session_id))?;
+    let child_session = {
+        let db = session_db.clone();
+        let agent_id = params.agent_id.clone();
+        let parent_session_id = params.parent_session_id.clone();
+        db.run(move |db| db.create_session_with_parent(&agent_id, Some(&parent_session_id)))
+            .await?
+    };
     let child_session_id = child_session.id.clone();
 
     // Set a descriptive title for the sub-agent session
     let task_preview = truncate_str(&params.task, 50);
-    let _ = session_db.update_session_title(&child_session_id, &task_preview);
+    {
+        let db = session_db.clone();
+        let sid = child_session_id.clone();
+        let title = task_preview.clone();
+        let _ = db
+            .run(move |db| db.update_session_title(&sid, &title))
+            .await;
+    }
 
     let mut assigned_child_working_dir = false;
     if params.isolate_worktree {
@@ -128,9 +140,14 @@ pub(crate) async fn spawn_subagent_with_run_id(
             .await
         {
             Ok(worktree) => {
-                match session_db
-                    .update_session_working_dir(&child_session_id, Some(worktree.path.clone()))
-                {
+                let update_result = {
+                    let db = session_db.clone();
+                    let sid = child_session_id.clone();
+                    let path = worktree.path.clone();
+                    db.run(move |db| db.update_session_working_dir(&sid, Some(path)))
+                        .await
+                };
+                match update_result {
                     Ok(_) => {
                         assigned_child_working_dir = true;
                         params.extra_system_context = append_extra_system_context(
@@ -167,9 +184,13 @@ pub(crate) async fn spawn_subagent_with_run_id(
         if let Some(parent_cwd) =
             crate::session::effective_session_working_dir(Some(&params.parent_session_id))
         {
-            if let Err(e) =
-                session_db.update_session_working_dir(&child_session_id, Some(parent_cwd))
-            {
+            let inherit_result = {
+                let db = session_db.clone();
+                let sid = child_session_id.clone();
+                db.run(move |db| db.update_session_working_dir(&sid, Some(parent_cwd)))
+                    .await
+            };
+            if let Err(e) = inherit_result {
                 crate::app_warn!(
                     "subagent",
                     "worktree",

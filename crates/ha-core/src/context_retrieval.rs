@@ -1321,7 +1321,7 @@ fn gather_ide_context(
 }
 
 async fn gather_lsp_diagnostics(
-    db: &SessionDB,
+    db: &Arc<SessionDB>,
     session_id: &str,
     matcher: &QueryMatcher,
     map: &mut HashMap<String, CandidateAccum>,
@@ -1813,7 +1813,7 @@ async fn gather_file_search(
 }
 
 async fn gather_lsp_symbols(
-    db: &SessionDB,
+    db: &Arc<SessionDB>,
     session_id: &str,
     query: Option<&str>,
     matcher: &QueryMatcher,

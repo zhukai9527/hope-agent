@@ -605,7 +605,7 @@ impl ToolExecContext {
         }
     }
 
-    fn workflow_visibility_error(&self, name: &str) -> Option<String> {
+    async fn workflow_visibility_error(&self, name: &str) -> Option<String> {
         if canonical_builtin_tool_name(name) != TOOL_WORKFLOW {
             return None;
         }
@@ -628,7 +628,11 @@ impl ToolExecContext {
         else {
             return Some("workflow cannot execute because Session DB is unavailable.".into());
         };
-        let mode = match db.get_session_workflow_mode(session_id) {
+        let session_id = session_id.to_string();
+        let mode = match db
+            .run(move |db| db.get_session_workflow_mode(&session_id))
+            .await
+        {
             Ok(Some(mode)) => mode,
             Ok(None) => Default::default(),
             Err(e) => {
@@ -647,11 +651,11 @@ impl ToolExecContext {
     }
 
     /// Human-readable reason when a tool is blocked by the current restrictions.
-    pub fn tool_visibility_error(&self, name: &str) -> Option<String> {
+    pub async fn tool_visibility_error(&self, name: &str) -> Option<String> {
         if let Some(err) = self.builtin_fate_error(name) {
             return Some(err);
         }
-        if let Some(err) = self.workflow_visibility_error(name) {
+        if let Some(err) = self.workflow_visibility_error(name).await {
             return Some(err);
         }
         if self.denied_tools.iter().any(|t| t == name) {
@@ -1379,7 +1383,7 @@ pub async fn execute_tool_with_context(
     // Defense-in-depth: enforce the same effective visibility rules used for
     // schema generation and tool_search, so a tool cannot execute if it was
     // hidden by Agent filter, denied_tools, skill allowlist, or Plan Mode.
-    if let Some(err) = ctx.tool_visibility_error(name) {
+    if let Some(err) = ctx.tool_visibility_error(name).await {
         return Err(anyhow::anyhow!(err));
     }
 

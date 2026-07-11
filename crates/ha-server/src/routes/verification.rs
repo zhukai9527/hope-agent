@@ -9,15 +9,21 @@ use crate::routes::helpers::session_db;
 pub async fn list_verification_runs(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<ha_core::verification::VerificationRun>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_verification_runs_for_session(&session_id, 100)?,
+        db.run(move |db| db.list_verification_runs_for_session(&session_id, 100))
+            .await?,
     ))
 }
 
 pub async fn get_verification_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<Option<ha_core::verification::VerificationRunSnapshot>>, AppError> {
-    Ok(Json(session_db()?.verification_run_snapshot(&run_id, 200)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.verification_run_snapshot(&run_id, 200))
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

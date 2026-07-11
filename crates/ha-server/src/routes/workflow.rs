@@ -13,8 +13,10 @@ fn workflow_owner(label: &str) -> String {
 pub async fn list_workflow_runs(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<ha_core::workflow::WorkflowRun>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_workflow_runs_for_session(&session_id, 100)?,
+        db.run(move |db| db.list_workflow_runs_for_session(&session_id, 100))
+            .await?,
     ))
 }
 
@@ -29,10 +31,13 @@ pub async fn list_workflow_watchdog_findings(
     Path(session_id): Path<String>,
     Query(query): Query<ListWorkflowWatchdogQuery>,
 ) -> Result<Json<Vec<ha_core::workflow::WorkflowWatchdogFinding>>, AppError> {
-    Ok(Json(session_db()?.list_workflow_watchdog_findings(
-        &session_id,
-        query.stale_secs.unwrap_or(300),
-    )?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| {
+            db.list_workflow_watchdog_findings(&session_id, query.stale_secs.unwrap_or(300))
+        })
+        .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,13 +51,17 @@ pub struct ListSavedWorkflowTemplatesBody {
 pub async fn list_saved_workflow_templates(
     Json(body): Json<ListSavedWorkflowTemplatesBody>,
 ) -> Result<Json<Vec<ha_core::workflow::SavedWorkflowTemplate>>, AppError> {
-    Ok(Json(session_db()?.list_saved_workflow_templates(
-        ha_core::workflow::ListSavedWorkflowTemplatesInput {
-            project_id: body.project_id,
-            include_disabled: body.include_disabled.unwrap_or(false),
-            limit: body.limit,
-        },
-    )?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| {
+            db.list_saved_workflow_templates(ha_core::workflow::ListSavedWorkflowTemplatesInput {
+                project_id: body.project_id,
+                include_disabled: body.include_disabled.unwrap_or(false),
+                limit: body.limit,
+            })
+        })
+        .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,8 +73,9 @@ pub struct SaveWorkflowTemplateFromRunBody {
 pub async fn save_workflow_template_from_run(
     Json(body): Json<SaveWorkflowTemplateFromRunBody>,
 ) -> Result<Json<ha_core::workflow::SavedWorkflowTemplate>, AppError> {
-    session_db()?
-        .save_workflow_template_from_run(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.save_workflow_template_from_run(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -81,8 +91,10 @@ pub async fn create_workflow_run_from_template(
     Json(body): Json<CreateWorkflowRunFromTemplateBody>,
 ) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {
     let db = session_db()?;
+    let template_id = body.input.template_id.clone();
     let template = db
-        .get_saved_workflow_template(&body.input.template_id)?
+        .run(move |db| db.get_saved_workflow_template(&template_id))
+        .await?
         .ok_or_else(|| AppError::not_found("saved workflow template not found"))?;
     let parsed_mode = ha_core::execution_mode::ExecutionMode::from_str(&template.execution_mode)
         .ok_or_else(|| AppError::bad_request("Invalid execution mode"))?;
@@ -91,15 +103,21 @@ pub async fn create_workflow_run_from_template(
         ha_core::workflow::ensure_workflow_launcher_primary()
             .map_err(|e| AppError::bad_request(e.to_string()))?;
     }
-    ha_core::workflow::ensure_workflow_script_can_create(
-        &db,
-        &body.input.session_id,
-        &template.script_source,
-        Some(parsed_mode.as_str()),
-    )
-    .map_err(|e| AppError::bad_request(e.to_string()))?;
+    let session_id = body.input.session_id.clone();
+    let script_source = template.script_source.clone();
+    let mode_str = parsed_mode.as_str().to_string();
+    let input = body.input;
     let run = db
-        .create_workflow_run_from_template(body.input)
+        .run(move |db| {
+            ha_core::workflow::ensure_workflow_script_can_create(
+                db,
+                &session_id,
+                &script_source,
+                Some(&mode_str),
+            )?;
+            db.create_workflow_run_from_template(input)
+        })
+        .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     if run_now {
         ha_core::workflow::spawn_workflow_run_if_primary(
@@ -142,13 +160,18 @@ pub async fn preview_workflow_script(
     Json(body): Json<PreviewWorkflowScriptBody>,
 ) -> Result<Json<ha_core::workflow::WorkflowScriptPreview>, AppError> {
     let db = session_db()?;
+    let script_source = body.script_source;
+    let execution_mode = body.execution_mode;
     Ok(Json(
-        ha_core::workflow::preview_workflow_script_for_session(
-            &db,
-            &session_id,
-            &body.script_source,
-            body.execution_mode.as_deref(),
-        ),
+        db.run(move |db| {
+            ha_core::workflow::preview_workflow_script_for_session(
+                db,
+                &session_id,
+                &script_source,
+                execution_mode.as_deref(),
+            )
+        })
+        .await,
     ))
 }
 
@@ -166,34 +189,48 @@ pub async fn create_workflow_run(
     }
     let db = session_db()?;
     let script_source = body.script_source;
-    ha_core::workflow::ensure_workflow_script_can_create(
-        &db,
-        &session_id,
-        &script_source,
-        Some(parsed_mode.as_str()),
-    )
-    .map_err(|e| AppError::bad_request(e.to_string()))?;
+    let mode_str = parsed_mode.as_str().to_string();
+    let kind = body.kind;
+    let budget = body.budget;
+    let parent_run_id = body.parent_run_id;
+    let origin = body.origin;
+    let goal_id = body.goal_id;
+    let goal_criterion_id = body.goal_criterion_id;
+    let worktree_id = body.worktree_id;
+    let api_version = body.api_version;
+    let meta = body.meta;
+    let args = body.args;
+    let resume_from_run_id = body.resume_from_run_id;
     let run = db
-        .create_workflow_run_with_control(
-            ha_core::workflow::CreateWorkflowRunInput {
-                session_id,
-                kind: body.kind.unwrap_or_else(|| "general.workflow".to_string()),
-                execution_mode: parsed_mode.as_str().to_string(),
-                script_source,
-                budget: body.budget.unwrap_or_else(|| json!({})),
-                parent_run_id: body.parent_run_id,
-                origin: body.origin,
-                goal_id: body.goal_id,
-                goal_criterion_id: body.goal_criterion_id,
-                worktree_id: body.worktree_id,
-            },
-            ha_core::workflow::WorkflowRunControlInput {
-                api_version: body.api_version.unwrap_or(4),
-                meta: body.meta.unwrap_or_else(|| json!({})),
-                args: body.args.unwrap_or_else(|| json!({})),
-                resume_from_run_id: body.resume_from_run_id,
-            },
-        )
+        .run(move |db| {
+            ha_core::workflow::ensure_workflow_script_can_create(
+                db,
+                &session_id,
+                &script_source,
+                Some(&mode_str),
+            )?;
+            db.create_workflow_run_with_control(
+                ha_core::workflow::CreateWorkflowRunInput {
+                    session_id,
+                    kind: kind.unwrap_or_else(|| "general.workflow".to_string()),
+                    execution_mode: mode_str,
+                    script_source,
+                    budget: budget.unwrap_or_else(|| json!({})),
+                    parent_run_id,
+                    origin,
+                    goal_id,
+                    goal_criterion_id,
+                    worktree_id,
+                },
+                ha_core::workflow::WorkflowRunControlInput {
+                    api_version: api_version.unwrap_or(4),
+                    meta: meta.unwrap_or_else(|| json!({})),
+                    args: args.unwrap_or_else(|| json!({})),
+                    resume_from_run_id,
+                },
+            )
+        })
+        .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     if run_now {
         ha_core::workflow::spawn_workflow_run_if_primary(
@@ -208,7 +245,11 @@ pub async fn create_workflow_run(
 pub async fn get_workflow_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<Option<ha_core::workflow::WorkflowRunSnapshot>>, AppError> {
-    Ok(Json(session_db()?.workflow_run_snapshot(&run_id, 200)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.workflow_run_snapshot(&run_id, 200))
+            .await?,
+    ))
 }
 
 pub async fn run_workflow_run(
@@ -217,8 +258,10 @@ pub async fn run_workflow_run(
     ha_core::workflow::ensure_workflow_launcher_primary()
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let db = session_db()?;
+    let lookup_id = run_id.clone();
     let run = db
-        .get_workflow_run(&run_id)?
+        .run(move |db| db.get_workflow_run(&lookup_id))
+        .await?
         .ok_or_else(|| AppError::not_found("workflow run not found"))?;
     ha_core::workflow::spawn_workflow_run_if_primary(
         db.clone(),
@@ -231,8 +274,9 @@ pub async fn run_workflow_run(
 pub async fn pause_workflow_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<ha_core::workflow::WorkflowRun>, AppError> {
-    session_db()?
-        .pause_workflow_run(&run_id)
+    let db = session_db()?;
+    db.run(move |db| db.pause_workflow_run(&run_id))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -244,7 +288,8 @@ pub async fn resume_workflow_run(
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let db = session_db()?;
     let run = db
-        .resume_workflow_run(&run_id)
+        .run(move |db| db.resume_workflow_run(&run_id))
+        .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     ha_core::workflow::spawn_workflow_run_if_primary(
         db.clone(),
@@ -261,7 +306,8 @@ pub async fn approve_workflow_run(
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     let db = session_db()?;
     let run = db
-        .approve_workflow_run(&run_id)
+        .run(move |db| db.approve_workflow_run(&run_id))
+        .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     ha_core::workflow::spawn_workflow_run_if_primary(
         db.clone(),

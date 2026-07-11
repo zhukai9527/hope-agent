@@ -115,13 +115,21 @@ pub struct DomainSoakReportBody {
 pub async fn list_domain_eval_tasks(
     Json(body): Json<ListDomainEvalTasksBody>,
 ) -> Result<Json<Vec<DomainEvalTask>>, AppError> {
-    Ok(Json(session_db()?.list_domain_eval_tasks(body.input)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.list_domain_eval_tasks(body.input))
+            .await?,
+    ))
 }
 
 pub async fn run_domain_eval_task(
     Json(body): Json<RunDomainEvalTaskBody>,
 ) -> Result<Json<DomainEvalRunRecord>, AppError> {
-    Ok(Json(session_db()?.run_domain_eval_task(body.input)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.run_domain_eval_task(body.input))
+            .await?,
+    ))
 }
 
 pub async fn run_domain_eval_fixture(
@@ -137,47 +145,62 @@ pub async fn run_domain_eval_fixture(
 pub async fn import_domain_eval_case(
     Json(body): Json<ImportDomainEvalCaseBody>,
 ) -> Result<Json<ImportDomainEvalCaseResult>, AppError> {
-    Ok(Json(session_db()?.import_domain_eval_case(body.input)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.import_domain_eval_case(body.input))
+            .await?,
+    ))
 }
 
 pub async fn record_domain_eval_calibration(
     Json(body): Json<RecordDomainEvalCalibrationBody>,
 ) -> Result<Json<DomainEvalCalibrationRecord>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.record_domain_eval_calibration(body.input)?,
+        db.run(move |db| db.record_domain_eval_calibration(body.input))
+            .await?,
     ))
 }
 
 pub async fn list_domain_eval_calibrations(
     Json(body): Json<ListDomainEvalCalibrationsBody>,
 ) -> Result<Json<Vec<DomainEvalCalibrationRecord>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_domain_eval_calibrations(body.input)?,
+        db.run(move |db| db.list_domain_eval_calibrations(body.input))
+            .await?,
     ))
 }
 
 pub async fn list_domain_eval_runs(
     Json(body): Json<ListDomainEvalRunsBody>,
 ) -> Result<Json<Vec<DomainEvalRunRecord>>, AppError> {
-    Ok(Json(session_db()?.list_domain_eval_runs(body.input)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.list_domain_eval_runs(body.input))
+            .await?,
+    ))
 }
 
 pub async fn list_domain_eval_fixture_runs(
     Json(body): Json<ListDomainEvalFixtureRunsBody>,
 ) -> Result<Json<Vec<DomainEvalFixtureRunRecord>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_domain_eval_fixture_runs(body.input)?,
+        db.run(move |db| db.list_domain_eval_fixture_runs(body.input))
+            .await?,
     ))
 }
 
 pub async fn create_domain_eval_campaign(
     Json(body): Json<CreateDomainEvalCampaignBody>,
 ) -> Result<Json<DomainEvalCampaign>, AppError> {
-    let db = session_db()?.clone();
+    let db = session_db()?;
     let run_now = body.input.run_now;
     let providers = body.input.providers.clone();
     let campaign = db
-        .create_domain_eval_campaign(body.input)
+        .run(move |db| db.create_domain_eval_campaign(body.input))
+        .await
         .map_err(|err| AppError::bad_request(err.to_string()))?;
     if run_now {
         let run_db = db.clone();
@@ -197,8 +220,9 @@ pub async fn create_domain_eval_campaign(
 pub async fn list_domain_eval_campaigns(
     Json(body): Json<ListDomainEvalCampaignsBody>,
 ) -> Result<Json<Vec<DomainEvalCampaign>>, AppError> {
-    session_db()?
-        .list_domain_eval_campaigns(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.list_domain_eval_campaigns(body.input))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
@@ -206,8 +230,9 @@ pub async fn list_domain_eval_campaigns(
 pub async fn get_domain_eval_campaign(
     axum::extract::Path(campaign_id): axum::extract::Path<String>,
 ) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
-    session_db()?
-        .get_domain_eval_campaign(&campaign_id)
+    let db = session_db()?;
+    db.run(move |db| db.get_domain_eval_campaign(&campaign_id))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
@@ -215,8 +240,9 @@ pub async fn get_domain_eval_campaign(
 pub async fn cancel_domain_eval_campaign(
     axum::extract::Path(campaign_id): axum::extract::Path<String>,
 ) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
-    session_db()?
-        .cancel_domain_eval_campaign(&campaign_id)
+    let db = session_db()?;
+    db.run(move |db| db.cancel_domain_eval_campaign(&campaign_id))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
@@ -224,13 +250,14 @@ pub async fn cancel_domain_eval_campaign(
 pub async fn run_domain_eval_campaign(
     Json(body): Json<RunDomainEvalCampaignBody>,
 ) -> Result<Json<Option<DomainEvalCampaign>>, AppError> {
-    let db = session_db()?.clone();
+    let db = session_db()?;
     let campaign_id = body.input.campaign_id.clone();
+    let spawn_db = db.clone();
     tokio::spawn(async move {
-        let _ = ha_core::domain_eval::run_domain_eval_campaign(db, body.input).await;
+        let _ = ha_core::domain_eval::run_domain_eval_campaign(spawn_db, body.input).await;
     });
-    session_db()?
-        .get_domain_eval_campaign(&campaign_id)
+    db.run(move |db| db.get_domain_eval_campaign(&campaign_id))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
@@ -238,8 +265,9 @@ pub async fn run_domain_eval_campaign(
 pub async fn get_domain_eval_campaign_leaderboard(
     Json(body): Json<DomainEvalCampaignLeaderboardBody>,
 ) -> Result<Json<DomainEvalCampaignLeaderboardReport>, AppError> {
-    session_db()?
-        .get_domain_eval_campaign_leaderboard(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.get_domain_eval_campaign_leaderboard(body.input))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
@@ -247,29 +275,39 @@ pub async fn get_domain_eval_campaign_leaderboard(
 pub async fn evaluate_domain_quality_gate(
     Json(body): Json<DomainQualityGateBody>,
 ) -> Result<Json<DomainQualityGateReport>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.evaluate_domain_quality_gate(body.input)?,
+        db.run(move |db| db.evaluate_domain_quality_gate(body.input))
+            .await?,
     ))
 }
 
 pub async fn evaluate_domain_readiness_gate(
     Json(body): Json<DomainReadinessGateBody>,
 ) -> Result<Json<DomainReadinessGateReport>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.evaluate_domain_readiness_gate(body.input)?,
+        db.run(move |db| db.evaluate_domain_readiness_gate(body.input))
+            .await?,
     ))
 }
 
 pub async fn evaluate_domain_operational_gate(
     Json(body): Json<DomainOperationalGateBody>,
 ) -> Result<Json<DomainOperationalGateReport>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.evaluate_domain_operational_gate(body.input)?,
+        db.run(move |db| db.evaluate_domain_operational_gate(body.input))
+            .await?,
     ))
 }
 
 pub async fn generate_domain_soak_report(
     Json(body): Json<DomainSoakReportBody>,
 ) -> Result<Json<DomainSoakReport>, AppError> {
-    Ok(Json(session_db()?.generate_domain_soak_report(body.input)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.generate_domain_soak_report(body.input))
+            .await?,
+    ))
 }

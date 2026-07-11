@@ -26,9 +26,9 @@ pub async fn get_coding_trend_report(
     window_days: Option<u32>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingTrendReport, CmdError> {
-    app_state
-        .session_db
-        .coding_trend_report(&session_id, window_days)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.coding_trend_report(&session_id, window_days))
+        .await
         .map_err(Into::into)
 }
 
@@ -37,9 +37,9 @@ pub async fn list_coding_improvement_proposals(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<CodingImprovementProposal>, CmdError> {
-    app_state
-        .session_db
-        .list_coding_improvement_proposals(&session_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_coding_improvement_proposals(&session_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -52,9 +52,9 @@ pub async fn generate_coding_improvement_proposals(
     proposal_kinds: Option<Vec<String>>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GenerateCodingImprovementProposalsResult, CmdError> {
-    app_state
-        .session_db
-        .generate_coding_improvement_proposals_with_input(
+    let db = app_state.session_db.clone();
+    db.run(move |db| {
+        db.generate_coding_improvement_proposals_with_input(
             &session_id,
             GenerateCodingImprovementProposalsInput {
                 window_days,
@@ -63,7 +63,9 @@ pub async fn generate_coding_improvement_proposals(
                 proposal_kinds: proposal_kinds.unwrap_or_default(),
             },
         )
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -72,9 +74,9 @@ pub async fn distill_coding_improvement_proposals(
     window_days: Option<u32>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<DistillCodingImprovementResult, CmdError> {
-    app_state
-        .session_db
-        .distill_coding_improvement_proposals(&session_id, window_days)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.distill_coding_improvement_proposals(&session_id, window_days))
+        .await
         .map_err(Into::into)
 }
 
@@ -84,9 +86,9 @@ pub async fn update_coding_improvement_proposal_status(
     status: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingImprovementProposal, CmdError> {
-    app_state
-        .session_db
-        .update_coding_improvement_proposal_status(&proposal_id, &status)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.update_coding_improvement_proposal_status(&proposal_id, &status))
+        .await
         .map_err(Into::into)
 }
 
@@ -95,9 +97,9 @@ pub async fn preview_coding_improvement_proposal_action(
     proposal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingImprovementActionPlan, CmdError> {
-    app_state
-        .session_db
-        .preview_coding_improvement_proposal_action(&proposal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.preview_coding_improvement_proposal_action(&proposal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -106,9 +108,9 @@ pub async fn apply_coding_improvement_proposal(
     proposal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<ApplyCodingImprovementProposalResult, CmdError> {
-    app_state
-        .session_db
-        .apply_coding_improvement_proposal(&proposal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.apply_coding_improvement_proposal(&proposal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -117,9 +119,9 @@ pub async fn preview_coding_improvement_proposal_promotion(
     proposal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingImprovementPromotionPlan, CmdError> {
-    app_state
-        .session_db
-        .preview_coding_improvement_proposal_promotion(&proposal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.preview_coding_improvement_proposal_promotion(&proposal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -128,9 +130,9 @@ pub async fn promote_coding_improvement_proposal(
     proposal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<PromoteCodingImprovementProposalResult, CmdError> {
-    app_state
-        .session_db
-        .promote_coding_improvement_proposal(&proposal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.promote_coding_improvement_proposal(&proposal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -139,9 +141,9 @@ pub async fn record_coding_eval_run(
     input: RecordCodingEvalRunInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingEvalRunRecord, CmdError> {
-    app_state
-        .session_db
-        .record_coding_eval_run(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.record_coding_eval_run(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -150,9 +152,9 @@ pub async fn evaluate_coding_eval_release_gate(
     input: CodingEvalReleaseGateInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingEvalReleaseGateReport, CmdError> {
-    app_state
-        .session_db
-        .evaluate_coding_eval_release_gate(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.evaluate_coding_eval_release_gate(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -161,9 +163,9 @@ pub async fn evaluate_coding_learning_generalization(
     input: CodingLearningGeneralizationInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingLearningGeneralizationReport, CmdError> {
-    app_state
-        .session_db
-        .evaluate_coding_learning_generalization(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.evaluate_coding_learning_generalization(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -172,9 +174,9 @@ pub async fn get_coding_benchmark_center(
     input: CodingBenchmarkCenterInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkCenterReport, CmdError> {
-    app_state
-        .session_db
-        .get_coding_benchmark_center(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_coding_benchmark_center(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -185,9 +187,10 @@ pub async fn create_coding_benchmark_campaign(
 ) -> Result<CodingBenchmarkCampaign, CmdError> {
     let run_now = input.run_now;
     let providers = input.gold_task_input.providers.clone();
-    let campaign = app_state
-        .session_db
-        .create_coding_benchmark_campaign(input)
+    let db = app_state.session_db.clone();
+    let campaign = db
+        .run(move |db| db.create_coding_benchmark_campaign(input))
+        .await
         .map_err(CmdError::from)?;
     if run_now {
         let db = app_state.session_db.clone();
@@ -209,9 +212,9 @@ pub async fn list_coding_benchmark_campaigns(
     input: CodingBenchmarkCampaignListInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<CodingBenchmarkCampaign>, CmdError> {
-    app_state
-        .session_db
-        .list_coding_benchmark_campaigns(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_coding_benchmark_campaigns(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -220,9 +223,9 @@ pub async fn get_coding_benchmark_campaign(
     campaign_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<CodingBenchmarkCampaign>, CmdError> {
-    app_state
-        .session_db
-        .get_coding_benchmark_campaign(&campaign_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_coding_benchmark_campaign(&campaign_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -231,9 +234,9 @@ pub async fn cancel_coding_benchmark_campaign(
     campaign_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<CodingBenchmarkCampaign>, CmdError> {
-    app_state
-        .session_db
-        .cancel_coding_benchmark_campaign(&campaign_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.cancel_coding_benchmark_campaign(&campaign_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -247,9 +250,9 @@ pub async fn run_coding_benchmark_campaign(
     tokio::spawn(async move {
         let _ = ha_core::coding_eval::run_benchmark_campaign(db, input).await;
     });
-    app_state
-        .session_db
-        .get_coding_benchmark_campaign(&campaign_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_coding_benchmark_campaign(&campaign_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -258,9 +261,9 @@ pub async fn get_benchmark_leaderboard(
     input: CodingBenchmarkLeaderboardInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkLeaderboardReport, CmdError> {
-    app_state
-        .session_db
-        .get_benchmark_leaderboard(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_benchmark_leaderboard(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -269,9 +272,9 @@ pub async fn compare_benchmark_models(
     input: CodingBenchmarkComparisonInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkLeaderboardReport, CmdError> {
-    app_state
-        .session_db
-        .compare_benchmark_models(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.compare_benchmark_models(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -280,9 +283,9 @@ pub async fn import_benchmark_task_pack(
     input: CodingBenchmarkTaskPackImportInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkTaskPack, CmdError> {
-    app_state
-        .session_db
-        .import_benchmark_task_pack(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.import_benchmark_task_pack(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -291,9 +294,9 @@ pub async fn list_benchmark_task_packs(
     input: CodingBenchmarkTaskPackListInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<CodingBenchmarkTaskPack>, CmdError> {
-    app_state
-        .session_db
-        .list_benchmark_task_packs(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_benchmark_task_packs(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -303,9 +306,9 @@ pub async fn get_benchmark_task_pack(
     version: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<CodingBenchmarkTaskPack>, CmdError> {
-    app_state
-        .session_db
-        .get_benchmark_task_pack(&pack_id, &version)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_benchmark_task_pack(&pack_id, &version))
+        .await
         .map_err(Into::into)
 }
 
@@ -314,9 +317,9 @@ pub async fn update_benchmark_task_pack_status(
     input: CodingBenchmarkTaskPackStatusInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkTaskPack, CmdError> {
-    app_state
-        .session_db
-        .update_benchmark_task_pack_status(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.update_benchmark_task_pack_status(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -325,9 +328,9 @@ pub async fn validate_benchmark_task_pack(
     input: CodingBenchmarkTaskPackValidateInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkTaskPackValidationReport, CmdError> {
-    app_state
-        .session_db
-        .validate_benchmark_task_pack(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.validate_benchmark_task_pack(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -336,9 +339,9 @@ pub async fn get_benchmark_corpus_health(
     input: CodingBenchmarkCorpusHealthInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkCorpusHealthReport, CmdError> {
-    app_state
-        .session_db
-        .get_benchmark_corpus_health(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_benchmark_corpus_health(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -347,9 +350,9 @@ pub async fn generate_benchmark_report(
     input: CodingBenchmarkReportGenerateInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkReport, CmdError> {
-    app_state
-        .session_db
-        .generate_benchmark_report(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.generate_benchmark_report(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -358,9 +361,9 @@ pub async fn list_benchmark_reports(
     input: CodingBenchmarkReportListInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<CodingBenchmarkReport>, CmdError> {
-    app_state
-        .session_db
-        .list_benchmark_reports(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_benchmark_reports(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -369,9 +372,9 @@ pub async fn get_benchmark_report(
     report_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<CodingBenchmarkReport>, CmdError> {
-    app_state
-        .session_db
-        .get_benchmark_report(&report_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_benchmark_report(&report_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -380,9 +383,9 @@ pub async fn mark_benchmark_report_release_evidence(
     input: CodingBenchmarkReportMarkInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkReport, CmdError> {
-    app_state
-        .session_db
-        .mark_benchmark_report_release_evidence(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.mark_benchmark_report_release_evidence(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -391,9 +394,9 @@ pub async fn evaluate_continuous_benchmark_gate(
     input: CodingContinuousBenchmarkGateInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingContinuousBenchmarkGateReport, CmdError> {
-    app_state
-        .session_db
-        .evaluate_continuous_benchmark_gate(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.evaluate_continuous_benchmark_gate(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -402,9 +405,9 @@ pub async fn materialize_benchmark_backlog(
     input: CodingBenchmarkBacklogMaterializeInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkBacklogMaterializeResult, CmdError> {
-    app_state
-        .session_db
-        .materialize_benchmark_backlog(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.materialize_benchmark_backlog(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -413,9 +416,9 @@ pub async fn list_benchmark_backlog(
     input: CodingBenchmarkBacklogListInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<CodingBenchmarkBacklogItem>, CmdError> {
-    app_state
-        .session_db
-        .list_benchmark_backlog(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_benchmark_backlog(input))
+        .await
         .map_err(Into::into)
 }
 
@@ -424,8 +427,8 @@ pub async fn update_benchmark_backlog_status(
     input: CodingBenchmarkBacklogStatusInput,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<CodingBenchmarkBacklogItem, CmdError> {
-    app_state
-        .session_db
-        .update_benchmark_backlog_status(input)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.update_benchmark_backlog_status(input))
+        .await
         .map_err(Into::into)
 }

@@ -62,8 +62,9 @@ pub struct EvaluateConnectorE2EGateBody {
 pub async fn list_domain_workflow_templates(
     Json(body): Json<ListTemplatesBody>,
 ) -> Result<Json<Vec<DomainWorkflowTemplate>>, AppError> {
-    session_db()?
-        .list_domain_workflow_templates(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.list_domain_workflow_templates(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -71,8 +72,9 @@ pub async fn list_domain_workflow_templates(
 pub async fn save_domain_workflow_template(
     Json(body): Json<SaveTemplateBody>,
 ) -> Result<Json<DomainWorkflowTemplate>, AppError> {
-    session_db()?
-        .save_domain_workflow_template(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.save_domain_workflow_template(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -80,8 +82,9 @@ pub async fn save_domain_workflow_template(
 pub async fn preview_domain_workflow(
     Json(body): Json<PreviewWorkflowBody>,
 ) -> Result<Json<DomainWorkflowDraft>, AppError> {
-    session_db()?
-        .preview_domain_workflow(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.preview_domain_workflow(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -89,8 +92,9 @@ pub async fn preview_domain_workflow(
 pub async fn record_domain_evidence(
     Json(body): Json<RecordEvidenceBody>,
 ) -> Result<Json<DomainEvidenceItem>, AppError> {
-    session_db()?
-        .record_domain_evidence(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.record_domain_evidence(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -98,8 +102,9 @@ pub async fn record_domain_evidence(
 pub async fn list_domain_evidence(
     Json(body): Json<ListEvidenceBody>,
 ) -> Result<Json<Vec<DomainEvidenceItem>>, AppError> {
-    session_db()?
-        .list_domain_evidence(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.list_domain_evidence(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -107,8 +112,9 @@ pub async fn list_domain_evidence(
 pub async fn evaluate_domain_artifact_export_guard(
     Json(body): Json<EvaluateExportGuardBody>,
 ) -> Result<Json<DomainArtifactExportGuardReport>, AppError> {
-    session_db()?
-        .evaluate_domain_artifact_export_guard(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.evaluate_domain_artifact_export_guard(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -116,8 +122,9 @@ pub async fn evaluate_domain_artifact_export_guard(
 pub async fn evaluate_domain_connector_action_guard(
     Json(body): Json<EvaluateConnectorActionGuardBody>,
 ) -> Result<Json<DomainConnectorActionGuardReport>, AppError> {
-    session_db()?
-        .evaluate_domain_connector_action_guard(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.evaluate_domain_connector_action_guard(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -125,8 +132,9 @@ pub async fn evaluate_domain_connector_action_guard(
 pub async fn evaluate_domain_connector_e2e_gate(
     Json(body): Json<EvaluateConnectorE2EGateBody>,
 ) -> Result<Json<DomainConnectorE2EGateReport>, AppError> {
-    session_db()?
-        .evaluate_domain_connector_e2e_gate(body.input)
+    let db = session_db()?;
+    db.run(move |db| db.evaluate_domain_connector_e2e_gate(body.input))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

@@ -9,9 +9,9 @@ pub async fn list_review_runs(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<ReviewRun>, CmdError> {
-    app_state
-        .session_db
-        .list_review_runs_for_session(&session_id, 100)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_review_runs_for_session(&session_id, 100))
+        .await
         .map_err(Into::into)
 }
 
@@ -20,13 +20,14 @@ pub async fn get_review_run(
     run_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<ReviewRunSnapshot>, CmdError> {
-    app_state
-        .session_db
-        .review_run_snapshot(&run_id, 200)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.review_run_snapshot(&run_id, 200))
+        .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_code_review(
     session_id: String,
     scope: Option<String>,
@@ -61,8 +62,8 @@ pub async fn update_review_finding_status(
 ) -> Result<ReviewFinding, CmdError> {
     let status = ReviewFindingStatus::from_str(&status)
         .ok_or_else(|| CmdError::msg(format!("Invalid review finding status: {status}")))?;
-    app_state
-        .session_db
-        .update_review_finding_status(&finding_id, status)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.update_review_finding_status(&finding_id, status))
+        .await
         .map_err(Into::into)
 }

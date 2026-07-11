@@ -13,8 +13,11 @@ use crate::routes::helpers::{cron_db, session_db};
 pub async fn list_loop_schedules(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<LoopSchedule>>, AppError> {
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
     Ok(Json(
-        session_db()?.list_loop_schedules_for_session_with_cron(cron_db()?, &session_id, 100)?,
+        db.run(move |db| db.list_loop_schedules_for_session_with_cron(&cron, &session_id, 100))
+            .await?,
     ))
 }
 
@@ -29,21 +32,25 @@ pub async fn list_loop_watchdog_findings(
     Path(session_id): Path<String>,
     Query(query): Query<ListLoopWatchdogQuery>,
 ) -> Result<Json<Vec<LoopWatchdogFinding>>, AppError> {
-    Ok(Json(session_db()?.list_loop_watchdog_findings(
-        cron_db()?,
-        &session_id,
-        query.grace_secs.unwrap_or(120),
-    )?))
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    Ok(Json(
+        db.run(move |db| {
+            db.list_loop_watchdog_findings(&cron, &session_id, query.grace_secs.unwrap_or(120))
+        })
+        .await?,
+    ))
 }
 
 pub async fn get_loop_schedule(
     Path(loop_id): Path<String>,
 ) -> Result<Json<Option<LoopSnapshot>>, AppError> {
-    Ok(Json(session_db()?.loop_snapshot_with_cron(
-        cron_db()?,
-        &loop_id,
-        100,
-    )?))
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    Ok(Json(
+        db.run(move |db| db.loop_snapshot_with_cron(&cron, &loop_id, 100))
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,9 +99,11 @@ pub async fn create_loop_schedule(
         })
         .transpose()?
         .unwrap_or_default();
-    session_db()?
-        .create_loop_schedule(
-            cron_db()?,
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    db.run(move |db| {
+        db.create_loop_schedule(
+            &cron,
             CreateLoopScheduleInput {
                 session_id,
                 goal_id: body.goal_id,
@@ -113,8 +122,10 @@ pub async fn create_loop_schedule(
                 agent_id: body.agent_id,
             },
         )
-        .map(Json)
-        .map_err(|e| AppError::bad_request(e.to_string()))
+    })
+    .await
+    .map(Json)
+    .map_err(|e| AppError::bad_request(e.to_string()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,9 +149,11 @@ pub async fn update_loop_schedule_policy(
     Path(loop_id): Path<String>,
     Json(body): Json<UpdateLoopPolicyBody>,
 ) -> Result<Json<LoopSchedule>, AppError> {
-    session_db()?
-        .update_loop_schedule_policy(
-            cron_db()?,
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    db.run(move |db| {
+        db.update_loop_schedule_policy(
+            &cron,
             UpdateLoopSchedulePolicyInput {
                 loop_id,
                 max_runs: body.max_runs,
@@ -151,21 +164,30 @@ pub async fn update_loop_schedule_policy(
                 backoff_secs: body.backoff_secs,
             },
         )
-        .map(Json)
-        .map_err(|e| AppError::bad_request(e.to_string()))
+    })
+    .await
+    .map(Json)
+    .map_err(|e| AppError::bad_request(e.to_string()))
 }
 
 pub async fn run_loop_schedule_now(Path(loop_id): Path<String>) -> Result<Json<Value>, AppError> {
-    ha_core::loop_control::spawn_loop_schedule_run_now(cron_db()?, session_db()?, &loop_id)
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    let cron = cron_db()?.clone();
+    let db = session_db()?.clone();
+    ha_core::blocking::run_blocking(move || {
+        ha_core::loop_control::spawn_loop_schedule_run_now(&cron, &db, &loop_id)
+    })
+    .await
+    .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(json!({ "scheduled": true })))
 }
 
 pub async fn pause_loop_schedule(
     Path(loop_id): Path<String>,
 ) -> Result<Json<LoopSchedule>, AppError> {
-    session_db()?
-        .pause_loop_schedule(cron_db()?, &loop_id)
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    db.run(move |db| db.pause_loop_schedule(&cron, &loop_id))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -173,8 +195,10 @@ pub async fn pause_loop_schedule(
 pub async fn resume_loop_schedule(
     Path(loop_id): Path<String>,
 ) -> Result<Json<LoopSchedule>, AppError> {
-    session_db()?
-        .resume_loop_schedule(cron_db()?, &loop_id)
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    db.run(move |db| db.resume_loop_schedule(&cron, &loop_id))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }
@@ -182,8 +206,10 @@ pub async fn resume_loop_schedule(
 pub async fn stop_loop_schedule(
     Path(loop_id): Path<String>,
 ) -> Result<Json<LoopSchedule>, AppError> {
-    session_db()?
-        .stop_loop_schedule(cron_db()?, &loop_id)
+    let db = session_db()?;
+    let cron = cron_db()?.clone();
+    db.run(move |db| db.stop_loop_schedule(&cron, &loop_id))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

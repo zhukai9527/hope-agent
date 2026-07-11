@@ -8,8 +8,11 @@ use crate::routes::helpers::session_db;
 
 /// `GET /api/sessions/{session_id}/execution-mode`
 pub async fn get_execution_mode(Path(session_id): Path<String>) -> Result<Json<Value>, AppError> {
-    let mode = session_db()?
-        .get_session_execution_mode(&session_id)?
+    let db = session_db()?;
+    let sid = session_id.clone();
+    let mode = db
+        .run(move |db| db.get_session_execution_mode(&sid))
+        .await?
         .ok_or_else(|| AppError::not_found(format!("Session not found: {session_id}")))?;
     Ok(Json(json!({ "mode": mode.as_str() })))
 }
@@ -26,16 +29,20 @@ pub async fn set_execution_mode(
 ) -> Result<Json<Value>, AppError> {
     let mode = ha_core::execution_mode::ExecutionMode::from_str(&body.mode)
         .ok_or_else(|| AppError::bad_request("Invalid execution mode"))?;
-    session_db()?
-        .update_session_execution_mode(&session_id, mode)
+    let db = session_db()?;
+    db.run(move |db| db.update_session_execution_mode(&session_id, mode))
+        .await
         .map_err(map_session_mode_error)?;
     Ok(Json(json!({ "mode": mode.as_str() })))
 }
 
 /// `GET /api/sessions/{session_id}/workflow-mode`
 pub async fn get_workflow_mode(Path(session_id): Path<String>) -> Result<Json<Value>, AppError> {
-    let mode = session_db()?
-        .get_session_workflow_mode(&session_id)?
+    let db = session_db()?;
+    let sid = session_id.clone();
+    let mode = db
+        .run(move |db| db.get_session_workflow_mode(&sid))
+        .await?
         .ok_or_else(|| AppError::not_found(format!("Session not found: {session_id}")))?;
     Ok(Json(json!({ "mode": mode.as_str() })))
 }
@@ -52,8 +59,9 @@ pub async fn set_workflow_mode(
 ) -> Result<Json<Value>, AppError> {
     let mode = ha_core::workflow_mode::WorkflowMode::from_str(&body.mode)
         .ok_or_else(|| AppError::bad_request("Invalid workflow mode"))?;
-    session_db()?
-        .update_session_workflow_mode(&session_id, mode)
+    let db = session_db()?;
+    db.run(move |db| db.update_session_workflow_mode(&session_id, mode))
+        .await
         .map_err(map_session_mode_error)?;
     Ok(Json(json!({ "mode": mode.as_str() })))
 }

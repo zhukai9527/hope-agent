@@ -10,15 +10,21 @@ use crate::routes::helpers::session_db;
 pub async fn list_review_runs(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<ha_core::review::ReviewRun>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_review_runs_for_session(&session_id, 100)?,
+        db.run(move |db| db.list_review_runs_for_session(&session_id, 100))
+            .await?,
     ))
 }
 
 pub async fn get_review_run(
     Path(run_id): Path<String>,
 ) -> Result<Json<Option<ha_core::review::ReviewRunSnapshot>>, AppError> {
-    Ok(Json(session_db()?.review_run_snapshot(&run_id, 200)?))
+    let db = session_db()?;
+    Ok(Json(
+        db.run(move |db| db.review_run_snapshot(&run_id, 200))
+            .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,8 +77,9 @@ pub async fn update_review_finding_status(
 ) -> Result<Json<ha_core::review::ReviewFinding>, AppError> {
     let status = ReviewFindingStatus::from_str(&body.status)
         .ok_or_else(|| AppError::bad_request("invalid review finding status"))?;
-    session_db()?
-        .update_review_finding_status(&finding_id, status)
+    let db = session_db()?;
+    db.run(move |db| db.update_review_finding_status(&finding_id, status))
+        .await
         .map(Json)
         .map_err(|e| AppError::bad_request(e.to_string()))
 }

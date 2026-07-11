@@ -202,149 +202,189 @@ pub(crate) fn ensure_tables(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Values computed by the (synchronous, blocking) pre-hook inspection phase of
+/// [`SessionDB::create_managed_worktree`], carried across the async hook await
+/// into the post-hook creation phase.
+struct WorktreePrep {
+    source_dir: std::path::PathBuf,
+    repo_root: std::path::PathBuf,
+    base_ref: String,
+    base_sha: String,
+    base_branch: Option<String>,
+    id: String,
+    default_path: std::path::PathBuf,
+}
+
 impl SessionDB {
     pub async fn create_managed_worktree(
-        &self,
+        self: &std::sync::Arc<Self>,
         input: CreateManagedWorktreeInput,
     ) -> Result<ManagedWorktree> {
-        let meta = self
-            .get_session(&input.session_id)?
-            .ok_or_else(|| anyhow!("session not found: {}", input.session_id))?;
-        if meta.incognito {
-            bail!(
-                "Cannot create managed worktree for incognito session {}",
-                input.session_id
-            );
-        }
-        if let Some(child_session_id) = input.child_session_id.as_deref() {
-            if self.get_session(child_session_id)?.is_none() {
-                bail!("child session not found: {child_session_id}");
-            }
-        }
-
-        let source = input
-            .source_working_dir
-            .as_deref()
-            .map(|p| p.to_string())
-            .or_else(|| effective_working_dir_for_meta(&meta))
-            .ok_or_else(|| anyhow!("session {} has no working directory", input.session_id))?;
-        let source_dir = canonical_dir(&source)?;
-        if !is_inside_git_work_tree(&source_dir) {
-            bail!("{} is not inside a git worktree", source_dir.display());
-        }
-        let repo_root = git_output(&source_dir, &["rev-parse", "--show-toplevel"])?;
-        let repo_root = canonical_dir(repo_root.trim())?;
-        let base_ref = input
-            .base_ref
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("HEAD")
-            .to_string();
-        let base_sha = git_output(&source_dir, &["rev-parse", "--verify", &base_ref])?
-            .trim()
-            .to_string();
-        let base_branch = current_branch(&source_dir);
-        let id = format!("wt_{}", uuid::Uuid::new_v4().simple());
-        let default_path = crate::paths::worktrees_dir()?
-            .join(repo_slug(&repo_root))
-            .join(&id);
+        // Phase 1 — validate the session and inspect the source repo. This runs
+        // synchronous DB reads plus several `git rev-parse` subprocesses; on a
+        // slow disk or large repo a subprocess wait can stall for seconds, so it
+        // must never sit on the async worker (see `crate::blocking`).
+        let prep = {
+            let db = self.clone();
+            let session_id = input.session_id.clone();
+            let child_session_id = input.child_session_id.clone();
+            let source_working_dir = input.source_working_dir.clone();
+            let base_ref_in = input.base_ref.clone();
+            crate::blocking::run_blocking(move || -> Result<WorktreePrep> {
+                let meta = db
+                    .get_session(&session_id)?
+                    .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+                if meta.incognito {
+                    bail!("Cannot create managed worktree for incognito session {session_id}");
+                }
+                if let Some(child_session_id) = child_session_id.as_deref() {
+                    if db.get_session(child_session_id)?.is_none() {
+                        bail!("child session not found: {child_session_id}");
+                    }
+                }
+                let source = source_working_dir
+                    .as_deref()
+                    .map(|p| p.to_string())
+                    .or_else(|| effective_working_dir_for_meta(&meta))
+                    .ok_or_else(|| anyhow!("session {session_id} has no working directory"))?;
+                let source_dir = canonical_dir(&source)?;
+                if !is_inside_git_work_tree(&source_dir) {
+                    bail!("{} is not inside a git worktree", source_dir.display());
+                }
+                let repo_root = git_output(&source_dir, &["rev-parse", "--show-toplevel"])?;
+                let repo_root = canonical_dir(repo_root.trim())?;
+                let base_ref = base_ref_in
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("HEAD")
+                    .to_string();
+                let base_sha = git_output(&source_dir, &["rev-parse", "--verify", &base_ref])?
+                    .trim()
+                    .to_string();
+                let base_branch = current_branch(&source_dir);
+                let id = format!("wt_{}", uuid::Uuid::new_v4().simple());
+                let default_path = crate::paths::worktrees_dir()?
+                    .join(repo_slug(&repo_root))
+                    .join(&id);
+                Ok(WorktreePrep {
+                    source_dir,
+                    repo_root,
+                    base_ref,
+                    base_sha,
+                    base_branch,
+                    id,
+                    default_path,
+                })
+            })
+            .await?
+        };
 
         let hook_outcome =
-            crate::hooks::dispatch_worktree_create(&input.session_id, &id, &source_dir).await;
-        let path = if let Some(outcome) = hook_outcome {
-            match outcome.decision {
-                crate::hooks::HookDecision::Deny { reason }
-                | crate::hooks::HookDecision::Block { reason } => {
-                    bail!("WorktreeCreate hook blocked creation: {reason}")
-                }
-                _ => {}
-            }
-            let hook_path = outcome.worktree_path.ok_or_else(|| {
-                anyhow!("WorktreeCreate hook must return hookSpecificOutput.worktreePath")
-            })?;
-            canonical_dir(&hook_path)?
-        } else {
-            ensure_parent(&default_path)?;
-            git_status(
-                &source_dir,
-                &[
-                    "worktree",
-                    "add",
-                    "--detach",
-                    path_arg(&default_path),
-                    &base_sha,
-                ],
-            )?;
-            copy_worktreeinclude(&repo_root, &default_path)?;
-            canonical_dir(default_path.to_string_lossy())?
-        };
+            crate::hooks::dispatch_worktree_create(&input.session_id, &prep.id, &prep.source_dir)
+                .await;
 
-        let git_branch = current_branch(&path);
-        let now = now_rfc3339();
-        let row = ManagedWorktree {
-            id,
-            session_id: input.session_id,
-            child_session_id: input.child_session_id,
-            workflow_run_id: input.workflow_run_id,
-            purpose: input.purpose,
-            state: ManagedWorktreeState::Active,
-            label: input.label.filter(|s| !s.trim().is_empty()),
-            repo_root: repo_root.to_string_lossy().to_string(),
-            source_working_dir: source_dir.to_string_lossy().to_string(),
-            path: path.to_string_lossy().to_string(),
-            base_ref: Some(base_ref),
-            base_branch,
-            base_sha: Some(base_sha),
-            git_branch,
-            dirty_snapshot: None,
-            path_exists: path.exists(),
-            created_at: now.clone(),
-            updated_at: now,
-            archived_at: None,
-            restored_at: None,
-            handed_off_at: None,
-        };
-        {
-            let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
-            conn.execute(
-                "INSERT INTO managed_worktrees (
-                    id, session_id, child_session_id, workflow_run_id, purpose, state, label,
-                    repo_root, source_working_dir, path, base_ref, base_branch, base_sha,
-                    git_branch, dirty_snapshot_json, created_at, updated_at,
-                    archived_at, restored_at, handed_off_at
-                ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                    NULL, ?15, ?15, NULL, NULL, NULL
-                )",
-                params![
-                    &row.id,
-                    &row.session_id,
-                    row.child_session_id.as_deref(),
-                    row.workflow_run_id.as_deref(),
-                    row.purpose.as_str(),
-                    row.state.as_str(),
-                    row.label.as_deref(),
-                    &row.repo_root,
-                    &row.source_working_dir,
-                    &row.path,
-                    row.base_ref.as_deref(),
-                    row.base_branch.as_deref(),
-                    row.base_sha.as_deref(),
-                    row.git_branch.as_deref(),
-                    &row.created_at
-                ],
-            )?;
-        }
-        emit_worktree_changed("worktree:created", &row);
-        if let Err(err) = self.refresh_goal_worktree_evidence(&row) {
-            crate::app_warn!(
-                "goal",
-                "worktree_evidence",
-                "failed to refresh goal worktree evidence after create {}: {err:#}",
-                row.id
-            );
-        }
+        // Phase 2 — materialize the worktree on disk (`git worktree add`, file
+        // copy) and persist the row (write lock + INSERT + goal-evidence refresh).
+        // All synchronous; routed to the blocking pool for the same reason.
+        let db = self.clone();
+        let row = crate::blocking::run_blocking(move || -> Result<ManagedWorktree> {
+            let path = if let Some(outcome) = hook_outcome {
+                match outcome.decision {
+                    crate::hooks::HookDecision::Deny { reason }
+                    | crate::hooks::HookDecision::Block { reason } => {
+                        bail!("WorktreeCreate hook blocked creation: {reason}")
+                    }
+                    _ => {}
+                }
+                let hook_path = outcome.worktree_path.ok_or_else(|| {
+                    anyhow!("WorktreeCreate hook must return hookSpecificOutput.worktreePath")
+                })?;
+                canonical_dir(&hook_path)?
+            } else {
+                ensure_parent(&prep.default_path)?;
+                git_status(
+                    &prep.source_dir,
+                    &[
+                        "worktree",
+                        "add",
+                        "--detach",
+                        path_arg(&prep.default_path),
+                        &prep.base_sha,
+                    ],
+                )?;
+                copy_worktreeinclude(&prep.repo_root, &prep.default_path)?;
+                canonical_dir(prep.default_path.to_string_lossy())?
+            };
+
+            let git_branch = current_branch(&path);
+            let now = now_rfc3339();
+            let row = ManagedWorktree {
+                id: prep.id,
+                session_id: input.session_id,
+                child_session_id: input.child_session_id,
+                workflow_run_id: input.workflow_run_id,
+                purpose: input.purpose,
+                state: ManagedWorktreeState::Active,
+                label: input.label.filter(|s| !s.trim().is_empty()),
+                repo_root: prep.repo_root.to_string_lossy().to_string(),
+                source_working_dir: prep.source_dir.to_string_lossy().to_string(),
+                path: path.to_string_lossy().to_string(),
+                base_ref: Some(prep.base_ref),
+                base_branch: prep.base_branch,
+                base_sha: Some(prep.base_sha),
+                git_branch,
+                dirty_snapshot: None,
+                path_exists: path.exists(),
+                created_at: now.clone(),
+                updated_at: now,
+                archived_at: None,
+                restored_at: None,
+                handed_off_at: None,
+            };
+            {
+                let conn = db.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+                conn.execute(
+                    "INSERT INTO managed_worktrees (
+                        id, session_id, child_session_id, workflow_run_id, purpose, state, label,
+                        repo_root, source_working_dir, path, base_ref, base_branch, base_sha,
+                        git_branch, dirty_snapshot_json, created_at, updated_at,
+                        archived_at, restored_at, handed_off_at
+                    ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                        NULL, ?15, ?15, NULL, NULL, NULL
+                    )",
+                    params![
+                        &row.id,
+                        &row.session_id,
+                        row.child_session_id.as_deref(),
+                        row.workflow_run_id.as_deref(),
+                        row.purpose.as_str(),
+                        row.state.as_str(),
+                        row.label.as_deref(),
+                        &row.repo_root,
+                        &row.source_working_dir,
+                        &row.path,
+                        row.base_ref.as_deref(),
+                        row.base_branch.as_deref(),
+                        row.base_sha.as_deref(),
+                        row.git_branch.as_deref(),
+                        &row.created_at
+                    ],
+                )?;
+            }
+            emit_worktree_changed("worktree:created", &row);
+            if let Err(err) = db.refresh_goal_worktree_evidence(&row) {
+                crate::app_warn!(
+                    "goal",
+                    "worktree_evidence",
+                    "failed to refresh goal worktree evidence after create {}: {err:#}",
+                    row.id
+                );
+            }
+            Ok(row)
+        })
+        .await?;
         Ok(row)
     }
 

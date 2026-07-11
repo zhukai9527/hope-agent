@@ -1276,9 +1276,9 @@ pub async fn set_permission_mode(
     if session_id.is_empty() {
         return Err(CmdError::from(anyhow::anyhow!("session_id required")));
     }
-    state
-        .session_db
-        .update_session_permission_mode(&session_id, mode)?;
+    let db = state.session_db.clone();
+    db.run(move |db| db.update_session_permission_mode(&session_id, mode))
+        .await?;
     Ok(())
 }
 
@@ -1293,9 +1293,10 @@ pub async fn set_sandbox_mode(
     if session_id.is_empty() {
         return Err(CmdError::from(anyhow::anyhow!("session_id required")));
     }
-    state
-        .session_db
-        .update_session_sandbox_mode(&session_id, mode)?;
+    let db = state.session_db.clone();
+    let sid = session_id.clone();
+    db.run(move |db| db.update_session_sandbox_mode(&sid, mode))
+        .await?;
     if let Some(bus) = ha_core::get_event_bus() {
         bus.emit(
             "sandbox:mode_changed",

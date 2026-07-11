@@ -19,8 +19,10 @@ pub struct CreateManagedWorktreeBody {
 pub async fn list_managed_worktrees(
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<ha_core::worktree::ManagedWorktree>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?.list_managed_worktrees_for_session(&session_id)?,
+        db.run(move |db| db.list_managed_worktrees_for_session(&session_id))
+            .await?,
     ))
 }
 
@@ -51,9 +53,10 @@ pub async fn create_managed_worktree(
 pub async fn get_managed_worktree(
     Path(id): Path<String>,
 ) -> Result<Json<Option<ha_core::worktree::ManagedWorktree>>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?
-            .get_managed_worktree(&id)
+        db.run(move |db| db.get_managed_worktree(&id))
+            .await
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
 }
@@ -61,9 +64,10 @@ pub async fn get_managed_worktree(
 pub async fn archive_managed_worktree(
     Path(id): Path<String>,
 ) -> Result<Json<ha_core::worktree::ManagedWorktree>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?
-            .archive_managed_worktree(&id)
+        db.run(move |db| db.archive_managed_worktree(&id))
+            .await
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
 }
@@ -71,9 +75,10 @@ pub async fn archive_managed_worktree(
 pub async fn restore_managed_worktree(
     Path(id): Path<String>,
 ) -> Result<Json<ha_core::worktree::ManagedWorktree>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?
-            .restore_managed_worktree(&id)
+        db.run(move |db| db.restore_managed_worktree(&id))
+            .await
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
 }
@@ -81,9 +86,10 @@ pub async fn restore_managed_worktree(
 pub async fn handoff_managed_worktree(
     Path(id): Path<String>,
 ) -> Result<Json<ha_core::worktree::ManagedWorktree>, AppError> {
+    let db = session_db()?;
     Ok(Json(
-        session_db()?
-            .handoff_managed_worktree(&id)
+        db.run(move |db| db.handoff_managed_worktree(&id))
+            .await
             .map_err(|e| AppError::bad_request(e.to_string()))?,
     ))
 }

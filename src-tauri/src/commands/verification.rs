@@ -6,9 +6,9 @@ pub async fn list_verification_runs(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<VerificationRun>, CmdError> {
-    app_state
-        .session_db
-        .list_verification_runs_for_session(&session_id, 100)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_verification_runs_for_session(&session_id, 100))
+        .await
         .map_err(Into::into)
 }
 
@@ -17,9 +17,9 @@ pub async fn get_verification_run(
     run_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<VerificationRunSnapshot>, CmdError> {
-    app_state
-        .session_db
-        .verification_run_snapshot(&run_id, 200)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.verification_run_snapshot(&run_id, 200))
+        .await
         .map_err(Into::into)
 }
 

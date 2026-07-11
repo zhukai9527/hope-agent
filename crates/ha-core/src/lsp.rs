@@ -426,12 +426,20 @@ pub fn diagnostics_prompt_suffix(
     Some(out)
 }
 
-pub async fn status_for_session(db: &SessionDB, session_id: &str) -> Result<LspStatusSnapshot> {
-    let meta = db
-        .get_session(session_id)?
-        .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
-    let workspace_root = effective_working_dir_for_meta(&meta)
-        .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok());
+pub async fn status_for_session(
+    db: &std::sync::Arc<SessionDB>,
+    session_id: &str,
+) -> Result<LspStatusSnapshot> {
+    let sid = session_id.to_string();
+    let workspace_root = db
+        .run(move |db| -> Result<Option<String>> {
+            let meta = db
+                .get_session(&sid)?
+                .ok_or_else(|| anyhow!("session not found: {sid}"))?;
+            Ok(effective_working_dir_for_meta(&meta)
+                .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok()))
+        })
+        .await?;
     let servers = server_infos(workspace_root.as_deref()).await;
     Ok(LspStatusSnapshot {
         session_id: session_id.to_string(),
@@ -441,14 +449,19 @@ pub async fn status_for_session(db: &SessionDB, session_id: &str) -> Result<LspS
 }
 
 pub async fn diagnostics_for_session(
-    db: &SessionDB,
+    db: &std::sync::Arc<SessionDB>,
     session_id: &str,
 ) -> Result<LspDiagnosticsSnapshot> {
-    let meta = db
-        .get_session(session_id)?
-        .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
-    let workspace_root = effective_working_dir_for_meta(&meta)
-        .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok());
+    let sid = session_id.to_string();
+    let workspace_root = db
+        .run(move |db| -> Result<Option<String>> {
+            let meta = db
+                .get_session(&sid)?
+                .ok_or_else(|| anyhow!("session not found: {sid}"))?;
+            Ok(effective_working_dir_for_meta(&meta)
+                .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok()))
+        })
+        .await?;
     let diagnostics = if let Some(root) = workspace_root.as_deref() {
         diagnostics_for_root(root).await
     } else {
@@ -475,17 +488,22 @@ pub async fn diagnostics_for_session(
 }
 
 pub async fn workspace_symbols_for_session(
-    db: &SessionDB,
+    db: &std::sync::Arc<SessionDB>,
     session_id: &str,
     query: &str,
     limit: Option<usize>,
 ) -> Result<LspWorkspaceSymbolsSnapshot> {
     let query = query.trim();
-    let meta = db
-        .get_session(session_id)?
-        .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
-    let workspace_root = effective_working_dir_for_meta(&meta)
-        .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok());
+    let sid = session_id.to_string();
+    let workspace_root = db
+        .run(move |db| -> Result<Option<String>> {
+            let meta = db
+                .get_session(&sid)?
+                .ok_or_else(|| anyhow!("session not found: {sid}"))?;
+            Ok(effective_working_dir_for_meta(&meta)
+                .and_then(|wd| workspace_root_for_path(Path::new(&wd)).ok()))
+        })
+        .await?;
     let Some(root) = workspace_root.clone() else {
         return Ok(LspWorkspaceSymbolsSnapshot {
             session_id: session_id.to_string(),

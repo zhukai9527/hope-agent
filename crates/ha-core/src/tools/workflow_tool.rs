@@ -105,19 +105,57 @@ impl WorkflowControlCommand {
 pub async fn tool_workflow(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     let input: WorkflowToolArgs = serde_json::from_value(args.clone())
         .map_err(|e| anyhow!("Invalid workflow arguments: {e}"))?;
-    let (session_id, db, workflow_mode) = workflow_context(ctx)?;
+    let (session_id, db) = resolve_workflow_ctx(ctx)?;
+
+    let workflow_mode = {
+        let sid = session_id.clone();
+        db.run(move |db| db.get_session_workflow_mode(&sid))
+            .await?
+            .unwrap_or_default()
+    };
+    if !workflow_mode.enabled() {
+        return Err(anyhow!(
+            "Workflow Mode is off for this session. Use `/workflow on` or the GUI Workflow Mode toggle before using the workflow tool."
+        ));
+    }
 
     let output = match input.action {
-        WorkflowToolAction::Guide => workflow_authoring_guide(workflow_mode),
-        WorkflowToolAction::Create => create_workflow(&input, &db, &session_id, workflow_mode)?,
-        WorkflowToolAction::Followup => {
-            create_followup_workflow(&input, &db, &session_id, workflow_mode)?
-        }
-        WorkflowToolAction::List => list_workflows(&input, &db, &session_id, workflow_mode)?,
-        WorkflowToolAction::Status => workflow_status(&input, &db, &session_id, workflow_mode)?,
-        WorkflowToolAction::Trace => workflow_trace(&input, &db, &session_id, workflow_mode)?,
+        // Async arm: spawns / awaits child cancellation. Its own synchronous DB
+        // segments are routed through `SessionDB::run` inside the fn.
         WorkflowToolAction::Control => {
             control_workflow(&input, &db, &session_id, workflow_mode).await?
+        }
+        // Every other arm is fully synchronous (DB reads/writes + JSON shaping);
+        // run the whole dispatch on the blocking pool in one hop so the shared
+        // write lock never pins the async worker.
+        _ => {
+            let dispatch_db = db.clone();
+            let dispatch_session_id = session_id.clone();
+            crate::blocking::run_blocking(move || -> Result<Value> {
+                match input.action {
+                    WorkflowToolAction::Guide => Ok(workflow_authoring_guide(workflow_mode)),
+                    WorkflowToolAction::Create => {
+                        create_workflow(&input, &dispatch_db, &dispatch_session_id, workflow_mode)
+                    }
+                    WorkflowToolAction::Followup => create_followup_workflow(
+                        &input,
+                        &dispatch_db,
+                        &dispatch_session_id,
+                        workflow_mode,
+                    ),
+                    WorkflowToolAction::List => {
+                        list_workflows(&input, &dispatch_db, &dispatch_session_id, workflow_mode)
+                    }
+                    WorkflowToolAction::Status => {
+                        workflow_status(&input, &dispatch_db, &dispatch_session_id, workflow_mode)
+                    }
+                    WorkflowToolAction::Trace => {
+                        workflow_trace(&input, &dispatch_db, &dispatch_session_id, workflow_mode)
+                    }
+                    WorkflowToolAction::Control => unreachable!("handled above"),
+                }
+            })
+            .await?
         }
     };
 
@@ -169,13 +207,13 @@ fn workflow_authoring_guide(workflow_mode: crate::workflow_mode::WorkflowMode) -
     })
 }
 
-fn workflow_context(
+/// Cheap resolution (no DB IO) of the session id + `SessionDB` handle for the
+/// workflow tool. The workflow-mode gate is read separately via
+/// `SessionDB::run` so the synchronous SQLite lookup never pins the async
+/// worker (see `crate::blocking`).
+fn resolve_workflow_ctx(
     ctx: &ToolExecContext,
-) -> Result<(
-    String,
-    std::sync::Arc<crate::session::SessionDB>,
-    crate::workflow_mode::WorkflowMode,
-)> {
+) -> Result<(String, std::sync::Arc<crate::session::SessionDB>)> {
     let session_id = ctx
         .session_id
         .as_deref()
@@ -191,15 +229,7 @@ fn workflow_context(
         .map(|handle| handle.0.clone())
         .or_else(|| crate::get_session_db().cloned())
         .ok_or_else(|| anyhow!("Session DB not initialized"))?;
-    let workflow_mode = db
-        .get_session_workflow_mode(session_id)?
-        .unwrap_or_default();
-    if !workflow_mode.enabled() {
-        return Err(anyhow!(
-            "Workflow Mode is off for this session. Use `/workflow on` or the GUI Workflow Mode toggle before using the workflow tool."
-        ));
-    }
-    Ok((session_id.to_string(), db, workflow_mode))
+    Ok((session_id.to_string(), db))
 }
 
 fn create_workflow(
@@ -612,15 +642,30 @@ async fn control_workflow(
     workflow_mode: crate::workflow_mode::WorkflowMode,
 ) -> Result<Value> {
     let run_id = normalized(input.run_id.as_deref())
-        .ok_or_else(|| anyhow!("workflow action=control requires `runId`"))?;
+        .ok_or_else(|| anyhow!("workflow action=control requires `runId`"))?
+        .to_string();
     let command = input
         .command
         .ok_or_else(|| anyhow!("workflow action=control requires `command`"))?;
-    let _ = visible_workflow_run(db, session_id, run_id)?;
     let run = match command {
-        WorkflowControlCommand::Pause => db.pause_workflow_run(run_id)?,
+        WorkflowControlCommand::Pause => {
+            let sid = session_id.to_string();
+            let rid = run_id.clone();
+            db.run(move |db| {
+                visible_workflow_run(db, &sid, &rid)?;
+                db.pause_workflow_run(&rid)
+            })
+            .await?
+        }
         WorkflowControlCommand::Resume => {
-            let run = db.resume_workflow_run(run_id)?;
+            let sid = session_id.to_string();
+            let rid = run_id.clone();
+            let run = db
+                .run(move |db| {
+                    visible_workflow_run(db, &sid, &rid)?;
+                    db.resume_workflow_run(&rid)
+                })
+                .await?;
             let _ = crate::workflow::spawn_workflow_run_if_primary(
                 db.clone(),
                 run.id.clone(),
@@ -629,21 +674,38 @@ async fn control_workflow(
             run
         }
         WorkflowControlCommand::Cancel => {
-            crate::workflow::cancel_workflow_run_with_children(db.clone(), run_id).await?
+            {
+                let sid = session_id.to_string();
+                let rid = run_id.clone();
+                db.run(move |db| visible_workflow_run(db, &sid, &rid).map(|_| ()))
+                    .await?;
+            }
+            crate::workflow::cancel_workflow_run_with_children(db.clone(), &run_id).await?
         }
     };
-    let reason = normalized(input.reason.as_deref()).unwrap_or("model_control_requested");
-    let _ = db.append_workflow_event(
-        &run.id,
-        "run_model_control_action",
-        json!({
-            "action": command.as_str(),
-            "reason": reason,
-            "resultState": run.state.as_str(),
-            "accepted": true,
-            "surface": "model_control",
-        }),
-    );
+    let reason = normalized(input.reason.as_deref())
+        .unwrap_or("model_control_requested")
+        .to_string();
+    {
+        let run_id_for_event = run.id.clone();
+        let result_state = run.state.as_str().to_string();
+        let command_str = command.as_str().to_string();
+        let _ = db
+            .run(move |db| {
+                db.append_workflow_event(
+                    &run_id_for_event,
+                    "run_model_control_action",
+                    json!({
+                        "action": command_str,
+                        "reason": reason,
+                        "resultState": result_state,
+                        "accepted": true,
+                        "surface": "model_control",
+                    }),
+                )
+            })
+            .await;
+    }
     Ok(json!({
         "ok": true,
         "action": "control",

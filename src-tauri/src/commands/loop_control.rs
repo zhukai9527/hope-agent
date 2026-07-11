@@ -10,9 +10,10 @@ pub async fn list_loop_schedules(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<LoopSchedule>, CmdError> {
-    app_state
-        .session_db
-        .list_loop_schedules_for_session_with_cron(&app_state.cron_db, &session_id, 100)
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.list_loop_schedules_for_session_with_cron(&cron, &session_id, 100))
+        .await
         .map_err(Into::into)
 }
 
@@ -22,9 +23,10 @@ pub async fn list_loop_watchdog_findings(
     grace_secs: Option<i64>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<LoopWatchdogFinding>, CmdError> {
-    app_state
-        .session_db
-        .list_loop_watchdog_findings(&app_state.cron_db, &session_id, grace_secs.unwrap_or(120))
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.list_loop_watchdog_findings(&cron, &session_id, grace_secs.unwrap_or(120)))
+        .await
         .map_err(Into::into)
 }
 
@@ -33,9 +35,10 @@ pub async fn get_loop_schedule(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<LoopSnapshot>, CmdError> {
-    app_state
-        .session_db
-        .loop_snapshot_with_cron(&app_state.cron_db, &loop_id, 100)
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.loop_snapshot_with_cron(&cron, &loop_id, 100))
+        .await
         .map_err(Into::into)
 }
 
@@ -69,10 +72,11 @@ pub async fn create_loop_schedule(
         })
         .transpose()?
         .unwrap_or_default();
-    app_state
-        .session_db
-        .create_loop_schedule(
-            &app_state.cron_db,
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| {
+        db.create_loop_schedule(
+            &cron,
             CreateLoopScheduleInput {
                 session_id,
                 goal_id,
@@ -91,7 +95,9 @@ pub async fn create_loop_schedule(
                 agent_id,
             },
         )
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -106,10 +112,11 @@ pub async fn update_loop_schedule_policy(
     backoff_secs: Option<i64>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<LoopSchedule, CmdError> {
-    app_state
-        .session_db
-        .update_loop_schedule_policy(
-            &app_state.cron_db,
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| {
+        db.update_loop_schedule_policy(
+            &cron,
             UpdateLoopSchedulePolicyInput {
                 loop_id,
                 max_runs,
@@ -120,7 +127,9 @@ pub async fn update_loop_schedule_policy(
                 backoff_secs,
             },
         )
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -128,11 +137,12 @@ pub async fn run_loop_schedule_now(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CmdError> {
-    ha_core::loop_control::spawn_loop_schedule_run_now(
-        &app_state.cron_db,
-        &app_state.session_db,
-        &loop_id,
-    )
+    let cron = app_state.cron_db.clone();
+    let session_db = app_state.session_db.clone();
+    ha_core::blocking::run_blocking(move || {
+        ha_core::loop_control::spawn_loop_schedule_run_now(&cron, &session_db, &loop_id)
+    })
+    .await
     .map_err(Into::into)
 }
 
@@ -141,9 +151,10 @@ pub async fn pause_loop_schedule(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<LoopSchedule, CmdError> {
-    app_state
-        .session_db
-        .pause_loop_schedule(&app_state.cron_db, &loop_id)
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.pause_loop_schedule(&cron, &loop_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -152,9 +163,10 @@ pub async fn resume_loop_schedule(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<LoopSchedule, CmdError> {
-    app_state
-        .session_db
-        .resume_loop_schedule(&app_state.cron_db, &loop_id)
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.resume_loop_schedule(&cron, &loop_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -163,8 +175,9 @@ pub async fn stop_loop_schedule(
     loop_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<LoopSchedule, CmdError> {
-    app_state
-        .session_db
-        .stop_loop_schedule(&app_state.cron_db, &loop_id)
+    let db = app_state.session_db.clone();
+    let cron = app_state.cron_db.clone();
+    db.run(move |db| db.stop_loop_schedule(&cron, &loop_id))
+        .await
         .map_err(Into::into)
 }

@@ -4,7 +4,8 @@ use serde_json::{json, Value};
 
 use crate::cron::CronDB;
 use crate::loop_control::{
-    LoopProgressState, LoopSchedule, LoopSnapshot, LoopState, LoopTriggerKind, LoopWatchKind,
+    LoopProgressState, LoopSchedule, LoopSnapshot, LoopState, LoopTriggerKind, LoopWatch,
+    LoopWatchKind,
 };
 use crate::session::SessionDB;
 
@@ -206,39 +207,42 @@ pub(crate) async fn tool_loop_status(args: &Value, ctx: &ToolExecContext) -> Str
         Err(err) => return error_json(err),
     };
     let loop_id = string_arg(args, "loopId");
-    if let Some(loop_id) = loop_id.as_deref() {
-        let schedule = match resolve_loop_for_session(&db, &session_id, Some(loop_id), false, false)
-        {
-            Ok(schedule) => schedule,
-            Err(err) => return error_json(err),
-        };
-        let snapshot = match crate::get_cron_db() {
-            Some(cron_db) => db.loop_snapshot_with_cron(cron_db, &schedule.id, 8),
-            None => db.loop_snapshot(&schedule.id, 8),
-        };
-        let snapshot = match snapshot {
-            Ok(Some(snapshot)) => snapshot,
-            Ok(None) => return error_json("Loop not found."),
-            Err(e) => return error_json(format!("Failed to read loop: {e}")),
-        };
-        return json_string(json!({
-            "ok": true,
-            "loop": compact_snapshot(&snapshot),
-        }));
-    }
+    db.run(move |db| {
+        if let Some(loop_id) = loop_id.as_deref() {
+            let schedule =
+                match resolve_loop_for_session(db, &session_id, Some(loop_id), false, false) {
+                    Ok(schedule) => schedule,
+                    Err(err) => return error_json(err),
+                };
+            let snapshot = match crate::get_cron_db() {
+                Some(cron_db) => db.loop_snapshot_with_cron(cron_db, &schedule.id, 8),
+                None => db.loop_snapshot(&schedule.id, 8),
+            };
+            let snapshot = match snapshot {
+                Ok(Some(snapshot)) => snapshot,
+                Ok(None) => return error_json("Loop not found."),
+                Err(e) => return error_json(format!("Failed to read loop: {e}")),
+            };
+            return json_string(json!({
+                "ok": true,
+                "loop": compact_snapshot(&snapshot),
+            }));
+        }
 
-    let schedules = match crate::get_cron_db() {
-        Some(cron_db) => db.list_loop_schedules_for_session_with_cron(cron_db, &session_id, 50),
-        None => db.list_loop_schedules_for_session(&session_id, 50),
-    };
-    let schedules = match schedules {
-        Ok(items) => items,
-        Err(e) => return error_json(format!("Failed to list loops: {e}")),
-    };
-    json_string(json!({
-        "ok": true,
-        "loops": schedules.iter().map(compact_schedule).collect::<Vec<_>>(),
-    }))
+        let schedules = match crate::get_cron_db() {
+            Some(cron_db) => db.list_loop_schedules_for_session_with_cron(cron_db, &session_id, 50),
+            None => db.list_loop_schedules_for_session(&session_id, 50),
+        };
+        let schedules = match schedules {
+            Ok(items) => items,
+            Err(e) => return error_json(format!("Failed to list loops: {e}")),
+        };
+        json_string(json!({
+            "ok": true,
+            "loops": schedules.iter().map(compact_schedule).collect::<Vec<_>>(),
+        }))
+    })
+    .await
 }
 
 pub(crate) async fn tool_loop_reschedule(args: &Value, ctx: &ToolExecContext) -> String {
@@ -259,24 +263,27 @@ pub(crate) async fn tool_loop_reschedule(args: &Value, ctx: &ToolExecContext) ->
         None => return error_json("reason is required."),
     };
     let loop_id = string_arg(args, "loopId");
-    let schedule = match resolve_loop_for_session(&db, &session_id, loop_id.as_deref(), true, true)
-    {
-        Ok(schedule) => schedule,
-        Err(err) => return error_json(err),
-    };
-    match db.record_loop_tool_reschedule(&cron_db, &schedule.id, delay_secs, &reason) {
-        Ok((schedule, next_run_at)) => json_string(json!({
-            "ok": true,
-            "loop": compact_schedule(&schedule),
-            "decision": {
-                "action": "reschedule",
-                "delaySecs": delay_secs.clamp(60, 3600),
-                "reason": reason,
-                "nextRunAt": next_run_at.or(schedule.next_run_at),
-            }
-        })),
-        Err(e) => error_json(format!("Failed to reschedule loop: {e}")),
-    }
+    db.run(move |db| {
+        let schedule =
+            match resolve_loop_for_session(db, &session_id, loop_id.as_deref(), true, true) {
+                Ok(schedule) => schedule,
+                Err(err) => return error_json(err),
+            };
+        match db.record_loop_tool_reschedule(&cron_db, &schedule.id, delay_secs, &reason) {
+            Ok((schedule, next_run_at)) => json_string(json!({
+                "ok": true,
+                "loop": compact_schedule(&schedule),
+                "decision": {
+                    "action": "reschedule",
+                    "delaySecs": delay_secs.clamp(60, 3600),
+                    "reason": reason,
+                    "nextRunAt": next_run_at.or(schedule.next_run_at),
+                }
+            })),
+            Err(e) => error_json(format!("Failed to reschedule loop: {e}")),
+        }
+    })
+    .await
 }
 
 pub(crate) async fn tool_loop_stop(args: &Value, ctx: &ToolExecContext) -> String {
@@ -303,22 +310,25 @@ pub(crate) async fn tool_loop_stop(args: &Value, ctx: &ToolExecContext) -> Strin
         }
     };
     let loop_id = string_arg(args, "loopId");
-    let schedule =
-        match resolve_loop_for_session(&db, &session_id, loop_id.as_deref(), false, false) {
-            Ok(schedule) => schedule,
-            Err(err) => return error_json(err),
-        };
-    match db.record_loop_tool_stop(&cron_db, &schedule.id, completed, &reason) {
-        Ok(schedule) => json_string(json!({
-            "ok": true,
-            "loop": compact_schedule(&schedule),
-            "decision": {
-                "action": if completed { "completed" } else { "blocked" },
-                "reason": reason,
-            }
-        })),
-        Err(e) => error_json(format!("Failed to stop loop: {e}")),
-    }
+    db.run(move |db| {
+        let schedule =
+            match resolve_loop_for_session(db, &session_id, loop_id.as_deref(), false, false) {
+                Ok(schedule) => schedule,
+                Err(err) => return error_json(err),
+            };
+        match db.record_loop_tool_stop(&cron_db, &schedule.id, completed, &reason) {
+            Ok(schedule) => json_string(json!({
+                "ok": true,
+                "loop": compact_schedule(&schedule),
+                "decision": {
+                    "action": if completed { "completed" } else { "blocked" },
+                    "reason": reason,
+                }
+            })),
+            Err(e) => error_json(format!("Failed to stop loop: {e}")),
+        }
+    })
+    .await
 }
 
 pub(crate) async fn tool_loop_record_progress(args: &Value, ctx: &ToolExecContext) -> String {
@@ -340,23 +350,32 @@ pub(crate) async fn tool_loop_record_progress(args: &Value, ctx: &ToolExecContex
         Err(err) => return error_json(err),
     };
     let loop_id = string_arg(args, "loopId");
-    let schedule =
-        match resolve_loop_for_session(&db, &session_id, loop_id.as_deref(), false, false) {
-            Ok(schedule) => schedule,
-            Err(err) => return error_json(err),
-        };
-    match db.record_loop_tool_progress(&schedule.id, state, &summary, reason.as_deref(), metadata) {
-        Ok(schedule) => json_string(json!({
-            "ok": true,
-            "loop": compact_schedule(&schedule),
-            "recorded": {
-                "state": state.as_str(),
-                "summary": summary,
-                "reason": reason,
-            }
-        })),
-        Err(e) => error_json(format!("Failed to record loop progress: {e}")),
-    }
+    db.run(move |db| {
+        let schedule =
+            match resolve_loop_for_session(db, &session_id, loop_id.as_deref(), false, false) {
+                Ok(schedule) => schedule,
+                Err(err) => return error_json(err),
+            };
+        match db.record_loop_tool_progress(
+            &schedule.id,
+            state,
+            &summary,
+            reason.as_deref(),
+            metadata,
+        ) {
+            Ok(schedule) => json_string(json!({
+                "ok": true,
+                "loop": compact_schedule(&schedule),
+                "recorded": {
+                    "state": state.as_str(),
+                    "summary": summary,
+                    "reason": reason,
+                }
+            })),
+            Err(e) => error_json(format!("Failed to record loop progress: {e}")),
+        }
+    })
+    .await
 }
 
 pub(crate) async fn tool_loop_watch(args: &Value, ctx: &ToolExecContext) -> String {
@@ -381,40 +400,48 @@ pub(crate) async fn tool_loop_watch(args: &Value, ctx: &ToolExecContext) -> Stri
         spec["path"] = Value::String(ctx.resolve_path(raw_path));
     }
     let loop_id = string_arg(args, "loopId");
-    let schedule = match resolve_loop_for_session(&db, &session_id, loop_id.as_deref(), true, true)
-    {
-        Ok(schedule) => schedule,
+    let prepared: Result<(LoopSchedule, LoopWatch), String> = db
+        .run(move |db| {
+            let schedule =
+                resolve_loop_for_session(db, &session_id, loop_id.as_deref(), true, true)?;
+            let watch = db
+                .upsert_loop_watch(&schedule.id, kind, &spec)
+                .map_err(|e| format!("Failed to attach loop watch: {e}"))?;
+            Ok((schedule, watch))
+        })
+        .await;
+    let (schedule, watch) = match prepared {
+        Ok(value) => value,
         Err(err) => return error_json(err),
     };
-    match db.upsert_loop_watch(&schedule.id, kind, &spec) {
-        Ok(watch) => {
-            let cron_db = match resolve_cron_db() {
-                Ok(value) => value,
-                Err(err) => return error_json(err),
-            };
-            if let Err(err) =
-                crate::loop_control::start_loop_monitor_adapter(db.clone(), cron_db, &watch).await
-            {
-                let _ = db.record_loop_monitor_error(&watch.id, &err.to_string());
-                return error_json(format!(
-                    "Loop watch was persisted but its monitor could not start; the fallback remains active: {err}"
-                ));
-            }
-            json_string(json!({
-                "ok": true,
-                "loopId": schedule.id,
-                "watch": {
-                    "id": watch.id,
-                    "kind": watch.kind.as_str(),
-                    "spec": watch.spec,
-                    "active": watch.active,
-                    "generation": watch.generation,
-                },
-                "fallbackAt": schedule.next_run_at,
-            }))
-        }
-        Err(e) => error_json(format!("Failed to attach loop watch: {e}")),
+    let cron_db = match resolve_cron_db() {
+        Ok(value) => value,
+        Err(err) => return error_json(err),
+    };
+    if let Err(err) =
+        crate::loop_control::start_loop_monitor_adapter(db.clone(), cron_db, &watch).await
+    {
+        let watch_id = watch.id.clone();
+        let message = err.to_string();
+        let _ = db
+            .run(move |db| db.record_loop_monitor_error(&watch_id, &message))
+            .await;
+        return error_json(format!(
+            "Loop watch was persisted but its monitor could not start; the fallback remains active: {err}"
+        ));
     }
+    json_string(json!({
+        "ok": true,
+        "loopId": schedule.id,
+        "watch": {
+            "id": watch.id,
+            "kind": watch.kind.as_str(),
+            "spec": watch.spec,
+            "active": watch.active,
+            "generation": watch.generation,
+        },
+        "fallbackAt": schedule.next_run_at,
+    }))
 }
 
 pub(crate) async fn tool_loop_unwatch(args: &Value, ctx: &ToolExecContext) -> String {
@@ -427,21 +454,24 @@ pub(crate) async fn tool_loop_unwatch(args: &Value, ctx: &ToolExecContext) -> St
         None => return error_json("watchId is required."),
     };
     let loop_id = string_arg(args, "loopId");
-    let schedule = match resolve_loop_for_session(&db, &session_id, loop_id.as_deref(), true, false)
-    {
-        Ok(schedule) => schedule,
-        Err(err) => return error_json(err),
-    };
-    match db.remove_loop_watch(&schedule.id, &watch_id) {
-        Ok(watch) => json_string(json!({
-            "ok": true,
-            "loopId": schedule.id,
-            "watch": {
-                "id": watch.id,
-                "active": watch.active,
-                "generation": watch.generation,
-            }
-        })),
-        Err(e) => error_json(format!("Failed to remove loop watch: {e}")),
-    }
+    db.run(move |db| {
+        let schedule =
+            match resolve_loop_for_session(db, &session_id, loop_id.as_deref(), true, false) {
+                Ok(schedule) => schedule,
+                Err(err) => return error_json(err),
+            };
+        match db.remove_loop_watch(&schedule.id, &watch_id) {
+            Ok(watch) => json_string(json!({
+                "ok": true,
+                "loopId": schedule.id,
+                "watch": {
+                    "id": watch.id,
+                    "active": watch.active,
+                    "generation": watch.generation,
+                }
+            })),
+            Err(e) => error_json(format!("Failed to remove loop watch: {e}")),
+        }
+    })
+    .await
 }

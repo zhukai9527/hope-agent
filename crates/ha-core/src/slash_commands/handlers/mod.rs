@@ -125,14 +125,40 @@ pub async fn dispatch(
         "search" => utility::handle_search(args),
         "prompts" => Ok(utility::handle_prompts()),
         "context" => context::handle_context(session_id, agent_id, args).await,
-        "workflow" => workflow::handle_workflow(session_db()?, session_id, args),
+        // `handle_workflow` / `handle_loop` / `handle_mode` are fully synchronous
+        // (SessionDB / CronDB reads + writes under the global write lock). Route
+        // them through the blocking pool so they never pin the async worker.
+        "workflow" => {
+            let db = session_db()?.clone();
+            let session_id = session_id.map(str::to_string);
+            let args = args.to_string();
+            crate::blocking::run_blocking(move || {
+                workflow::handle_workflow(&db, session_id.as_deref(), &args)
+            })
+            .await
+        }
         "review" => review::handle_review(session_db()?, session_id, args).await,
         "loop" => {
-            let sid = session_id.ok_or_else(|| "No active session for /loop".to_string())?;
-            let cron_db = crate::require_cron_db().map_err(|e| e.to_string())?;
-            loop_control::handle_loop(session_db()?, cron_db, sid, args)
+            let sid = session_id
+                .ok_or_else(|| "No active session for /loop".to_string())?
+                .to_string();
+            let cron_db = crate::require_cron_db().map_err(|e| e.to_string())?.clone();
+            let db = session_db()?.clone();
+            let args = args.to_string();
+            crate::blocking::run_blocking(move || {
+                loop_control::handle_loop(&db, &cron_db, &sid, &args)
+            })
+            .await
         }
-        "mode" => workflow::handle_mode(session_db()?, session_id, args),
+        "mode" => {
+            let db = session_db()?.clone();
+            let session_id = session_id.map(str::to_string);
+            let args = args.to_string();
+            crate::blocking::run_blocking(move || {
+                workflow::handle_mode(&db, session_id.as_deref(), &args)
+            })
+            .await
+        }
         "goal" => goal::handle_goal(session_db()?, session_id, args).await,
         "awareness" => awareness::handle_awareness(args),
         "imreply" => utility::handle_imreply(session_id, args).await,

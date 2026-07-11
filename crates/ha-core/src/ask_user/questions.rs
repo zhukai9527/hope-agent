@@ -80,7 +80,7 @@ pub async fn submit_ask_user_question_response(
         Ok(())
     } else {
         drop(pending);
-        submit_owner_question_response(request_id, answers)
+        submit_owner_question_response(request_id, answers).await
     }
 }
 
@@ -215,36 +215,44 @@ pub fn mark_group_answered(request_id: &str) -> Result<()> {
     db.mark_ask_user_answered(request_id)
 }
 
-fn submit_owner_question_response(
+async fn submit_owner_question_response(
     request_id: &str,
     answers: Vec<AskUserQuestionAnswer>,
 ) -> Result<()> {
-    let Some(db) = crate::get_session_db() else {
-        bail!("No pending ask_user_question request: {request_id}");
-    };
-    let Some(group) = db.get_pending_ask_user_group_by_request_id(request_id)? else {
-        bail!("No pending ask_user_question request: {request_id}");
-    };
-    let Some(owner) = group.owner_response.clone() else {
-        bail!("No pending ask_user_question request: {request_id}");
-    };
-    match owner.action.as_str() {
-        "record_domain_evidence" => {
-            let Some(mut input) = owner.domain_evidence else {
-                bail!("owner ask_user response missing domain evidence target");
-            };
-            ensure_domain_evidence_session(&mut input, &group.session_id)?;
-            let formatted = format_answers_for_evidence(&group.questions, &answers);
-            input.summary = Some(owner_answer_summary(input.summary.as_deref(), &formatted));
-            input.source_metadata =
-                merge_owner_answer_metadata(input.source_metadata, &group, &formatted);
-            db.record_domain_evidence(input)?;
+    // The owner-response path issues several synchronous SessionDB writes
+    // (lookup + record_domain_evidence + mark_answered). Route them through the
+    // blocking pool so they never pin the async worker (see `crate::blocking`).
+    let request_id_owned = request_id.to_string();
+    let session_id = crate::blocking::run_blocking(move || -> Result<String> {
+        let Some(db) = crate::get_session_db() else {
+            bail!("No pending ask_user_question request: {request_id_owned}");
+        };
+        let Some(group) = db.get_pending_ask_user_group_by_request_id(&request_id_owned)? else {
+            bail!("No pending ask_user_question request: {request_id_owned}");
+        };
+        let Some(owner) = group.owner_response.clone() else {
+            bail!("No pending ask_user_question request: {request_id_owned}");
+        };
+        match owner.action.as_str() {
+            "record_domain_evidence" => {
+                let Some(mut input) = owner.domain_evidence else {
+                    bail!("owner ask_user response missing domain evidence target");
+                };
+                ensure_domain_evidence_session(&mut input, &group.session_id)?;
+                let formatted = format_answers_for_evidence(&group.questions, &answers);
+                input.summary = Some(owner_answer_summary(input.summary.as_deref(), &formatted));
+                input.source_metadata =
+                    merge_owner_answer_metadata(input.source_metadata, &group, &formatted);
+                db.record_domain_evidence(input)?;
+            }
+            other => bail!("unsupported owner ask_user response action: {other}"),
         }
-        other => bail!("unsupported owner ask_user response action: {other}"),
-    }
-    db.mark_ask_user_answered(request_id)?;
-    crate::hooks::fire_elicitation_result(&group.session_id, request_id, "answered");
-    crate::tools::approval::emit_pending_interactions_changed(Some(&group.session_id));
+        db.mark_ask_user_answered(&request_id_owned)?;
+        Ok(group.session_id)
+    })
+    .await?;
+    crate::hooks::fire_elicitation_result(&session_id, request_id, "answered");
+    crate::tools::approval::emit_pending_interactions_changed(Some(&session_id));
     Ok(())
 }
 

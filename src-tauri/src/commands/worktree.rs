@@ -13,13 +13,14 @@ pub async fn list_managed_worktrees(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<ManagedWorktree>, CmdError> {
-    app_state
-        .session_db
-        .list_managed_worktrees_for_session(&session_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_managed_worktrees_for_session(&session_id))
+        .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_managed_worktree(
     session_id: String,
     source_working_dir: Option<String>,
@@ -50,9 +51,9 @@ pub async fn get_managed_worktree(
     worktree_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<ManagedWorktree>, CmdError> {
-    app_state
-        .session_db
-        .get_managed_worktree(&worktree_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.get_managed_worktree(&worktree_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -61,9 +62,9 @@ pub async fn archive_managed_worktree(
     worktree_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<ManagedWorktree, CmdError> {
-    app_state
-        .session_db
-        .archive_managed_worktree(&worktree_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.archive_managed_worktree(&worktree_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -72,9 +73,9 @@ pub async fn restore_managed_worktree(
     worktree_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<ManagedWorktree, CmdError> {
-    app_state
-        .session_db
-        .restore_managed_worktree(&worktree_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.restore_managed_worktree(&worktree_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -83,8 +84,8 @@ pub async fn handoff_managed_worktree(
     worktree_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<ManagedWorktree, CmdError> {
-    app_state
-        .session_db
-        .handoff_managed_worktree(&worktree_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.handoff_managed_worktree(&worktree_id))
+        .await
         .map_err(Into::into)
 }

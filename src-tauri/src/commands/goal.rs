@@ -10,9 +10,9 @@ pub async fn get_active_goal(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<GoalSnapshot>, CmdError> {
-    app_state
-        .session_db
-        .active_goal_for_session(&session_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.active_goal_for_session(&session_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -21,9 +21,9 @@ pub async fn get_autonomy_activity(
     session_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<AutonomyActivity, CmdError> {
-    app_state
-        .session_db
-        .autonomy_activity_for_session(&session_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.autonomy_activity_for_session(&session_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -32,9 +32,9 @@ pub async fn get_goal(
     goal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Option<GoalSnapshot>, CmdError> {
-    app_state
-        .session_db
-        .goal_snapshot(&goal_id, 200)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.goal_snapshot(&goal_id, 200))
+        .await
         .map_err(Into::into)
 }
 
@@ -44,13 +44,14 @@ pub async fn list_goal_watchdog_findings(
     stale_secs: Option<i64>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<GoalWatchdogFinding>, CmdError> {
-    app_state
-        .session_db
-        .list_goal_watchdog_findings(&session_id, stale_secs.unwrap_or(300))
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.list_goal_watchdog_findings(&session_id, stale_secs.unwrap_or(300)))
+        .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_goal(
     session_id: String,
     objective: String,
@@ -64,9 +65,9 @@ pub async fn create_goal(
     budget_turn_limit: Option<i64>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .create_goal(CreateGoalInput {
+    let db = app_state.session_db.clone();
+    db.run(move |db| {
+        db.create_goal(CreateGoalInput {
             session_id,
             objective,
             completion_criteria: completion_criteria.unwrap_or_default(),
@@ -78,7 +79,9 @@ pub async fn create_goal(
             budget_time_limit_secs,
             budget_turn_limit,
         })
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -92,9 +95,9 @@ pub async fn update_goal(
     workflow_task_type: Option<String>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .update_goal(UpdateGoalInput {
+    let db = app_state.session_db.clone();
+    db.run(move |db| {
+        db.update_goal(UpdateGoalInput {
             goal_id,
             objective,
             completion_criteria,
@@ -103,7 +106,9 @@ pub async fn update_goal(
             workflow_template_version,
             workflow_task_type,
         })
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -111,9 +116,9 @@ pub async fn pause_goal(
     goal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .pause_goal(&goal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.pause_goal(&goal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -122,9 +127,9 @@ pub async fn resume_goal(
     goal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .resume_goal(&goal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.resume_goal(&goal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -133,9 +138,9 @@ pub async fn clear_goal(
     goal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .clear_goal(&goal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.clear_goal(&goal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -144,9 +149,9 @@ pub async fn evaluate_goal(
     goal_id: String,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .evaluate_goal(&goal_id)
+    let db = app_state.session_db.clone();
+    db.run(move |db| db.evaluate_goal(&goal_id))
+        .await
         .map_err(Into::into)
 }
 
@@ -158,15 +163,17 @@ pub async fn close_goal(
     follow_up_items: Option<Vec<String>>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .close_goal(CloseGoalInput {
+    let db = app_state.session_db.clone();
+    db.run(move |db| {
+        db.close_goal(CloseGoalInput {
             goal_id,
             decision,
             reason,
             follow_up_items: follow_up_items.unwrap_or_default(),
         })
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -176,12 +183,14 @@ pub async fn append_goal_follow_up(
     source: Option<String>,
     app_state: tauri::State<'_, crate::AppState>,
 ) -> Result<GoalSnapshot, CmdError> {
-    app_state
-        .session_db
-        .append_goal_follow_up(AppendGoalFollowUpInput {
+    let db = app_state.session_db.clone();
+    db.run(move |db| {
+        db.append_goal_follow_up(AppendGoalFollowUpInput {
             goal_id,
             items,
             source,
         })
-        .map_err(Into::into)
+    })
+    .await
+    .map_err(Into::into)
 }

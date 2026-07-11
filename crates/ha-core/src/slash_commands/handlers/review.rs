@@ -35,85 +35,106 @@ pub async fn handle_review(
         return Ok(display_only(render_review_snapshot(&snapshot)));
     }
     match first_word(trimmed) {
-        "status" | "show" | "list" => render_review_status(session_db, sid, rest(trimmed)),
-        "resolved" | "resolve" | "fixed" => update_finding(
-            session_db,
-            sid,
-            rest(trimmed),
-            ReviewFindingStatus::Resolved,
-        ),
-        "dismiss" | "dismissed" => update_finding(
-            session_db,
-            sid,
-            rest(trimmed),
-            ReviewFindingStatus::Dismissed,
-        ),
-        "false_positive" | "false-positive" | "fp" => update_finding(
-            session_db,
-            sid,
-            rest(trimmed),
-            ReviewFindingStatus::FalsePositive,
-        ),
+        "status" | "show" | "list" => render_review_status(session_db, sid, rest(trimmed)).await,
+        "resolved" | "resolve" | "fixed" => {
+            update_finding(
+                session_db,
+                sid,
+                rest(trimmed),
+                ReviewFindingStatus::Resolved,
+            )
+            .await
+        }
+        "dismiss" | "dismissed" => {
+            update_finding(
+                session_db,
+                sid,
+                rest(trimmed),
+                ReviewFindingStatus::Dismissed,
+            )
+            .await
+        }
+        "false_positive" | "false-positive" | "fp" => {
+            update_finding(
+                session_db,
+                sid,
+                rest(trimmed),
+                ReviewFindingStatus::FalsePositive,
+            )
+            .await
+        }
         "open" | "reopen" => {
-            update_finding(session_db, sid, rest(trimmed), ReviewFindingStatus::Open)
+            update_finding(session_db, sid, rest(trimmed), ReviewFindingStatus::Open).await
         }
         "help" => Ok(display_only(review_usage())),
         _ => Err(review_usage()),
     }
 }
 
-fn render_review_status(
+async fn render_review_status(
     session_db: &Arc<SessionDB>,
     sid: &str,
     maybe_id: &str,
 ) -> Result<CommandResult, String> {
-    if !maybe_id.trim().is_empty() {
-        let run = resolve_review_run(session_db, sid, maybe_id.trim())?;
-        let snapshot = session_db
-            .review_run_snapshot(&run.id, 100)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Review run not found".to_string())?;
-        return Ok(display_only(render_review_snapshot(&snapshot)));
-    }
-    let runs = session_db
-        .list_review_runs_for_session(sid, 20)
-        .map_err(|e| e.to_string())?;
-    if runs.is_empty() {
-        return Ok(display_only(
-            "No review runs for this session.\n\nUse `/review` to inspect local uncommitted changes."
-                .to_string(),
-        ));
-    }
-    let mut lines = vec![format!("## Review runs ({})", runs.len())];
-    for run in runs {
-        lines.push(format!(
-            "- `{}` · **{}** · {} · {}",
-            short_id(&run.id),
-            run.state.as_str(),
-            run.scope,
-            truncate(&run.summary, 120)
-        ));
-    }
-    lines.push("\nUse `/review status <id>` to inspect findings.".to_string());
-    Ok(display_only(lines.join("\n")))
+    let db = session_db.clone();
+    let sid = sid.to_string();
+    let maybe_id = maybe_id.to_string();
+    crate::blocking::run_blocking(move || {
+        if !maybe_id.trim().is_empty() {
+            let run = resolve_review_run(&db, &sid, maybe_id.trim())?;
+            let snapshot = db
+                .review_run_snapshot(&run.id, 100)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "Review run not found".to_string())?;
+            return Ok(display_only(render_review_snapshot(&snapshot)));
+        }
+        let runs = db
+            .list_review_runs_for_session(&sid, 20)
+            .map_err(|e| e.to_string())?;
+        if runs.is_empty() {
+            return Ok(display_only(
+                "No review runs for this session.\n\nUse `/review` to inspect local uncommitted changes."
+                    .to_string(),
+            ));
+        }
+        let mut lines = vec![format!("## Review runs ({})", runs.len())];
+        for run in runs {
+            lines.push(format!(
+                "- `{}` · **{}** · {} · {}",
+                short_id(&run.id),
+                run.state.as_str(),
+                run.scope,
+                truncate(&run.summary, 120)
+            ));
+        }
+        lines.push("\nUse `/review status <id>` to inspect findings.".to_string());
+        Ok(display_only(lines.join("\n")))
+    })
+    .await
 }
 
-fn update_finding(
+async fn update_finding(
     session_db: &Arc<SessionDB>,
     sid: &str,
     id_or_prefix: &str,
     status: ReviewFindingStatus,
 ) -> Result<CommandResult, String> {
-    let finding = resolve_review_finding(session_db, sid, id_or_prefix.trim())?;
-    let updated = session_db
-        .update_review_finding_status(&finding.id, status)
-        .map_err(|e| e.to_string())?;
-    Ok(display_only(format!(
-        "Review finding `{}` is now **{}**.\n\n{}",
-        short_id(&updated.id),
-        updated.status.as_str(),
-        render_finding_line(&updated)
-    )))
+    let db = session_db.clone();
+    let sid = sid.to_string();
+    let id_or_prefix = id_or_prefix.trim().to_string();
+    crate::blocking::run_blocking(move || {
+        let finding = resolve_review_finding(&db, &sid, &id_or_prefix)?;
+        let updated = db
+            .update_review_finding_status(&finding.id, status)
+            .map_err(|e| e.to_string())?;
+        Ok(display_only(format!(
+            "Review finding `{}` is now **{}**.\n\n{}",
+            short_id(&updated.id),
+            updated.status.as_str(),
+            render_finding_line(&updated)
+        )))
+    })
+    .await
 }
 
 fn resolve_review_run(

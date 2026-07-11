@@ -53,8 +53,9 @@ pub async fn run_coding_eval_gold_task_pack(
 pub async fn evaluate_coding_eval_strategy_effect(
     Json(body): Json<EvaluateCodingEvalStrategyEffectBody>,
 ) -> Result<Json<StrategyEffectReport>, AppError> {
-    let db = session_db()?.clone();
-    coding_eval::evaluate_strategy_effect_with_recording(&db, body.input)
+    let db = session_db()?;
+    db.run(move |db| coding_eval::evaluate_strategy_effect_with_recording(db, body.input))
+        .await
         .map(Json)
         .map_err(|err| AppError::bad_request(err.to_string()))
 }
