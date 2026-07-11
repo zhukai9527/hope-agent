@@ -23,7 +23,8 @@ test("HttpTransport requests durable-state resync on connect and EventBus lag", 
     onerror: (() => void) | null = null
     onclose: (() => void) | null = null
 
-    constructor(_url: string) {
+    constructor(url: string) {
+      void url
       MockWebSocket.instances.push(this)
     }
 
