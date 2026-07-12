@@ -987,6 +987,12 @@ pub fn flush_all_idle_extractions() {
 
 /// Execute idle extraction: load history from DB and run extraction without agent cache.
 async fn run_idle_extraction(agent_id: &str, session_id: &str, expected_updated_at: &str) {
+    // Admission must happen before removing the pending handle. If deletion
+    // wins the lifecycle gate, the extraction fails closed; if extraction wins,
+    // its guard remains visible until all memory writes finish.
+    let _agent_admission = crate::agent_lifecycle::begin_agent_run(agent_id).ok();
+    let admitted = _agent_admission.is_some();
+
     // Remove our handle entry — but only if it still matches the updated_at we
     // were scheduled for. A concurrent `schedule_idle_extraction()` may have
     // cancelled the old abort handle and registered a fresh one while this
@@ -1000,6 +1006,16 @@ async fn run_idle_extraction(agent_id: &str, session_id: &str, expected_updated_
                 }
             }
         }
+    }
+
+    if !admitted {
+        app_info!(
+            "memory",
+            "idle_extract",
+            "Skipping idle extraction for unavailable agent {}",
+            agent_id
+        );
+        return;
     }
 
     let aid = agent_id.to_string();

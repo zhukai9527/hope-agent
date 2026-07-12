@@ -13,11 +13,23 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use crate::agent_loader::{self, DEFAULT_AGENT_ID};
-use crate::cron::CronPayload;
+use crate::cron::{CronJob, CronPayload};
 
 fn lifecycle_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Serialize a short admission-side mutation with Agent deletion.
+///
+/// The closure must not call another lifecycle operation. Cron uses this to
+/// publish its durable `running_at` claim before deletion performs its active
+/// work scan, closing the claim-to-executor admission gap.
+pub(crate) fn with_lifecycle_gate<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _guard = lifecycle_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    operation()
 }
 
 fn active_agent_runs() -> &'static Mutex<HashMap<String, usize>> {
@@ -427,6 +439,16 @@ pub fn set_agent_enabled(id: &str, enabled: bool) -> Result<()> {
     if id == DEFAULT_AGENT_ID && !enabled {
         anyhow::bail!("Cannot disable the main agent");
     }
+    if deleted_agent_ids()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .contains(id)
+    {
+        anyhow::bail!("Agent '{id}' was deleted; refusing a stale toggle");
+    }
+    if !crate::paths::agent_dir(id)?.join("agent.json").is_file() {
+        anyhow::bail!("Agent '{id}' does not exist");
+    }
     let mut def = agent_loader::load_agent(id)?;
     if !enabled && def.config.enabled {
         ensure_agent_can_disable(id)?;
@@ -523,7 +545,7 @@ pub fn delete_agent(request: &AgentDeleteRequest) -> Result<AgentDeleteSummary> 
         anyhow::anyhow!("Failed to create the mandatory pre-delete backup: {error}")
     })?;
     let backup_root = Path::new(&backup_path);
-    verify_backup_file(
+    verify_backup_file_if_present(
         &crate::paths::agent_dir(id)?.join("agent.json"),
         &backup_root.join("agents").join(id).join("agent.json"),
     )?;
@@ -534,20 +556,28 @@ pub fn delete_agent(request: &AgentDeleteRequest) -> Result<AgentDeleteSummary> 
     let backup_path = Some(backup_path);
 
     // Disable first so newly-resolved work stops selecting the Agent while
-    // durable references are being rebound. If a later step fails the Agent
-    // directory remains present and a retry is safe.
-    let mut def = agent_loader::load_agent(id)?;
-    let was_enabled = def.config.enabled;
-    def.config.enabled = false;
-    agent_loader::save_agent_config_unlocked(id, &def.config)?;
+    // durable references are being rebound. A configless legacy/recovery
+    // directory has no runnable identity and must remain configless while it
+    // is moved to trash rather than synthesizing a new agent.json.
+    let original_config = if agent_dir.join("agent.json").is_file() {
+        Some(agent_loader::load_agent(id)?.config)
+    } else {
+        None
+    };
+    if let Some(config) = original_config.as_ref() {
+        let mut disabled = config.clone();
+        disabled.enabled = false;
+        agent_loader::save_agent_config_unlocked(id, &disabled)?;
+    }
 
     // Close the admission race: work that passed its own runnable check just
     // before the lifecycle gate flipped must become visible before any files
     // move. Leave the Agent intact and re-enable it when that happens.
     let after_disable = collect_active_work(id)?;
     if after_disable.total() > 0 {
-        def.config.enabled = was_enabled;
-        agent_loader::save_agent_config_unlocked(id, &def.config)?;
+        if let Some(config) = original_config.as_ref() {
+            agent_loader::save_agent_config_unlocked(id, config)?;
+        }
         anyhow::bail!("Agent '{id}' became active while deletion was starting; retry when idle");
     }
 
@@ -557,8 +587,9 @@ pub fn delete_agent(request: &AgentDeleteRequest) -> Result<AgentDeleteSummary> 
     let rollback_snapshot = match capture_delete_rollback(id, replacement) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            def.config.enabled = was_enabled;
-            agent_loader::save_agent_config_unlocked(id, &def.config)?;
+            if let Some(config) = original_config.as_ref() {
+                agent_loader::save_agent_config_unlocked(id, config)?;
+            }
             return Err(error);
         }
     };
@@ -626,9 +657,10 @@ pub fn delete_agent(request: &AgentDeleteRequest) -> Result<AgentDeleteSummary> 
         Ok(summary) => Ok(summary),
         Err(error) => {
             let rollback_error = rollback_snapshot.restore(&rewrite_progress).err();
-            if let Ok(mut current) = agent_loader::load_agent(id) {
-                current.config.enabled = was_enabled;
-                let _ = agent_loader::save_agent_config_unlocked(id, &current.config);
+            if agent_dir.exists() {
+                if let Some(config) = original_config.as_ref() {
+                    let _ = agent_loader::save_agent_config_unlocked(id, config);
+                }
             }
             if agent_dir.exists() {
                 deleted_agent_ids()
@@ -851,11 +883,11 @@ fn collect_active_work(id: &str) -> Result<AgentActiveWorkCounts> {
         }
     }
     if let Some(db) = crate::get_cron_db() {
-        counts.cron_runs = db
-            .list_jobs()?
-            .iter()
-            .filter(|job| job.running_at.is_some() && payload_references_agent(&job.payload, id))
-            .count();
+        for job in db.list_jobs()? {
+            if job.running_at.is_some() && cron_job_resolves_to_agent(&job, id)? {
+                counts.cron_runs += 1;
+            }
+        }
     }
     if let Some(db) = crate::async_jobs::get_async_jobs_db() {
         counts.background_jobs = db
@@ -1070,6 +1102,22 @@ fn payload_references_agent(payload: &CronPayload, id: &str) -> bool {
             agent_id.as_deref() == Some(id)
         }
     }
+}
+
+fn cron_job_resolves_to_agent(job: &CronJob, id: &str) -> Result<bool> {
+    let explicit_agent_id = match &job.payload {
+        CronPayload::AgentTurn { agent_id, .. } | CronPayload::SessionLoop { agent_id, .. } => {
+            agent_id.as_deref()
+        }
+    };
+    let project = match (job.project_id.as_deref(), crate::get_project_db()) {
+        (Some(project_id), Some(db)) => db.get(project_id)?,
+        _ => None,
+    };
+    Ok(
+        crate::cron::executor::resolve_agent_id_for_execution(explicit_agent_id, project.as_ref())
+            == id,
+    )
 }
 
 fn table_exists(conn: &Connection, table: &str) -> bool {
@@ -1306,6 +1354,35 @@ mod tests {
                 .unwrap()
                 .join("agent.json")
                 .is_file());
+        });
+    }
+
+    #[test]
+    fn deleted_or_missing_agent_rejects_lifecycle_toggle() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let deleted_id = format!("toggle-deleted-{}", uuid::Uuid::new_v4());
+            let missing_id = format!("toggle-missing-{}", uuid::Uuid::new_v4());
+            let config = crate::agent_config::AgentConfig::default();
+            agent_loader::create_agent_config(&deleted_id, &config).unwrap();
+            std::fs::remove_dir_all(crate::paths::agent_dir(&deleted_id).unwrap()).unwrap();
+            deleted_agent_ids()
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(deleted_id.clone());
+
+            let deleted_error = set_agent_enabled(&deleted_id, false).unwrap_err();
+            assert!(deleted_error.to_string().contains("stale toggle"));
+            let missing_error = set_agent_enabled(&missing_id, true).unwrap_err();
+            assert!(missing_error.to_string().contains("does not exist"));
+            assert!(!crate::paths::agent_dir(&deleted_id)
+                .unwrap()
+                .join("agent.json")
+                .exists());
+            assert!(!crate::paths::agent_dir(&missing_id)
+                .unwrap()
+                .join("agent.json")
+                .exists());
         });
     }
 

@@ -69,7 +69,9 @@ pub async fn execute_job_public(
         );
         return;
     }
-    match cron_db.claim_immediate_job_for_execution(job) {
+    match crate::agent_lifecycle::with_lifecycle_gate(|| {
+        cron_db.claim_immediate_job_for_execution(job)
+    }) {
         Ok(Some(claimed)) => execute_claimed_job(cron_db, session_db, claimed).await,
         Ok(None) => {
             app_warn!(
