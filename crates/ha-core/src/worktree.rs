@@ -368,11 +368,7 @@ impl SessionDB {
                     }
                     let run_dir = crate::paths::bootstrap_run_dir(request_id)?;
                     let snapshot = snapshot_local_changes(
-                        &source_dir,
-                        &run_dir,
-                        request_id,
-                        &base_ref,
-                        &base_sha,
+                        &repo_root, &run_dir, request_id, &base_ref, &base_sha,
                     )?;
                     ensure_bootstrap_not_cancelled(Some(request_id))?;
                     let head_after = git_output(&source_dir, &["rev-parse", "HEAD"])?;
@@ -1416,6 +1412,66 @@ mod tests {
         assert!(status.contains(" M binary.bin"));
         assert!(status.contains("?? untracked.txt"));
         assert!(!status.lines().any(|line| line.starts_with("M ")));
+
+        git(
+            repo,
+            &["worktree", "remove", "--force", path_arg(&worktree)],
+        );
+    }
+
+    #[test]
+    fn nested_project_snapshot_keeps_untracked_paths_repo_relative() {
+        let root = tempfile::tempdir().expect("repo tempdir");
+        let repo = root.path();
+        git(repo, &["init", "-b", "main"]);
+        git(repo, &["config", "core.autocrlf", "false"]);
+        let project = repo.join("packages").join("app");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("tracked.txt"), "base\n").unwrap();
+        git(repo, &["add", "."]);
+        git(
+            repo,
+            &[
+                "-c",
+                "user.name=Hope Test",
+                "-c",
+                "user.email=hope@example.invalid",
+                "commit",
+                "-m",
+                "base",
+            ],
+        );
+
+        fs::write(repo.join("new.txt"), "root file\n").unwrap();
+        fs::write(project.join("new.txt"), "nested file\n").unwrap();
+
+        let sha = git_output(repo, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let run_dir = root.path().join("bootstrap");
+        let snapshot =
+            snapshot_local_changes(repo, &run_dir, "request-nested", "refs/heads/main", &sha)
+                .unwrap();
+        assert!(snapshot.untracked.contains(&PathBuf::from("new.txt")));
+        assert!(snapshot
+            .untracked
+            .contains(&PathBuf::from("packages/app/new.txt")));
+
+        let worktree = root.path().join("worktree");
+        git(
+            repo,
+            &["worktree", "add", "--detach", path_arg(&worktree), &sha],
+        );
+        apply_local_changes(repo, &worktree, &snapshot, None).unwrap();
+        assert_eq!(
+            fs::read_to_string(worktree.join("new.txt")).unwrap(),
+            "root file\n"
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.join("packages/app/new.txt")).unwrap(),
+            "nested file\n"
+        );
 
         git(
             repo,

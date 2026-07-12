@@ -439,6 +439,12 @@ pub async fn chat(
     if body.project_bootstrap.is_some() && project_id.is_none() {
         return Err(AppError::bad_request("projectBootstrap requires projectId"));
     }
+    if body.project_bootstrap.is_some() {
+        // Project bootstrap can switch the local checkout or create a managed
+        // worktree, so HTTP must enforce the same default-deny write policy as
+        // the session-scoped Git mutation routes before creating a Session.
+        super::git_control::ensure_writes_allowed()?;
+    }
     if let Some(bootstrap) = body.project_bootstrap.as_ref() {
         if bootstrap
             .base_ref

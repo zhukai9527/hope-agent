@@ -466,6 +466,8 @@ KB 文件预览端点是**纯 owner 平面，无 session 参数、无 owner fall
 
 Managed Worktree owner API 管理 session-scoped durable git worktree。`create_managed_worktree` 拒绝 incognito session，默认在 `~/.hope-agent/worktrees/<repo-slug>/<wt-id>` 创建 detached worktree，并支持 `WorktreeCreate` hook 接管创建；`archive` 会记录 dirty snapshot，clean worktree 才 best-effort remove；`restore` 可重建已清理路径；生命周期兼容 `handoff` 只负责绑定父 session cwd，不复制 Git 改动。`chat` / `POST /api/chat` 的新项目草稿可带 `projectBootstrap`；Bootstrap 查询与取消接口用于断线恢复和停止准备。完整契约见 [Managed Worktree 控制平面](worktree.md)。
 
+`POST /api/chat` 的 `projectBootstrap` 可能执行本地分支切换或创建 Worktree，因此与 Git 写端点共用 `filesystem.allow_remote_writes` 默认关闭闸门，并在创建临时 Session 前返回 403；普通聊天以及 Bootstrap 状态查询/取消不受此闸门影响。
+
 ### Session Git
 
 | Tauri Command | HTTP | 状态 |

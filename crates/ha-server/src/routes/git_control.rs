@@ -15,7 +15,7 @@ use ha_core::git_control::{
     GitSwitchBranchInput,
 };
 
-fn ensure_writes_allowed() -> Result<(), AppError> {
+pub(super) fn ensure_writes_allowed() -> Result<(), AppError> {
     if ha_core::config::cached_config()
         .filesystem
         .allow_remote_writes
