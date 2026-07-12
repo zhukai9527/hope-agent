@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import AgentListView from "./AgentListView"
 
@@ -89,11 +89,9 @@ describe("AgentListView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /common\.retry/ }))
 
-    await waitFor(() => {
-      expect(screen.queryByText("Failed to load agent")).toBeNull()
-    })
+    expect(await screen.findByText("Research agent")).toBeTruthy()
+    expect(screen.queryByText("Failed to load agent")).toBeNull()
     expect(listCalls).toBe(2)
-    expect(screen.getByText("Research agent")).toBeTruthy()
   })
 
   it("shows redacted detail when creating an agent fails", async () => {
