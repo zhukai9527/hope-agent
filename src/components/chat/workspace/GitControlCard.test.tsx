@@ -162,6 +162,46 @@ describe("GitControlCard", () => {
     expect(onOpenGitDiff).toHaveBeenCalledWith(diff, "session-1", [])
   })
 
+  it("opens the staged scope when the repository only has staged changes", async () => {
+    const diff: SessionGitDiffSnapshot = {
+      revision: "rev-1",
+      scope: "staged",
+      changes: [],
+    }
+    call.mockResolvedValue(diff)
+    const onOpenGitDiff = vi.fn()
+    render(
+      <GitControlCard
+        sessionId="session-1"
+        state={{
+          snapshot: snapshot({
+            dirty: {
+              stagedFiles: 1,
+              unstagedFiles: 0,
+              untrackedFiles: 0,
+              conflictedFiles: 0,
+              changedFiles: 1,
+            },
+          }),
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        }}
+        managedWorktrees={[]}
+        onOpenGitDiff={onOpenGitDiff}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /变更|Changes/i }))
+    await waitFor(() =>
+      expect(call).toHaveBeenCalledWith("load_session_git_diff_snapshot_cmd", {
+        sessionId: "session-1",
+        scope: "staged",
+      }),
+    )
+    expect(onOpenGitDiff).toHaveBeenCalledWith(diff, "session-1", [])
+  })
+
   it("requires a branch before commit or push in detached worktrees", () => {
     render(
       <GitControlCard

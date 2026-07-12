@@ -248,9 +248,12 @@ export function GitControlCard({
 
   const openChanges = () =>
     void run("diff", async () => {
+      const scope = snapshot?.dirty.unstagedFiles || snapshot?.dirty.untrackedFiles
+        ? "unstaged"
+        : "staged"
       const diff = await getTransport().call<SessionGitDiffSnapshot>(
         "load_session_git_diff_snapshot_cmd",
-        { sessionId, scope: "unstaged" },
+        { sessionId, scope },
       )
       onOpenGitDiff(
         diff,

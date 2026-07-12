@@ -17,7 +17,9 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::filesystem::{git_info, GitBranchInfo, GitDirtySummary, WorkspaceScope, WorktreeInfo};
+use crate::filesystem::{
+    git_info, GitBranchInfo, GitBranchKind, GitDirtySummary, GitInfo, WorkspaceScope, WorktreeInfo,
+};
 use crate::session::{
     effective_working_dir_for_meta, SessionDB, WorkspaceGitCommit, WorkspaceGitStatus,
     WorkspaceGitSync, WorkspaceGitSyncState,
@@ -474,7 +476,9 @@ pub fn load_control_snapshot(
     let managed = db
         .list_managed_worktrees_for_session(session_id)?
         .into_iter()
-        .find(|wt| wt.path_exists && Path::new(&wt.path) == ctx.workspace_root);
+        .find(|wt| {
+            wt.path_exists && managed_worktree_matches_checkout(&wt.path, &ctx.checkout_root)
+        });
     let active_location = if managed.is_some() {
         "worktree"
     } else {
@@ -1045,12 +1049,12 @@ pub async fn handoff(
     require_revision(&current, &input.expected_revision)?;
     let (target_path, created_worktree_id) = match input.target {
         GitHandoffTarget::Local => {
-            let current_path = current.workspace_root.clone();
+            let current_checkout = current.checkout_root.clone();
             let row = db
                 .list_managed_worktrees_for_session(&session_id)?
                 .into_iter()
                 .find(|worktree| {
-                    Path::new(&worktree.path).canonicalize().ok().as_ref() == Some(&current_path)
+                    managed_worktree_matches_checkout(&worktree.path, &current_checkout)
                 })
                 .ok_or_else(|| {
                     anyhow!(
@@ -1160,6 +1164,63 @@ fn worktree_in_session_scope(owner: &str, child: Option<&str>, session_id: &str)
     owner == session_id || child == Some(session_id)
 }
 
+fn managed_worktree_matches_checkout(worktree_path: &str, checkout_root: &Path) -> bool {
+    Path::new(worktree_path)
+        .canonicalize()
+        .is_ok_and(|path| path == checkout_root)
+}
+
+fn safe_local_branch_after_handoff(
+    info: &GitInfo,
+    source_branch: &str,
+    preferred: Option<&str>,
+) -> Option<String> {
+    let local_branch = |branch: &&GitBranchInfo| {
+        branch.kind == GitBranchKind::Local && branch.name != source_branch
+    };
+    if let Some(preferred) = preferred {
+        if info
+            .branches
+            .iter()
+            .filter(local_branch)
+            .any(|branch| branch.name == preferred)
+        {
+            return Some(preferred.to_string());
+        }
+    }
+    ["main", "master"]
+        .into_iter()
+        .find_map(|name| {
+            info.branches
+                .iter()
+                .filter(local_branch)
+                .find(|branch| branch.name == name && !branch.is_checked_out)
+                .map(|branch| branch.name.clone())
+        })
+        .or_else(|| {
+            info.branches
+                .iter()
+                .filter(local_branch)
+                .find(|branch| !branch.is_checked_out)
+                .map(|branch| branch.name.clone())
+        })
+}
+
+fn move_branch_ownership(
+    source: &Path,
+    target: &Path,
+    source_head: &str,
+    source_branch: &str,
+    source_fallback_branch: Option<&str>,
+) -> Result<()> {
+    run_git_ok(source, &["switch", "--detach", source_head])?;
+    run_git_ok(target, &["switch", "--no-guess", source_branch])?;
+    if let Some(fallback) = source_fallback_branch {
+        run_git_ok(source, &["switch", "--no-guess", fallback])?;
+    }
+    Ok(())
+}
+
 fn transfer_workspace(
     db: &SessionDB,
     session_id: &str,
@@ -1228,6 +1289,11 @@ fn transfer_workspace(
     let target_head = run_git(&target_checkout, &["rev-parse", "HEAD"])?;
     let source_branch = current_branch(&source.checkout_root);
     let target_branch = current_branch(&target_checkout);
+    let source_fallback_branch = source_branch.as_deref().and_then(|branch| {
+        git_info(&source.checkout_root).and_then(|info| {
+            safe_local_branch_after_handoff(&info, branch, target_branch.as_deref())
+        })
+    });
     if source_branch.is_none() && source_head != target_head {
         let _ = fs::remove_dir_all(&run_dir);
         bail!("target_head_mismatch: detached source and target do not point to the same commit");
@@ -1271,8 +1337,13 @@ fn transfer_workspace(
         }
         clean_checkout(&source.checkout_root, &untracked)?;
         if let Some(branch) = source_branch.as_deref() {
-            run_git_ok(&source.checkout_root, &["switch", "--detach", &source_head])?;
-            run_git_ok(&target_checkout, &["switch", "--no-guess", branch])?;
+            move_branch_ownership(
+                &source.checkout_root,
+                &target_checkout,
+                &source_head,
+                branch,
+                source_fallback_branch.as_deref(),
+            )?;
         }
 
         db.set_git_operation_stage(request_id, "transferring_changes")?;
@@ -3386,6 +3457,82 @@ mod tests {
         assert!(worktree_in_session_scope("owner", None, "owner"));
         assert!(worktree_in_session_scope("owner", Some("child"), "child"));
         assert!(!worktree_in_session_scope("other", Some("child"), "owner"));
+    }
+
+    #[test]
+    fn managed_worktree_matching_uses_checkout_root_for_nested_workspaces() {
+        let checkout = tempfile::tempdir().unwrap();
+        let nested = checkout.path().join("project");
+        fs::create_dir_all(&nested).unwrap();
+        let checkout_root = checkout.path().canonicalize().unwrap();
+        let nested_workspace = nested.canonicalize().unwrap();
+
+        assert_ne!(checkout_root, nested_workspace);
+        assert!(managed_worktree_matches_checkout(
+            checkout_root.to_str().unwrap(),
+            &checkout_root,
+        ));
+    }
+
+    #[test]
+    fn handoff_prefers_the_branch_released_by_the_target_checkout() {
+        let branch = |name: &str, is_current: bool, is_checked_out: bool| GitBranchInfo {
+            name: name.to_string(),
+            full_ref: format!("refs/heads/{name}"),
+            kind: GitBranchKind::Local,
+            remote: None,
+            is_current,
+            is_checked_out,
+            checked_out_path: None,
+        };
+        let info = GitInfo {
+            branch: Some("feature".into()),
+            branches: vec![
+                branch("feature", true, true),
+                branch("main", false, false),
+                branch("target-safe", false, true),
+            ],
+            dirty: GitDirtySummary::default(),
+            worktrees: Vec::new(),
+        };
+
+        assert_eq!(
+            safe_local_branch_after_handoff(&info, "feature", Some("target-safe")).as_deref(),
+            Some("target-safe"),
+        );
+        assert_eq!(
+            safe_local_branch_after_handoff(&info, "feature", None).as_deref(),
+            Some("main"),
+        );
+    }
+
+    #[test]
+    fn moving_a_task_branch_to_a_worktree_restores_the_local_safe_branch() {
+        let repo = initialized_repo();
+        test_git(repo.path(), &["switch", "-c", "feature"]);
+        let parent = tempfile::tempdir().unwrap();
+        let target_path = parent.path().join("target");
+        test_git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                target_path.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        let target = target_path.canonicalize().unwrap();
+        let head = run_git(repo.path(), &["rev-parse", "HEAD"]).unwrap();
+
+        move_branch_ownership(repo.path(), &target, &head, "feature", Some("main")).unwrap();
+
+        assert_eq!(current_branch(repo.path()).as_deref(), Some("main"));
+        assert_eq!(current_branch(&target).as_deref(), Some("feature"));
+        test_git(
+            repo.path(),
+            &["worktree", "remove", "--force", target.to_str().unwrap()],
+        );
     }
 
     #[test]

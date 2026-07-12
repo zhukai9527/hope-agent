@@ -58,6 +58,13 @@ export function projectRuntimeDraftForBranch(
   }
 }
 
+export function projectBranchDisabledForLaunch(
+  branch: GitBranchInfo,
+  launchMode: ProjectRuntimeDraft["launchMode"],
+): boolean {
+  return launchMode === "local" && branch.isCheckedOut && !branch.isCurrent
+}
+
 export function ProjectSessionDraftBar({
   project,
   projects,
@@ -195,7 +202,16 @@ export function ProjectSessionDraftBar({
           <button
             key={branch.fullRef}
             type="button"
-            className={FLOATING_MENU_ITEM_CLASS}
+            disabled={projectBranchDisabledForLaunch(branch, draft.launchMode)}
+            title={
+              projectBranchDisabledForLaunch(branch, draft.launchMode)
+                ? t("chat.projectRuntime.checkedOut", "已在其他工作树中使用")
+                : undefined
+            }
+            className={cn(
+              FLOATING_MENU_ITEM_CLASS,
+              "disabled:cursor-not-allowed disabled:opacity-45",
+            )}
             onClick={() => {
               setGitNotice(null)
               onDraftChange(projectRuntimeDraftForBranch(draft, branch))

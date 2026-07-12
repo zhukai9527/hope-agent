@@ -1504,14 +1504,9 @@ function EnvironmentSection({
     }
   }, [managedWorktreesState, sessionId, t, workingDir, worktreeActionKey])
   const runManagedWorktreeAction = useCallback(
-    async (worktree: ManagedWorktree, action: "archive" | "restore" | "handoff") => {
+    async (worktree: ManagedWorktree, action: "archive" | "restore") => {
       if (worktreeActionKey) return
-      const command =
-        action === "archive"
-          ? "archive_managed_worktree"
-          : action === "restore"
-            ? "restore_managed_worktree"
-            : "handoff_managed_worktree"
+      const command = action === "archive" ? "archive_managed_worktree" : "restore_managed_worktree"
       setWorktreeActionKey(`${action}:${worktree.id}`)
       try {
         await getTransport().call<ManagedWorktree>(command, { worktreeId: worktree.id })
@@ -1519,9 +1514,7 @@ function EnvironmentSection({
         toast.success(
           action === "archive"
             ? t("workspace.worktree.archived", "已归档工作树")
-            : action === "restore"
-              ? t("workspace.worktree.restored", "已恢复工作树")
-              : t("workspace.worktree.handoffDone", "已交接到当前会话"),
+            : t("workspace.worktree.restored", "已恢复工作树"),
         )
       } catch (e) {
         logger.error("ui", "EnvironmentSection::managedWorktreeAction", `${action} failed`, e)
@@ -1700,10 +1693,9 @@ function ManagedWorktreesMiniPanel({
   actionKey?: string | null
   canCreate?: boolean
   onCreate: () => void
-  onAction: (worktree: ManagedWorktree, action: "archive" | "restore" | "handoff") => void
+  onAction: (worktree: ManagedWorktree, action: "archive" | "restore") => void
 }) {
   const { t } = useTranslation()
-  const visible = worktrees.slice(0, 4)
   const createBusy = actionKey === "create"
   return (
     <div className="rounded-md border border-border/55 bg-secondary/15">
@@ -1734,13 +1726,13 @@ function ManagedWorktreesMiniPanel({
         <div className="border-t border-border/60 px-2 py-1.5 text-[10px] text-destructive">
           {truncateMiddle(error, 120)}
         </div>
-      ) : visible.length === 0 ? (
+      ) : worktrees.length === 0 ? (
         <div className="border-t border-border/60 px-2 py-1.5 text-[10px] text-muted-foreground">
           {t("workspace.worktree.empty", "暂无托管工作树")}
         </div>
       ) : (
-        <div className="space-y-1 border-t border-border/60 p-1.5">
-          {visible.map((worktree) => {
+        <div className="max-h-48 space-y-1 overflow-y-auto border-t border-border/60 p-1.5">
+          {worktrees.map((worktree) => {
             const isActive = activeWorktree?.id === worktree.id
             const busyPrefix = actionKey?.endsWith(`:${worktree.id}`)
               ? actionKey.split(":")[0]
@@ -1791,52 +1783,27 @@ function ManagedWorktreesMiniPanel({
                       </Button>
                     </IconTip>
                   ) : (
-                    <>
-                      <IconTip label={t("workspace.worktree.handoff", "交接到当前会话")}>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6"
-                          disabled={Boolean(actionKey) || isActive}
-                          onClick={() => onAction(worktree, "handoff")}
-                        >
-                          {busyPrefix === "handoff" ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <GitPullRequest className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </IconTip>
-                      <IconTip label={t("workspace.worktree.archive", "归档")}>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                          disabled={Boolean(actionKey)}
-                          onClick={() => onAction(worktree, "archive")}
-                        >
-                          {busyPrefix === "archive" ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <X className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </IconTip>
-                    </>
+                    <IconTip label={t("workspace.worktree.archive", "归档")}>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                        disabled={Boolean(actionKey) || isActive}
+                        onClick={() => onAction(worktree, "archive")}
+                      >
+                        {busyPrefix === "archive" ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <X className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </IconTip>
                   )}
                 </div>
               </div>
             )
           })}
-          {worktrees.length > visible.length ? (
-            <div className="px-1.5 pb-0.5 text-[10px] text-muted-foreground">
-              {t("workspace.worktree.more", "另有 {{count}} 个", {
-                count: worktrees.length - visible.length,
-              })}
-            </div>
-          ) : null}
         </div>
       )}
     </div>

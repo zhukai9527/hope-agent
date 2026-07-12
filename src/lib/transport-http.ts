@@ -1534,6 +1534,7 @@ function normalizeHttpCommandArgs(
     command === "commit_session_git_cmd" ||
     command === "push_session_git_cmd" ||
     command === "create_session_git_pr_cmd" ||
+    command === "enable_session_git_pr_auto_merge_cmd" ||
     command === "handoff_session_git_cmd"
   ) {
     const input = args?.input

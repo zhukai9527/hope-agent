@@ -4,6 +4,7 @@ import type { GitBranchInfo, GitInfo } from "@/lib/transport"
 import {
   createLocalProjectRuntimeDraft,
   defaultProjectBranch,
+  projectBranchDisabledForLaunch,
   projectRuntimeDraftForBranch,
 } from "./ProjectSessionDraftBar"
 
@@ -67,5 +68,17 @@ describe("project runtime branch defaults", () => {
     const local = projectRuntimeDraftForBranch(createLocalProjectRuntimeDraft(), current)
     expect(local.launchMode).toBe("local")
     expect(local.baseRef).toBe("refs/heads/main")
+  })
+
+  it("blocks local checkout of a branch owned by another worktree", () => {
+    const checkedOutElsewhere = branch({ isCheckedOut: true, isCurrent: false })
+    expect(projectBranchDisabledForLaunch(checkedOutElsewhere, "local")).toBe(true)
+    expect(projectBranchDisabledForLaunch(checkedOutElsewhere, "worktree")).toBe(false)
+    expect(
+      projectBranchDisabledForLaunch(
+        branch({ isCheckedOut: true, isCurrent: true }),
+        "local",
+      ),
+    ).toBe(false)
   })
 })

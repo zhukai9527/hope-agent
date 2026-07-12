@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **macOS 点击交互更可靠**：非活动窗口中的主窗口、快捷对话、Plan、文件浏览和 Canvas 面板可直接响应首次点击；同时兼容触控板轻点配合部分中文 / 日文输入法时 WebKit 偶发颠倒 `pointerup` / `pointerdown` 顺序的问题，避免发送按钮、`ask_user` 选项等控件需要点击两次。悬停提示不再进入交互控件的点击链路，也不会与原生 `title` 重复显示。
-- **Git Handoff 与提交失败恢复更安全**：Worktree 目标现在严格限制为当前会话或其子会话所有，失败回滚只撤销快照中的改动并保留无关文件；嵌套项目的 Git 写操作统一落到真实 checkout 根目录；commit 成功但可选 push 失败时会保留提交并返回明确警告，不再误报整次操作失败。
+- **Git Handoff 与提交失败恢复更安全**：Worktree 目标现在严格限制为当前会话或其子会话所有，失败回滚只撤销快照中的改动并保留无关文件；嵌套项目按 canonical checkout root 正确识别 Managed Worktree 和运行位置；任务分支移入 Worktree 后，本地检出优先回到目标释放的安全分支；工作台移除绕过安全编排的旧 Handoff 快捷入口。commit 成功但可选 push 失败时会保留提交并返回明确警告，不再误报整次操作失败；HTTP/server 的 PR 自动合并请求与 Tauri 使用相同 DTO，不再因嵌套 `input` 返回 422。
 
 ## [0.17.0] - 2026-07-10
 
