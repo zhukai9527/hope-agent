@@ -3,6 +3,12 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { AnimatedCollapse, AnimatedPresenceBox } from "@/components/ui/animated-presence"
+import { FloatingMenu } from "@/components/ui/floating-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { IconTip, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { logger } from "@/lib/logger"
@@ -32,7 +38,6 @@ import {
   CheckCircle2,
   Radio,
 } from "lucide-react"
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import type {
   AvailableModel,
   ActiveModel,
@@ -59,7 +64,6 @@ import type { CommandResult } from "../slash-commands/types"
 import { AttachFilesButton, AttachFilesMenuItem, AttachmentPreview } from "./AttachmentBar"
 import ModelPicker from "./ModelPicker"
 import PermissionModeSwitcher, { type PermissionModeChangeOptions } from "./PermissionModeSwitcher"
-import SandboxModeSwitcher from "./SandboxModeSwitcher"
 import AwarenessToggle from "./AwarenessToggle"
 import KnowledgePicker from "./KnowledgePicker"
 import WorkingDirectoryButton from "./WorkingDirectoryButton"
@@ -543,14 +547,13 @@ export default function ChatInput({
   const overflowTriggerRef = useRef<HTMLDivElement>(null)
   const addActionsRef = useRef<HTMLDivElement>(null)
   const semanticModesRef = useRef<HTMLDivElement>(null)
-  const sandboxModeRef = useRef<HTMLDivElement>(null)
   const permissionModeRef = useRef<HTMLDivElement>(null)
   const toolbarGroupWidthsRef = useRef<ChatInputToolbarGroupWidths>({
     ...CHAT_INPUT_TOOLBAR_GROUP_WIDTH_FALLBACKS,
   })
   const [showOverflowMenu, setShowOverflowMenu] = useState(false)
   // 0 = everything inline; 1 = add actions behind "+"; 2 = semantic modes behind
-  // "+"; 3 = sandbox behind "+"; 4 = permission behind "+". The level is chosen
+  // "+"; 3 = permission (including sandbox) behind "+". The level is chosen
   // by live DOM measurement instead of fixed container-width breakpoints.
   const [toolbarCollapseLevel, setToolbarCollapseLevel] = useState(0)
   const [toolbarMinHeight, setToolbarMinHeight] = useState<number | null>(null)
@@ -573,8 +576,9 @@ export default function ChatInput({
   const [workflowModeSaving, setWorkflowModeSaving] = useState<WorkflowMode | null>(null)
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false)
   const [dismissedWorkflowHintFor, setDismissedWorkflowHintFor] = useState<string | null>(null)
-  const { toolbarCompact, toolbarTight, sandboxCollapsed, permissionCollapsed } =
-    getChatInputToolbarFlags(toolbarCollapseLevel)
+  const { toolbarCompact, toolbarTight, permissionCollapsed } = getChatInputToolbarFlags(
+    toolbarCollapseLevel,
+  )
 
   const handlePermissionModeChange = useCallback(
     (mode: SessionMode, options?: PermissionModeChangeOptions) => {
@@ -908,10 +912,6 @@ export default function ChatInput({
           semanticModesRef.current,
           toolbarGroupWidthsRef.current.semanticModes,
         ),
-        sandbox: readToolbarItemWidth(
-          sandboxModeRef.current,
-          toolbarGroupWidthsRef.current.sandbox,
-        ),
         permission: readToolbarItemWidth(
           permissionModeRef.current,
           toolbarGroupWidthsRef.current.permission,
@@ -955,7 +955,6 @@ export default function ChatInput({
       overflowTriggerRef.current,
       addActionsRef.current,
       semanticModesRef.current,
-      sandboxModeRef.current,
       permissionModeRef.current,
     ].forEach((el) => {
       if (el) observer.observe(el)
@@ -969,6 +968,19 @@ export default function ChatInput({
   useEffect(() => {
     if (showOverflowMenu && !toolbarCompact) setShowOverflowMenu(false)
   }, [showOverflowMenu, toolbarCompact])
+
+  useEffect(() => {
+    if (!showOverflowMenu) return
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!overflowTriggerRef.current?.contains(event.target as Node)) {
+        setShowOverflowMenu(false)
+      }
+    }
+
+    document.addEventListener("mousedown", closeOnOutsideClick)
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick)
+  }, [showOverflowMenu])
 
   useEffect(() => {
     setToolbarMinHeight(null)
@@ -1777,18 +1789,13 @@ export default function ChatInput({
           </button>
         </>
       )}
-      {sandboxCollapsed && (
-        <SandboxModeSwitcher
-          variant="menu"
-          sandboxMode={sandboxMode}
-          onSandboxModeChange={onSandboxModeChange}
-        />
-      )}
       {permissionCollapsed && (
         <PermissionModeSwitcher
           variant="menu"
           permissionMode={permissionMode}
           onPermissionModeChange={handlePermissionModeChange}
+          sandboxMode={sandboxMode}
+          onSandboxModeChange={onSandboxModeChange}
         />
       )}
     </>
@@ -2235,7 +2242,7 @@ export default function ChatInput({
                         ? "border-destructive/30 text-destructive"
                         : "border-emerald-500/20",
                   )}
-                  title={activityDetail || undefined}
+                  data-ha-title-tip={activityDetail || undefined}
                 >
                   {activityHeadlineLabel}
                 </span>
@@ -2438,7 +2445,7 @@ export default function ChatInput({
                   type="button"
                   className="min-w-0 flex-1 truncate text-left font-medium"
                   onClick={onOpenWorkspace}
-                  title={activityDetail || undefined}
+                  data-ha-title-tip={activityDetail || undefined}
                 >
                   {activityHeadlineLabel}
                   {autonomyActivity.currentStep ? (
@@ -2694,35 +2701,34 @@ export default function ChatInput({
 
                 <div
                   ref={overflowTriggerRef}
-                  className={toolbarCompact ? "block shrink-0" : CHAT_INPUT_OVERFLOW_MENU_CLASS}
+                  className={
+                    toolbarCompact ? "relative block shrink-0" : CHAT_INPUT_OVERFLOW_MENU_CLASS
+                  }
                 >
-                  <DropdownMenu.Root open={showOverflowMenu} onOpenChange={setShowOverflowMenu}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <DropdownMenu.Trigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t("chat.moreActions")}
-                            className="h-8 w-8 rounded-lg bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0 data-[state=open]:bg-transparent"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenu.Trigger>
-                      </TooltipTrigger>
-                      <TooltipContent>{t("chat.moreActions")}</TooltipContent>
-                    </Tooltip>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        className="z-50 min-w-[180px] overflow-hidden rounded-floating border border-border-soft bg-surface-floating/95 p-1.5 text-popover-foreground shadow-floating backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
-                        side="top"
-                        align="start"
-                        sideOffset={8}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t("chat.moreActions")}
+                        aria-expanded={showOverflowMenu}
+                        aria-haspopup="menu"
+                        onClick={() => setShowOverflowMenu((open) => !open)}
+                        className="h-8 w-8 rounded-lg bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0"
                       >
-                        <div className="flex flex-col gap-0.5">{renderOverflowMenuItems()}</div>
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t("chat.moreActions")}</TooltipContent>
+                  </Tooltip>
+                  <FloatingMenu
+                    open={showOverflowMenu}
+                    className="min-w-[180px] overflow-hidden p-1.5"
+                    onEscapeKeyDown={() => setShowOverflowMenu(false)}
+                    role="menu"
+                  >
+                    <div className="flex flex-col gap-0.5">{renderOverflowMenuItems()}</div>
+                  </FloatingMenu>
                 </div>
 
                 {/* Model / Think / Temperature */}
@@ -2792,9 +2798,9 @@ export default function ChatInput({
                       </IconTip>
                     )}
 
-                    <DropdownMenu.Root open={workflowMenuOpen} onOpenChange={setWorkflowMenuOpen}>
+                    <DropdownMenu open={workflowMenuOpen} onOpenChange={setWorkflowMenuOpen}>
                       <IconTip label={workflowMenuLabel}>
-                        <DropdownMenu.Trigger asChild>
+                        <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             aria-label={workflowMenuLabel}
@@ -2812,19 +2818,18 @@ export default function ChatInput({
                             <span>{workflowButtonLabel}</span>
                             <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
                           </button>
-                        </DropdownMenu.Trigger>
+                        </DropdownMenuTrigger>
                       </IconTip>
-                      <DropdownMenu.Portal>
-                        <DropdownMenu.Content
-                          className="z-50 min-w-[280px] overflow-hidden rounded-floating border border-border-soft bg-surface-floating/95 p-1.5 text-popover-foreground shadow-floating backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
-                          side="top"
-                          align="start"
-                          sideOffset={8}
-                        >
-                          {renderWorkflowModeMenuItems(() => setWorkflowMenuOpen(false))}
-                        </DropdownMenu.Content>
-                      </DropdownMenu.Portal>
-                    </DropdownMenu.Root>
+                      <DropdownMenuContent
+                        variant="floating"
+                        className="min-w-[280px]"
+                        side="top"
+                        align="start"
+                        sideOffset={8}
+                      >
+                        {renderWorkflowModeMenuItems(() => setWorkflowMenuOpen(false))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
 
                     <IconTip label={planToggleTip}>
                       <button
@@ -2848,19 +2853,13 @@ export default function ChatInput({
                   </div>
                 )}
 
-                {/* Tool Permission Mode — collapses into the "+" menu last, at
-                    the narrowest tier (kept inline longer than Sandbox). */}
+                {/* Permission and sandbox share one menu, which collapses into
+                    the "+" overflow only at the narrowest toolbar tier. */}
                 {!permissionCollapsed && (
                   <div ref={permissionModeRef} className="shrink-0">
                     <PermissionModeSwitcher
                       permissionMode={permissionMode}
                       onPermissionModeChange={handlePermissionModeChange}
-                    />
-                  </div>
-                )}
-                {!sandboxCollapsed && (
-                  <div ref={sandboxModeRef} className="shrink-0">
-                    <SandboxModeSwitcher
                       sandboxMode={sandboxMode}
                       onSandboxModeChange={onSandboxModeChange}
                     />

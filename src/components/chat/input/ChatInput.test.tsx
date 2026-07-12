@@ -281,17 +281,37 @@ describe("IncognitoToggle", () => {
 })
 
 describe("Collapsed toolbar mode switchers", () => {
-  test("render permission and sandbox controls inline when used inside the overflow menu", () => {
+  test("uses the standard tooltip for toolbar permission and sandbox controls", () => {
     render(
       <TooltipProvider>
-        <div>
-          <PermissionModeSwitcher
-            variant="menu"
-            permissionMode="default"
-            onPermissionModeChange={vi.fn()}
-          />
-          <SandboxModeSwitcher variant="menu" sandboxMode="off" onSandboxModeChange={vi.fn()} />
-        </div>
+        <PermissionModeSwitcher permissionMode="default" onPermissionModeChange={vi.fn()} />
+        <SandboxModeSwitcher sandboxMode="off" onSandboxModeChange={vi.fn()} />
+      </TooltipProvider>,
+    )
+
+    const permissionButton = screen.getByRole("button", {
+      name: "chat.permissionMode.default.label (Shift+Tab)",
+    })
+    const sandboxButton = screen.getByRole("button", { name: "off" })
+
+    expect(permissionButton.getAttribute("title")).toBeNull()
+    expect(permissionButton.getAttribute("data-ha-tip")).toBe(
+      "chat.permissionMode.default.label (Shift+Tab)",
+    )
+    expect(sandboxButton.getAttribute("title")).toBeNull()
+    expect(sandboxButton.getAttribute("data-ha-tip")).toBe("off")
+  })
+
+  test("renders sandbox choices inside the inline permission menu", async () => {
+    render(
+      <TooltipProvider>
+        <PermissionModeSwitcher
+          variant="menu"
+          permissionMode="default"
+          onPermissionModeChange={vi.fn()}
+          sandboxMode="off"
+          onSandboxModeChange={vi.fn()}
+        />
       </TooltipProvider>,
     )
 
@@ -302,8 +322,9 @@ describe("Collapsed toolbar mode switchers", () => {
     expect(smartOption.closest(".rounded-floating")).toBeFalsy()
     expect(smartOption.closest(".absolute")).toBeFalsy()
 
-    fireEvent.click(screen.getByRole("button", { name: "off" }))
-    const standardOption = screen.getByText("standard")
+    expect(screen.queryByText("standard")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "沙箱" }))
+    const standardOption = await screen.findByText("standard")
     expect(standardOption.closest(".rounded-floating")).toBeFalsy()
     expect(standardOption.closest(".absolute")).toBeFalsy()
   })
@@ -330,6 +351,23 @@ describe("ChatInput", () => {
     )
     fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
     expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  test("sends on the first click before the hover hint delay elapses", () => {
+    const onSend = vi.fn()
+    renderChatInput({ input: "hello", onSend })
+
+    const sendButton = screen.getByRole("button", { name: "chat.send" })
+    fireEvent.pointerOver(sendButton)
+    fireEvent.pointerDown(sendButton)
+    fireEvent.mouseDown(sendButton)
+    fireEvent.focus(sendButton)
+    fireEvent.pointerUp(sendButton)
+    fireEvent.mouseUp(sendButton)
+    fireEvent.click(sendButton)
+
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole("tooltip")).toBeNull()
   })
 
   test("blocks mouse and keyboard sends while send is disabled", () => {
@@ -396,7 +434,7 @@ describe("ChatInput", () => {
     expect(screen.getByText("chat.loopMode.restricted")).toBeTruthy()
   })
 
-  test("stacks model submenus upward when a side panel would overflow the viewport", async () => {
+  test("places model submenus below when neither horizontal side fits and space below is larger", async () => {
     const originalInnerWidth = window.innerWidth
     const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
     const longModel: AvailableModel = {
@@ -436,7 +474,7 @@ describe("ChatInput", () => {
 
       await waitFor(() => {
         const submenuItem = screen.getByText(longModel.modelName)
-        expect(submenuItem.closest(".ha-menu-from-top")).toBeTruthy()
+        expect(submenuItem.closest(".ha-menu-from-bottom")).toBeTruthy()
         expect(submenuItem.closest(".ha-menu-from-left")).toBeFalsy()
       })
     } finally {
@@ -758,10 +796,7 @@ describe("ChatInput", () => {
       expect(onGoalModeSubmit).toHaveBeenCalledWith("Build a durable goal flow")
     })
     expect(onCommandAction).not.toHaveBeenCalled()
-    expect(transportMock.call).not.toHaveBeenCalledWith(
-      "execute_slash_command",
-      expect.anything(),
-    )
+    expect(transportMock.call).not.toHaveBeenCalledWith("execute_slash_command", expect.anything())
   })
 
   test("lets /loop drafts bypass slash execution on Enter", async () => {
@@ -805,10 +840,7 @@ describe("ChatInput", () => {
       expect(onLoopModeSubmit).toHaveBeenCalledWith("Build release notes every 10m")
     })
     expect(onCommandAction).not.toHaveBeenCalled()
-    expect(transportMock.call).not.toHaveBeenCalledWith(
-      "execute_slash_command",
-      expect.anything(),
-    )
+    expect(transportMock.call).not.toHaveBeenCalledWith("execute_slash_command", expect.anything())
   })
 
   test("executes /loop drafts as slash commands when loop composer submit is unavailable", async () => {
@@ -918,10 +950,7 @@ describe("ChatInput", () => {
       fireEvent.click(screen.getByRole("button", { name: "chat.send" }))
 
       await waitFor(() => {
-        expect(onGoalModeSubmit).toHaveBeenCalledWith(
-          "Manual browser smoke",
-          "append_follow_up",
-        )
+        expect(onGoalModeSubmit).toHaveBeenCalledWith("Manual browser smoke", "append_follow_up")
       })
       expect(onInputChange).toHaveBeenCalledWith("")
     } finally {
@@ -972,7 +1001,7 @@ describe("ChatInput", () => {
 
     const activity = screen.getByText("chat.activity.waitingGoalAcceptance")
     expect(activity).toBeTruthy()
-    expect(activity.getAttribute("title")).toContain("Complete Goal v4 review")
+    expect(activity.getAttribute("data-ha-title-tip")).toContain("Complete Goal v4 review")
   })
 
   test("shows a compact workflow progress line for the most relevant run", () => {
@@ -1134,10 +1163,7 @@ describe("ChatInput", () => {
         expect(onDraftWorkflowModeChange).toHaveBeenCalledWith("on")
       })
       expect(onEnsureSession).not.toHaveBeenCalled()
-      expect(transportMock.call).not.toHaveBeenCalledWith(
-        "set_workflow_mode",
-        expect.anything(),
-      )
+      expect(transportMock.call).not.toHaveBeenCalledWith("set_workflow_mode", expect.anything())
       expect(await screen.findByText("chat.workflowMode.activeOnDetail")).toBeTruthy()
     } finally {
       rectSpy.mockRestore()
