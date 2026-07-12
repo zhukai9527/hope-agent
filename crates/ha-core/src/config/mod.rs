@@ -344,9 +344,21 @@ pub fn default_deferred_tool_names() -> Vec<String> {
 /// `enabled` turns on the mechanism; `tool_names` is the explicit set of
 /// built-in tools whose schemas should be withheld from the initial LLM
 /// request and discovered via `tool_search`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeferredToolsMode {
+    Recommended,
+    Custom,
+    Disabled,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeferredToolsConfig {
+    /// V2 policy. `None` is a legacy config and is interpreted without
+    /// overwriting ambiguous user choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<DeferredToolsMode>,
     /// Enable deferred tool loading (default: true for low-frequency tools).
     #[serde(default = "default_deferred_tools_enabled")]
     pub enabled: bool,
@@ -359,9 +371,37 @@ pub struct DeferredToolsConfig {
 impl Default for DeferredToolsConfig {
     fn default() -> Self {
         Self {
+            mode: Some(DeferredToolsMode::Recommended),
             enabled: default_deferred_tools_enabled(),
             tool_names: default_deferred_tool_names(),
         }
+    }
+}
+
+impl DeferredToolsConfig {
+    pub fn effective_mode(&self) -> DeferredToolsMode {
+        if let Some(mode) = self.mode {
+            return mode;
+        }
+        if !self.enabled {
+            return DeferredToolsMode::Disabled;
+        }
+        let recommended = default_deferred_tool_names();
+        if self.tool_names.len() == recommended.len()
+            && recommended
+                .iter()
+                .all(|name| self.tool_names.iter().any(|configured| configured == name))
+        {
+            DeferredToolsMode::Recommended
+        } else {
+            // Includes the historically ambiguous explicit empty list. Never
+            // silently rewrite it to the current recommendation.
+            DeferredToolsMode::Custom
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.effective_mode() != DeferredToolsMode::Disabled
     }
 }
 
@@ -1507,6 +1547,7 @@ mod deferred_tools_config_tests {
     fn default_deferred_tools_preloads_low_frequency_tools() {
         let d = DeferredToolsConfig::default();
         assert!(d.enabled);
+        assert_eq!(d.effective_mode(), DeferredToolsMode::Recommended);
         for name in DEFAULT_DEFERRED_TOOL_NAMES {
             assert!(
                 d.tool_names.iter().any(|configured| configured == name),
@@ -1519,6 +1560,10 @@ mod deferred_tools_config_tests {
     fn missing_deferred_tools_deserializes_to_default_policy() {
         let cfg: AppConfig = serde_json::from_str(r#"{"providers":[]}"#).unwrap();
         assert!(cfg.deferred_tools.enabled);
+        assert_eq!(
+            cfg.deferred_tools.effective_mode(),
+            DeferredToolsMode::Recommended
+        );
         assert_eq!(cfg.deferred_tools.tool_names, default_deferred_tool_names());
     }
 
@@ -1529,7 +1574,23 @@ mod deferred_tools_config_tests {
         )
         .unwrap();
         assert!(!cfg.deferred_tools.enabled);
+        assert_eq!(
+            cfg.deferred_tools.effective_mode(),
+            DeferredToolsMode::Disabled
+        );
         assert!(cfg.deferred_tools.tool_names.is_empty());
+    }
+
+    #[test]
+    fn legacy_explicit_empty_list_remains_custom() {
+        let cfg: AppConfig = serde_json::from_str(
+            r#"{"providers":[],"deferredTools":{"enabled":true,"toolNames":[]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.deferred_tools.effective_mode(),
+            DeferredToolsMode::Custom
+        );
     }
 }
 

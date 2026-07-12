@@ -136,27 +136,79 @@ fn user_enables_tool(name: &str, tier: &ToolTier, ctx: &DispatchContext) -> bool
 
 /// Whether any built-in tool is configured for deferred loading.
 pub fn has_deferred_builtin_tools(app_config: &AppConfig) -> bool {
-    app_config.deferred_tools.enabled && !app_config.deferred_tools.tool_names.is_empty()
+    match app_config.deferred_tools.effective_mode() {
+        crate::config::DeferredToolsMode::Recommended => true,
+        crate::config::DeferredToolsMode::Custom => {
+            !app_config.deferred_tools.tool_names.is_empty()
+        }
+        crate::config::DeferredToolsMode::Disabled => false,
+    }
+}
+
+/// Recommended V2 treats dynamic MCP tools like every other non-bootstrap
+/// capability: discoverable by default, but not eager. Custom/disabled
+/// built-in policy keeps the existing per-server MCP opt-in semantics.
+pub fn should_defer_dynamic_mcp_tool(name: &str, app_config: &AppConfig) -> bool {
+    matches!(
+        app_config.deferred_tools.effective_mode(),
+        crate::config::DeferredToolsMode::Recommended
+    ) || crate::mcp::catalog::tool_belongs_to_deferred_server(name, &app_config.mcp_servers)
+}
+
+/// Small deterministic first-round set. Everything else remains eligible but
+/// moves behind tool_search in recommended mode.
+fn is_recommended_eager(name: &str) -> bool {
+    use crate::tools::*;
+    matches!(
+        name,
+        TOOL_ASK_USER_QUESTION
+            | TOOL_RUNTIME_CANCEL
+            | TOOL_SKILL
+            | TOOL_READ
+            | TOOL_GREP
+            | TOOL_EXEC
+            | TOOL_APPLY_PATCH
+            | TOOL_JOB_STATUS
+            | TOOL_NOTE_READ
+            | TOOL_NOTE_SEARCH
+            | TOOL_NOTE_CREATE
+            | TOOL_NOTE_PATCH
+    )
 }
 
 /// Decide whether the tool should be deferred (schema not eagerly sent).
-/// Individual built-in tools move to the deferred pool only when they both
-/// opt in structurally (`default_deferred`) and their name appears in
-/// `deferredTools.toolNames`. The config default pre-populates that list with
-/// low-frequency / large-schema tools, while still letting users opt tools
-/// back into eager loading by removing a name.
+/// Recommended mode keeps a small fixed eager set and moves every other
+/// eligible built-in behind discovery. Custom mode uses `toolNames`; V2 lets
+/// users place any non-bootstrap Standard/Configured tool there, while the
+/// legacy `default_deferred` field remains serialization-compatible metadata.
 fn is_deferred(name: &str, tier: &ToolTier, app_config: &AppConfig) -> bool {
-    if !app_config.deferred_tools.enabled {
-        return false;
+    match app_config.deferred_tools.effective_mode() {
+        crate::config::DeferredToolsMode::Disabled => return false,
+        crate::config::DeferredToolsMode::Recommended => {
+            return !is_recommended_eager(name)
+                && !matches!(
+                    tier,
+                    ToolTier::Core {
+                        subclass: CoreSubclass::PlanMode
+                    }
+                );
+        }
+        crate::config::DeferredToolsMode::Custom => {}
     }
     let supports_deferred = match tier {
-        ToolTier::Standard {
-            default_deferred, ..
+        ToolTier::Core { subclass } => {
+            !matches!(subclass, CoreSubclass::PlanMode)
+                && !matches!(
+                    name,
+                    crate::tools::TOOL_TOOL_SEARCH
+                        | crate::tools::TOOL_ASK_USER_QUESTION
+                        | crate::tools::TOOL_RUNTIME_CANCEL
+                        | crate::tools::TOOL_SKILL
+                )
         }
-        | ToolTier::Configured {
-            default_deferred, ..
-        } => *default_deferred,
-        // Tier 1 / Memory / Mcp ignore the deferred switch entirely.
+        ToolTier::Memory => true,
+        ToolTier::Standard { .. } | ToolTier::Configured { .. } => true,
+        // Dynamic MCP servers have their own per-server deferred switch.
         _ => false,
     };
     supports_deferred
@@ -201,14 +253,32 @@ pub fn resolve_tool_fate(def: &ToolDefinition, ctx: &DispatchContext) -> ToolFat
                         ToolFate::Hidden
                     }
                 }
-                _ => ToolFate::InjectEager,
+                _ => {
+                    if is_deferred(&def.name, &def.tier, app_config) {
+                        ToolFate::InjectDeferred
+                    } else {
+                        ToolFate::InjectEager
+                    }
+                }
             },
-            // FileSystem / Interaction / SessionAware — always eager.
-            _ => ToolFate::InjectEager,
+            // In recommended V2 mode only the compact bootstrap/hot set stays
+            // eager. Core remains non-disableable, but its schema may be loaded
+            // on demand; this changes token placement, not capability.
+            _ => {
+                if is_deferred(&def.name, &def.tier, app_config) {
+                    ToolFate::InjectDeferred
+                } else {
+                    ToolFate::InjectEager
+                }
+            }
         },
         ToolTier::Memory => {
             if !ctx.incognito && ctx.memory_enabled && ctx.app_config.memory_extract.enabled {
-                ToolFate::InjectEager
+                if is_deferred(&def.name, &def.tier, app_config) {
+                    ToolFate::InjectDeferred
+                } else {
+                    ToolFate::InjectEager
+                }
             } else {
                 ToolFate::Hidden
             }
@@ -307,9 +377,13 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            let mut app = AppConfig::default();
+            // Most dispatcher fixtures exercise the legacy/custom name-list
+            // semantics. Recommended-V2 behavior has dedicated tests below.
+            app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Custom);
             Self {
                 filter: FilterConfig::default(),
-                app: AppConfig::default(),
+                app,
                 incognito: false,
                 mcp_enabled: true,
                 memory_enabled: true,
@@ -512,6 +586,7 @@ mod tests {
     fn deferred_tools_can_be_disabled_globally() {
         let mut f = Fixture::new();
         f.app.deferred_tools.enabled = false;
+        f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
         let def = def_with_tier(
             crate::tools::TOOL_BROWSER,
             ToolTier::Standard {
@@ -523,6 +598,79 @@ mod tests {
         assert_eq!(
             resolve_tool_fate(&def, &f.ctx(DEFAULT_AGENT_ID)),
             ToolFate::InjectEager
+        );
+    }
+
+    #[test]
+    fn recommended_mode_defers_non_bootstrap_core_without_hiding_it() {
+        let mut f = Fixture::new();
+        f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
+        let def = def_with_tier(
+            crate::tools::TOOL_SESSIONS_HISTORY,
+            ToolTier::Core {
+                subclass: CoreSubclass::SessionAware,
+            },
+        );
+        assert_eq!(
+            resolve_tool_fate(&def, &f.ctx(DEFAULT_AGENT_ID)),
+            ToolFate::InjectDeferred
+        );
+    }
+
+    #[test]
+    fn recommended_mode_defers_dynamic_mcp_without_per_server_opt_in() {
+        let mut app = AppConfig::default();
+        app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
+        assert!(should_defer_dynamic_mcp_tool(
+            "mcp__example__large_tool",
+            &app
+        ));
+
+        app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
+        assert!(!should_defer_dynamic_mcp_tool(
+            "mcp__example__large_tool",
+            &app
+        ));
+    }
+
+    #[test]
+    fn recommended_eager_schema_budget_and_capability_partition() {
+        let mut f = Fixture::new();
+        f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
+        let ctx = f.ctx(DEFAULT_AGENT_ID);
+        let mut schema_bytes = 0usize;
+        for def in all_dispatchable_tools() {
+            match resolve_tool_fate(def, &ctx) {
+                ToolFate::InjectEager => {
+                    // Canonical empty-session fixture has no attached KB, so
+                    // the final live gate removes note_* schemas before the
+                    // request is built.
+                    if !crate::tools::is_kb_scoped_tool(&def.name) {
+                        schema_bytes += serde_json::to_vec(
+                            &def.to_provider_schema(crate::tools::ToolProvider::OpenAI),
+                        )
+                        .unwrap()
+                        .len();
+                    }
+                }
+                ToolFate::InjectDeferred | ToolFate::HintOnly { .. } | ToolFate::Hidden => {}
+            }
+            if matches!(def.tier, ToolTier::Core { subclass } if subclass != CoreSubclass::PlanMode)
+            {
+                assert!(
+                    matches!(
+                        resolve_tool_fate(def, &ctx),
+                        ToolFate::InjectEager | ToolFate::InjectDeferred
+                    ),
+                    "enabled core capability {} was hidden",
+                    def.name
+                );
+            }
+        }
+        assert!(
+            schema_bytes / crate::context_compact::CHARS_PER_TOKEN <= 4_000,
+            "recommended eager schemas exceed 4k token heuristic: {} bytes",
+            schema_bytes
         );
     }
 
@@ -680,6 +828,7 @@ mod tests {
     fn tier_standard_allow_enables_default_off() {
         let mut f = Fixture::new();
         f.filter.allow.push("get_weather".into());
+        f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
         let def = def_with_tier(
             "get_weather",
             ToolTier::Standard {

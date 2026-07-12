@@ -62,6 +62,15 @@ pub(crate) struct RoundRequest<'a> {
     /// Tool schemas for this round (already filtered for plan mode / denied
     /// tools / skill allowlist by `build_tool_schemas`).
     pub tool_schemas: &'a [Value],
+    /// Live-gated deferred schemas not necessarily loaded into the model
+    /// context. Native provider tool-search implementations consume these.
+    pub deferred_tool_schemas: &'a [Value],
+    pub eager_tool_count: usize,
+    pub deferred_tool_count: usize,
+    pub activated_tool_count: usize,
+    /// Stable, non-sensitive cache routing key. Provider adapters only send it
+    /// when their endpoint is known to support the field.
+    pub prompt_cache_key: Option<&'a str>,
     /// Conversation history prepared for API: `_oc_round` metadata stripped.
     pub history_for_api: &'a [Value],
     /// Resolved reasoning effort for this round (live or fallback).
@@ -83,6 +92,10 @@ pub(crate) struct RoundOutcome {
     pub text: String,
     pub thinking: String,
     pub tool_calls: Vec<FunctionCallItem>,
+    /// Provider-native output items that must be round-tripped in history.
+    /// Native tool-search adapters include adjacent message/text blocks here
+    /// as needed to preserve the provider's original output ordering.
+    pub provider_history_items: Vec<Value>,
     pub usage: ChatUsage,
     /// Time-to-first-token (ms from request start).
     pub ttft_ms: Option<u64>,

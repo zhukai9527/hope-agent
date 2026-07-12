@@ -576,6 +576,14 @@ including UUIDs, hashes, IDs, tokens, hostnames, IPs, ports, URLs, and file name
 
 ## Prompt 缓存优化
 
+当前请求诊断由 `agent::token_manifest` 生成 content-free `RoundTokenManifest`：只记录各 prompt/tool/history 段的字节数、估算 token、BLAKE3 指纹、工具计数和 transport body 大小，不记录正文。稳定 system + eager tools 位于前缀，awareness/active recall/task 等动态段位于其后；deferred 工具通过 Provider 原生 reference 或客户端下一轮追加，不得重排稳定 eager 集合。
+
+Provider 返回后以同一 `provider/model/round` 记录实际 `contextInputTokens`、`freshInputTokens`、cache read/write、output 与 TTFT。Prompt Cache 只改变 fresh prefill、费用和 TTFT；`contextInputTokens` 始终表示模型本轮实际占用的完整上下文，不因 cache hit 减少。
+
+OpenAI 官方端点使用包含 provider、model、prompt contract version、agent/session scope hash 与稳定 prompt fingerprint 的 `prompt_cache_key`。GPT-5.6+ Responses 将稳定 PromptEnvelope 放在首个 developer `input_text` block，并设置显式 `prompt_cache_breakpoint` 与 `prompt_cache_options.mode=explicit`；5.4/5.5 保持自动缓存，Codex和未知兼容端不假设支持这些字段。
+
+工具详细描述只为 eager 工具注入；deferred 目录使用紧凑名称索引，完整 schema 只在激活后出现。Skills 首轮只保留名称和有界触发语句，完整 SKILL.md 继续由 `skill` 工具加载。Subagent/Team/ACP 的长指南在工具 eager 时进入静态 prompt；deferred 时随完整 schema 组成 activation package，因此客户端激活和 Provider 原生 tool reference 都能加载，而不会改变稳定缓存前缀。
+
 为最大化 LLM prompt 缓存命中率，系统采取以下策略：
 
 | 策略         | 实现                          | 效果                              |

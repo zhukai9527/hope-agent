@@ -22,6 +22,7 @@ pub(crate) mod runtime_ledger;
 mod side_query;
 mod streaming_adapter;
 mod streaming_loop;
+mod token_manifest;
 mod types;
 mod vision_bridge;
 
@@ -85,6 +86,35 @@ fn extract_tool_name(t: &serde_json::Value) -> &str {
                 .and_then(|v| v.as_str())
         })
         .unwrap_or("")
+}
+
+/// Provider-rendered tool inventory for one round. `activated_names` is the
+/// live-gated subset of the requested activation set; persisted activation is
+/// only a discovery hint and never widens current permissions.
+pub(crate) struct ToolInventory {
+    pub schemas: Vec<serde_json::Value>,
+    pub deferred_schemas: Vec<serde_json::Value>,
+    pub eager_count: usize,
+    pub deferred_count: usize,
+    pub activated_names: Vec<String>,
+}
+
+const INCOGNITO_TOOL_ACTIVATION_CAPACITY: usize = 256;
+const INCOGNITO_TOOL_ACTIVATION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+fn incognito_tool_activation_cache() -> &'static crate::ttl_cache::TtlCache<String, Vec<String>> {
+    static CACHE: std::sync::OnceLock<crate::ttl_cache::TtlCache<String, Vec<String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| crate::ttl_cache::TtlCache::new(INCOGNITO_TOOL_ACTIVATION_CAPACITY))
+}
+
+/// Burn session-scoped deferred activation hints when a session is deleted or
+/// an incognito session is purged. The cache never contains prompt/tool data,
+/// only canonical or compact variant names, but it follows the same close-time
+/// burn contract as other incognito runtime state.
+pub(crate) fn purge_incognito_tool_activations(session_id: &str) {
+    incognito_tool_activation_cache().remove(session_id);
 }
 
 fn backdate_instant_safely(
@@ -352,6 +382,7 @@ impl AssistantAgent {
             token_calibrator: std::sync::Mutex::new(
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
+            activated_tool_names: std::sync::Mutex::new(Vec::new()),
             session_id: None,
             session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
@@ -420,6 +451,7 @@ impl AssistantAgent {
             token_calibrator: std::sync::Mutex::new(
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
+            activated_tool_names: std::sync::Mutex::new(Vec::new()),
             session_id: None,
             session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
@@ -613,6 +645,7 @@ impl AssistantAgent {
             token_calibrator: std::sync::Mutex::new(
                 crate::context_compact::TokenEstimateCalibrator::new(),
             ),
+            activated_tool_names: std::sync::Mutex::new(Vec::new()),
             session_id: None,
             session_db: None,
             incognito_cached: std::sync::atomic::AtomicBool::new(false),
@@ -895,6 +928,12 @@ impl AssistantAgent {
 
     /// Set the current session ID (for sub-agent context propagation).
     pub fn set_session_id(&mut self, id: &str) {
+        if self.session_id.as_deref() != Some(id) {
+            self.activated_tool_names
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
         self.session_id = Some(id.to_string());
         self.refresh_incognito_cache();
         // Rebinding a (possibly long-lived / cached) agent to a different session
@@ -2739,10 +2778,7 @@ impl AssistantAgent {
         if caps.mcp_enabled && app_config.mcp_global.enabled {
             if let Some(mcp) = crate::mcp::McpManager::global() {
                 for def in mcp.mcp_tool_definitions().iter() {
-                    if crate::mcp::catalog::tool_belongs_to_deferred_server(
-                        &def.name,
-                        &app_config.mcp_servers,
-                    ) {
+                    if tools::dispatch::should_defer_dynamic_mcp_tool(&def.name, &app_config) {
                         continue;
                     }
                     schemas.push(def.to_provider_schema(provider));
@@ -2766,6 +2802,230 @@ impl AssistantAgent {
             }
         }
 
+        self.finalize_tool_schemas(&mut schemas);
+        schemas
+    }
+
+    /// Build eager tools plus the requested deferred tools. Deferred tools go
+    /// through the same final visibility and scope gates as eager tools.
+    pub(crate) fn build_tool_inventory(
+        &self,
+        provider: tools::ToolProvider,
+        requested_activations: &[String],
+    ) -> ToolInventory {
+        let mut schemas = self.build_tool_schemas(provider);
+        let eager_count = schemas.len();
+        let eager_names: std::collections::HashSet<String> = schemas
+            .iter()
+            .map(|schema| extract_tool_name(schema).to_string())
+            .collect();
+
+        let app_config = crate::config::cached_config();
+        let caps = self.agent_caps();
+        let ctx = tools::dispatch::DispatchContext {
+            agent_id: self.agent_id.as_str(),
+            incognito: self.session_is_incognito(),
+            mcp_enabled: caps.mcp_enabled,
+            memory_enabled: caps.memory_enabled,
+            tools_filter: &caps.agent_tool_filter,
+            app_config: &app_config,
+        };
+        let requested: std::collections::HashSet<&str> =
+            requested_activations.iter().map(String::as_str).collect();
+        let activation_guidance = crate::system_prompt::build_tool_activation_guidance_packages(
+            &self.agent_id,
+            self.subagent_depth,
+        );
+
+        let mut deferred_schemas = Vec::new();
+        let mut deferred_builtin_names = std::collections::HashSet::new();
+        for def in tools::dispatch::all_dispatchable_tools() {
+            if !matches!(
+                tools::dispatch::resolve_tool_fate(def, &ctx),
+                tools::dispatch::ToolFate::InjectDeferred
+            ) {
+                continue;
+            }
+            deferred_builtin_names.insert(def.name.clone());
+            let mut schema = if def.name == tools::TOOL_IMAGE_GENERATE {
+                tools::get_image_generate_tool_dynamic(&app_config.image_generate)
+                    .to_provider_schema(provider)
+            } else {
+                def.to_provider_schema(provider)
+            };
+            if let Some(guidance) = activation_guidance.get(&def.name) {
+                if let Some(serde_json::Value::String(description)) = schema.get_mut("description")
+                {
+                    description.push_str("\n\n");
+                    description.push_str(guidance);
+                }
+            }
+            // Deferred changes where the schema is loaded, never its semantic
+            // contract. Compact large composite tools through callVariants,
+            // not by truncating descriptions or examples.
+            deferred_schemas.push(schema);
+        }
+
+        if caps.mcp_enabled && app_config.mcp_global.enabled {
+            if let Some(mcp) = crate::mcp::McpManager::global() {
+                for def in mcp.mcp_tool_definitions().iter() {
+                    if tools::dispatch::should_defer_dynamic_mcp_tool(&def.name, &app_config) {
+                        deferred_schemas.push(def.to_provider_schema(provider));
+                    }
+                }
+            }
+        }
+
+        self.finalize_tool_schemas(&mut deferred_schemas);
+        let deferred_count = deferred_schemas.len();
+        let all_deferred_schemas = deferred_schemas.clone();
+        let mut activated_names = Vec::new();
+        for schema in deferred_schemas {
+            let name = extract_tool_name(&schema);
+            if requested.contains(name) && !eager_names.contains(name) {
+                activated_names.push(name.to_string());
+                schemas.push(schema);
+            }
+        }
+
+        // Large composite built-ins may be activated as one action-scoped
+        // call variant. The deferred catalog remains canonical for provider-
+        // native search; only the loaded client-side schema is compact.
+        for requested_name in requested_activations {
+            let Some((canonical, action)) = tools::split_call_variant_name(requested_name) else {
+                continue;
+            };
+            if !deferred_builtin_names.contains(canonical) || eager_names.contains(canonical) {
+                continue;
+            }
+            let Some(definition) = tools::dispatch::all_dispatchable_tools()
+                .iter()
+                .find(|definition| definition.name == canonical)
+            else {
+                continue;
+            };
+            let Some(schema) = definition.to_compact_call_variant(action, provider) else {
+                continue;
+            };
+            let mut gated = vec![schema];
+            self.finalize_tool_schemas(&mut gated);
+            if let Some(schema) = gated.pop() {
+                activated_names.push(requested_name.clone());
+                schemas.push(schema);
+            }
+        }
+
+        ToolInventory {
+            schemas,
+            deferred_schemas: all_deferred_schemas,
+            eager_count,
+            deferred_count,
+            activated_names,
+        }
+    }
+
+    pub(crate) fn load_activated_tool_names(&self) -> Vec<String> {
+        let mut names = self
+            .activated_tool_names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(session_id) = self.session_id.as_deref() {
+            if self.session_is_incognito() {
+                if let Some(loaded) =
+                    incognito_tool_activation_cache().get(session_id, INCOGNITO_TOOL_ACTIVATION_TTL)
+                {
+                    for name in loaded {
+                        if !names.contains(&name) {
+                            names.push(name);
+                        }
+                    }
+                }
+            } else {
+                let loaded = self
+                    .session_db
+                    .as_ref()
+                    .and_then(|db| db.load_tool_activations(session_id).ok())
+                    .or_else(|| {
+                        crate::get_session_db()
+                            .and_then(|db| db.load_tool_activations(session_id).ok())
+                    })
+                    .unwrap_or_default();
+                for name in loaded {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        *self
+            .activated_tool_names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = names.clone();
+        names
+    }
+
+    /// Merge newly activated names into the session ledger. Returns true when
+    /// at least one name was new. Incognito sessions intentionally skip DB.
+    pub(crate) fn record_tool_activations(&self, names: &[String]) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+        let mut ledger = self
+            .activated_tool_names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut added = Vec::new();
+        for name in names {
+            if !ledger.contains(name) {
+                ledger.push(name.clone());
+                added.push(name.clone());
+            }
+        }
+        let ledger_snapshot = ledger.clone();
+        drop(ledger);
+        if added.is_empty() {
+            return false;
+        }
+        if let Some(session_id) = self.session_id.as_deref() {
+            if self.session_is_incognito() {
+                incognito_tool_activation_cache().put(session_id.to_string(), ledger_snapshot);
+            } else if let Some(db) = self.session_db.as_ref() {
+                let _ = db.insert_tool_activations(session_id, &added);
+            } else if let Some(db) = crate::get_session_db() {
+                let _ = db.insert_tool_activations(session_id, &added);
+            }
+        }
+        true
+    }
+
+    pub(crate) fn clear_tool_activations_after_summary(&self) {
+        self.activated_tool_names
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        if self.session_is_incognito() {
+            if let Some(session_id) = self.session_id.as_deref() {
+                purge_incognito_tool_activations(session_id);
+            }
+            return;
+        }
+        let Some(session_id) = self.session_id.as_deref() else {
+            return;
+        };
+        if let Some(db) = self.session_db.as_ref() {
+            let _ = db.clear_tool_activations(session_id);
+        } else if let Some(db) = crate::get_session_db() {
+            let _ = db.clear_tool_activations(session_id);
+        }
+    }
+
+    /// Final schema gate shared by eager and dynamically activated tools.
+    fn finalize_tool_schemas(&self, schemas: &mut Vec<serde_json::Value>) {
+        let caps = self.agent_caps();
+        if !self.subagent_depth_allows_subagent() {
+            schemas.retain(|t| extract_tool_name(t) != tools::TOOL_SUBAGENT);
+        }
         // Final filter pipeline (skill / denied / plan-allowed) — defense
         // in depth on top of dispatcher visibility.
         let plan_mode = self.plan_agent_mode.load();
@@ -2774,7 +3034,7 @@ impl AssistantAgent {
             _ => &[],
         };
         schemas.retain(|t| {
-            let name = extract_tool_name(t);
+            let name = tools::canonical_tool_schema_name(extract_tool_name(t));
             tools::tool_visible_with_filters(
                 name,
                 &caps.agent_tool_filter,
@@ -2790,22 +3050,22 @@ impl AssistantAgent {
         // `effective_kb_access` either way. Mirrors the exact access set the tools
         // see, so a hidden tool can never still be reachable (or vice-versa).
         // `knowledge_recall` is deferred + cross-store and is intentionally kept.
-        if schemas
-            .iter()
-            .any(|t| tools::is_kb_scoped_tool(extract_tool_name(t)))
-            && self.resolve_kb_access().is_empty()
+        if schemas.iter().any(|t| {
+            tools::is_kb_scoped_tool(tools::canonical_tool_schema_name(extract_tool_name(t)))
+        }) && self.resolve_kb_access().is_empty()
         {
-            schemas.retain(|t| !tools::is_kb_scoped_tool(extract_tool_name(t)));
+            schemas.retain(|t| {
+                !tools::is_kb_scoped_tool(tools::canonical_tool_schema_name(extract_tool_name(t)))
+            });
         }
 
         // Knowledge-space sidebar chat: trim to the curated white-list so the
         // document-writing conversation isn't handed exec / browser / subagent /
         // etc. Pure visibility narrowing — KB access is still `effective_kb_access`.
         if let Some(scope) = self.tool_scope {
-            schemas.retain(|t| scope.allows(extract_tool_name(t)));
+            schemas
+                .retain(|t| scope.allows(tools::canonical_tool_schema_name(extract_tool_name(t))));
         }
-
-        schemas
     }
 
     /// Whether the current subagent depth permits spawning further sub-agents.
@@ -3549,7 +3809,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use super::{backdate_instant_safely, extract_tool_name};
+    use super::{
+        backdate_instant_safely, extract_tool_name, purge_incognito_tool_activations,
+        AssistantAgent,
+    };
     use crate::memory::{claims::ClaimGraphEdge, episodes::MemoryProcedureRecord, MemoryScope};
 
     #[test]
@@ -3565,6 +3828,34 @@ mod tests {
         let now = Instant::now();
 
         assert_eq!(backdate_instant_safely(now, Duration::MAX), now);
+    }
+
+    #[test]
+    fn incognito_tool_activations_survive_agent_rebuild_and_burn_on_purge() {
+        let session_id = format!("incognito-{}", uuid::Uuid::new_v4());
+        let activated = vec![crate::tools::TOOL_BROWSER.to_string()];
+
+        let mut first = AssistantAgent::new_anthropic("test-key");
+        first.set_session_id(&session_id);
+        first
+            .incognito_cached
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(first.record_tool_activations(&activated));
+
+        let mut rebuilt = AssistantAgent::new_anthropic("test-key");
+        rebuilt.set_session_id(&session_id);
+        rebuilt
+            .incognito_cached
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(rebuilt.load_activated_tool_names(), activated);
+
+        purge_incognito_tool_activations(&session_id);
+        let mut after_purge = AssistantAgent::new_anthropic("test-key");
+        after_purge.set_session_id(&session_id);
+        after_purge
+            .incognito_cached
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(after_purge.load_activated_tool_names().is_empty());
     }
 
     #[test]

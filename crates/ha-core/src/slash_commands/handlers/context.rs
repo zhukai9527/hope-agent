@@ -41,14 +41,24 @@ pub async fn handle_context(
         .sum();
     let messages_tokens = chars_to_tokens(messages_chars);
 
-    // JSON tool schemas sent in the API `tools:` array.
-    // Provider-agnostic estimate — Anthropic format is representative.
-    let tool_schemas = agent.build_tool_schemas(crate::tools::ToolProvider::Anthropic);
+    // Build the same provider-specific prompt and live-gated tool inventory as
+    // a chat round, including deferred tools already activated for the session.
+    let (provider_key, model_id) = agent.current_model_for_compaction();
+    let tool_provider = if provider_key == "Anthropic" {
+        crate::tools::ToolProvider::Anthropic
+    } else {
+        crate::tools::ToolProvider::OpenAI
+    };
+    let activated = agent.load_activated_tool_names();
+    let inventory = agent.build_tool_inventory(tool_provider, &activated);
+    let tool_schemas = inventory.schemas;
     let tool_schemas_chars: usize = tool_schemas
         .iter()
         .map(|s| serde_json::to_string(s).map(|x| x.len()).unwrap_or(0))
         .sum();
     let tool_schemas_tokens = chars_to_tokens(tool_schemas_chars);
+    let actual_system_prompt = agent.build_full_system_prompt(&model_id, provider_key);
+    let actual_system_tokens = chars_to_tokens(actual_system_prompt.len());
 
     // Last compaction timer — read directly while we still hold `agent`.
     let last_compact_secs_ago = agent
@@ -111,25 +121,19 @@ pub async fn handle_context(
         agent_home.as_deref(),
     );
 
-    let total_system_tokens = chars_to_tokens(breakdown_chars.total_chars);
     let memory_tokens = chars_to_tokens(breakdown_chars.memory_chars);
     let skill_tokens = chars_to_tokens(breakdown_chars.skills_chars);
     let tool_descriptions_tokens = chars_to_tokens(breakdown_chars.tool_descriptions_chars);
     // "Base" system prompt = everything in the prompt minus the sub-sections
     // we already attribute separately (memory, skills, tool descriptions).
-    let system_prompt_tokens = total_system_tokens
+    let system_prompt_tokens = actual_system_tokens
         .saturating_sub(memory_tokens)
         .saturating_sub(skill_tokens)
         .saturating_sub(tool_descriptions_tokens);
 
     // ── Totals ───────────────────────────────────────────────────
-    let used_total = system_prompt_tokens
-        + tool_schemas_tokens
-        + tool_descriptions_tokens
-        + memory_tokens
-        + skill_tokens
-        + messages_tokens
-        + max_output_tokens;
+    let used_total =
+        actual_system_tokens + tool_schemas_tokens + messages_tokens + max_output_tokens;
     let free_space = context_window.saturating_sub(used_total);
     let usage_pct = if context_window > 0 {
         (used_total as f32 / context_window as f32) * 100.0

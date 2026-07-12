@@ -184,8 +184,10 @@ pub struct AssistantAgent {
     pub(super) compaction_provider:
         Option<std::sync::Arc<dyn crate::context_compact::CompactionProvider>>,
     /// Token estimate calibrator (updated with actual API usage)
-    #[allow(dead_code)]
     pub(super) token_calibrator: std::sync::Mutex<crate::context_compact::TokenEstimateCalibrator>,
+    /// Session-scoped deferred tools already discovered by `tool_search`.
+    /// Persisted for regular sessions and kept memory-only for incognito.
+    pub(super) activated_tool_names: std::sync::Mutex<Vec<String>>,
     /// Current session ID (for sub-agent context)
     pub(super) session_id: Option<String>,
     /// Session database backing the current chat-engine turn. Most runtime
@@ -535,16 +537,48 @@ impl ThinkTagFilter {
 /// recent API round for status UIs where cumulative sums are misleading.
 #[derive(Debug, Clone, Default)]
 pub struct ChatUsage {
+    /// Provider-reported input tokens. For Anthropic this excludes cache
+    /// creation/read tokens; for OpenAI-style providers it is already the
+    /// complete input count. Keep this raw field for billing compatibility.
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_input_tokens: u64,
     pub cache_read_input_tokens: u64,
+    /// Normalized number of input tokens that occupied the model context.
+    /// Unlike `input_tokens`, this has identical semantics across providers.
+    pub context_input_tokens: u64,
+    /// Context input that was not served by a cache read. Cache writes are
+    /// intentionally included: they still require fresh prompt processing.
+    pub fresh_input_tokens: u64,
     pub last_input_tokens: u64,
+    pub last_context_input_tokens: u64,
+    pub last_fresh_input_tokens: u64,
     pub last_cache_creation_input_tokens: u64,
     pub last_cache_read_input_tokens: u64,
 }
 
 impl ChatUsage {
+    /// Normalize a single Anthropic round. Anthropic reports uncached input,
+    /// cache creation, and cache reads as disjoint counters.
+    pub fn normalize_anthropic_round(&mut self) {
+        self.context_input_tokens = self
+            .input_tokens
+            .saturating_add(self.cache_creation_input_tokens)
+            .saturating_add(self.cache_read_input_tokens);
+        self.fresh_input_tokens = self
+            .context_input_tokens
+            .saturating_sub(self.cache_read_input_tokens);
+    }
+
+    /// Normalize a single OpenAI-compatible round. OpenAI input tokens already
+    /// include cached tokens; cached tokens are a subset of the total.
+    pub fn normalize_openai_round(&mut self) {
+        self.context_input_tokens = self.input_tokens;
+        self.fresh_input_tokens = self
+            .context_input_tokens
+            .saturating_sub(self.cache_read_input_tokens);
+    }
+
     /// Fold one round's usage into the running turn total. Cumulative
     /// fields accumulate; `last_*` fields are overwritten so callers can
     /// render the most recent round without summing over a tool loop.
@@ -553,7 +587,23 @@ impl ChatUsage {
         self.output_tokens += round.output_tokens;
         self.cache_creation_input_tokens += round.cache_creation_input_tokens;
         self.cache_read_input_tokens += round.cache_read_input_tokens;
-        self.last_input_tokens = round.input_tokens;
+        let round_context = if round.context_input_tokens > 0 {
+            round.context_input_tokens
+        } else {
+            round.input_tokens
+        };
+        let round_fresh = if round.fresh_input_tokens > 0 {
+            round.fresh_input_tokens
+        } else {
+            round_context.saturating_sub(round.cache_read_input_tokens)
+        };
+        self.context_input_tokens += round_context;
+        self.fresh_input_tokens += round_fresh;
+        // Backward-compatible event/DB field: `last_input_tokens` has always
+        // powered the context gauge, so make it the normalized context count.
+        self.last_input_tokens = round_context;
+        self.last_context_input_tokens = round_context;
+        self.last_fresh_input_tokens = round_fresh;
         self.last_cache_creation_input_tokens = round.cache_creation_input_tokens;
         self.last_cache_read_input_tokens = round.cache_read_input_tokens;
     }

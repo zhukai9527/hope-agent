@@ -127,7 +127,7 @@ impl<'a> StreamingChatAdapter for CodexStreamingAdapter<'a> {
             model: self.model.to_string(),
             store: false,
             stream: true,
-            instructions: req.system_prompt.to_string(),
+            instructions: Some(req.system_prompt.to_string()),
             input: api_input.clone(),
             reasoning: self.reasoning.clone(),
             // `reasoning.encrypted_content` is not requested: with
@@ -141,12 +141,25 @@ impl<'a> StreamingChatAdapter for CodexStreamingAdapter<'a> {
                 Some(req.tool_schemas.to_vec())
             },
             temperature: req.temperature,
+            // Codex happens to use the Responses wire shape, but support for
+            // cache-routing fields is not assumed without an advertised
+            // capability.
+            prompt_cache_key: None,
+            prompt_cache_options: None,
         };
 
         let body_json = serde_json::to_string(&request)?;
+        let body_size = body_json.len();
+        super::super::token_manifest::log_round_manifest(
+            "Codex",
+            self.model,
+            "codex_responses",
+            &req,
+            body_size,
+            false,
+        );
 
         if let Some(logger) = crate::get_logger() {
-            let body_size = body_json.len();
             let raw_body = if body_size > 32768 {
                 format!(
                     "{}...(truncated, total {}B)",
@@ -347,13 +360,14 @@ impl<'a> StreamingChatAdapter for CodexStreamingAdapter<'a> {
                 text: String::new(),
                 thinking: String::new(),
                 tool_calls: Vec::new(),
+                provider_history_items: Vec::new(),
                 usage: Default::default(),
                 ttft_ms: None,
                 stop_reason: None,
             });
         }
 
-        let (text, tool_calls, usage, thinking_text, ttft_ms) =
+        let (text, tool_calls, provider_history_items, mut usage, thinking_text, ttft_ms) =
             parse_openai_sse(resp, request_start, cancel.as_ref(), on_delta).await?;
 
         if let Some(logger) = crate::get_logger() {
@@ -383,10 +397,15 @@ impl<'a> StreamingChatAdapter for CodexStreamingAdapter<'a> {
             }
         }
 
+        usage.normalize_openai_round();
+        super::super::token_manifest::log_round_usage(
+            "Codex", self.model, req.round, &usage, ttft_ms,
+        );
         Ok(RoundOutcome {
             text,
             thinking: thinking_text,
             tool_calls,
+            provider_history_items,
             usage,
             ttft_ms,
             stop_reason: None,
@@ -400,7 +419,17 @@ impl<'a> StreamingChatAdapter for CodexStreamingAdapter<'a> {
         outcome: &RoundOutcome,
         executed: &[ExecutedTool],
     ) {
-        push_responses_assistant_message(history, Some(round), &outcome.text);
+        if !outcome
+            .provider_history_items
+            .iter()
+            .any(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        {
+            push_responses_assistant_message(history, Some(round), &outcome.text);
+        }
+
+        for item in &outcome.provider_history_items {
+            crate::context_compact::push_and_stamp(history, item.clone(), round);
+        }
 
         for et in executed {
             crate::context_compact::push_and_stamp(

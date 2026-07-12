@@ -30,6 +30,70 @@ use super::super::streaming_adapter::{
 use super::super::types::{AssistantAgent, ChatUsage, ProviderFormat};
 use crate::tools::ToolProvider;
 
+fn supports_native_tool_search(base_url: &str, model: &str) -> bool {
+    if !base_url.contains("api.openai.com") {
+        return false;
+    }
+    let Some(version) = model.strip_prefix("gpt-") else {
+        return false;
+    };
+    let mut parts = version.split(['-', '.']);
+    let major = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let minor = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    major > 5 || (major == 5 && minor >= 4)
+}
+
+fn supports_explicit_prompt_cache(base_url: &str, model: &str) -> bool {
+    if !base_url.contains("api.openai.com") {
+        return false;
+    }
+    let Some(version) = model.strip_prefix("gpt-") else {
+        return false;
+    };
+    let mut parts = version.split(['-', '.']);
+    let major = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let minor = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    major > 5 || (major == 5 && minor >= 6)
+}
+
+fn native_tool_search_tools(req: &RoundRequest<'_>) -> Vec<Value> {
+    let loaded_names: std::collections::HashSet<&str> = req
+        .tool_schemas
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(|v| v.as_str()))
+        .collect();
+    let mut tools: Vec<Value> = req
+        .tool_schemas
+        .iter()
+        // Replace Hope's client meta-tool with the provider-native tool.
+        .filter(|tool| tool.get("name").and_then(|v| v.as_str()) != Some("tool_search"))
+        .cloned()
+        .collect();
+    for schema in req.deferred_tool_schemas {
+        let name = schema.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if name.is_empty() || loaded_names.contains(name) {
+            continue;
+        }
+        let mut deferred = schema.clone();
+        deferred["defer_loading"] = json!(true);
+        tools.push(deferred);
+    }
+    tools.push(json!({ "type": "tool_search" }));
+    tools
+}
+
 fn sse_request_id(resp: &reqwest::Response) -> String {
     resp.headers()
         .get("x-request-id")
@@ -275,6 +339,31 @@ fn finalize_pending_tool_calls(
     0
 }
 
+fn push_provider_history_item(items: &mut Vec<Value>, item: Value) {
+    let item_type = item.get("type").and_then(Value::as_str);
+    if !matches!(
+        item_type,
+        Some("message" | "tool_search_call" | "tool_search_output")
+    ) {
+        return;
+    }
+    if !items.iter().any(|existing| existing == &item) {
+        items.push(item);
+    }
+}
+
+fn output_item_arguments(item: &super::super::api_types::SseOutputItem) -> String {
+    item.arguments
+        .as_ref()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string())
+        })
+        .unwrap_or_default()
+}
+
 fn handle_openai_sse_event_block(
     request_id: &str,
     event_block: &str,
@@ -283,6 +372,7 @@ fn handle_openai_sse_event_block(
     collected_text: &mut String,
     collected_thinking: &mut String,
     tool_calls: &mut Vec<FunctionCallItem>,
+    provider_history_items: &mut Vec<Value>,
     pending_calls: &mut std::collections::HashMap<String, FunctionCallItem>,
     usage: &mut ChatUsage,
     first_token_time: &mut Option<u64>,
@@ -302,6 +392,7 @@ fn handle_openai_sse_event_block(
         return Ok(());
     }
 
+    let raw_event = serde_json::from_str::<Value>(&data).ok();
     match serde_json::from_str::<SseEvent>(&data) {
         Ok(event) => {
             let event_type = event.event_type.as_deref().unwrap_or("");
@@ -343,7 +434,7 @@ fn handle_openai_sse_event_block(
                                 FunctionCallItem {
                                     call_id,
                                     name,
-                                    arguments: item.arguments.clone().unwrap_or_default(),
+                                    arguments: output_item_arguments(item),
                                 },
                             );
                         }
@@ -374,9 +465,10 @@ fn handle_openai_sse_event_block(
                                 .or_else(|| item.call_id.clone())
                                 .unwrap_or_default();
                             if let Some(mut tc) = pending_calls.remove(&call_id) {
-                                if let Some(args) = &item.arguments {
+                                if let Some(args) = item.arguments.as_ref().and_then(Value::as_str)
+                                {
                                     if !args.is_empty() {
-                                        tc.arguments = args.clone();
+                                        tc.arguments = args.to_string();
                                     }
                                 }
                                 if item.name.is_some() {
@@ -384,6 +476,11 @@ fn handle_openai_sse_event_block(
                                 }
                                 tool_calls.push(tc);
                             }
+                        }
+                        if let Some(raw_item) =
+                            raw_event.as_ref().and_then(|raw| raw.get("item")).cloned()
+                        {
+                            push_provider_history_item(provider_history_items, raw_item);
                         }
                         // Responses/Codex run with `store: false`, so any
                         // `rs_*` reasoning item the server emits is throwaway
@@ -416,6 +513,15 @@ fn handle_openai_sse_event_block(
                     return Err(anyhow::anyhow!("{}", msg));
                 }
                 "response.completed" | "response.done" => {
+                    if let Some(raw_outputs) = raw_event
+                        .as_ref()
+                        .and_then(|raw| raw.pointer("/response/output"))
+                        .and_then(Value::as_array)
+                    {
+                        for item in raw_outputs {
+                            push_provider_history_item(provider_history_items, item.clone());
+                        }
+                    }
                     if let Some(resp_obj) = &event.response {
                         if let Some(u) = &resp_obj.usage {
                             if let Some(it) = u.input_tokens {
@@ -439,6 +545,18 @@ fn handle_openai_sse_event_block(
                                         u.prompt_tokens_details
                                             .as_ref()
                                             .and_then(|d| d.cached_tokens)
+                                    })
+                                    .unwrap_or(0);
+                            }
+                            if usage.cache_creation_input_tokens == 0 {
+                                usage.cache_creation_input_tokens = u
+                                    .input_tokens_details
+                                    .as_ref()
+                                    .and_then(|d| d.cache_write_tokens)
+                                    .or_else(|| {
+                                        u.prompt_tokens_details
+                                            .as_ref()
+                                            .and_then(|d| d.cache_write_tokens)
                                     })
                                     .unwrap_or(0);
                             }
@@ -469,7 +587,7 @@ fn handle_openai_sse_event_block(
                                         tool_calls.push(FunctionCallItem {
                                             call_id,
                                             name: item.name.clone().unwrap_or_default(),
-                                            arguments: item.arguments.clone().unwrap_or_default(),
+                                            arguments: output_item_arguments(item),
                                         });
                                     }
                                 }
@@ -585,11 +703,41 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
             }
         }
 
+        let explicit_prompt_cache = supports_explicit_prompt_cache(self.base_url, self.model);
+        if explicit_prompt_cache {
+            // GPT-5.6+ only accepts explicit breakpoints on content blocks.
+            // Put the stable PromptEnvelope at the head of `input`; all
+            // per-turn suffixes and conversation items remain after it, so
+            // changing a dynamic suffix cannot invalidate the cached prefix.
+            api_input.insert(
+                0,
+                json!({
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": req.system_prompt,
+                        "prompt_cache_breakpoint": { "mode": "explicit" }
+                    }]
+                }),
+            );
+        }
+
+        let native_deferred = !req.is_final_round
+            && !req.deferred_tool_schemas.is_empty()
+            && supports_native_tool_search(self.base_url, self.model);
+        let request_tools = if req.is_final_round {
+            None
+        } else if native_deferred {
+            Some(native_tool_search_tools(&req))
+        } else {
+            Some(req.tool_schemas.to_vec())
+        };
         let request = ResponsesRequest {
             model: self.model.to_string(),
             store: false,
             stream: true,
-            instructions: req.system_prompt.to_string(),
+            instructions: (!explicit_prompt_cache).then(|| req.system_prompt.to_string()),
             input: api_input.clone(),
             reasoning: self.reasoning.clone(),
             // `reasoning.encrypted_content` is not requested: with
@@ -597,20 +745,28 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
             // round, so the encrypted payload would just inflate the SSE
             // response with no consumer.
             include: None,
-            tools: if req.is_final_round {
-                None
-            } else {
-                Some(req.tool_schemas.to_vec())
-            },
+            tools: request_tools,
             temperature: req.temperature,
+            prompt_cache_key: req.prompt_cache_key.map(str::to_string),
+            prompt_cache_options: explicit_prompt_cache
+                .then(|| json!({ "mode": "explicit", "ttl": "30m" })),
         };
 
         let api_url = build_api_url(self.base_url, "/v1/responses");
 
         // ── Log API request.
         let body_str = serde_json::to_string(&request).unwrap_or_default();
+        let body_size = body_str.len();
+        let request_tool_count = request.tools.as_ref().map_or(0, Vec::len);
+        super::super::token_manifest::log_round_manifest(
+            "OpenAIResponses",
+            self.model,
+            "responses",
+            &req,
+            body_size,
+            native_deferred,
+        );
         if let Some(logger) = crate::get_logger() {
-            let body_size = body_str.len();
             let raw_body = if body_size > 32768 {
                 format!(
                     "{}...(truncated, total {}B)",
@@ -629,7 +785,7 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
                     "OpenAI Responses API request round {}: {} input items, {} tools, body {}B",
                     req.round,
                     api_input.len(),
-                    req.tool_schemas.len(),
+                    request_tool_count,
                     body_size
                 ),
                 Some(
@@ -638,7 +794,7 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
                         "api_url": &api_url,
                         "model": self.model,
                         "input_count": api_input.len(),
-                        "tool_count": req.tool_schemas.len(),
+                        "tool_count": request_tool_count,
                         "body_size_bytes": body_size,
                         "reasoning": self.reasoning.as_ref().map(|r| r.effort.as_str()),
                         "request_body": raw_body,
@@ -748,7 +904,7 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
             ));
         }
 
-        let (text, tool_calls, usage, thinking_text, ttft_ms) =
+        let (text, tool_calls, provider_history_items, mut usage, thinking_text, ttft_ms) =
             parse_openai_sse(resp, request_start, cancel.as_ref(), on_delta).await?;
 
         if let Some(logger) = crate::get_logger() {
@@ -778,10 +934,19 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
             }
         }
 
+        usage.normalize_openai_round();
+        super::super::token_manifest::log_round_usage(
+            "OpenAIResponses",
+            self.model,
+            req.round,
+            &usage,
+            ttft_ms,
+        );
         Ok(RoundOutcome {
             text,
             thinking: thinking_text,
             tool_calls,
+            provider_history_items,
             usage,
             ttft_ms,
             stop_reason: None,
@@ -798,7 +963,20 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
         // Keep assistant narration in the next round's model-visible context,
         // matching the Responses item stream shape: message, function_call,
         // then function_call_output.
-        push_responses_assistant_message(history, Some(round), &outcome.text);
+        // A completed Responses payload contains message/tool-search items in
+        // provider order. Prefer those exact items; synthesize a message only
+        // for interrupted streams where the completed item was unavailable.
+        if !outcome
+            .provider_history_items
+            .iter()
+            .any(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        {
+            push_responses_assistant_message(history, Some(round), &outcome.text);
+        }
+
+        for item in &outcome.provider_history_items {
+            crate::context_compact::push_and_stamp(history, item.clone(), round);
+        }
 
         // Per executed tool: function_call item + function_call_output item.
         for et in executed {
@@ -844,7 +1022,7 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
 }
 
 /// Parse OpenAI SSE stream (Responses API + Codex share this).
-/// Returns `(collected_text, tool_calls, usage, thinking, ttft_ms)`.
+/// Returns `(collected_text, tool_calls, provider_items, usage, thinking, ttft_ms)`.
 pub(in crate::agent) async fn parse_openai_sse(
     resp: reqwest::Response,
     request_start: std::time::Instant,
@@ -853,6 +1031,7 @@ pub(in crate::agent) async fn parse_openai_sse(
 ) -> Result<(
     String,
     Vec<FunctionCallItem>,
+    Vec<Value>,
     ChatUsage,
     String,
     Option<u64>,
@@ -861,6 +1040,7 @@ pub(in crate::agent) async fn parse_openai_sse(
     let mut collected_text = String::new();
     let mut collected_thinking = String::new();
     let mut tool_calls: Vec<FunctionCallItem> = Vec::new();
+    let mut provider_history_items: Vec<Value> = Vec::new();
     let mut pending_calls: std::collections::HashMap<String, FunctionCallItem> =
         std::collections::HashMap::new();
     let mut usage = ChatUsage::default();
@@ -937,6 +1117,7 @@ pub(in crate::agent) async fn parse_openai_sse(
                 &mut collected_text,
                 &mut collected_thinking,
                 &mut tool_calls,
+                &mut provider_history_items,
                 &mut pending_calls,
                 &mut usage,
                 &mut first_token_time,
@@ -954,6 +1135,7 @@ pub(in crate::agent) async fn parse_openai_sse(
             &mut collected_text,
             &mut collected_thinking,
             &mut tool_calls,
+            &mut provider_history_items,
             &mut pending_calls,
             &mut usage,
             &mut first_token_time,
@@ -1028,6 +1210,7 @@ pub(in crate::agent) async fn parse_openai_sse(
     Ok((
         collected_text,
         tool_calls,
+        provider_history_items,
         usage,
         collected_thinking,
         first_token_time,
@@ -1039,12 +1222,37 @@ mod tests {
     use super::{
         extract_request_id_from_message, finalize_pending_tool_calls,
         handle_openai_sse_event_block, has_complete_stream_output, sse_event_error_code,
-        sse_event_error_message, sse_event_error_type, take_next_sse_event_block, FunctionCallItem,
+        sse_event_error_message, sse_event_error_type, supports_explicit_prompt_cache,
+        supports_native_tool_search, take_next_sse_event_block, FunctionCallItem,
         OpenAIResponsesStreamingAdapter, SseEvent,
     };
     use crate::agent::streaming_adapter::{ExecutedTool, RoundOutcome, StreamingChatAdapter};
     use crate::agent::types::ChatUsage;
     use std::collections::HashMap;
+
+    #[test]
+    fn openai_capability_guards_are_endpoint_and_model_aware() {
+        assert!(supports_native_tool_search(
+            "https://api.openai.com",
+            "gpt-5.4"
+        ));
+        assert!(!supports_native_tool_search(
+            "https://api.openai.com",
+            "gpt-5.3"
+        ));
+        assert!(!supports_native_tool_search(
+            "https://compatible.example",
+            "gpt-5.6"
+        ));
+        assert!(supports_explicit_prompt_cache(
+            "https://api.openai.com",
+            "gpt-5.6"
+        ));
+        assert!(!supports_explicit_prompt_cache(
+            "https://api.openai.com",
+            "gpt-5.5"
+        ));
+    }
 
     #[test]
     fn nested_error_fields_are_extracted_from_event_error() {
@@ -1148,6 +1356,7 @@ mod tests {
                 name: "read".to_string(),
                 arguments: r#"{"path":"scripts/a.py"}"#.to_string(),
             }],
+            provider_history_items: Vec::new(),
             usage: ChatUsage::default(),
             ttft_ms: None,
             stop_reason: None,
@@ -1228,6 +1437,20 @@ mod tests {
             "response": {
                 "output": [
                     {
+                        "type": "tool_search_call",
+                        "execution": "server",
+                        "call_id": null,
+                        "status": "completed",
+                        "arguments": { "paths": ["browser"] }
+                    },
+                    {
+                        "type": "tool_search_output",
+                        "execution": "server",
+                        "call_id": null,
+                        "status": "completed",
+                        "tools": [{ "type": "function", "name": "browser" }]
+                    },
+                    {
                         "type": "reasoning",
                         "id": "rs_ok",
                         "summary": [],
@@ -1246,6 +1469,7 @@ mod tests {
         let mut text = String::new();
         let mut thinking = String::new();
         let mut tool_calls = Vec::new();
+        let mut provider_history_items = Vec::new();
         let mut pending = HashMap::new();
         let mut usage = ChatUsage::default();
         let mut first_token_time = None;
@@ -1259,6 +1483,7 @@ mod tests {
             &mut text,
             &mut thinking,
             &mut tool_calls,
+            &mut provider_history_items,
             &mut pending,
             &mut usage,
             &mut first_token_time,
@@ -1266,5 +1491,31 @@ mod tests {
         .expect("handle event");
 
         assert_eq!(text, "done");
+        assert_eq!(provider_history_items.len(), 3);
+        assert_eq!(provider_history_items[0]["type"], "tool_search_call");
+        assert_eq!(provider_history_items[1]["type"], "tool_search_output");
+        assert_eq!(provider_history_items[2]["type"], "message");
+
+        let adapter = OpenAIResponsesStreamingAdapter {
+            api_key: "",
+            base_url: "https://api.openai.com",
+            model: "gpt-5.4",
+            reasoning: None,
+        };
+        let outcome = RoundOutcome {
+            text,
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            provider_history_items,
+            usage: ChatUsage::default(),
+            ttft_ms: None,
+            stop_reason: None,
+        };
+        let mut history = Vec::new();
+        adapter.append_round_to_history(&mut history, 0, &outcome, &[]);
+        assert_eq!(history.len(), 3, "assistant message must not be duplicated");
+        assert_eq!(history[0]["type"], "tool_search_call");
+        assert_eq!(history[1]["type"], "tool_search_output");
+        assert_eq!(history[2]["type"], "message");
     }
 }

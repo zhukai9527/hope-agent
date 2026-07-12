@@ -364,7 +364,14 @@ pub(crate) fn build_with_resolved_session(
     sections.push(build_runtime_section(model, provider, agent_home));
 
     // ⑩ Sub-agent delegation (conditionally injected — gated by Tier 3 toggle)
-    if crate::tools::subagent::subagent_capability_enabled(&definition.id, &definition.config) {
+    if crate::tools::subagent::subagent_capability_enabled(&definition.id, &definition.config)
+        && tool_is_eager(
+            &definition.id,
+            &definition.config,
+            incognito,
+            crate::tools::TOOL_SUBAGENT,
+        )
+    {
         let subagent_section =
             build_subagent_section(&definition.config.subagents, &definition.id, 0);
         if !subagent_section.is_empty() {
@@ -373,7 +380,14 @@ pub(crate) fn build_with_resolved_session(
     }
 
     // ⑩½ Agent Team (conditionally injected)
-    if definition.config.team.enabled {
+    if definition.config.team.enabled
+        && tool_is_eager(
+            &definition.id,
+            &definition.config,
+            incognito,
+            crate::tools::TOOL_TEAM,
+        )
+    {
         let team_section = build_team_section();
         if !team_section.is_empty() {
             sections.push(team_section);
@@ -393,7 +407,14 @@ pub(crate) fn build_with_resolved_session(
     }
 
     // ⑬ ACP external agent delegation (conditionally injected)
-    if definition.config.acp.enabled {
+    if definition.config.acp.enabled
+        && tool_is_eager(
+            &definition.id,
+            &definition.config,
+            incognito,
+            crate::tools::TOOL_ACP_SPAWN,
+        )
+    {
         let acp_section = build_acp_section();
         if !acp_section.is_empty() {
             sections.push(acp_section);
@@ -1481,6 +1502,70 @@ mod memory_section_tests {
         assert!(
             out.contains("/srv/projects/demo"),
             "expected selected path to appear in prompt: {out}"
+        );
+    }
+
+    #[test]
+    fn default_static_prompt_stays_within_six_k_token_budget() {
+        let definition = mk_definition();
+        let out = build(
+            &definition,
+            Some("gpt-5.4"),
+            Some("OpenAI"),
+            &[],
+            &MemoryBudgetConfig::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            SessionMode::Default,
+            ExecutionMode::Off,
+            crate::workflow_mode::WorkflowMode::Off,
+        );
+        assert!(
+            out.len() / crate::context_compact::CHARS_PER_TOKEN <= 6_000,
+            "default static prompt exceeds 6k token heuristic: {} bytes",
+            out.len()
+        );
+
+        let app_config = crate::config::AppConfig::default();
+        let dispatch_ctx = crate::tools::dispatch::DispatchContext {
+            agent_id: crate::agent_loader::DEFAULT_AGENT_ID,
+            incognito: false,
+            mcp_enabled: definition.config.capabilities.mcp_enabled,
+            memory_enabled: definition.config.memory.enabled,
+            tools_filter: &definition.config.capabilities.tools,
+            app_config: &app_config,
+        };
+        let eager_schema_tokens: u32 = crate::tools::dispatch::all_dispatchable_tools()
+            .iter()
+            .filter(|tool| !crate::tools::is_kb_scoped_tool(&tool.name))
+            .filter(|tool| {
+                matches!(
+                    crate::tools::dispatch::resolve_tool_fate(tool, &dispatch_ctx),
+                    crate::tools::dispatch::ToolFate::InjectEager
+                )
+            })
+            .map(|tool| {
+                crate::context_compact::estimate_tokens(
+                    &tool.to_provider_schema(crate::tools::ToolProvider::OpenAI),
+                )
+            })
+            .sum();
+        let hi_tokens = crate::context_compact::estimate_tokens(&serde_json::json!({
+            "role": "user",
+            "content": "hi"
+        }));
+        let total = (out.len() / crate::context_compact::CHARS_PER_TOKEN) as u32
+            + eager_schema_tokens
+            + hi_tokens;
+        assert!(
+            total <= 10_000,
+            "canonical empty hi request exceeds 10k heuristic: {total} tokens"
         );
     }
 

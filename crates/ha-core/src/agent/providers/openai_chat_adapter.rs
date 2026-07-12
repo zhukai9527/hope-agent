@@ -68,6 +68,7 @@ struct ThinkingAutoDisable {
 }
 
 fn build_chat_body(
+    base_url: &str,
     model: &str,
     thinking_style: &ThinkingStyle,
     model_supports_vision: bool,
@@ -137,6 +138,11 @@ fn build_chat_body(
     if let Some(temp) = req.temperature {
         body["temperature"] = json!(temp);
     }
+    if base_url.contains("api.openai.com") {
+        if let Some(key) = req.prompt_cache_key {
+            body["prompt_cache_key"] = json!(key);
+        }
+    }
 
     (body, api_messages, tools_array)
 }
@@ -150,8 +156,16 @@ fn log_openai_chat_request(
     body: &Value,
 ) {
     let body_str = serde_json::to_string(body).unwrap_or_default();
+    let body_size = body_str.len();
+    super::super::token_manifest::log_round_manifest(
+        "OpenAIChat",
+        model,
+        "chat_completions",
+        req,
+        body_size,
+        false,
+    );
     if let Some(logger) = crate::get_logger() {
-        let body_size = body_str.len();
         let raw_body = if body_size > 32768 {
             format!(
                 "{}...(truncated, total {}B)",
@@ -474,8 +488,13 @@ impl<'a> StreamingChatAdapter for OpenAIChatStreamingAdapter<'a> {
         {
             emit_vision_auto_disabled(&on_delta, self.provider_config, self.model);
         }
-        let (body, api_messages, tools_array) =
-            build_chat_body(self.model, self.thinking_style, model_supports_vision, &req);
+        let (body, api_messages, tools_array) = build_chat_body(
+            self.base_url,
+            self.model,
+            self.thinking_style,
+            model_supports_vision,
+            &req,
+        );
         log_openai_chat_request(
             &api_url,
             self.model,
@@ -509,8 +528,13 @@ impl<'a> StreamingChatAdapter for OpenAIChatStreamingAdapter<'a> {
             ) {
                 on_delta(&autofix.payload.to_string());
                 let retry_style = ThinkingStyle::None;
-                let (retry_body, retry_messages, retry_tools) =
-                    build_chat_body(self.model, &retry_style, model_supports_vision, &req);
+                let (retry_body, retry_messages, retry_tools) = build_chat_body(
+                    self.base_url,
+                    self.model,
+                    &retry_style,
+                    model_supports_vision,
+                    &req,
+                );
                 log_openai_chat_request(
                     &api_url,
                     self.model,
@@ -557,7 +581,7 @@ impl<'a> StreamingChatAdapter for OpenAIChatStreamingAdapter<'a> {
                     emit_vision_auto_disabled(&on_delta, self.provider_config, self.model);
                 }
                 let (retry_body, retry_messages, retry_tools) =
-                    build_chat_body(self.model, self.thinking_style, false, &req);
+                    build_chat_body(self.base_url, self.model, self.thinking_style, false, &req);
                 log_openai_chat_request(
                     &api_url,
                     self.model,
@@ -605,7 +629,7 @@ impl<'a> StreamingChatAdapter for OpenAIChatStreamingAdapter<'a> {
         }
 
         // ── Parse SSE.
-        let (text, tool_calls, usage, thinking_text, ttft_ms) =
+        let (text, tool_calls, mut usage, thinking_text, ttft_ms) =
             parse_chat_completions_sse(resp, request_start, req.reasoning_effort, cancel, on_delta)
                 .await?;
 
@@ -636,10 +660,19 @@ impl<'a> StreamingChatAdapter for OpenAIChatStreamingAdapter<'a> {
             }
         }
 
+        usage.normalize_openai_round();
+        super::super::token_manifest::log_round_usage(
+            "OpenAIChat",
+            self.model,
+            req.round,
+            &usage,
+            ttft_ms,
+        );
         Ok(RoundOutcome {
             text,
             thinking: thinking_text,
             tool_calls,
+            provider_history_items: Vec::new(),
             usage,
             ttft_ms,
             stop_reason: None, // OpenAI Chat exits via empty tool_calls
@@ -786,6 +819,13 @@ async fn parse_chat_completions_sse(
                                 .and_then(|d| d.get("cached_tokens"))
                                 .and_then(|v| v.as_u64())
                                 .or_else(|| u.get("cached_tokens").and_then(|v| v.as_u64()))
+                                .unwrap_or(0);
+                        }
+                        if usage.cache_creation_input_tokens == 0 {
+                            usage.cache_creation_input_tokens = u
+                                .get("prompt_tokens_details")
+                                .and_then(|d| d.get("cache_write_tokens"))
+                                .and_then(|v| v.as_u64())
                                 .unwrap_or(0);
                         }
                     }

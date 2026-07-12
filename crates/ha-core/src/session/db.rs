@@ -914,7 +914,19 @@ impl SessionDB {
                 PRIMARY KEY (session_id, skill_name)
             );
             CREATE INDEX IF NOT EXISTS idx_session_skill_activation_session
-                ON session_skill_activation(session_id);",
+                ON session_skill_activation(session_id);
+
+            -- Deferred-tool V2: tools loaded through tool_search remain
+            -- callable on later turns and after an app restart. Incognito
+            -- sessions deliberately never write this table.
+            CREATE TABLE IF NOT EXISTS session_tool_activation (
+                session_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                activated_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, tool_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_tool_activation_session
+                ON session_tool_activation(session_id);",
         )?;
 
         // ── Idempotent migrations for team_* tables ─────────────────
@@ -3867,7 +3879,7 @@ impl SessionDB {
     }
 
     /// Drain rows that reference `session_id` in tables without FK cascade
-    /// (`session_skill_activation`, `learning_events`, `subagent_runs`,
+    /// (`session_skill_activation`, `session_tool_activation`, `learning_events`, `subagent_runs`,
     /// `acp_runs`). Bundled in a single transaction to amortize fsync.
     /// Best-effort: failures are logged via `app_warn!` so a corrupted side
     /// table never blocks the primary delete.
@@ -3879,6 +3891,7 @@ impl SessionDB {
             conn.execute_batch("BEGIN")?;
             for sql in [
                 "DELETE FROM session_skill_activation WHERE session_id = ?1",
+                "DELETE FROM session_tool_activation WHERE session_id = ?1",
                 "DELETE FROM learning_events WHERE session_id = ?1",
                 "DELETE FROM subagent_runs WHERE parent_session_id = ?1",
                 "DELETE FROM acp_runs WHERE parent_session_id = ?1",
@@ -4087,6 +4100,64 @@ impl SessionDB {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Persist deferred tools activated through `tool_search`. This is not an
+    /// authorization grant: every request and execution re-applies the live
+    /// dispatcher/permission filters before exposing or calling the tool.
+    pub fn insert_tool_activations(
+        &self,
+        session_id: &str,
+        tool_names: &[String],
+    ) -> Result<Vec<String>> {
+        if tool_names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut added = Vec::new();
+        for name in tool_names {
+            let changed = conn.execute(
+                "INSERT OR IGNORE INTO session_tool_activation (session_id, tool_name, activated_at)
+                 VALUES (?1, ?2, ?3)",
+                params![session_id, name, now],
+            )?;
+            if changed > 0 {
+                added.push(name.clone());
+            }
+        }
+        Ok(added)
+    }
+
+    pub fn load_tool_activations(&self, session_id: &str) -> Result<Vec<String>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT tool_name FROM session_tool_activation
+             WHERE session_id = ?1 ORDER BY activated_at, tool_name",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn clear_tool_activations(&self, session_id: &str) -> Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        Ok(conn.execute(
+            "DELETE FROM session_tool_activation WHERE session_id = ?1",
+            params![session_id],
+        )?)
     }
 
     /// Save the agent's conversation_history JSON for a session.

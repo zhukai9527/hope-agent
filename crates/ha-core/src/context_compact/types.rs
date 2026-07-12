@@ -10,9 +10,7 @@ use super::manifest::CompactionManifest;
 /// Uses exponential moving average (EMA) for smooth adaptation.
 #[derive(Debug, Clone)]
 pub struct TokenEstimateCalibrator {
-    #[allow(dead_code)]
     calibration_factor: f64,
-    #[allow(dead_code)]
     sample_count: u32,
 }
 
@@ -25,7 +23,6 @@ impl TokenEstimateCalibrator {
     }
 
     /// Update calibration factor with actual token count from API response.
-    #[allow(dead_code)]
     pub fn update(&mut self, estimated: u32, actual: u32) {
         if estimated == 0 || actual == 0 {
             return;
@@ -37,7 +34,6 @@ impl TokenEstimateCalibrator {
     }
 
     /// Apply calibration to a raw estimate.
-    #[allow(dead_code)]
     pub fn calibrated_estimate(&self, raw_estimate: u32) -> u32 {
         (raw_estimate as f64 * self.calibration_factor) as u32
     }
