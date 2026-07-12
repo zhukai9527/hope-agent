@@ -431,7 +431,7 @@ pub fn search_messages(
 - **incognito 过滤的双路径语义**：
   - `session_id = None`（**全局 FTS** 路径，sidebar 搜索框）：强制 `s.incognito = 0`，无痕会话内容**不会**被全局搜索到
   - `session_id = Some(sid)`（**会话内 Cmd+F** 路径）：**不应用** incognito 过滤；用户既然已经在该无痕会话里，允许搜本会话内容
-- `SessionTypeFilter` 枚举：`Regular` / `Cron` / `Subagent` / `Channel`，用于 sidebar 类型 chips 筛选
+- `SessionTypeFilter` 枚举：`Regular` / `Cron` / `Subagent` / `Channel`。侧边栏浏览态只保留「对话 / Subagent」Tab；输入搜索词后隐藏浏览 Tab，并固定以 `Regular + Subagent + Channel` 做全局检索，因此项目会话、IM 渠道和 Subagent 都可被发现，Cron 仍由独立面板承载
 - snippet 用 STX/ETX（U+0002/U+0003）作为 mark 边界——不可能在用户文本里出现，前端按字符 split 后白名单包回 `<mark>...</mark>`，避免 HTML escape/unescape 攻击面（用户写 `<mark onclick=...>` 不会被反解出来）
 - 返回 `SessionSearchResult`：包含 `message_id` / `session_id` / `session_title` / `agent_id` / `message_role` / `content_snippet` / `timestamp` / `relevance_rank` / `is_cron` / `parent_session_id` / `channel_type` / `channel_chat_type`
 

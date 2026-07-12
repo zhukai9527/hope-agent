@@ -11,9 +11,7 @@ export type SidebarDisplayMode = "compact" | "detailed"
 export const DEFAULT_SIDEBAR_DISPLAY_MODE: SidebarDisplayMode = "compact"
 
 export function normalizeSidebarDisplayMode(value: unknown): SidebarDisplayMode {
-  return value === "compact" || value === "detailed"
-    ? value
-    : DEFAULT_SIDEBAR_DISPLAY_MODE
+  return value === "compact" || value === "detailed" ? value : DEFAULT_SIDEBAR_DISPLAY_MODE
 }
 
 export interface ChatSidebarProps {
@@ -66,4 +64,4 @@ export interface ChatSidebarProps {
   searchFocusSignal?: number
 }
 
-export type SessionFilterType = "all" | "session" | "subagent" | "channel"
+export type SessionFilterType = "session" | "subagent"

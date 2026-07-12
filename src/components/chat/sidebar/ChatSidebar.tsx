@@ -15,7 +15,16 @@ import { IconTip } from "@/components/ui/tooltip"
 import { FloatingMenu } from "@/components/ui/floating-menu"
 import { SearchInput } from "@/components/ui/search-input"
 import { cn } from "@/lib/utils"
-import { Bot, ListCollapse, Loader2, MessageSquarePlus, PanelLeft, Rows3, Search, X } from "lucide-react"
+import {
+  Bot,
+  ListCollapse,
+  Loader2,
+  MessageSquarePlus,
+  PanelLeft,
+  Rows3,
+  Search,
+  X,
+} from "lucide-react"
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
 import type { SessionSearchResult } from "@/types/chat"
@@ -33,6 +42,7 @@ import { SEARCH_LIMIT } from "../hooks/constants"
 import AgentSection from "./AgentSection"
 import SessionList from "./SessionList"
 import ProjectSection from "../project/ProjectSection"
+import { filterSessionsForSidebarTab, GLOBAL_SESSION_SEARCH_TYPES } from "./sessionListModel"
 
 const AGENTS_EXPANDED_STORAGE_KEY = "hope.chatSidebarAgentsExpanded"
 const PROJECTS_EXPANDED_STORAGE_KEY = "hope.chatSidebarProjectsExpanded"
@@ -198,7 +208,9 @@ export default function ChatSidebar({
     const next: SidebarDisplayMode = sidebarDisplayMode === "compact" ? "detailed" : "compact"
     const previous = sidebarDisplayMode
     setSidebarDisplayMode(next)
-    window.dispatchEvent(new CustomEvent("sidebar-display-mode-changed", { detail: { mode: next } }))
+    window.dispatchEvent(
+      new CustomEvent("sidebar-display-mode-changed", { detail: { mode: next } }),
+    )
     try {
       await getTransport().call("set_sidebar_display_mode", { mode: next })
     } catch (err) {
@@ -227,7 +239,7 @@ export default function ChatSidebar({
           // by hidden cron hits (they live in the cron panel's history view, not
           // the sidebar) — otherwise a regular match ranked just below a burst of
           // cron matches could fall outside the limit and never render.
-          types: ["regular", "subagent", "channel"],
+          types: GLOBAL_SESSION_SEARCH_TYPES,
         })
         setSearchResults(sortSessionSearchResults(results ?? []))
       } catch (err) {
@@ -240,22 +252,9 @@ export default function ChatSidebar({
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  const filteredSessions = (() => {
-    const list =
-      selectedAgentId === null ? sessions : sessions.filter((s) => s.agentId === selectedAgentId)
-    switch (sessionFilter) {
-      case "session":
-        // Project-bound sessions render under their project group above —
-        // exclude them here to avoid duplicate rows. IM-channel sessions
-        // are surfaced inline (the row already shows a channel icon)
-        // since the dedicated "channel" tab was retired in Phase B3.
-        return list.filter((s) => !s.isCron && !s.parentSessionId && !s.projectId)
-      case "subagent":
-        return list.filter((s) => !!s.parentSessionId)
-      default:
-        return list
-    }
-  })()
+  // The flat list owns unassigned sessions only. Project sessions stay in the
+  // independently-paginated project tree above, while search remains global.
+  const filteredSessions = filterSessionsForSidebarTab(sessions, sessionFilter, selectedAgentId)
 
   const toggleAgentFilter = useCallback(
     (agentId: string) => {
