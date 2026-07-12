@@ -4928,8 +4928,8 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(await screen.findByText("coding.feature"))
 
     expect((await screen.findAllByText("输出预算")).length).toBeGreaterThan(0)
-    expect(screen.getAllByText("10.0k/10.0k").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("预算用量").length).toBeGreaterThan(0)
+    expect((await screen.findAllByText("10.0k/10.0k")).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText("预算用量")).length).toBeGreaterThan(0)
   })
 
   it("shows reliable workflow run summary metrics without estimating unattributed token cost", async () => {
