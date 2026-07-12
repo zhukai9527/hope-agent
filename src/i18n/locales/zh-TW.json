@@ -1,4 +1,16 @@
 {
+  "agentLifecycle": {
+    "activeWorkBlocked": "仍有 {{count}} 個 Agent 工作正在執行，暫時無法刪除。",
+    "deleteDescription": "路由引用會移轉到替代 Agent；歷史對話與結構化記憶會保留，Agent 檔案會移入可復原的回收站。",
+    "deleteTitle": "安全刪除 Agent",
+    "disabled": "已停用",
+    "enabled": "已啟用",
+    "history": "歷史對話",
+    "memories": "保留的記憶",
+    "replacement": "替代 Agent",
+    "retentionNotice": "操作前會建立設定備份。Agent 設定、Home 與 Plan 只會移入回收站，不會立即永久清除。",
+    "routes": "路由引用"
+  },
   "about": {
     "badge": "面向日常使用的桌面 AI 助手",
     "closing": "它不是為了堆功能清單而設計，而是為了在長時間使用裡依然順手、可靠、不過度打擾。",
@@ -5542,7 +5554,7 @@
       "skillCount_one": "{{count}} 個 skill",
       "skillCount_other": "{{count}} 個 skill",
       "tooltip": {
-        "distinguishOnboarding": "若要遷移舊版 OpenClaw 使用者資料，請使用第 2 步『Import OpenClaw』。"
+        "distinguishUserDataImport": "若要遷移舊版 OpenClaw 使用者資料，請前往「設定 → Agents → 從 OpenClaw 匯入」。"
       },
       "warning": {
         "openclaw": "OpenClaw 多數 skill 依賴外部 CLI（gh、1password、tmux 等），未安裝時呼叫會失敗。",

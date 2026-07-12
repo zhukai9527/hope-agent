@@ -626,6 +626,7 @@ export type SessionSearchType = "regular" | "cron" | "subagent" | "channel"
 
 export interface AgentSummaryForSidebar {
   id: string
+  enabled?: boolean
   name: string
   description?: string | null
   emoji?: string | null

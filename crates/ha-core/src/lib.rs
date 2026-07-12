@@ -26,6 +26,7 @@ pub mod acp_control;
 pub mod activity;
 pub mod agent;
 pub mod agent_config;
+pub mod agent_lifecycle;
 pub mod agent_loader;
 pub mod ask_user;
 pub mod automation;

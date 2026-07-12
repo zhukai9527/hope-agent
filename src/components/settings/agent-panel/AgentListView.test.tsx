@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import AgentListView from "./AgentListView"
 
@@ -72,7 +72,7 @@ describe("AgentListView", () => {
   it("shows a retryable, redacted list load failure instead of an empty-agent state", async () => {
     let listCalls = 0
     transportMock.call.mockImplementation(async (command: string) => {
-      if (command === "list_agents") {
+      if (command === "list_all_agents") {
         listCalls += 1
         if (listCalls === 1) throw new Error("agent list failed token=agent-list-secret")
         return [{ id: "agent-1", name: "Research agent", description: null }]
@@ -89,16 +89,14 @@ describe("AgentListView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /common\.retry/ }))
 
-    await waitFor(() => {
-      expect(screen.queryByText("Failed to load agent")).toBeNull()
-    })
-    expect(listCalls).toBe(2)
     expect(await screen.findByText("Research agent")).toBeTruthy()
+    expect(screen.queryByText("Failed to load agent")).toBeNull()
+    expect(listCalls).toBe(2)
   })
 
   it("shows redacted detail when creating an agent fails", async () => {
     transportMock.call.mockImplementation(async (command: string) => {
-      if (command === "list_agents") return []
+      if (command === "list_all_agents") return []
       if (command === "save_agent_config_cmd") {
         throw new Error("create failed api_key=create-agent-secret")
       }
@@ -114,7 +112,24 @@ describe("AgentListView", () => {
     fireEvent.click(screen.getByRole("button", { name: "common.add" }))
 
     expect(await screen.findByText("Save failed")).toBeTruthy()
+    expect(transportMock.call).toHaveBeenCalledWith(
+      "save_agent_config_cmd",
+      expect.objectContaining({ id: "research", create: true }),
+    )
     expect(screen.getByText("Details: create failed api_key=[redacted]")).toBeTruthy()
     expect(screen.queryByText(/create-agent-secret/)).toBeNull()
+  })
+
+  it("keeps OpenClaw migration as a secondary action after agent settings", async () => {
+    transportMock.call.mockResolvedValue([])
+
+    render(<AgentListView onEditAgent={vi.fn()} />)
+
+    const defaultAgentSection = await screen.findByTestId("default-agent-section")
+    const importButton = screen.getByRole("button", { name: "settings.openclawImportBtn" })
+
+    expect(
+      defaultAgentSection.compareDocumentPosition(importButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
   })
 })

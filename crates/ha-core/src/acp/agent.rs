@@ -227,6 +227,16 @@ impl AcpAgent {
             .agent_id
             .unwrap_or_else(|| self.default_agent_id.clone());
 
+        // ACP does not use the shared chat engine. Reserve the Agent before
+        // creating the durable session so deletion cannot slip between
+        // validation and session construction.
+        let _agent_admission = match crate::agent_lifecycle::begin_agent_run(&agent_id) {
+            Ok(guard) => guard,
+            Err(e) => {
+                return JsonRpcResponse::error(id.clone(), ERROR_INVALID_PARAMS, e.to_string())
+            }
+        };
+
         let session_meta = match self.session_db.create_session(&agent_id) {
             Ok(m) => m,
             Err(e) => return JsonRpcResponse::error(id.clone(), ERROR_INTERNAL, e.to_string()),
@@ -623,6 +633,7 @@ impl AcpAgent {
 
     /// Build an AssistantAgent from provider config (mirrors cron::build_and_run_agent)
     fn build_agent(&self, agent_id: &str, session_id: &str) -> Result<AssistantAgent> {
+        let _agent_admission = crate::agent_lifecycle::begin_agent_run(agent_id)?;
         let store = crate::config::cached_config();
         let agent_model_config = crate::agent_loader::load_agent(agent_id)
             .map(|def| def.config.model)
@@ -752,6 +763,7 @@ impl AcpAgent {
             .get(session_id)
             .map(|s| s.agent_id.clone())
             .unwrap_or_else(|| self.default_agent_id.clone());
+        let _agent_run_guard = crate::agent_lifecycle::begin_agent_run(&agent_id)?;
 
         let agent_model_config = crate::agent_loader::load_agent(&agent_id)
             .map(|def| def.config.model)

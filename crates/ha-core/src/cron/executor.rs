@@ -69,7 +69,9 @@ pub async fn execute_job_public(
         );
         return;
     }
-    match cron_db.claim_immediate_job_for_execution(job) {
+    match crate::agent_lifecycle::with_lifecycle_gate(|| {
+        cron_db.claim_immediate_job_for_execution(job)
+    }) {
         Ok(Some(claimed)) => execute_claimed_job(cron_db, session_db, claimed).await,
         Ok(None) => {
             app_warn!(
@@ -270,6 +272,29 @@ pub(crate) async fn execute_claimed_job(
             pid,
             agent_id
         );
+    };
+
+    // Acquire before the isolated session and run metadata are persisted.
+    // The engine retains its own guard as a shared backstop; this outer guard
+    // closes the shell-side create/delete race.
+    let _agent_admission = match crate::agent_lifecycle::begin_agent_run(&agent_id) {
+        Ok(guard) => guard,
+        Err(error) => {
+            record_failure(
+                cron_db,
+                &job,
+                &started_at,
+                start_time,
+                "agent_unavailable",
+                &error.to_string(),
+                "",
+                None,
+                None,
+                false,
+                immediate,
+            );
+            return;
+        }
     };
 
     // Create an isolated session for this cron run

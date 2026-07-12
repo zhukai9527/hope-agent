@@ -1492,6 +1492,7 @@ fn build_router_with_cors(
         )
         // Agents
         .route("/agents", get(routes::agents::list_agents))
+        .route("/agents/all", get(routes::agents::list_all_agents))
         .route("/agents/reorder", post(routes::agents::reorder_agents))
         .route("/agents/template", get(routes::agents::get_agent_template))
         .route("/agents/initialize", post(routes::agents::initialize_agent))
@@ -1516,6 +1517,14 @@ fn build_router_with_cors(
         .route(
             "/agents/{id}/model-defaults",
             patch(routes::agents::patch_agent_model_defaults),
+        )
+        .route(
+            "/agents/{id}/delete-preview",
+            get(routes::agents::preview_agent_delete),
+        )
+        .route(
+            "/agents/{id}/enabled",
+            patch(routes::agents::set_agent_enabled),
         )
         .route("/agents/{id}", delete(routes::agents::delete_agent))
         .route(

@@ -34,7 +34,7 @@ afterEach(() => {
   cleanup()
 })
 
-it("treats an empty scan payload as not detected instead of crashing", async () => {
+it("handles a missing OpenClaw installation from Settings", async () => {
   transportMock.call.mockResolvedValueOnce(undefined)
 
   render(<OpenClawImportPanel onSkip={() => {}} onImported={() => {}} />)

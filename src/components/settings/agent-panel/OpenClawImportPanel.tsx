@@ -1,15 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
-import {
-  AlertTriangle,
-  Check,
-  Database,
-  Folder,
-  Loader2,
-  Server,
-  Users,
-  X,
-} from "lucide-react"
+import { AlertTriangle, Check, Database, Folder, Loader2, Server, Users, X } from "lucide-react"
 
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
@@ -157,11 +148,7 @@ interface OpenClawImportPanelProps {
   hideSkip?: boolean
 }
 
-export function OpenClawImportPanel({
-  onSkip,
-  onImported,
-  hideSkip,
-}: OpenClawImportPanelProps) {
+export function OpenClawImportPanel({ onSkip, onImported, hideSkip }: OpenClawImportPanelProps) {
   const { t } = useTranslation()
   const [scanning, setScanning] = useState(true)
   const [scanError, setScanError] = useState<string | null>(null)
@@ -214,7 +201,7 @@ export function OpenClawImportPanel({
         }
         setAgentEdits(seeded)
       } catch (e) {
-        logger.warn("onboarding", "OpenClawImportPanel", "scan_openclaw_full failed", e)
+        logger.warn("settings", "OpenClawImportPanel", "scan_openclaw_full failed", e)
         if (!cancelled) setScanError(String(e))
       } finally {
         if (!cancelled) setScanning(false)
@@ -280,15 +267,18 @@ export function OpenClawImportPanel({
     try {
       const importAgents: ImportAgentRequest[] = preview.agents
         .filter((a) => selectedAgents.has(a.id))
-        .map((a) => agentEdits[a.id] ?? {
-          sourceId: a.id,
-          targetId: a.id,
-          name: a.name,
-          emoji: a.emoji ?? null,
-          vibe: null,
-          sandbox: a.sandbox,
-          importFiles: a.availableFiles,
-        })
+        .map(
+          (a) =>
+            agentEdits[a.id] ?? {
+              sourceId: a.id,
+              targetId: a.id,
+              name: a.name,
+              emoji: a.emoji ?? null,
+              vibe: null,
+              sandbox: a.sandbox,
+              importFiles: a.availableFiles,
+            },
+        )
 
       // Translate "selected agent ids (source)" to target ids since the
       // backend keys memory imports off the canonical target.
@@ -304,10 +294,9 @@ export function OpenClawImportPanel({
         importGlobalMemory: globalMemory,
         importAgentMemories: Array.from(selectedAgentTargetIds),
       }
-      const summary = await getTransport().call<ImportSummary>(
-        "import_openclaw_full",
-        { request: payload },
-      )
+      const summary = await getTransport().call<ImportSummary>("import_openclaw_full", {
+        request: payload,
+      })
       setSaveStatus("saved")
       setLastSummary(summary)
       const failedAgents = summary.agents.filter((a) => !a.success)
@@ -319,11 +308,11 @@ export function OpenClawImportPanel({
       }
       if (failedAgents.length > 0) {
         const failedSourceIds = new Set(failedAgents.map((a) => a.sourceId))
-        setSelectedAgents((prev) =>
-          new Set(Array.from(prev).filter((agentId) => failedSourceIds.has(agentId))),
+        setSelectedAgents(
+          (prev) => new Set(Array.from(prev).filter((agentId) => failedSourceIds.has(agentId))),
         )
-        setSelectedAgentMemories((prev) =>
-          new Set(Array.from(prev).filter((agentId) => failedSourceIds.has(agentId))),
+        setSelectedAgentMemories(
+          (prev) => new Set(Array.from(prev).filter((agentId) => failedSourceIds.has(agentId))),
         )
       }
       if (failedAgents.length > 0 || summary.warnings.length > 0) {
@@ -332,7 +321,7 @@ export function OpenClawImportPanel({
       }
       onImported(summary)
     } catch (e) {
-      logger.error("onboarding", "OpenClawImportPanel", "import_openclaw_full failed", e)
+      logger.error("settings", "OpenClawImportPanel", "import_openclaw_full failed", e)
       setSaveStatus("failed")
       setTimeout(() => setSaveStatus("idle"), 2000)
     } finally {
@@ -345,9 +334,7 @@ export function OpenClawImportPanel({
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          {t("onboarding.importOpenClaw.scanning")}
-        </p>
+        <p className="text-sm text-muted-foreground">{t("onboarding.importOpenClaw.scanning")}</p>
       </div>
     )
   }
@@ -355,9 +342,7 @@ export function OpenClawImportPanel({
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
         <AlertTriangle className="h-6 w-6 text-amber-600" />
-        <p className="text-sm text-muted-foreground">
-          {t("onboarding.importOpenClaw.scanFailed")}
-        </p>
+        <p className="text-sm text-muted-foreground">{t("onboarding.importOpenClaw.scanFailed")}</p>
         <p className="text-xs text-muted-foreground/70 max-w-md break-all">{scanError}</p>
         {!hideSkip && (
           <Button variant="ghost" onClick={onSkip} className="mt-2">
@@ -436,9 +421,7 @@ export function OpenClawImportPanel({
             if (selectedProviders.size === preview.providers.length) {
               setSelectedProviders(new Set())
             } else {
-              setSelectedProviders(
-                new Set(preview.providers.map((p) => p.sourceKey)),
-              )
+              setSelectedProviders(new Set(preview.providers.map((p) => p.sourceKey)))
             }
             setLastSummary(null)
             setSaveStatus("idle")
@@ -475,9 +458,7 @@ export function OpenClawImportPanel({
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {p.baseUrl}
-                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{p.baseUrl}</div>
                       <div className="mt-1 flex flex-wrap gap-1">
                         <Chip>
                           {t("onboarding.importOpenClaw.providers.modelCount", {
@@ -496,9 +477,7 @@ export function OpenClawImportPanel({
                         )}
                       </div>
                       {p.apiTypeWarning && (
-                        <div className="mt-1 text-[11px] text-amber-700/80">
-                          {p.apiTypeWarning}
-                        </div>
+                        <div className="mt-1 text-[11px] text-amber-700/80">{p.apiTypeWarning}</div>
                       )}
                     </div>
                   </div>
@@ -541,11 +520,7 @@ export function OpenClawImportPanel({
                   )}
                 >
                   <div className="flex items-start gap-3">
-                    <button
-                      type="button"
-                      className="mt-0.5"
-                      onClick={() => toggleAgent(a.id)}
-                    >
+                    <button type="button" className="mt-0.5" onClick={() => toggleAgent(a.id)}>
                       <Checkbox checked={checked} />
                     </button>
                     <div className="flex-1 min-w-0">
@@ -574,9 +549,7 @@ export function OpenClawImportPanel({
                       <div className="mt-1 flex flex-wrap gap-1">
                         {a.modelInfo && <Chip>{a.modelInfo}</Chip>}
                         {a.hasSystemPrompt && (
-                          <Chip>
-                            {t("onboarding.importOpenClaw.agents.hasSystemPrompt")}
-                          </Chip>
+                          <Chip>{t("onboarding.importOpenClaw.agents.hasSystemPrompt")}</Chip>
                         )}
                         {a.sandbox && (
                           <Chip variant="warn">
@@ -621,9 +594,7 @@ export function OpenClawImportPanel({
                     setGlobalMemory((v) => !v)
                   }}
                 />
-                <span className="text-sm">
-                  {t("onboarding.importOpenClaw.memory.global")}
-                </span>
+                <span className="text-sm">{t("onboarding.importOpenClaw.memory.global")}</span>
               </label>
             )}
             {preview.memories.agentMdCounts.map((entry) => {
@@ -690,8 +661,8 @@ export function OpenClawImportPanel({
         }}
         canContinue={Boolean(
           lastSummary &&
-            lastSummary.agents.every((a) => a.success) &&
-            lastSummary.warnings.length > 0,
+          lastSummary.agents.every((a) => a.success) &&
+          lastSummary.warnings.length > 0,
         )}
         hideSkip={hideSkip}
       />
@@ -901,13 +872,7 @@ function Checkbox({
   )
 }
 
-function Chip({
-  children,
-  variant,
-}: {
-  children: React.ReactNode
-  variant?: "warn" | "success"
-}) {
+function Chip({ children, variant }: { children: React.ReactNode; variant?: "warn" | "success" }) {
   return (
     <span
       className={cn(

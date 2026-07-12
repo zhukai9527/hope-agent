@@ -405,12 +405,15 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Agents --
   list_agents: { method: "GET", path: "/api/agents" },
+  list_all_agents: { method: "GET", path: "/api/agents/all" },
   reorder_agents: { method: "POST", path: "/api/agents/reorder" },
   get_agent_template: { method: "GET", path: "/api/agents/template" },
   initialize_agent: { method: "POST", path: "/api/agents/initialize" },
   get_agent_config: { method: "GET", path: "/api/agents/{id}" },
   save_agent_config_cmd: { method: "PUT", path: "/api/agents/{id}" },
   patch_agent_model_defaults: { method: "PATCH", path: "/api/agents/{id}/model-defaults" },
+  preview_agent_delete: { method: "GET", path: "/api/agents/{id}/delete-preview" },
+  set_agent_enabled: { method: "PATCH", path: "/api/agents/{id}/enabled" },
   delete_agent: { method: "DELETE", path: "/api/agents/{id}" },
   get_agent_markdown: { method: "GET", path: "/api/agents/{id}/markdown" },
   save_agent_markdown: { method: "PUT", path: "/api/agents/{id}/markdown" },
