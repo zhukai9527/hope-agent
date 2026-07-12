@@ -10,10 +10,19 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
+  AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { AvatarCropDialog } from "@/components/settings/AvatarCropDialog"
 import { useAvatarUpload } from "@/hooks/useAvatarUpload"
 import { AlertTriangle, ArrowLeft, Camera, Check, Loader2, RefreshCw, Trash2 } from "lucide-react"
@@ -23,6 +32,7 @@ import type {
   AvailableModel,
   SkillSummary,
   AgentTab,
+  AgentSummary,
 } from "./types"
 import { DEFAULT_PERSONALITY, TABS } from "./types"
 import { isMainAgent } from "@/types/tools"
@@ -43,6 +53,36 @@ interface AgentEditViewProps {
   agentId: string
   initialTab?: AgentTab
   onBack: () => void
+}
+
+interface AgentDeletePreview {
+  agentId: string
+  agentName: string
+  enabled: boolean
+  isMain: boolean
+  references: {
+    globalConfig: number
+    projects: number
+    cronJobs: number
+    pendingWakeups: number
+    otherAgentConfigs: number
+    historicalSessions: number
+    historicalSubagentRuns: number
+    historicalTeams: number
+    agentMemories: number
+  }
+  activeWork: {
+    agentRuns: number
+    foregroundSessions: number
+    subagentRuns: number
+    teams: number
+    cronRuns: number
+    backgroundJobs: number
+    pendingWakeups: number
+  }
+  hasHomeDir: boolean
+  hasPlanDir: boolean
+  blockers: string[]
 }
 
 export default function AgentEditView({ agentId, initialTab, onBack }: AgentEditViewProps) {
@@ -73,6 +113,11 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([])
   const [needsFillTemplate, setNeedsFillTemplate] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deletePreview, setDeletePreview] = useState<AgentDeletePreview | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [replacementAgentId, setReplacementAgentId] = useState("")
+  const [replacementAgents, setReplacementAgents] = useState<AgentSummary[]>([])
+  const [togglingEnabled, setTogglingEnabled] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadRetryKey, setLoadRetryKey] = useState(0)
   const composingRef = useRef(false)
@@ -249,11 +294,40 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
     }
   }
 
-  const handleDelete = async () => {
+  const prepareDelete = async () => {
     if (isMainAgent(agentId)) return
-    if (!config) return
+    setConfirmDeleteOpen(true)
+    setDeleteLoading(true)
+    setDeletePreview(null)
     try {
-      await getTransport().call("delete_agent", { id: agentId })
+      const [preview, agents] = await Promise.all([
+        getTransport().call<AgentDeletePreview>("preview_agent_delete", { id: agentId }),
+        getTransport().call<AgentSummary[]>("list_agents"),
+      ])
+      const choices = agents.filter((agent) => agent.id !== agentId && agent.enabled !== false)
+      setDeletePreview(preview)
+      setReplacementAgents(choices)
+      setReplacementAgentId((current) =>
+        choices.some((agent) => agent.id === current) ? current : (choices[0]?.id ?? ""),
+      )
+    } catch (e) {
+      logger.error("settings", "AgentPanel::previewDelete", "Failed to preview deletion", e)
+      const failureToast = agentOperationErrorToast("delete", t, e)
+      toast.error(failureToast.title, { description: failureToast.description })
+      setConfirmDeleteOpen(false)
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (isMainAgent(agentId) || !config || !replacementAgentId) return
+    setDeleteLoading(true)
+    try {
+      await getTransport().call("delete_agent", {
+        id: agentId,
+        replacementAgentId,
+      })
       window.dispatchEvent(new Event("agents-changed"))
       toast.success(t("common.deleted"), {
         description: config.name,
@@ -269,7 +343,28 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
           : { description: config.name },
       )
     }
+    setDeleteLoading(false)
     setConfirmDeleteOpen(false)
+  }
+
+  const handleEnabledChange = async (enabled: boolean) => {
+    if (isMainAgent(agentId) || !config) return
+    const previous = config.enabled !== false
+    updateConfig({ enabled })
+    setTogglingEnabled(true)
+    try {
+      await getTransport().call("set_agent_enabled", { id: agentId, enabled })
+      window.dispatchEvent(new Event("agents-changed"))
+      toast.success(enabled ? t("provider.enable") : t("provider.disable"), {
+        description: config.name,
+      })
+    } catch (e) {
+      updateConfig({ enabled: previous })
+      const failureToast = agentOperationErrorToast("save", t, e)
+      toast.error(failureToast.title, { description: failureToast.description })
+    } finally {
+      setTogglingEnabled(false)
+    }
   }
 
   const {
@@ -562,9 +657,7 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
             <SubagentTab config={config} agentId={agentId} updateConfig={updateConfig} />
           )}
 
-          {activeTab === "approval" && (
-            <ApprovalTab config={config} updateConfig={updateConfig} />
-          )}
+          {activeTab === "approval" && <ApprovalTab config={config} updateConfig={updateConfig} />}
 
           {activeTab === "custom" && (
             <CustomTab
@@ -588,17 +681,34 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
 
       {/* Bottom bar: delete + save */}
       <div className="shrink-0 flex items-center justify-between px-6 py-3 border-t border-border/30">
-        <div>
+        <div className="flex items-center gap-3">
           {!isMainAgent(agentId) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 text-muted-foreground hover:text-destructive"
-              onClick={() => setConfirmDeleteOpen(true)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>{t("common.delete")}</span>
-            </Button>
+            <>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch
+                  checked={config.enabled !== false}
+                  disabled={togglingEnabled}
+                  onCheckedChange={(enabled) => void handleEnabledChange(enabled)}
+                  aria-label={
+                    config.enabled !== false ? t("provider.disable") : t("provider.enable")
+                  }
+                />
+                <span>
+                  {config.enabled !== false
+                    ? t("agentLifecycle.enabled")
+                    : t("agentLifecycle.disabled")}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground hover:text-destructive"
+                onClick={() => void prepareDelete()}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{t("common.delete")}</span>
+              </Button>
+            </>
           )}
         </div>
         <Button
@@ -630,15 +740,73 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("settings.agentDeleteConfirm")}</AlertDialogTitle>
+            <AlertDialogTitle>{t("agentLifecycle.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("agentLifecycle.deleteDescription")}</AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteLoading && !deletePreview ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : deletePreview ? (
+            <div className="space-y-4 text-sm">
+              {deletePreview.blockers.includes("active_work") && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">
+                  {t("agentLifecycle.activeWorkBlocked", {
+                    count: Object.values(deletePreview.activeWork).reduce((a, b) => a + b, 0),
+                  })}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2 rounded-md bg-secondary/40 p-3 text-xs text-muted-foreground">
+                <span>{t("agentLifecycle.routes")}</span>
+                <span className="text-right text-foreground">
+                  {deletePreview.references.globalConfig +
+                    deletePreview.references.projects +
+                    deletePreview.references.cronJobs +
+                    deletePreview.references.pendingWakeups +
+                    deletePreview.references.otherAgentConfigs}
+                </span>
+                <span>{t("agentLifecycle.history")}</span>
+                <span className="text-right text-foreground">
+                  {deletePreview.references.historicalSessions}
+                </span>
+                <span>{t("agentLifecycle.memories")}</span>
+                <span className="text-right text-foreground">
+                  {deletePreview.references.agentMemories}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium">{t("agentLifecycle.replacement")}</div>
+                <Select value={replacementAgentId} onValueChange={setReplacementAgentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t("common.select")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {replacementAgents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("agentLifecycle.retentionNotice")}
+              </p>
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => void handleDelete()}
+              disabled={
+                deleteLoading ||
+                !deletePreview ||
+                deletePreview.blockers.length > 0 ||
+                !replacementAgentId
+              }
             >
-              {t("common.delete")}
+              {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -81,8 +81,8 @@ pub(crate) async fn spawn_subagent_with_run_id(
         ));
     }
     // 2. Agent exists.
-    let _agent_def = crate::agent_loader::load_agent(&params.agent_id)
-        .map_err(|e| anyhow::anyhow!("Agent '{}' not found: {}", params.agent_id, e))?;
+    let _agent_run_admission = crate::agent_lifecycle::begin_agent_run(&params.agent_id)
+        .map_err(|e| anyhow::anyhow!("Agent '{}' is unavailable: {}", params.agent_id, e))?;
 
     // ── Resource limit (R7.2): at the per-session concurrency limit, PARK the
     // spawn as `Queued` instead of rejecting — the subagent scheduler

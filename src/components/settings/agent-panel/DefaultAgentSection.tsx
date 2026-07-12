@@ -3,12 +3,7 @@ import { useTranslation } from "react-i18next"
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
 import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
 import { AgentSelectDisplay } from "@/components/common/AgentSelectDisplay"
 import { DEFAULT_AGENT_ID } from "@/types/tools"
 import type { AgentSummary } from "./types"
@@ -30,10 +25,7 @@ interface DefaultAgentSectionProps {
  * See `AppConfig.default_agent_id` and `crate::agent::resolver` in the
  * backend for the precedence chain.
  */
-export default function DefaultAgentSection({
-  agents,
-  loading = false,
-}: DefaultAgentSectionProps) {
+export default function DefaultAgentSection({ agents, loading = false }: DefaultAgentSectionProps) {
   const { t } = useTranslation()
   const [defaultAgentId, setDefaultAgentId] = useState<string>(DEFAULT_AGENT_ID)
   const [loaded, setLoaded] = useState(false)
@@ -57,12 +49,7 @@ export default function DefaultAgentSection({
         setLoaded(true)
       } catch (e) {
         if (options.cancelled?.()) return
-        logger.error(
-          "settings",
-          "DefaultAgentSection::load",
-          "Failed to load default agent",
-          e,
-        )
+        logger.error("settings", "DefaultAgentSection::load", "Failed to load default agent", e)
         setLoadError(agentOperationErrorToast("load", t, e))
       }
     },
@@ -78,7 +65,9 @@ export default function DefaultAgentSection({
   }, [loadDefaultAgent])
 
   const sortedAgents = useMemo(() => {
-    return [...agents].sort((a, b) => a.name.localeCompare(b.name))
+    return agents
+      .filter((agent) => agent.enabled !== false)
+      .sort((a, b) => a.name.localeCompare(b.name))
   }, [agents])
 
   const selectedAgent = sortedAgents.find((a) => a.id === defaultAgentId)

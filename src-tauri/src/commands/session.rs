@@ -31,6 +31,10 @@ pub async fn create_session_cmd(
             ha_core::agent::resolver::resolve_default_agent_id(project.as_ref(), None)
         }
     };
+    // Reserve the Agent before the SessionDB write so a stale UI cannot create
+    // a durable session for a disabled/deleted Agent or race deletion between
+    // validation and insertion.
+    let _agent_admission = ha_core::agent_lifecycle::begin_agent_run(&agent_id)?;
     state
         .session_db
         .run(move |db| db.create_session_with_project(&agent_id, project_id.as_deref(), incognito))

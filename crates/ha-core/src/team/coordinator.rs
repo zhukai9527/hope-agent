@@ -106,6 +106,10 @@ pub async fn spawn_member(
     role_description: Option<&str>,
     color_index: usize,
 ) -> Result<TeamMember> {
+    // Reserve the target before persisting the TeamMember row. Subagent spawn
+    // acquires its own admission later, but doing that only after this insert
+    // leaves a deletion race that can strand an active Team on a removed id.
+    let _agent_admission = crate::agent_lifecycle::begin_agent_run(agent_id)?;
     let member_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 

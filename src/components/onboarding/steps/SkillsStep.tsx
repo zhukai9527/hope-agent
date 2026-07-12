@@ -174,7 +174,7 @@ export function SkillsStep({ initialDisabled, onChange }: SkillsStepProps) {
             )}
             <span>{t("settings.skillsDirAdd")}</span>
           </button>
-          <IconTip label={t("settings.skillsImport.tooltip.distinguishOnboarding")}>
+          <IconTip label={t("settings.skillsImport.tooltip.distinguishUserDataImport")}>
             <button
               type="button"
               onClick={() => setQuickImportOpen(true)}

@@ -764,15 +764,20 @@ Loop owner API 管理 session-scoped recurring triggers。`create_loop_schedule`
 | Tauri Command | HTTP | 状态 |
 |---|---|---|
 | `list_agents` | `GET /api/agents` | ✅ |
+| `list_all_agents` | `GET /api/agents/all` | ✅ owner 设置面，包含 disabled |
 | `get_agent_template` | `GET /api/agents/template` | ✅ |
 | `initialize_agent` | `POST /api/agents/initialize` | ✅ (见 §7.4 语义差异) |
 | `get_agent_config` | `GET /api/agents/{id}` | ✅ |
-| `save_agent_config_cmd` | `PUT /api/agents/{id}` | ✅ |
-| `delete_agent` | `DELETE /api/agents/{id}` | ✅ |
+| `save_agent_config_cmd` | `PUT /api/agents/{id}` | ✅ `create=true` 仅用于显式新建/重用已删 id；普通保存受删除墓碑保护 |
+| `preview_agent_delete` | `GET /api/agents/{id}/delete-preview` | ✅ 引用/活动工作/保留数据预检 |
+| `set_agent_enabled` | `PATCH /api/agents/{id}/enabled` | ✅ 主 Agent 不可禁用；仍被全局 / Project / Channel / Cron / Wakeup 实时路由引用时拒绝禁用 |
+| `delete_agent` | `DELETE /api/agents/{id}?replacementAgentId=...` | ✅ 活动工作 fail closed、含待触发 Wakeup 的引用重绑与精确回滚、备份 + 可恢复回收站；无持久化 Wakeup 作为活动工作阻断 |
 | `get_agent_markdown` | `GET /api/agents/{id}/markdown` | ✅ |
 | `save_agent_markdown` | `PUT /api/agents/{id}/markdown` | ✅ |
 | `render_persona_to_soul_md` | `POST /api/agents/{id}/persona/render-soul-md` | ✅ |
 | `get_agent_memory_md` | `GET /api/agents/{id}/memory-md` | ✅ |
+
+Agent 执行准入采用两层 guard：Desktop / HTTP / Channel / Cron 等调用方必须在创建会话、写 turn / 注入消息等持久化副作用前取得外层 guard，`run_chat_engine` 入口再取得内层 backstop。删除与两层准入共用同一生命周期锁；禁止退化为“先 `ensure_agent_runnable`、落库后再进引擎”，否则检查与删除之间会留下 TOCTOU 窗口。删除重绑 Subagent allowlist 时，若 replacement 已在 denylist 必须同步移除（deny 优先于 allow）。
 | `save_agent_memory_md` | `PUT /api/agents/{id}/memory-md` | ✅ |
 | `dreaming_run_now` | `POST /api/dreaming/run` | ✅ |
 | `dreaming_run_resolver` | `POST /api/dreaming/resolver` | ✅ owner 平面；Deep resolver（phase=deep）：valid_until 过期确定性 expire + 同主谓多对象组 LLM 判定 duplicates→merge / conflict→needs_review / independent→no_op，绝不自动 supersede 或硬删 |

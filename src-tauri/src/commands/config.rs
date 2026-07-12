@@ -16,6 +16,9 @@ pub async fn get_default_agent_id() -> Result<Option<String>, CmdError> {
 #[tauri::command]
 pub async fn set_default_agent_id(agent_id: Option<String>) -> Result<(), CmdError> {
     let normalized = ha_core::agent::resolver::normalize_default_agent_id(agent_id.as_deref());
+    if let Some(id) = normalized.as_deref() {
+        ha_core::agent_lifecycle::ensure_agent_runnable(id)?;
+    }
     ha_core::config::mutate_config_async(("default_agent", "settings-ui"), move |store| {
         store.default_agent_id = normalized;
         Ok(())

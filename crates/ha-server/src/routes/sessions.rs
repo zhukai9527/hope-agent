@@ -614,6 +614,11 @@ pub async fn create_session(
     let agent_id = explicit_agent_id.map(ToOwned::to_owned).unwrap_or_else(|| {
         ha_core::agent::resolver::resolve_default_agent_id(project.as_ref(), None)
     });
+    // Hold lifecycle admission across the durable session insert. This makes
+    // explicit session creation obey the same fail-closed contract as lazy
+    // chat creation: disabled/deleted Agents fail before any row is written,
+    // and deletion cannot pass its active-work scan mid-insert.
+    let _agent_admission = ha_core::agent_lifecycle::begin_agent_run(&agent_id)?;
     let meta = {
         let agent_id = agent_id.clone();
         let project_id = body.project_id.clone();

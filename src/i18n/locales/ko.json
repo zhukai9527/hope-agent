@@ -1,4 +1,16 @@
 {
+  "agentLifecycle": {
+    "activeWorkBlocked": "Deletion is blocked while {{count}} Agent task(s) are still active.",
+    "deleteDescription": "Routing references will move to the replacement Agent. Historical conversations and structured memories are retained, while Agent files are moved to the recoverable trash.",
+    "deleteTitle": "Delete Agent safely",
+    "disabled": "Disabled",
+    "enabled": "Enabled",
+    "history": "Historical conversations",
+    "memories": "Retained memories",
+    "replacement": "Replacement Agent",
+    "retentionNotice": "This operation creates a configuration backup. Agent configuration, Home, and Plans are moved to trash instead of being permanently erased.",
+    "routes": "Routing references"
+  },
   "about": {
     "badge": "일상 업무를 위한 데스크톱 AI",
     "closing": "기능 체크리스트로 만든 것이 아닙니다. 오래 써도 유용하고, 믿을 수 있고, 과하게 방해하지 않도록 설계했습니다.",
@@ -5542,7 +5554,7 @@
       "skillCount_one": "{{count}}개 skill",
       "skillCount_other": "{{count}}개 skill",
       "tooltip": {
-        "distinguishOnboarding": "이전 OpenClaw 사용자 데이터 마이그레이션은 2단계의 'Import OpenClaw'를 사용하세요."
+        "distinguishUserDataImport": "이전 OpenClaw 사용자 데이터를 이전하려면 설정 → Agents → OpenClaw에서 가져오기로 이동하세요."
       },
       "warning": {
         "openclaw": "OpenClaw skill은 외부 CLI(gh, 1password, tmux 등)에 의존하는 경우가 많아 설치 전에는 호출이 실패할 수 있습니다.",

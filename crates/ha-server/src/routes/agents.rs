@@ -13,6 +13,11 @@ pub async fn list_agents() -> Result<Json<Vec<ha_core::agent_config::AgentSummar
     Ok(Json(agents))
 }
 
+/// Owner-plane list including disabled Agents.
+pub async fn list_all_agents() -> Result<Json<Vec<ha_core::agent_config::AgentSummary>>, AppError> {
+    Ok(Json(ha_core::agent_loader::list_all_agents()?))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReorderAgentsBody {
@@ -41,6 +46,8 @@ pub async fn get_agent(
 #[derive(Debug, Deserialize)]
 pub struct SaveAgentBody {
     pub config: ha_core::agent_config::AgentConfig,
+    #[serde(default)]
+    pub create: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +60,11 @@ pub async fn save_agent(
     Path(id): Path<String>,
     Json(body): Json<SaveAgentBody>,
 ) -> Result<Json<Value>, AppError> {
-    ha_core::agent_loader::save_agent_config(&id, &body.config)?;
+    if body.create {
+        ha_core::agent_loader::create_agent_config(&id, &body.config)?;
+    } else {
+        ha_core::agent_loader::save_agent_config(&id, &body.config)?;
+    }
     if let Some(bus) = ha_core::get_event_bus() {
         bus.emit("agents:changed", json!({ "id": id, "kind": "saved" }));
     }
@@ -77,13 +88,64 @@ pub async fn patch_agent_model_defaults(
     Ok(Json(json!({ "updated": true })))
 }
 
-/// `DELETE /api/agents/{id}` -- delete an agent and all its files.
-pub async fn delete_agent(Path(id): Path<String>) -> Result<Json<Value>, AppError> {
-    ha_core::agent_loader::delete_agent(&id)?;
+/// `GET /api/agents/{id}/delete-preview` -- inspect blockers and references.
+pub async fn preview_agent_delete(
+    Path(id): Path<String>,
+) -> Result<Json<ha_core::agent_lifecycle::AgentDeletePreview>, AppError> {
+    let preview = ha_core::blocking::run_blocking(move || {
+        ha_core::agent_lifecycle::preview_agent_delete(&id)
+    })
+    .await?;
+    Ok(Json(preview))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAgentEnabledBody {
+    pub enabled: bool,
+}
+
+pub async fn set_agent_enabled(
+    Path(id): Path<String>,
+    Json(body): Json<SetAgentEnabledBody>,
+) -> Result<Json<Value>, AppError> {
+    let enabled = body.enabled;
+    ha_core::blocking::run_blocking({
+        let id = id.clone();
+        move || ha_core::agent_lifecycle::set_agent_enabled(&id, enabled)
+    })
+    .await?;
+    if let Some(bus) = ha_core::get_event_bus() {
+        bus.emit(
+            "agents:changed",
+            json!({ "id": id, "kind": "enabled", "enabled": enabled }),
+        );
+    }
+    Ok(Json(json!({ "enabled": enabled })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteAgentQuery {
+    pub replacement_agent_id: String,
+}
+
+/// `DELETE /api/agents/{id}` -- coordinated recoverable deletion.
+pub async fn delete_agent(
+    Path(id): Path<String>,
+    Query(query): Query<DeleteAgentQuery>,
+) -> Result<Json<ha_core::agent_lifecycle::AgentDeleteSummary>, AppError> {
+    let request = ha_core::agent_lifecycle::AgentDeleteRequest {
+        id: id.clone(),
+        replacement_agent_id: query.replacement_agent_id,
+    };
+    let summary =
+        ha_core::blocking::run_blocking(move || ha_core::agent_lifecycle::delete_agent(&request))
+            .await?;
     if let Some(bus) = ha_core::get_event_bus() {
         bus.emit("agents:changed", json!({ "id": id, "kind": "deleted" }));
     }
-    Ok(Json(json!({ "deleted": true })))
+    Ok(Json(summary))
 }
 
 // ── Markdown files (agent.md / persona.md / tools.md / ...) ────
@@ -151,10 +213,10 @@ pub async fn save_agent_memory_md(
     Path(id): Path<String>,
     Json(body): Json<MemoryMdBody>,
 ) -> Result<Json<Value>, AppError> {
-    let dir = ha_core::paths::agent_dir(&id)?;
-    std::fs::create_dir_all(&dir).map_err(|e| AppError::internal(e.to_string()))?;
-    ha_core::platform::write_atomic(&dir.join("memory.md"), body.content.as_bytes())
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    ha_core::blocking::run_blocking(move || {
+        ha_core::agent_lifecycle::save_agent_memory_md(&id, &body.content)
+    })
+    .await?;
     Ok(Json(json!({ "saved": true })))
 }
 

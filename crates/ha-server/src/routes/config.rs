@@ -65,6 +65,9 @@ pub async fn set_default_agent_id(
     Json(body): Json<DefaultAgentBody>,
 ) -> Result<Json<Value>, AppError> {
     let normalized = ha_core::agent::resolver::normalize_default_agent_id(body.agent_id.as_deref());
+    if let Some(id) = normalized.as_deref() {
+        ha_core::agent_lifecycle::ensure_agent_runnable(id)?;
+    }
     ha_core::config::mutate_config_async(("default_agent", "http"), move |store| {
         store.default_agent_id = normalized;
         Ok(())

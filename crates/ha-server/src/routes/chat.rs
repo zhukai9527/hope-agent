@@ -462,6 +462,11 @@ pub async fn chat(
         };
         ha_core::agent::resolver::resolve_default_agent_id(project.as_ref(), None)
     };
+    // Acquire before creating or mutating session state. The engine keeps its
+    // own admission backstop, while this outer guard closes the shell-side
+    // check/create race with Agent deletion.
+    let _agent_admission = ha_core::agent_lifecycle::begin_agent_run(&agent_id)
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     // Resolve or create session
     let mut new_session_created = false;

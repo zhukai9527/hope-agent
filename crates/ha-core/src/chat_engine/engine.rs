@@ -529,6 +529,13 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         event_sink,
     } = params;
 
+    // Atomically register execution against the lifecycle gate. Every desktop,
+    // HTTP, channel, ACP, subagent, and parent-injection path must fail closed
+    // once an Agent is disabled, and deletion must see admitted work even
+    // before its durable activity rows have been written.
+    let _agent_run_guard =
+        crate::agent_lifecycle::begin_agent_run(&agent_id).map_err(|error| error.to_string())?;
+
     // Effective KB-access origin for this turn (design D10): top-level turns
     // have origin == source; a subagent carries its parent turn's origin so an
     // IM-origin chain can't reacquire KB access via the neutral Subagent source.
