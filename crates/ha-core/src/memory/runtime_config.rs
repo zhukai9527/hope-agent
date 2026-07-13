@@ -116,6 +116,7 @@ pub struct DeepRecallRuntimeConfig {
     pub timeout_ms: u64,
     pub cache_ttl_secs: u64,
     pub max_chars: usize,
+    pub budget_tokens: u32,
 }
 
 impl Default for DeepRecallRuntimeConfig {
@@ -125,6 +126,7 @@ impl Default for DeepRecallRuntimeConfig {
             timeout_ms: 4_500,
             cache_ttl_secs: 60,
             max_chars: 220,
+            budget_tokens: 512,
         }
     }
 }

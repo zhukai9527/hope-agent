@@ -1581,6 +1581,7 @@ impl AssistantAgent {
                 .and_then(|idx| candidate_refs.get(idx).cloned());
             active_memory::ActiveMemoryRecall {
                 summary: parsed.summary,
+                mode: "deep".to_string(),
                 selected,
                 selected_candidates: Vec::new(),
                 candidates: candidate_refs.clone(),
@@ -1682,7 +1683,8 @@ impl AssistantAgent {
         };
 
         let query = user_text.trim().to_string();
-        let recall_config_fingerprint = serde_json::to_string(&runtime.recall).unwrap_or_default();
+        let recall_config_fingerprint =
+            serde_json::to_string(&(&runtime.recall, &runtime.deep_recall)).unwrap_or_default();
         let hash = active_memory::hash_user_text(&format!(
             "v2-fast:{session_id}:{}:{recall_config_fingerprint}:{query}",
             self.agent_id
@@ -1721,6 +1723,7 @@ impl AssistantAgent {
         let sid_for_search = session_id.clone();
         let shared_global = snapshot.shared_global;
         let config = runtime.recall.clone();
+        let query_for_search = query.clone();
         let timeout = Duration::from_millis(config.timeout_ms.max(1));
         let search = tokio::time::timeout(
             timeout,
@@ -1728,18 +1731,26 @@ impl AssistantAgent {
                 let _retrieval_slot = retrieval_slot;
                 let scopes =
                     active_memory::scopes_for_session(&sid_for_search, &agent_id, shared_global);
-                let memories =
-                    active_memory::shortlist_candidates(&query, &scopes, config.candidate_limit);
+                let memories = active_memory::shortlist_candidates(
+                    &query_for_search,
+                    &scopes,
+                    config.candidate_limit,
+                );
                 let claims = if config.include_claims {
                     active_memory::shortlist_claim_candidates(
-                        &query,
+                        &query_for_search,
                         &scopes,
                         config.candidate_limit,
                     )
                 } else {
                     Vec::new()
                 };
-                crate::memory::recall_planner::plan_fast_recall(&query, memories, claims, &config)
+                crate::memory::recall_planner::plan_fast_recall(
+                    &query_for_search,
+                    memories,
+                    claims,
+                    &config,
+                )
             }),
         )
         .await;
@@ -1777,6 +1788,64 @@ impl AssistantAgent {
                 return;
             }
         };
+        let deep_requested = runtime.deep_recall.enabled
+            || runtime.recall.mode == crate::memory::MemoryRecallMode::Deep;
+        if deep_requested {
+            let prompt = crate::memory::recall_planner::build_deep_recall_prompt(
+                &query,
+                &recall.candidates,
+                runtime.recall.max_selected,
+                runtime.deep_recall.max_chars,
+            );
+            match tokio::time::timeout(
+                Duration::from_millis(runtime.deep_recall.timeout_ms.max(1)),
+                self.side_query(&prompt, runtime.deep_recall.budget_tokens),
+            )
+            .await
+            {
+                Ok(Ok(response)) => {
+                    if let Some(parsed) = crate::memory::recall_planner::parse_deep_recall_response(
+                        &response.text,
+                        recall.candidates.len(),
+                        runtime.recall.max_selected,
+                        runtime.deep_recall.max_chars,
+                    ) {
+                        let candidate_count = recall.total_candidates;
+                        let Some(deep_recall) = crate::memory::recall_planner::apply_deep_recall(
+                            recall,
+                            parsed,
+                            runtime.recall.max_tokens,
+                        ) else {
+                            self.active_memory_state.put_cached(hash, None);
+                            self.set_retrieval_planner_layer(retrieval_planner::empty_layer(
+                                "active_memory",
+                                "deep_none",
+                                candidate_count,
+                            ));
+                            self.set_active_memory_recall(None);
+                            return;
+                        };
+                        recall = deep_recall;
+                    }
+                }
+                Ok(Err(error)) => {
+                    app_warn!(
+                        "agent",
+                        "memory_deep_recall",
+                        "deep rerank failed; using deterministic fast recall: {}",
+                        error
+                    );
+                }
+                Err(_) => {
+                    app_warn!(
+                        "agent",
+                        "memory_deep_recall",
+                        "deep rerank timed out after {}ms; using deterministic fast recall",
+                        runtime.deep_recall.timeout_ms
+                    );
+                }
+            }
+        }
         recall.latency_ms = Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
         recall.cached = false;
         // Keep the existing intent-aware trace context aligned with the new

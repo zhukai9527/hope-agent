@@ -1134,6 +1134,7 @@ mod tests {
     fn active_layer_legacy_summary_counts_as_used_without_selected_ref() {
         let recall = ActiveMemoryRecall {
             summary: "Use the user's concise-answer preference.".to_string(),
+            mode: "legacy".to_string(),
             selected: None,
             selected_candidates: Vec::new(),
             candidates: vec![super::super::active_memory::ActiveMemoryCandidateRef {

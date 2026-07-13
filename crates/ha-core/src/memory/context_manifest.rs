@@ -98,6 +98,7 @@ impl StaticMemoryContextManifest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DynamicMemoryContextManifest {
     pub active_recall_present: bool,
+    pub active_recall_mode: Option<String>,
     pub active_recall_cached: bool,
     pub active_recall_candidate_count: usize,
     pub active_recall_selected_count: usize,
@@ -118,6 +119,7 @@ impl DynamicMemoryContextManifest {
     ) -> Self {
         Self {
             active_recall_present: active.is_some(),
+            active_recall_mode: active.map(|recall| recall.mode.clone()),
             active_recall_cached: active.is_some_and(|recall| recall.cached),
             active_recall_candidate_count: active.map_or(0, |recall| recall.total_candidates),
             active_recall_selected_count: active

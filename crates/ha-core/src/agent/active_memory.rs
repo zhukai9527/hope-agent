@@ -150,6 +150,8 @@ pub struct UsedMemoryRef {
 #[serde(rename_all = "camelCase")]
 pub struct ActiveMemoryRecall {
     pub summary: String,
+    #[serde(default = "default_recall_mode")]
+    pub mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<ActiveMemoryCandidateRef>,
     /// V2 fast recall can inject more than one bounded candidate. `selected`
@@ -161,6 +163,10 @@ pub struct ActiveMemoryRecall {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<u64>,
     pub cached: bool,
+}
+
+fn default_recall_mode() -> String {
+    "legacy".to_string()
 }
 
 impl ActiveMemoryRecall {
@@ -702,6 +708,7 @@ mod tests {
         };
         let recall = ActiveMemoryRecall {
             summary: "Use the concise-answer preference.".into(),
+            mode: "legacy".into(),
             selected: Some(selected.clone()),
             selected_candidates: Vec::new(),
             candidates: vec![selected, fallback],
