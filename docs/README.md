@@ -6,6 +6,10 @@
 
 ## 规划归档
 
+当前实施中的路线文档：
+
+- [Memory UX v2：核心记忆、动态召回与学习控制改造路线](plans/memory-ux-v2.md) — `feat/memory-ux-v2` 分支的分阶段实施、迁移、缓存、测试与验收契约；完成后将稳定事实并回 architecture 文档并归档路线材料。
+
 历史调研、RFC、计划方案、roadmap、review packet 和原始参考材料已按任务归档到本机 iCloud：
 
 ```text
