@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "캐시 적중은 반복 계산, 비용, TTFT를 줄이지만 컨텍스트 창 사용량은 줄이지 않습니다.",
     "cacheWrite": "캐시 쓰기",
     "compactAllowedIn": "다음 압축까지",
+    "coreMemoryBudget": "Core Memory 예산",
+    "coreMemoryModelLimited": "현재 모델에 맞게 일시적으로 제한됨",
     "dynamicPrompt": "동적 프롬프트",
     "estimated": "추정",
     "estimateNote": "각 라운드 후에는 Provider 실제 사용량이 기준이며, 그전에는 실제 요청 형식에 따른 보수적 추정치를 표시합니다.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "기억 자동 추출",
     "memoryAutoExtractDesc": "토큰, 시간 또는 메시지 임계값을 충족하면 자동으로 기억 추출",
     "memoryBudget": {
+      "advancedAllocation": "고급 범위 할당",
       "agentOverrideDesc": "기본적으로 전역 메모리 예산을 상속합니다. 끄면 Agent 전용 예산을 사용합니다.",
+      "contextWindow": "현재 기본 모델 컨텍스트: {{count}} tokens",
+      "coreSimpleDesc": "Core Memory 총예산 하나만 선택하세요. 사용하지 않은 용량은 Project > Agent > Global 우선순위로 공유됩니다.",
       "coreMemoryFileChars": "MEMORY.md 계층별 상한",
       "coreMemoryFileCharsDesc": "각 MEMORY.md 파일(Global / Agent)의 독립 상한. 상한을 초과한 내용은 프롬프트에서 잘리지만 디스크에는 그대로 보존됩니다. 기본값 8000.",
       "desc": "메모리 섹션(Global MEMORY.md / Agent MEMORY.md / SQLite 메모리 / 가이드라인)의 총 문자 수와 내부 각 계층의 개별 상한을 제한합니다. 총량을 줄이면 대화 컨텍스트에 더 많은 예산을 남길 수 있습니다.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "레거시 롤백 예산",
       "legacyDesc": "이 문자 예산은 기존 정적 메모리 경로에만 적용되며 호환 기간 동안 계속 편집할 수 있습니다.",
+      "effective": "설정 {{configured}} · 이번 요청 유효값 {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "세부정보: {{error}}"
       },
       "resetToDefaults": "기본값으로 복원",
+      "highBudgetWarning": "권장 범위인 2400 tokens를 초과했습니다. 저장할 수 있지만 매 요청의 안정 컨텍스트, 캐시 쓰기 및 첫 토큰 지연이 증가합니다.",
+      "modelLimited": "{{configured}} tokens로 설정했지만 현재 모델은 안전하게 {{effective}}를 사용합니다. 저장된 설정은 변경되지 않습니다.",
+      "presets": {
+        "balanced": "균형",
+        "concise": "간결",
+        "rich": "풍부"
+      },
       "sections": {
         "aboutUser": "사용자에 대해",
         "preferences": "선호도",

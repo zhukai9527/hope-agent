@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "Acertos de cache reduzem computação repetida, custo e TTFT; não reduzem o uso da janela de contexto.",
     "cacheWrite": "Gravação de cache",
     "compactAllowedIn": "Próxima compactação em",
+    "coreMemoryBudget": "Orçamento da Core Memory",
+    "coreMemoryModelLimited": "limitado temporariamente para este modelo",
     "dynamicPrompt": "Prompt dinâmico",
     "estimated": "estimado",
     "estimateNote": "Após cada rodada, vale o uso real do provedor; antes disso, é exibida uma estimativa conservadora baseada no formato da solicitação.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "Extrair memórias automaticamente",
     "memoryAutoExtractDesc": "Extrair memórias automaticamente quando os limites de tokens, tempo ou mensagens forem atingidos",
     "memoryBudget": {
+      "advancedAllocation": "Alocação avançada por escopo",
       "agentOverrideDesc": "Por padrão, herda o Orçamento de memória global. Desative para usar um orçamento específico do Agent.",
+      "contextWindow": "Contexto do modelo padrão atual: {{count}} tokens",
+      "coreSimpleDesc": "Escolha um único orçamento total para a Core Memory. Os escopos compartilham a capacidade livre na prioridade Project > Agent > Global.",
       "coreMemoryFileChars": "Limite por MEMORY.md",
       "coreMemoryFileCharsDesc": "Limite independente para cada arquivo MEMORY.md (Global / Agent). O conteúdo além do limite é truncado no prompt, mas preservado em disco. Padrão 8000.",
       "desc": "Limita o total de caracteres da seção de memória (Global MEMORY.md / Agent MEMORY.md / memórias SQLite / Diretrizes) e os limites por camada dentro dela. Reduzir o total libera orçamento para o contexto da conversa ativa.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "Orçamentos de reversão legados",
       "legacyDesc": "Esses orçamentos de caracteres se aplicam apenas ao caminho legado de memória estática e continuam editáveis durante o período de compatibilidade.",
+      "effective": "Configurado {{configured}} · efetivo nesta rodada {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "Detalhes: {{error}}"
       },
       "resetToDefaults": "Restaurar padrões",
+      "highBudgetWarning": "Acima da faixa recomendada de 2400 tokens. É permitido salvar, mas isso aumenta o contexto estável, as gravações de cache e a latência do primeiro token.",
+      "modelLimited": "Configurado em {{configured}} tokens; o modelo atual usa {{effective}} com segurança. A preferência salva não será alterada.",
+      "presets": {
+        "balanced": "Equilibrado",
+        "concise": "Conciso",
+        "rich": "Completo"
+      },
       "sections": {
         "aboutUser": "Sobre o usuário",
         "preferences": "Preferências",

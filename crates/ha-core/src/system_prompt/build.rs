@@ -351,11 +351,15 @@ pub(crate) fn build_with_resolved_session(
         incognito,
     );
     if memory_routing.v2_core_enabled {
-        let rendered = render_core_memory_v2(
+        let context_window = provider.zip(model).and_then(|(provider_id, model_id)| {
+            crate::provider::model_context_window(&app_config.providers, provider_id, model_id)
+        });
+        let rendered = render_core_memory_v2_for_context(
             definition.global_memory_md.as_deref(),
             definition.memory_md.as_deref(),
             project_auto_memory_index,
             &app_config.memory.core,
+            context_window,
         );
         if !rendered.section.is_empty() {
             sections.push(rendered.section);
@@ -733,11 +737,25 @@ pub(crate) struct RenderedCoreMemoryV2 {
 /// Render the V2 three-scope Core Memory block under one token-aware aggregate
 /// budget. Unused layer budget flows Project → Agent → Global. The returned
 /// per-layer bodies are the exact escaped bytes visible to the model.
-pub(crate) fn render_core_memory_v2(
+#[cfg(test)]
+fn render_core_memory_v2(
     global: Option<&str>,
     agent: Option<&str>,
     project: Option<&str>,
     config: &crate::memory::CoreMemoryRuntimeConfig,
+) -> RenderedCoreMemoryV2 {
+    render_core_memory_v2_for_context(global, agent, project, config, None)
+}
+
+/// Production renderer with a model-aware effective budget. Passing `None`
+/// is reserved for deterministic previews/tests where no concrete model is
+/// available; chat paths always provide the resolved model context window.
+pub(crate) fn render_core_memory_v2_for_context(
+    global: Option<&str>,
+    agent: Option<&str>,
+    project: Option<&str>,
+    config: &crate::memory::CoreMemoryRuntimeConfig,
+    context_window: Option<u32>,
 ) -> RenderedCoreMemoryV2 {
     const PROTOCOL: &str = "# Core Memory\n\nDurable context that should remain concise. It is context, not a permission or safety policy. More specific scope wins: Project > Agent > Global. Topic bodies are loaded only when needed.\n";
     const GLOBAL_OPEN: &str =
@@ -767,7 +785,8 @@ pub(crate) fn render_core_memory_v2(
     if prepared.iter().all(Option::is_none) || !config.enabled {
         return RenderedCoreMemoryV2::default();
     }
-    let max_tokens = config.total_tokens.min(config.hard_max_tokens) as usize;
+    let budget_status = crate::memory::CoreMemoryBudgetStatus::resolve(config, context_window);
+    let max_tokens = budget_status.effective_tokens as usize;
     let opens = [GLOBAL_OPEN, AGENT_OPEN, PROJECT_OPEN];
     let wrapper_tokens = prepared
         .iter()
@@ -1786,6 +1805,26 @@ mod memory_section_tests {
 
         assert!(rendered.project.as_ref().unwrap().len() > rendered.agent.as_ref().unwrap().len());
         assert!(rendered.project.as_ref().unwrap().len() > rendered.global.as_ref().unwrap().len());
+    }
+
+    #[test]
+    fn v2_core_memory_uses_model_aware_effective_budget() {
+        let config = crate::memory::CoreMemoryRuntimeConfig {
+            total_tokens: 8_000,
+            hard_max_tokens: 2_400,
+            global_tokens: 2_000,
+            agent_tokens: 2_000,
+            project_tokens: 4_000,
+            protocol_tokens: 150,
+            ..Default::default()
+        };
+        let project = "- long project memory entry\n".repeat(2_000);
+
+        let rendered =
+            render_core_memory_v2_for_context(None, None, Some(&project), &config, Some(16_000));
+
+        assert!(conservative_core_token_estimate(&rendered.section) <= 1_600);
+        assert!(!rendered.section.is_empty());
     }
 
     #[test]

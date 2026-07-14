@@ -105,6 +105,15 @@ export interface MemoryRuntimeConfig {
   }
 }
 
+export interface CoreMemoryBudgetStatus {
+  configuredTokens: number
+  effectiveTokens: number
+  contextWindowTokens?: number | null
+  modelSafetyLimitTokens?: number | null
+  emergencyLimitTokens: number
+  limitedBy?: "context_window" | "emergency_guard" | null
+}
+
 export interface PendingMemoryCandidate {
   id: string
   content: string

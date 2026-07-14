@@ -614,8 +614,8 @@ mod parse_tests {
             }"#,
         )
         .expect("parse bounded V2 memory config");
-        assert_eq!(cfg.memory.core.hard_max_tokens, 4096);
-        assert_eq!(cfg.memory.core.total_tokens, 4096);
+        assert_eq!(cfg.memory.core.hard_max_tokens, 16_384);
+        assert_eq!(cfg.memory.core.total_tokens, 16_384);
         assert_eq!(cfg.memory.recall.candidate_limit, 100);
         assert_eq!(cfg.memory.recall.timeout_ms, 2000);
     }

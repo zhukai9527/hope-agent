@@ -46,6 +46,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/logger", () => ({
   logger: {
     error: vi.fn(),
+    warn: vi.fn(),
   },
 }))
 
@@ -112,6 +113,34 @@ afterEach(() => {
 })
 
 describe("BudgetConfig", () => {
+  it("shows one Core budget control and model-aware effective status", async () => {
+    const configured = structuredClone(runtimeConfig)
+    configured.core.totalTokens = 8000
+    configured.core.hardMaxTokens = 2400
+    transportMock.call.mockImplementation(async (command: string) => {
+      if (command === "get_memory_runtime_config") return configured
+      if (command === "get_memory_budget_config") return legacyBudgetConfig
+      if (command === "get_memory_core_budget_status") {
+        return {
+          configuredTokens: 8000,
+          effectiveTokens: 1600,
+          contextWindowTokens: 16000,
+          modelSafetyLimitTokens: 1600,
+          emergencyLimitTokens: 16384,
+          limitedBy: "context_window",
+        }
+      }
+      return null
+    })
+
+    render(<BudgetConfig />)
+    fireEvent.click(screen.getByRole("button", { name: /settings\.memoryBudget\.title/ }))
+
+    expect(await screen.findByText("settings.memoryBudget.modelLimited")).toBeTruthy()
+    expect(screen.getByText("settings.memoryBudget.engine.totalTokens")).toBeTruthy()
+    expect(screen.queryByText("settings.memoryBudget.engine.hardMaxTokens")).toBeNull()
+  })
+
   it("shows redacted load failure detail without rendering fallback defaults, then retries", async () => {
     let loadCalls = 0
     transportMock.call.mockImplementation(async (command: string) => {

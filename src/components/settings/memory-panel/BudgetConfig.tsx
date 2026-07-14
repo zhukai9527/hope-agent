@@ -11,7 +11,7 @@ import {
   type MemoryBudgetConfig,
   type SqliteSectionBudgets,
 } from "../types"
-import type { MemoryRuntimeConfig } from "./types"
+import type { CoreMemoryBudgetStatus, MemoryRuntimeConfig } from "./types"
 import MemoryEngineBudgetInputs from "./MemoryEngineBudgetInputs"
 import MemoryBudgetInputs from "./MemoryBudgetInputs"
 import {
@@ -73,6 +73,7 @@ export default function BudgetConfig() {
   const [original, setOriginal] = useState<MemoryBudgetConfig>(DEFAULT_MEMORY_BUDGET)
   const [runtime, setRuntime] = useState<MemoryRuntimeConfig | null>(null)
   const [originalRuntime, setOriginalRuntime] = useState<MemoryRuntimeConfig | null>(null)
+  const [coreBudgetStatus, setCoreBudgetStatus] = useState<CoreMemoryBudgetStatus | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<MemoryBudgetOperationErrorToast | null>(null)
@@ -82,14 +83,26 @@ export default function BudgetConfig() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cfg, memoryRuntime] = await Promise.all([
+      const [cfg, memoryRuntime, budgetStatus] = await Promise.all([
         getTransport().call<MemoryBudgetConfig>("get_memory_budget_config"),
         getTransport().call<MemoryRuntimeConfig>("get_memory_runtime_config"),
+        getTransport()
+          .call<CoreMemoryBudgetStatus>("get_memory_core_budget_status")
+          .catch((error) => {
+            logger.warn(
+              "settings",
+              "BudgetConfig::loadCoreBudgetStatus",
+              "Failed to load effective Core budget",
+              error,
+            )
+            return null
+          }),
       ])
       setConfig(cfg)
       setOriginal(cfg)
       setRuntime(memoryRuntime)
       setOriginalRuntime(memoryRuntime)
+      setCoreBudgetStatus(budgetStatus)
       setLoaded(true)
       setLoadError(null)
     } catch (e) {
@@ -135,9 +148,13 @@ export default function BudgetConfig() {
       if (legacyDirty) {
         await getTransport().call("save_memory_budget_config", { config })
       }
+      const budgetStatus = await getTransport()
+        .call<CoreMemoryBudgetStatus>("get_memory_core_budget_status")
+        .catch(() => null)
       setOriginal(config)
       setRuntime(savedRuntime)
       setOriginalRuntime(savedRuntime)
+      setCoreBudgetStatus(budgetStatus)
       setSaveStatus("saved")
       setTimeout(() => setSaveStatus("idle"), 2000)
     } catch (e) {
@@ -210,7 +227,11 @@ export default function BudgetConfig() {
             </div>
           ) : loaded && runtime ? (
             <>
-              <MemoryEngineBudgetInputs value={runtime} onChange={setRuntime} />
+              <MemoryEngineBudgetInputs
+                value={runtime}
+                onChange={setRuntime}
+                coreBudgetStatus={coreBudgetStatus}
+              />
 
               <div className="border-t border-border/50 pt-4">
                 <h4 className="mb-1 text-xs font-medium text-muted-foreground">

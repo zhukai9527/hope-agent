@@ -920,6 +920,11 @@ pub async fn get_memory_runtime_config() -> Result<memory::MemoryRuntimeConfig, 
 }
 
 #[tauri::command]
+pub async fn get_memory_core_budget_status() -> Result<memory::CoreMemoryBudgetStatus, CmdError> {
+    Ok(memory::active_core_memory_budget_status())
+}
+
+#[tauri::command]
 pub async fn save_memory_runtime_config(
     config: memory::MemoryRuntimeConfig,
 ) -> Result<memory::MemoryRuntimeConfig, CmdError> {

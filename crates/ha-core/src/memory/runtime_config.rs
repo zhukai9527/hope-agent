@@ -7,6 +7,76 @@
 
 use serde::{Deserialize, Serialize};
 
+/// User-facing Core Memory budget bounds. The recommended range is a UX
+/// guideline, while the emergency guard only protects against malformed raw
+/// config / owner API input. Runtime rendering applies an additional
+/// model-context-aware cap.
+pub const CORE_MEMORY_MIN_TOKENS: u32 = 128;
+pub const CORE_MEMORY_RECOMMENDED_MAX_TOKENS: u32 = 2_400;
+pub const CORE_MEMORY_EMERGENCY_MAX_TOKENS: u32 = 16_384;
+const CORE_MEMORY_CONTEXT_SHARE_DIVISOR: u32 = 10;
+const CORE_MEMORY_MIN_MODEL_CAP_TOKENS: u32 = 256;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreMemoryBudgetStatus {
+    pub configured_tokens: u32,
+    pub effective_tokens: u32,
+    pub context_window_tokens: Option<u32>,
+    pub model_safety_limit_tokens: Option<u32>,
+    pub emergency_limit_tokens: u32,
+    pub limited_by: Option<CoreMemoryBudgetLimit>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreMemoryBudgetLimit {
+    ContextWindow,
+    EmergencyGuard,
+}
+
+impl CoreMemoryBudgetStatus {
+    pub fn resolve(config: &CoreMemoryRuntimeConfig, context_window: Option<u32>) -> Self {
+        let configured_tokens = config.total_tokens.max(CORE_MEMORY_MIN_TOKENS);
+        let model_safety_limit_tokens = context_window.map(|window| {
+            (window / CORE_MEMORY_CONTEXT_SHARE_DIVISOR)
+                .max(CORE_MEMORY_MIN_MODEL_CAP_TOKENS)
+                .min(CORE_MEMORY_EMERGENCY_MAX_TOKENS)
+        });
+        let after_emergency = configured_tokens.min(CORE_MEMORY_EMERGENCY_MAX_TOKENS);
+        let effective_tokens =
+            model_safety_limit_tokens.map_or(after_emergency, |limit| after_emergency.min(limit));
+        let limited_by = if model_safety_limit_tokens
+            .is_some_and(|limit| limit < configured_tokens.min(CORE_MEMORY_EMERGENCY_MAX_TOKENS))
+        {
+            Some(CoreMemoryBudgetLimit::ContextWindow)
+        } else if configured_tokens > CORE_MEMORY_EMERGENCY_MAX_TOKENS {
+            Some(CoreMemoryBudgetLimit::EmergencyGuard)
+        } else {
+            None
+        };
+        Self {
+            configured_tokens,
+            effective_tokens,
+            context_window_tokens: context_window,
+            model_safety_limit_tokens,
+            emergency_limit_tokens: CORE_MEMORY_EMERGENCY_MAX_TOKENS,
+            limited_by,
+        }
+    }
+}
+
+/// Resolve the Settings-page status against the global active model. Session
+/// model overrides are reported by the per-round Memory Context Manifest and
+/// `/context`; this owner view intentionally describes the global default.
+pub fn active_core_memory_budget_status() -> CoreMemoryBudgetStatus {
+    let app = crate::config::cached_config();
+    let context_window = app.active_model.as_ref().and_then(|active| {
+        crate::provider::model_context_window(&app.providers, &active.provider_id, &active.model_id)
+    });
+    CoreMemoryBudgetStatus::resolve(&app.memory.core, context_window)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MemoryRuntimeConfig {
@@ -120,7 +190,11 @@ impl MemoryRuntimeConfig {
         // Legacy prompt budgets are character based. Preserve their effective
         // size conservatively while respecting the new Core hard ceiling.
         let estimated_tokens = budget.total_chars.div_ceil(4) as u32;
-        migrated.core.total_tokens = estimated_tokens.clamp(128, migrated.core.hard_max_tokens);
+        // Preserve the old migration ceiling for predictability. Once the
+        // user explicitly edits the V2 budget, `hardMaxTokens` no longer acts
+        // as a second user-controlled limiter.
+        migrated.core.total_tokens =
+            estimated_tokens.clamp(CORE_MEMORY_MIN_TOKENS, CORE_MEMORY_RECOMMENDED_MAX_TOKENS);
         migrated.normalized()
     }
 
@@ -154,15 +228,25 @@ impl MemoryRuntimeConfig {
     /// prompt-size bounds, not capability gates; disabling a layer is always
     /// represented by its explicit boolean rather than a magic zero budget.
     pub fn normalized(mut self) -> Self {
-        self.core.hard_max_tokens = self.core.hard_max_tokens.clamp(256, 4_096);
-        self.core.total_tokens = self.core.total_tokens.clamp(128, self.core.hard_max_tokens);
+        self.core.total_tokens = self
+            .core
+            .total_tokens
+            .clamp(CORE_MEMORY_MIN_TOKENS, CORE_MEMORY_EMERGENCY_MAX_TOKENS);
+        // Deprecated compatibility mirror. Older config readers still expect
+        // the field, but it must never silently push a user's single visible
+        // budget back down. Keep it at least as large as `totalTokens`.
+        self.core.hard_max_tokens = self
+            .core
+            .hard_max_tokens
+            .clamp(256, CORE_MEMORY_EMERGENCY_MAX_TOKENS)
+            .max(self.core.total_tokens);
         self.core.protocol_tokens = self.core.protocol_tokens.clamp(32, self.core.total_tokens);
         for budget in [
             &mut self.core.global_tokens,
             &mut self.core.agent_tokens,
             &mut self.core.project_tokens,
         ] {
-            *budget = (*budget).clamp(32, self.core.hard_max_tokens);
+            *budget = (*budget).clamp(32, CORE_MEMORY_EMERGENCY_MAX_TOKENS);
         }
         self.core.topic_read_max_tokens = self.core.topic_read_max_tokens.clamp(64, 4_096);
 
@@ -184,6 +268,9 @@ impl MemoryRuntimeConfig {
 pub struct CoreMemoryRuntimeConfig {
     pub enabled: bool,
     pub total_tokens: u32,
+    /// Deprecated compatibility mirror. The product UI exposes only
+    /// `totalTokens`; runtime safety is model-aware via
+    /// [`CoreMemoryBudgetStatus`] instead of this persisted value.
     pub hard_max_tokens: u32,
     pub global_tokens: u32,
     pub agent_tokens: u32,
@@ -588,11 +675,39 @@ mod tests {
         config.recall.timeout_ms = 99_999;
         config.deep_recall.budget_tokens = 0;
         let normalized = config.normalized();
-        assert_eq!(normalized.core.hard_max_tokens, 4_096);
-        assert_eq!(normalized.core.total_tokens, 4_096);
+        assert_eq!(normalized.core.hard_max_tokens, 16_384);
+        assert_eq!(normalized.core.total_tokens, 16_384);
         assert_eq!(normalized.core.protocol_tokens, 32);
         assert_eq!(normalized.recall.max_selected, 1);
         assert_eq!(normalized.recall.timeout_ms, 2_000);
         assert_eq!(normalized.deep_recall.budget_tokens, 64);
+    }
+
+    #[test]
+    fn deprecated_hard_max_never_silently_reduces_visible_budget() {
+        let mut config = MemoryRuntimeConfig::default();
+        config.core.total_tokens = 8_000;
+        config.core.hard_max_tokens = 2_400;
+
+        let normalized = config.normalized();
+
+        assert_eq!(normalized.core.total_tokens, 8_000);
+        assert_eq!(normalized.core.hard_max_tokens, 8_000);
+    }
+
+    #[test]
+    fn core_budget_is_capped_to_ten_percent_of_model_context() {
+        let mut config = CoreMemoryRuntimeConfig::default();
+        config.total_tokens = 8_000;
+
+        let small = CoreMemoryBudgetStatus::resolve(&config, Some(16_000));
+        assert_eq!(small.configured_tokens, 8_000);
+        assert_eq!(small.effective_tokens, 1_600);
+        assert_eq!(small.model_safety_limit_tokens, Some(1_600));
+        assert_eq!(small.limited_by, Some(CoreMemoryBudgetLimit::ContextWindow));
+
+        let large = CoreMemoryBudgetStatus::resolve(&config, Some(128_000));
+        assert_eq!(large.effective_tokens, 8_000);
+        assert_eq!(large.limited_by, None);
     }
 }

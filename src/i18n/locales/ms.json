@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "Cache hit mengurangkan pengiraan berulang, kos dan TTFT; ia tidak mengurangkan penggunaan tetingkap konteks.",
     "cacheWrite": "Tulisan cache",
     "compactAllowedIn": "Mampatan seterusnya dalam",
+    "coreMemoryBudget": "Bajet Core Memory",
+    "coreMemoryModelLimited": "dihadkan sementara untuk model ini",
     "dynamicPrompt": "Gesaan dinamik",
     "estimated": "anggaran",
     "estimateNote": "Selepas setiap pusingan, penggunaan sebenar Provider menjadi rujukan; sebelumnya anggaran konservatif berdasarkan bentuk permintaan dipaparkan.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "Ekstrak ingatan automatik",
     "memoryAutoExtractDesc": "Ekstrak ingatan secara automatik apabila ambang token, masa atau mesej dipenuhi",
     "memoryBudget": {
+      "advancedAllocation": "Peruntukan skop lanjutan",
       "agentOverrideDesc": "Secara lalai mewarisi Bajet Memori global. Tutup untuk menggunakan bajet khusus Agent.",
+      "contextWindow": "Konteks model lalai semasa: {{count}} tokens",
+      "coreSimpleDesc": "Pilih satu jumlah bajet Core Memory. Kapasiti yang tidak digunakan dikongsi mengikut keutamaan Project > Agent > Global.",
       "coreMemoryFileChars": "Had setiap MEMORY.md",
       "coreMemoryFileCharsDesc": "Had bebas bagi setiap fail MEMORY.md (Global / Agent). Kandungan yang melebihi had dipotong dalam prom tetapi kekal pada cakera. Lalai 8000.",
       "desc": "Mengehadkan jumlah aksara bahagian memori (Global MEMORY.md / Agent MEMORY.md / memori SQLite / Garis Panduan) dan had setiap lapisan dalamnya. Mengurangkan jumlah membebaskan bajet untuk konteks perbualan aktif.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "Bajet undur versi lama",
       "legacyDesc": "Bajet aksara ini hanya digunakan pada laluan memori statik lama dan kekal boleh diedit sepanjang tempoh keserasian.",
+      "effective": "Dikonfigurasi {{configured}} · berkesan pusingan ini {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "Butiran: {{error}}"
       },
       "resetToDefaults": "Set semula kepada lalai",
+      "highBudgetWarning": "Melebihi julat disyorkan 2400 tokens. Ia boleh disimpan, tetapi meningkatkan konteks stabil, penulisan cache dan kependaman token pertama.",
+      "modelLimited": "Dikonfigurasi {{configured}} tokens; model semasa menggunakan {{effective}} dengan selamat. Keutamaan tersimpan tidak berubah.",
+      "presets": {
+        "balanced": "Seimbang",
+        "concise": "Ringkas",
+        "rich": "Kaya"
+      },
       "sections": {
         "aboutUser": "Tentang pengguna",
         "preferences": "Keutamaan",

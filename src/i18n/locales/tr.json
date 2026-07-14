@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "Önbellek isabetleri yinelenen hesaplamayı, maliyeti ve TTFT'yi azaltır; bağlam penceresi kullanımını azaltmaz.",
     "cacheWrite": "Önbellek yazma",
     "compactAllowedIn": "Sonraki sıkıştırma",
+    "coreMemoryBudget": "Core Memory bütçesi",
+    "coreMemoryModelLimited": "bu model için geçici olarak sınırlandı",
     "dynamicPrompt": "Dinamik istem",
     "estimated": "tahmini",
     "estimateNote": "Her turdan sonra Provider'ın gerçek kullanımı esas alınır; öncesinde istek biçimine göre ihtiyatlı bir tahmin gösterilir.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "Hafızaları otomatik çıkar",
     "memoryAutoExtractDesc": "Token, zaman veya mesaj eşikleri karşılandığında hafızaları otomatik olarak çıkar",
     "memoryBudget": {
+      "advancedAllocation": "Gelişmiş kapsam dağılımı",
       "agentOverrideDesc": "Varsayılan olarak küresel Bellek Bütçesini devralır. Agent'e özgü bir bütçe kullanmak için kapatın.",
+      "contextWindow": "Geçerli varsayılan model bağlamı: {{count}} tokens",
+      "coreSimpleDesc": "Core Memory için tek bir toplam bütçe seçin. Kullanılmayan kapasite Project > Agent > Global önceliğiyle paylaşılır.",
       "coreMemoryFileChars": "MEMORY.md katman başı sınır",
       "coreMemoryFileCharsDesc": "Her MEMORY.md dosyası (Global / Agent) için bağımsız sınır. Sınırı aşan içerik istemde kesilir ancak diskte korunur. Varsayılan 8000.",
       "desc": "Bellek bölümünün (Global MEMORY.md / Agent MEMORY.md / SQLite bellekleri / Yönergeler) toplam karakter sayısını ve içindeki katman başı sınırları sınırlar. Toplamı düşürmek canlı konuşma bağlamına daha fazla bütçe bırakır.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "Eski sürüm geri alma bütçeleri",
       "legacyDesc": "Bu karakter bütçeleri yalnızca eski statik bellek yoluna uygulanır ve uyumluluk süresince düzenlenebilir kalır.",
+      "effective": "Yapılandırılan {{configured}} · bu turda etkin {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "Ayrıntılar: {{error}}"
       },
       "resetToDefaults": "Varsayılanlara sıfırla",
+      "highBudgetWarning": "Önerilen 2400 tokens aralığının üzerinde. Kaydedilebilir; ancak her istekte kararlı bağlamı, önbellek yazımını ve ilk token gecikmesini artırır.",
+      "modelLimited": "{{configured}} tokens yapılandırıldı; geçerli model güvenli olarak {{effective}} kullanıyor. Kayıtlı tercihiniz değişmez.",
+      "presets": {
+        "balanced": "Dengeli",
+        "concise": "Kısa",
+        "rich": "Zengin"
+      },
       "sections": {
         "aboutUser": "Kullanıcı hakkında",
         "preferences": "Tercihler",

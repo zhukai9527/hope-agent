@@ -951,6 +951,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_deferred_tools_config: { method: "GET", path: "/api/config/deferred-tools" },
   save_deferred_tools_config: { method: "PUT", path: "/api/config/deferred-tools" },
   get_memory_runtime_config: { method: "GET", path: "/api/config/memory-runtime" },
+  get_memory_core_budget_status: {
+    method: "GET",
+    path: "/api/config/memory-core-budget-status",
+  },
   save_memory_runtime_config: { method: "PUT", path: "/api/config/memory-runtime" },
   get_memory_selection_config: { method: "GET", path: "/api/config/memory-selection" },
   save_memory_selection_config: { method: "PUT", path: "/api/config/memory-selection" },

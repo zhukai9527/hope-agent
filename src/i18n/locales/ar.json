@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "تقلل إصابات التخزين المؤقت الحساب المتكرر والتكلفة وTTFT، لكنها لا تقلل استخدام نافذة السياق.",
     "cacheWrite": "كتابة التخزين المؤقت",
     "compactAllowedIn": "الضغط التالي خلال",
+    "coreMemoryBudget": "ميزانية Core Memory",
+    "coreMemoryModelLimited": "محدودة مؤقتًا لهذا النموذج",
     "dynamicPrompt": "الموجه الديناميكي",
     "estimated": "تقديري",
     "estimateNote": "بعد كل جولة تكون بيانات الاستخدام الفعلية من المزوّد هي المرجع؛ وقبل ذلك يظهر تقدير محافظ بحسب شكل الطلب.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "استخراج الذاكرات تلقائياً",
     "memoryAutoExtractDesc": "استخراج الذاكرات تلقائياً عند استيفاء عتبات الرموز أو الوقت أو الرسائل",
     "memoryBudget": {
+      "advancedAllocation": "توزيع النطاقات المتقدم",
       "agentOverrideDesc": "يرث ميزانية الذاكرة العامة بشكل افتراضي. أوقف التشغيل لاستخدام ميزانية خاصة بـ Agent.",
+      "contextWindow": "سياق النموذج الافتراضي الحالي: {{count}} tokens",
+      "coreSimpleDesc": "اختر ميزانية إجمالية واحدة لـ Core Memory. تتشارك النطاقات السعة غير المستخدمة بالأولوية Project > Agent > Global.",
       "coreMemoryFileChars": "حد كل طبقة MEMORY.md",
       "coreMemoryFileCharsDesc": "حد مستقل لكل ملف MEMORY.md (Global / Agent). يُقطع المحتوى الزائد في المحث لكنه يُحفظ على القرص. الافتراضي 8000.",
       "desc": "يقيّد إجمالي عدد الأحرف في قسم الذاكرة (Global MEMORY.md / Agent MEMORY.md / ذاكرة SQLite / الإرشادات) وحدود كل طبقة داخله. خفض الإجمالي يترك مزيدًا من الميزانية لسياق المحادثة الحية.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "ميزانيات الرجوع إلى الإصدار القديم",
       "legacyDesc": "تنطبق ميزانيات الأحرف هذه فقط على مسار الذاكرة الثابتة القديم، وتبقى قابلة للتعديل خلال فترة التوافق.",
+      "effective": "المضبوط {{configured}} · الفعلي في هذه الجولة {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "التفاصيل: {{error}}"
       },
       "resetToDefaults": "إعادة تعيين للقيم الافتراضية",
+      "highBudgetWarning": "تجاوزت النطاق الموصى به وهو 2400 tokens. يمكن الحفظ، لكن ذلك يزيد السياق الثابت وكتابة التخزين المؤقت وزمن أول رمز.",
+      "modelLimited": "تم الضبط على {{configured}} tokens؛ يستخدم النموذج الحالي {{effective}} بأمان. لن يتغير التفضيل المحفوظ.",
+      "presets": {
+        "balanced": "متوازن",
+        "concise": "موجز",
+        "rich": "موسع"
+      },
       "sections": {
         "aboutUser": "عن المستخدم",
         "preferences": "التفضيلات",

@@ -241,6 +241,22 @@ export default function ContextBreakdownCard({
         })}
       </div>
 
+      {data.coreMemoryConfiguredTokens != null && data.coreMemoryEffectiveTokens != null && (
+        <div className="border-t border-border/60 px-4 py-2.5 text-[11px] text-muted-foreground">
+          <span>{t("context.coreMemoryBudget", "Core Memory budget")}: </span>
+          <span className="tabular-nums text-foreground/80">
+            {data.coreMemoryConfiguredTokens === data.coreMemoryEffectiveTokens
+              ? formatK(data.coreMemoryEffectiveTokens)
+              : `${formatK(data.coreMemoryConfiguredTokens)} → ${formatK(data.coreMemoryEffectiveTokens)}`}
+          </span>
+          {data.coreMemoryBudgetLimitedBy === "context_window" && (
+            <span className="ml-1.5">
+              {t("context.coreMemoryModelLimited", "temporarily limited for this model")}
+            </span>
+          )}
+        </div>
+      )}
+
       {(data.contextInputTokens != null || data.requestInputTokensEstimate != null) && (
         <div className="border-t border-border/60 px-4 py-3 text-[11px] text-muted-foreground">
           <div className="flex flex-wrap gap-x-4 gap-y-1">

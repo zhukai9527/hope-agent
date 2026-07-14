@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "缓存命中只减少重复计算、成本和首 Token 延迟，不减少上下文窗口占用。",
     "cacheWrite": "缓存写入",
     "compactAllowedIn": "下次压缩",
+    "coreMemoryBudget": "Core Memory 预算",
+    "coreMemoryModelLimited": "已按当前模型临时裁剪",
     "dynamicPrompt": "动态提示",
     "estimated": "估算",
     "estimateNote": "每轮结束后以 Provider 实际用量为准；此前显示按真实请求形态计算的保守估算。",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "自动提取记忆",
     "memoryAutoExtractDesc": "对话过程中当 Token / 时间 / 消息数达到阈值时自动提取记忆",
     "memoryBudget": {
+      "advancedAllocation": "高级作用域分配",
       "agentOverrideDesc": "默认继承全局记忆预算。关闭下方开关以为当前 Agent 定制独立预算。",
+      "contextWindow": "当前默认模型上下文：{{count}} tokens",
+      "coreSimpleDesc": "只需选择一个 Core Memory 总预算。各作用域可以借用未使用额度，优先级为 Project > Agent > Global。",
       "coreMemoryFileChars": "MEMORY.md 单层上限",
       "coreMemoryFileCharsDesc": "Global / Agent 每个 MEMORY.md 独立上限。超出的部分截断显示,完整内容仍在磁盘。默认 8000。",
       "desc": "限制系统提示词中记忆部分（Global MEMORY.md / Agent MEMORY.md / SQLite 记忆 / 使用指南）的总字符数,以及内部各层独立上限。降低 total 可以让更多预算留给对话上下文。",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "旧版回滚预算",
       "legacyDesc": "这些字符预算只用于旧版静态记忆路径，并在兼容窗口内继续保留可编辑入口。",
+      "effective": "配置 {{configured}} · 本轮有效 {{effective}} tokens",
       "errors": {
         "load": "加载记忆预算失败",
         "save": "保存记忆预算失败",
         "detail": "详细信息：{{error}}"
       },
       "resetToDefaults": "恢复默认值",
+      "highBudgetWarning": "已超过推荐的 2400 tokens。系统允许保存，但会增加每轮稳定上下文、缓存写入量和首字延迟。",
+      "modelLimited": "已配置 {{configured}} tokens；当前模型安全使用 {{effective}}。保存的偏好不会被改写。",
+      "presets": {
+        "balanced": "平衡",
+        "concise": "精简",
+        "rich": "丰富"
+      },
       "sections": {
         "aboutUser": "关于用户",
         "preferences": "偏好",

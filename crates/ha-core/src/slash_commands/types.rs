@@ -173,6 +173,16 @@ pub struct ContextBreakdown {
     pub tool_descriptions_tokens: u32,
     /// Memory section injected into the system prompt (core + SQLite + guidelines).
     pub memory_tokens: u32,
+    /// User-configured and model-safe effective Core Memory budgets. These are
+    /// limits, not actual usage (`memory_tokens` remains the measured value).
+    #[serde(default)]
+    pub core_memory_configured_tokens: Option<u32>,
+    #[serde(default)]
+    pub core_memory_effective_tokens: Option<u32>,
+    #[serde(default)]
+    pub core_memory_model_safety_limit_tokens: Option<u32>,
+    #[serde(default)]
+    pub core_memory_budget_limited_by: Option<crate::memory::CoreMemoryBudgetLimit>,
     /// Skill descriptions injected into the system prompt.
     pub skill_tokens: u32,
     /// Conversation history (user/assistant messages + tool results).

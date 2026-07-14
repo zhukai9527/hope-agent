@@ -188,6 +188,10 @@ pub async fn handle_context(
         tool_schemas_tokens,
         tool_descriptions_tokens,
         memory_tokens,
+        core_memory_configured_tokens: static_memory.core_budget_configured_tokens,
+        core_memory_effective_tokens: static_memory.core_budget_effective_tokens,
+        core_memory_model_safety_limit_tokens: static_memory.core_budget_model_safety_limit_tokens,
+        core_memory_budget_limited_by: static_memory.core_budget_limited_by,
         skill_tokens,
         messages_tokens,
         used_total,
@@ -292,6 +296,17 @@ fn render_markdown_fallback(b: &ContextBreakdown) -> String {
         b.context_window,
     ));
     lines.push(format_row("Memory", b.memory_tokens, b.context_window));
+    if let (Some(configured), Some(effective)) = (
+        b.core_memory_configured_tokens,
+        b.core_memory_effective_tokens,
+    ) {
+        let suffix = if configured == effective {
+            format!("Core budget: {effective} tokens")
+        } else {
+            format!("Core budget: configured {configured}, effective {effective} tokens")
+        };
+        lines.push(format!("  {suffix}"));
+    }
     lines.push(format_row("Skills", b.skill_tokens, b.context_window));
     lines.push(format_row(
         "Dynamic prompt",

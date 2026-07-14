@@ -69,6 +69,10 @@ export interface ContextBreakdown {
   toolSchemasTokens: number
   toolDescriptionsTokens: number
   memoryTokens: number
+  coreMemoryConfiguredTokens?: number | null
+  coreMemoryEffectiveTokens?: number | null
+  coreMemoryModelSafetyLimitTokens?: number | null
+  coreMemoryBudgetLimitedBy?: "context_window" | "emergency_guard" | null
   skillTokens: number
   messagesTokens: number
   dynamicPromptTokens: number

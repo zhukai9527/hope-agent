@@ -46,7 +46,6 @@ Snapshot 只冻结内容，不冻结权限。Memory master switch、Agent memory
     "core": {
       "enabled": true,
       "totalTokens": 1600,
-      "hardMaxTokens": 2400,
       "globalTokens": 350,
       "agentTokens": 450,
       "projectTokens": 650,
@@ -98,6 +97,17 @@ Snapshot 只冻结内容，不冻结权限。Memory master switch、Agent memory
 
 旧配置的首次 V2 视图由 `MemoryRuntimeConfig::from_legacy` 纯计算得出，读取旧配置本身不改盘；下一次正常保存才持久化新结构。V2 简单开关与仍可见的旧高级字段双向镜像一个 minor，且保留旧模型、阈值等专家参数。`rollout.enabled=false` 是完整 V1 回滚；`compatibility.legacyStaticMemory=true` 只恢复旧 SQLite / Profile / Pinned 静态段，不改变 V2 Core 文件和底层资产。
 
+`core.hardMaxTokens` 仅作为旧配置反序列化 / 旧版本读取的兼容镜像保留，Memory UI 不展示，也不得再压低用户唯一可见的 `totalTokens`。保存时保证兼容镜像 `>= totalTokens`；用户预算允许在 `[128, 16384]` 内显式调整。`2400` 是推荐区间上界而非权限或模型能力硬限制，超过时只警告稳定 Prompt、cache write 和 TTFT 成本。
+
+Core 的本轮有效预算由 `CoreMemoryBudgetStatus` 统一解析：
+
+```text
+modelSafetyLimit = clamp(contextWindow / 10, 256, 16384)
+effectiveTokens  = min(totalTokens, modelSafetyLimit, 16384)
+```
+
+`16384` 只是一道防止 raw config / owner API 数量级错误的宽松 emergency guard。模型上下文未知时只应用 emergency guard；具体聊天模型已知时最多使用其窗口的 10%。临时裁剪绝不回写用户配置。Settings 通过 Tauri `get_memory_core_budget_status` / HTTP `GET /api/config/memory-core-budget-status` 展示全局默认模型的「配置值 / 有效值」；session 模型覆盖与 failover 的真实有效值进入 `StaticMemoryContextManifest` 和 `/context`，不得拿全局模型状态冒充当前会话。
+
 ### CoreMemoryRepository、渐进式文件与大小写迁移
 
 三个 scope 共用 `CoreMemoryRepository`，canonical 索引文件名统一为大写 `MEMORY.md`：
@@ -109,6 +119,8 @@ Snapshot 只冻结内容，不冻结权限。Memory master switch、Agent memory
 ```
 
 细节正文位于各自的 `topics/*.md`，只由 `core_memory` / `project_memory` 按需读取；主题正文变化不会改变静态前缀，只有索引内容变化才会合理 bust cache。索引仍受 200 行 / 25KB 文件安全上限约束，但真正进入 Prompt 的大小由 token budget 决定。三层先获得各自预算，未使用额度进入共享池，再按 Project > Agent > Global 分配；裁剪必须以完整 Markdown 条目为边界，并使用保守 token 上界。
+
+Memory Budget 普通 UI 只暴露 `totalTokens`，提供精简 `1000` / 平衡 `1600` / 丰富 `2400` 三档和自定义输入；Global / Agent / Project / protocol / topic-read 分配收在高级区。修改稳定 Core 预算或内容会合理产生一次新 stable-prefix fingerprint，之后继续稳定命中；Fast/Deep Recall 仍位于动态 suffix，不得因本轮召回破坏已有 Core 前缀缓存。
 
 旧 Global `~/.hope-agent/memory.md` 和 Agent `~/.hope-agent/agents/{id}/memory.md` 只在兼容窗口作为同步镜像。所有 loader、tool、owner API、import、backup 和 restore 都必须经 repository，禁止自行拼路径或做 case-only rename。迁移使用全局 OS 独占锁、原子写、回读 BLAKE3 校验和 `~/.hope-agent/memory/migrations/core-memory-v2.json` manifest：
 

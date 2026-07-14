@@ -287,6 +287,13 @@ pub async fn get_memory_runtime_config(
     Ok(Json(ha_core::config::cached_config().memory.clone()))
 }
 
+/// `GET /api/config/memory-core-budget-status` -- resolve the configured Core
+/// budget against the global active model's context window.
+pub async fn get_memory_core_budget_status(
+) -> Result<Json<ha_core::memory::CoreMemoryBudgetStatus>, AppError> {
+    Ok(Json(ha_core::memory::active_core_memory_budget_status()))
+}
+
 /// `PUT /api/config/memory-runtime` -- save the normalized Memory UX v2
 /// contract. Legacy expert settings remain available during rollout.
 pub async fn save_memory_runtime_config(

@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "Lượt trúng bộ nhớ đệm giảm tính toán lặp lại, chi phí và TTFT; không giảm mức sử dụng cửa sổ ngữ cảnh.",
     "cacheWrite": "Ghi bộ nhớ đệm",
     "compactAllowedIn": "Lần nén tiếp theo trong",
+    "coreMemoryBudget": "Ngân sách Core Memory",
+    "coreMemoryModelLimited": "tạm thời giới hạn cho mô hình này",
     "dynamicPrompt": "Lời nhắc động",
     "estimated": "ước tính",
     "estimateNote": "Sau mỗi lượt, số liệu sử dụng thực tế của Provider là chuẩn; trước đó hiển thị ước tính thận trọng theo dạng yêu cầu.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "Tự động trích xuất bộ nhớ",
     "memoryAutoExtractDesc": "Tự động trích xuất bộ nhớ khi đáp ứng ngưỡng token, thời gian hoặc tin nhắn",
     "memoryBudget": {
+      "advancedAllocation": "Phân bổ phạm vi nâng cao",
       "agentOverrideDesc": "Mặc định kế thừa Ngân sách bộ nhớ chung. Tắt để dùng ngân sách riêng cho Agent.",
+      "contextWindow": "Ngữ cảnh mô hình mặc định hiện tại: {{count}} tokens",
+      "coreSimpleDesc": "Chọn một ngân sách tổng cho Core Memory. Dung lượng chưa dùng được chia sẻ theo ưu tiên Project > Agent > Global.",
       "coreMemoryFileChars": "Giới hạn từng MEMORY.md",
       "coreMemoryFileCharsDesc": "Giới hạn độc lập cho mỗi tệp MEMORY.md (Global / Agent). Nội dung vượt quá sẽ bị cắt trong lời nhắc nhưng vẫn giữ nguyên trên đĩa. Mặc định 8000.",
       "desc": "Giới hạn tổng số ký tự của phần bộ nhớ (Global MEMORY.md / Agent MEMORY.md / bộ nhớ SQLite / Hướng dẫn) và giới hạn từng lớp bên trong. Giảm tổng sẽ dành thêm ngân sách cho ngữ cảnh hội thoại trực tiếp.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "Ngân sách quay lui phiên bản cũ",
       "legacyDesc": "Các ngân sách ký tự này chỉ áp dụng cho luồng bộ nhớ tĩnh cũ và vẫn có thể chỉnh sửa trong thời gian tương thích.",
+      "effective": "Đã đặt {{configured}} · hiệu lực ở lượt này {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "Chi tiết: {{error}}"
       },
       "resetToDefaults": "Khôi phục mặc định",
+      "highBudgetWarning": "Vượt phạm vi khuyến nghị 2400 tokens. Vẫn có thể lưu, nhưng sẽ tăng ngữ cảnh ổn định, lượng ghi bộ nhớ đệm và độ trễ token đầu tiên.",
+      "modelLimited": "Đã đặt {{configured}} tokens; mô hình hiện tại dùng an toàn {{effective}}. Tùy chọn đã lưu không bị thay đổi.",
+      "presets": {
+        "balanced": "Cân bằng",
+        "concise": "Gọn",
+        "rich": "Phong phú"
+      },
       "sections": {
         "aboutUser": "Về người dùng",
         "preferences": "Sở thích",

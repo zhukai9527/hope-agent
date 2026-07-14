@@ -43,6 +43,11 @@ pub(crate) struct StaticMemoryContextManifest {
     pub enabled: bool,
     pub incognito: bool,
     pub legacy_static_memory: bool,
+    pub core_budget_configured_tokens: Option<u32>,
+    pub core_budget_effective_tokens: Option<u32>,
+    pub core_budget_context_window_tokens: Option<u32>,
+    pub core_budget_model_safety_limit_tokens: Option<u32>,
+    pub core_budget_limited_by: Option<super::CoreMemoryBudgetLimit>,
     pub core_snapshot_fingerprint: Option<String>,
     pub core_snapshot_captured_at: Option<String>,
     pub core_migration_states: BTreeMap<String, String>,
@@ -73,6 +78,7 @@ impl StaticMemoryContextManifest {
         legacy_candidate_count: usize,
         pinned_claim_candidate_count: usize,
         refs: &[UsedMemoryRef],
+        core_budget_status: Option<&super::CoreMemoryBudgetStatus>,
     ) -> Self {
         let mut injected_refs_by_origin = BTreeMap::new();
         for reference in refs.iter().filter(|reference| reference.role == "injected") {
@@ -99,6 +105,14 @@ impl StaticMemoryContextManifest {
             enabled,
             incognito,
             legacy_static_memory,
+            core_budget_configured_tokens: core_budget_status
+                .map(|status| status.configured_tokens),
+            core_budget_effective_tokens: core_budget_status.map(|status| status.effective_tokens),
+            core_budget_context_window_tokens: core_budget_status
+                .and_then(|status| status.context_window_tokens),
+            core_budget_model_safety_limit_tokens: core_budget_status
+                .and_then(|status| status.model_safety_limit_tokens),
+            core_budget_limited_by: core_budget_status.and_then(|status| status.limited_by),
             core_snapshot_fingerprint: core_snapshot.map(|snapshot| snapshot.fingerprint.clone()),
             core_snapshot_captured_at: core_snapshot.map(|snapshot| snapshot.captured_at.clone()),
             core_migration_states,
@@ -318,6 +332,7 @@ mod tests {
             1,
             0,
             &refs,
+            None,
         );
         let manifest = MemoryContextManifest::new(
             "test",

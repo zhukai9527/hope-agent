@@ -1273,6 +1273,10 @@ fn build_router_with_cors(
                 .put(routes::config::save_memory_runtime_config),
         )
         .route(
+            "/config/memory-core-budget-status",
+            get(routes::config::get_memory_core_budget_status),
+        )
+        .route(
             "/config/memory-selection",
             get(routes::config::get_memory_selection_config),
         )

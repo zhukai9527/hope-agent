@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "快取命中只會減少重複運算、成本與首 Token 延遲，不會減少上下文視窗占用。",
     "cacheWrite": "快取寫入",
     "compactAllowedIn": "下次壓縮",
+    "coreMemoryBudget": "Core Memory 預算",
+    "coreMemoryModelLimited": "已針對目前模型暫時裁剪",
     "dynamicPrompt": "動態提示",
     "estimated": "估算",
     "estimateNote": "每輪結束後以 Provider 實際用量為準；此前顯示按真實請求形態計算的保守估算。",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "自動提取記憶",
     "memoryAutoExtractDesc": "對話過程中當 Token / 時間 / 消息數達到閾值時自動提取記憶",
     "memoryBudget": {
+      "advancedAllocation": "進階作用域分配",
       "agentOverrideDesc": "預設繼承全域記憶預算。關閉下方開關以為當前 Agent 自訂獨立預算。",
+      "contextWindow": "目前預設模型上下文：{{count}} tokens",
+      "coreSimpleDesc": "只需選擇一個 Core Memory 總預算。各作用域可借用未使用額度，優先順序為 Project > Agent > Global。",
       "coreMemoryFileChars": "MEMORY.md 單層上限",
       "coreMemoryFileCharsDesc": "Global / Agent 每個 MEMORY.md 獨立上限。超出的部分截斷顯示,完整內容仍在磁碟。預設 8000。",
       "desc": "限制系統提示詞中記憶區塊(Global MEMORY.md / Agent MEMORY.md / SQLite 記憶 / 使用指南)的總字元數,以及內部各層獨立上限。降低 total 可以讓更多預算留給對話上下文。",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "舊版回滾預算",
       "legacyDesc": "這些字元預算只用於舊版靜態記憶路徑，並在相容期間繼續保留可編輯入口。",
+      "effective": "設定 {{configured}} · 本輪有效 {{effective}} tokens",
       "errors": {
         "load": "載入記憶預算失敗",
         "save": "儲存記憶預算失敗",
         "detail": "詳細資訊：{{error}}"
       },
       "resetToDefaults": "恢復預設值",
+      "highBudgetWarning": "已超過建議的 2400 tokens。系統允許儲存，但會增加每輪穩定上下文、快取寫入量和首字延遲。",
+      "modelLimited": "已設定 {{configured}} tokens；目前模型安全使用 {{effective}}。儲存的偏好不會被改寫。",
+      "presets": {
+        "balanced": "平衡",
+        "concise": "精簡",
+        "rich": "豐富"
+      },
       "sections": {
         "aboutUser": "關於使用者",
         "preferences": "偏好",

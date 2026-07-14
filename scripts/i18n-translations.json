@@ -240,7 +240,18 @@
           "preferences": "好み",
           "projectContext": "プロジェクトコンテキスト",
           "references": "参考資料"
-        }
+        },
+        "presets": {
+          "balanced": "バランス",
+          "concise": "簡潔",
+          "rich": "充実"
+        },
+        "advancedAllocation": "高度なスコープ配分",
+        "contextWindow": "現在のデフォルトモデルのコンテキスト：{{count}} tokens",
+        "coreSimpleDesc": "Core Memory の総予算を1つ選択します。未使用枠は Project > Agent > Global の優先順で共有されます。",
+        "effective": "設定 {{configured}} · 今回の有効値 {{effective}} tokens",
+        "highBudgetWarning": "推奨範囲の 2400 tokens を超えています。保存はできますが、各リクエストの安定コンテキスト、キャッシュ書き込み、初回トークン遅延が増加します。",
+        "modelLimited": "{{configured}} tokens に設定されていますが、現在のモデルでは安全のため {{effective}} を使用します。保存済み設定は変更されません。"
       },
       "skillsDirShared": "共有",
       "skillsDirSharedDesc": "ツール間で共有されるスキルディレクトリ（~/.agents/skills/ 規約）",
@@ -1925,6 +1936,10 @@
         "title": "スキル{{skill}}"
       },
       "defaultName": "スキル"
+    },
+    "context": {
+      "coreMemoryBudget": "Core Memory 予算",
+      "coreMemoryModelLimited": "このモデル向けに一時的に制限"
     }
   },
   "ko": {
@@ -2168,7 +2183,18 @@
           "preferences": "선호도",
           "projectContext": "프로젝트 컨텍스트",
           "references": "참조"
-        }
+        },
+        "presets": {
+          "balanced": "균형",
+          "concise": "간결",
+          "rich": "풍부"
+        },
+        "advancedAllocation": "고급 범위 할당",
+        "contextWindow": "현재 기본 모델 컨텍스트: {{count}} tokens",
+        "coreSimpleDesc": "Core Memory 총예산 하나만 선택하세요. 사용하지 않은 용량은 Project > Agent > Global 우선순위로 공유됩니다.",
+        "effective": "설정 {{configured}} · 이번 요청 유효값 {{effective}} tokens",
+        "highBudgetWarning": "권장 범위인 2400 tokens를 초과했습니다. 저장할 수 있지만 매 요청의 안정 컨텍스트, 캐시 쓰기 및 첫 토큰 지연이 증가합니다.",
+        "modelLimited": "{{configured}} tokens로 설정했지만 현재 모델은 안전하게 {{effective}}를 사용합니다. 저장된 설정은 변경되지 않습니다."
       },
       "skillsDirShared": "공유",
       "skillsDirSharedDesc": "도구 간 공유 스킬 디렉토리 (~/.agents/skills/ 규약)",
@@ -3853,6 +3879,10 @@
         "title": "스킬 {{skill}}"
       },
       "defaultName": "기술"
+    },
+    "context": {
+      "coreMemoryBudget": "Core Memory 예산",
+      "coreMemoryModelLimited": "현재 모델에 맞게 일시적으로 제한됨"
     }
   },
   "zh-TW": {
@@ -4096,7 +4126,18 @@
           "preferences": "偏好",
           "projectContext": "專案上下文",
           "references": "參考資料"
-        }
+        },
+        "presets": {
+          "balanced": "平衡",
+          "concise": "精簡",
+          "rich": "豐富"
+        },
+        "advancedAllocation": "進階作用域分配",
+        "contextWindow": "目前預設模型上下文：{{count}} tokens",
+        "coreSimpleDesc": "只需選擇一個 Core Memory 總預算。各作用域可借用未使用額度，優先順序為 Project > Agent > Global。",
+        "effective": "設定 {{configured}} · 本輪有效 {{effective}} tokens",
+        "highBudgetWarning": "已超過建議的 2400 tokens。系統允許儲存，但會增加每輪穩定上下文、快取寫入量和首字延遲。",
+        "modelLimited": "已設定 {{configured}} tokens；目前模型安全使用 {{effective}}。儲存的偏好不會被改寫。"
       },
       "skillsDirShared": "共享",
       "skillsDirSharedDesc": "跨工具共享的技能目錄（~/.agents/skills/ 約定）",
@@ -5764,6 +5805,10 @@
         "title": "技能{{skill}}"
       },
       "defaultName": "技能"
+    },
+    "context": {
+      "coreMemoryBudget": "Core Memory 預算",
+      "coreMemoryModelLimited": "已針對目前模型暫時裁剪"
     }
   },
   "tr": {
@@ -6007,7 +6052,18 @@
           "preferences": "Tercihler",
           "projectContext": "Proje bağlamı",
           "references": "Referanslar"
-        }
+        },
+        "presets": {
+          "balanced": "Dengeli",
+          "concise": "Kısa",
+          "rich": "Zengin"
+        },
+        "advancedAllocation": "Gelişmiş kapsam dağılımı",
+        "contextWindow": "Geçerli varsayılan model bağlamı: {{count}} tokens",
+        "coreSimpleDesc": "Core Memory için tek bir toplam bütçe seçin. Kullanılmayan kapasite Project > Agent > Global önceliğiyle paylaşılır.",
+        "effective": "Yapılandırılan {{configured}} · bu turda etkin {{effective}} tokens",
+        "highBudgetWarning": "Önerilen 2400 tokens aralığının üzerinde. Kaydedilebilir; ancak her istekte kararlı bağlamı, önbellek yazımını ve ilk token gecikmesini artırır.",
+        "modelLimited": "{{configured}} tokens yapılandırıldı; geçerli model güvenli olarak {{effective}} kullanıyor. Kayıtlı tercihiniz değişmez."
       },
       "skillsDirShared": "Paylaşılan",
       "skillsDirSharedDesc": "Araçlar arası paylaşılan beceri dizini (~/.agents/skills/ sözleşmesi)",
@@ -7692,6 +7748,10 @@
         "title": "Beceri {{skill}}"
       },
       "defaultName": "beceri"
+    },
+    "context": {
+      "coreMemoryBudget": "Core Memory bütçesi",
+      "coreMemoryModelLimited": "bu model için geçici olarak sınırlandı"
     }
   },
   "vi": {
@@ -7935,7 +7995,18 @@
           "preferences": "Sở thích",
           "projectContext": "Ngữ cảnh dự án",
           "references": "Tham chiếu"
-        }
+        },
+        "presets": {
+          "balanced": "Cân bằng",
+          "concise": "Gọn",
+          "rich": "Phong phú"
+        },
+        "advancedAllocation": "Phân bổ phạm vi nâng cao",
+        "contextWindow": "Ngữ cảnh mô hình mặc định hiện tại: {{count}} tokens",
+        "coreSimpleDesc": "Chọn một ngân sách tổng cho Core Memory. Dung lượng chưa dùng được chia sẻ theo ưu tiên Project > Agent > Global.",
+        "effective": "Đã đặt {{configured}} · hiệu lực ở lượt này {{effective}} tokens",
+        "highBudgetWarning": "Vượt phạm vi khuyến nghị 2400 tokens. Vẫn có thể lưu, nhưng sẽ tăng ngữ cảnh ổn định, lượng ghi bộ nhớ đệm và độ trễ token đầu tiên.",
+        "modelLimited": "Đã đặt {{configured}} tokens; mô hình hiện tại dùng an toàn {{effective}}. Tùy chọn đã lưu không bị thay đổi."
       },
       "skillsDirShared": "Dùng chung",
       "skillsDirSharedDesc": "Thư mục kỹ năng dùng chung giữa các công cụ (quy ước ~/.agents/skills/)",
@@ -9620,6 +9691,10 @@
         "title": "Kỹ năng {{skill}}"
       },
       "defaultName": "kỹ năng"
+    },
+    "context": {
+      "coreMemoryBudget": "Ngân sách Core Memory",
+      "coreMemoryModelLimited": "tạm thời giới hạn cho mô hình này"
     }
   },
   "pt": {
@@ -9863,7 +9938,18 @@
           "preferences": "Preferências",
           "projectContext": "Contexto do projeto",
           "references": "Referências"
-        }
+        },
+        "presets": {
+          "balanced": "Equilibrado",
+          "concise": "Conciso",
+          "rich": "Completo"
+        },
+        "advancedAllocation": "Alocação avançada por escopo",
+        "contextWindow": "Contexto do modelo padrão atual: {{count}} tokens",
+        "coreSimpleDesc": "Escolha um único orçamento total para a Core Memory. Os escopos compartilham a capacidade livre na prioridade Project > Agent > Global.",
+        "effective": "Configurado {{configured}} · efetivo nesta rodada {{effective}} tokens",
+        "highBudgetWarning": "Acima da faixa recomendada de 2400 tokens. É permitido salvar, mas isso aumenta o contexto estável, as gravações de cache e a latência do primeiro token.",
+        "modelLimited": "Configurado em {{configured}} tokens; o modelo atual usa {{effective}} com segurança. A preferência salva não será alterada."
       },
       "skillsDirShared": "Compartilhado",
       "skillsDirSharedDesc": "Diretório de habilidades compartilhado entre ferramentas (convenção ~/.agents/skills/)",
@@ -11548,6 +11634,10 @@
         "title": "Habilidade {{skill}}"
       },
       "defaultName": "habilidade"
+    },
+    "context": {
+      "coreMemoryBudget": "Orçamento da Core Memory",
+      "coreMemoryModelLimited": "limitado temporariamente para este modelo"
     }
   },
   "ru": {
@@ -11791,7 +11881,18 @@
           "preferences": "Предпочтения",
           "projectContext": "Контекст проекта",
           "references": "Ссылки"
-        }
+        },
+        "presets": {
+          "balanced": "Сбалансированный",
+          "concise": "Компактный",
+          "rich": "Расширенный"
+        },
+        "advancedAllocation": "Расширенное распределение по областям",
+        "contextWindow": "Контекст текущей модели по умолчанию: {{count}} tokens",
+        "coreSimpleDesc": "Выберите единый общий бюджет Core Memory. Неиспользованный объём распределяется с приоритетом Project > Agent > Global.",
+        "effective": "Настроено {{configured}} · эффективно в этом раунде {{effective}} tokens",
+        "highBudgetWarning": "Превышен рекомендуемый диапазон 2400 tokens. Сохранение разрешено, но увеличит стабильный контекст, запись кэша и задержку первого токена.",
+        "modelLimited": "Настроено {{configured}} tokens; текущая модель безопасно использует {{effective}}. Сохранённая настройка не изменяется."
       },
       "skillsDirShared": "Общий",
       "skillsDirSharedDesc": "Общий каталог навыков между инструментами (соглашение ~/.agents/skills/)",
@@ -13476,6 +13577,10 @@
         "title": "Навык {{skill}}"
       },
       "defaultName": "умение"
+    },
+    "context": {
+      "coreMemoryBudget": "Бюджет Core Memory",
+      "coreMemoryModelLimited": "временно ограничено для этой модели"
     }
   },
   "ar": {
@@ -13719,7 +13824,18 @@
           "preferences": "التفضيلات",
           "projectContext": "سياق المشروع",
           "references": "المراجع"
-        }
+        },
+        "presets": {
+          "balanced": "متوازن",
+          "concise": "موجز",
+          "rich": "موسع"
+        },
+        "advancedAllocation": "توزيع النطاقات المتقدم",
+        "contextWindow": "سياق النموذج الافتراضي الحالي: {{count}} tokens",
+        "coreSimpleDesc": "اختر ميزانية إجمالية واحدة لـ Core Memory. تتشارك النطاقات السعة غير المستخدمة بالأولوية Project > Agent > Global.",
+        "effective": "المضبوط {{configured}} · الفعلي في هذه الجولة {{effective}} tokens",
+        "highBudgetWarning": "تجاوزت النطاق الموصى به وهو 2400 tokens. يمكن الحفظ، لكن ذلك يزيد السياق الثابت وكتابة التخزين المؤقت وزمن أول رمز.",
+        "modelLimited": "تم الضبط على {{configured}} tokens؛ يستخدم النموذج الحالي {{effective}} بأمان. لن يتغير التفضيل المحفوظ."
       },
       "skillsDirShared": "مشترك",
       "skillsDirSharedDesc": "دليل مهارات مشترك بين الأدوات (اصطلاح ~/.agents/skills/)",
@@ -15404,6 +15520,10 @@
         "title": "المهارة {{skill}}"
       },
       "defaultName": "مهارة"
+    },
+    "context": {
+      "coreMemoryBudget": "ميزانية Core Memory",
+      "coreMemoryModelLimited": "محدودة مؤقتًا لهذا النموذج"
     }
   },
   "es": {
@@ -15647,7 +15767,18 @@
           "preferences": "Preferencias",
           "projectContext": "Contexto del proyecto",
           "references": "Referencias"
-        }
+        },
+        "presets": {
+          "balanced": "Equilibrado",
+          "concise": "Conciso",
+          "rich": "Amplio"
+        },
+        "advancedAllocation": "Asignación avanzada por ámbito",
+        "contextWindow": "Contexto del modelo predeterminado actual: {{count}} tokens",
+        "coreSimpleDesc": "Elige un único presupuesto total para Core Memory. Los ámbitos comparten la capacidad libre con prioridad Project > Agent > Global.",
+        "effective": "Configurado {{configured}} · efectivo en esta ronda {{effective}} tokens",
+        "highBudgetWarning": "Supera el rango recomendado de 2400 tokens. Se puede guardar, pero aumenta el contexto estable, las escrituras de caché y la latencia del primer token.",
+        "modelLimited": "Configurado en {{configured}} tokens; el modelo actual usa {{effective}} de forma segura. La preferencia guardada no cambia."
       },
       "skillsDirShared": "Compartido",
       "skillsDirSharedDesc": "Directorio de habilidades compartido entre herramientas (convención ~/.agents/skills/)",
@@ -17332,6 +17463,10 @@
         "title": "Habilidad {{skill}}"
       },
       "defaultName": "habilidad"
+    },
+    "context": {
+      "coreMemoryBudget": "Presupuesto de Core Memory",
+      "coreMemoryModelLimited": "limitado temporalmente para este modelo"
     }
   },
   "ms": {
@@ -17575,7 +17710,18 @@
           "preferences": "Keutamaan",
           "projectContext": "Konteks projek",
           "references": "Rujukan"
-        }
+        },
+        "presets": {
+          "balanced": "Seimbang",
+          "concise": "Ringkas",
+          "rich": "Kaya"
+        },
+        "advancedAllocation": "Peruntukan skop lanjutan",
+        "contextWindow": "Konteks model lalai semasa: {{count}} tokens",
+        "coreSimpleDesc": "Pilih satu jumlah bajet Core Memory. Kapasiti yang tidak digunakan dikongsi mengikut keutamaan Project > Agent > Global.",
+        "effective": "Dikonfigurasi {{configured}} · berkesan pusingan ini {{effective}} tokens",
+        "highBudgetWarning": "Melebihi julat disyorkan 2400 tokens. Ia boleh disimpan, tetapi meningkatkan konteks stabil, penulisan cache dan kependaman token pertama.",
+        "modelLimited": "Dikonfigurasi {{configured}} tokens; model semasa menggunakan {{effective}} dengan selamat. Keutamaan tersimpan tidak berubah."
       },
       "skillsDirShared": "Dikongsi",
       "skillsDirSharedDesc": "Direktori kemahiran dikongsi antara alat (konvensyen ~/.agents/skills/)",
@@ -19260,6 +19406,10 @@
         "title": "Kemahiran {{skill}}"
       },
       "defaultName": "kemahiran"
+    },
+    "context": {
+      "coreMemoryBudget": "Bajet Core Memory",
+      "coreMemoryModelLimited": "dihadkan sementara untuk model ini"
     }
   },
   "zh": {

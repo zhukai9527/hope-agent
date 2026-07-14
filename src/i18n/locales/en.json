@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "Cache hits reduce repeated computation, cost, and TTFT; they do not reduce context-window usage.",
     "cacheWrite": "Cache write",
     "compactAllowedIn": "Next compact in",
+    "coreMemoryBudget": "Core Memory budget",
+    "coreMemoryModelLimited": "temporarily limited for this model",
     "dynamicPrompt": "Dynamic prompt",
     "estimated": "estimated",
     "estimateNote": "Provider usage is authoritative after each round; before that, a conservative request-shape estimate is shown.",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "Auto-extract memories",
     "memoryAutoExtractDesc": "Automatically extract memories when token, time, or message thresholds are met",
     "memoryBudget": {
+      "advancedAllocation": "Advanced scope allocation",
       "agentOverrideDesc": "Inherits the global Memory Budget by default. Toggle off to use an agent-specific budget.",
+      "contextWindow": "Current default model context: {{count}} tokens",
+      "coreSimpleDesc": "Choose one Core Memory budget. Scope allocations can borrow unused capacity, with Project > Agent > Global priority.",
       "coreMemoryFileChars": "MEMORY.md per-layer cap",
       "coreMemoryFileCharsDesc": "Independent cap for each MEMORY.md file (Global / Agent). Content beyond the cap is truncated in the prompt but preserved on disk. Default 8000.",
       "desc": "Caps the total character count of the Memory section (Global MEMORY.md / Agent MEMORY.md / SQLite memories / Guidelines) and the per-layer limits inside it. Lowering the total frees budget for the live conversation context.",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "Legacy rollback budgets",
       "legacyDesc": "These character budgets only apply to the legacy static-memory path and remain editable during the compatibility window.",
+      "effective": "Configured {{configured}} · effective {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "Details: {{error}}"
       },
       "resetToDefaults": "Reset to defaults",
+      "highBudgetWarning": "Above the recommended 2400-token range. This is allowed, but increases every request's stable context, cache writes, and first-token latency.",
+      "modelLimited": "Configured {{configured}} tokens; the current model safely uses {{effective}}. Your saved preference is unchanged.",
+      "presets": {
+        "balanced": "Balanced",
+        "concise": "Concise",
+        "rich": "Rich"
+      },
       "sections": {
         "aboutUser": "About the User",
         "preferences": "Preferences",

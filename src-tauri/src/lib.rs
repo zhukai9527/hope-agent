@@ -338,6 +338,7 @@ pub fn run() {
             commands::memory::memory_import_preview,
             commands::memory::memory_get_import_from_ai_prompt,
             commands::memory::get_memory_runtime_config,
+            commands::memory::get_memory_core_budget_status,
             commands::memory::save_memory_runtime_config,
             commands::memory::memory_reembed,
             commands::memory::get_global_memory_md,

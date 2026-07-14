@@ -629,12 +629,19 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
             .map(|m| m.workflow_mode)
             .unwrap_or_default();
         let channel_info = session_meta.as_ref().and_then(|m| m.channel_info.as_ref());
+        let model_context_window =
+            crate::provider::model_context_window(&app_cfg.providers, provider, model);
+        let core_budget_status = crate::memory::CoreMemoryBudgetStatus::resolve(
+            &app_cfg.memory.core,
+            model_context_window,
+        );
         let rendered_v2_core = core_repository_enabled.then(|| {
-            crate::system_prompt::render_core_memory_v2(
+            crate::system_prompt::render_core_memory_v2_for_context(
                 global_core_memory,
                 agent_core_memory,
                 project_auto_memory_index.as_deref(),
                 &app_cfg.memory.core,
+                model_context_window,
             )
         });
         let (rendered_agent_core, rendered_global_core, rendered_project_core) =
@@ -823,6 +830,7 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
                     .as_ref()
                     .map_or(0, |pack| pack.source_digest.len()),
                 &static_memory_refs,
+                core_repository_enabled.then_some(&core_budget_status),
             );
 
         // A CoreMemorySnapshot is immutable for the session. Override the

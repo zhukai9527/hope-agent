@@ -1224,6 +1224,8 @@
     "cacheWindowNotice": "キャッシュヒットは再計算、コスト、TTFTを削減しますが、コンテキストウィンドウの使用量は削減しません。",
     "cacheWrite": "キャッシュ書き込み",
     "compactAllowedIn": "次回の圧縮まで",
+    "coreMemoryBudget": "Core Memory 予算",
+    "coreMemoryModelLimited": "このモデル向けに一時的に制限",
     "dynamicPrompt": "動的プロンプト",
     "estimated": "推定",
     "estimateNote": "各ラウンド後は Provider の実測値を優先し、それまでは実際のリクエスト形状に基づく保守的な推定値を表示します。",
@@ -4903,7 +4905,10 @@
     "memoryAutoExtract": "記憶を自動抽出",
     "memoryAutoExtractDesc": "トークン、時間、メッセージ数の閾値を超えると記憶を自動抽出",
     "memoryBudget": {
+      "advancedAllocation": "高度なスコープ配分",
       "agentOverrideDesc": "デフォルトではグローバルのメモリバジェットを継承します。オフにすると Agent 固有のバジェットを使用します。",
+      "contextWindow": "現在のデフォルトモデルのコンテキスト：{{count}} tokens",
+      "coreSimpleDesc": "Core Memory の総予算を1つ選択します。未使用枠は Project > Agent > Global の優先順で共有されます。",
       "coreMemoryFileChars": "MEMORY.md 各層の上限",
       "coreMemoryFileCharsDesc": "各 MEMORY.md ファイル(Global / Agent)の独立した上限。超過分はプロンプト上で切り詰められますが、ディスク上の内容は保持されます。デフォルト 8000。",
       "desc": "メモリセクション(Global MEMORY.md / Agent MEMORY.md / SQLite メモリ / ガイドライン)の合計文字数と内部各層の上限を制限します。合計を減らすと会話コンテキストに使える予算が増えます。",
@@ -4925,12 +4930,20 @@
       },
       "legacyTitle": "従来版ロールバック用バジェット",
       "legacyDesc": "これらの文字数バジェットは従来の静的メモリ経路にのみ適用され、互換期間中は引き続き編集できます。",
+      "effective": "設定 {{configured}} · 今回の有効値 {{effective}} tokens",
       "errors": {
         "load": "Failed to load memory budget",
         "save": "Failed to save memory budget",
         "detail": "詳細：{{error}}"
       },
       "resetToDefaults": "デフォルトに戻す",
+      "highBudgetWarning": "推奨範囲の 2400 tokens を超えています。保存はできますが、各リクエストの安定コンテキスト、キャッシュ書き込み、初回トークン遅延が増加します。",
+      "modelLimited": "{{configured}} tokens に設定されていますが、現在のモデルでは安全のため {{effective}} を使用します。保存済み設定は変更されません。",
+      "presets": {
+        "balanced": "バランス",
+        "concise": "簡潔",
+        "rich": "充実"
+      },
       "sections": {
         "aboutUser": "ユーザーについて",
         "preferences": "好み",
