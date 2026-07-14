@@ -76,6 +76,8 @@ interface SessionListProps {
   onMoveToProject?: (sessionId: string, projectId: string | null) => void
   onToggleSessionPinned?: (sessionId: string, pinned: boolean) => void
   displayMode: SidebarDisplayMode
+  /** Number of visible 32px sticky section headers above the filter tabs. */
+  stickyHeaderCount?: number
 }
 
 export default function SessionList({
@@ -109,6 +111,7 @@ export default function SessionList({
   onMoveToProject,
   onToggleSessionPinned,
   displayMode,
+  stickyHeaderCount = 0,
 }: SessionListProps) {
   const { t } = useTranslation()
 
@@ -138,13 +141,16 @@ export default function SessionList({
 
   return (
     <>
-      {/* Session type filter tabs — sticky below the agent/project section
-          headers (each h-8 = 32px) when those are present, top-0 in search mode
-          where they're not rendered. */}
+      {/* Session type filter tabs — sticky below whichever 32px section
+          headers are actually visible; search mode renders neither header. */}
       <div
         className={cn(
           "sticky z-20 flex items-center gap-0.5 px-3 py-1.5 border-b border-border/40 bg-surface-panel overflow-x-auto scrollbar-none",
-          isSearching ? "top-0" : "top-16",
+          isSearching || stickyHeaderCount === 0
+            ? "top-0"
+            : stickyHeaderCount === 1
+              ? "top-8"
+              : "top-16",
         )}
       >
         {(["all", "session", "subagent"] as const).map((filter) => {
