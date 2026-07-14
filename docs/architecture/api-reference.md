@@ -278,6 +278,8 @@ Tauri ↔ COMMAND_MAP 差集为 14 条合法非 REST 命令（5 条 Desktop-only
 | `get_project_cmd` | `GET /api/projects/{id}` | ✅ |
 | `create_project_cmd` | `POST /api/projects` | ✅ |
 | `update_project_cmd` | `PATCH /api/projects/{id}` | ✅ |
+| `get_project_instructions_cmd` | `GET /api/projects/{id}/instructions` | ✅（缺失时创建根 `AGENTS.md`） |
+| `save_project_instructions_cmd` | `PUT /api/projects/{id}/instructions` | ✅（owner 设置面，原子写入，不受通用文件写闸门影响） |
 | `delete_project_cmd` | `DELETE /api/projects/{id}` | ✅ |
 | `archive_project_cmd` | `POST /api/projects/{id}/archive` | ✅ |
 | `list_project_sessions_cmd` | `GET /api/projects/{id}/sessions` | ✅ |
@@ -290,6 +292,8 @@ Tauri ↔ COMMAND_MAP 差集为 14 条合法非 REST 命令（5 条 Desktop-only
 | `rebuild_project_memory_index_cmd` | `POST /api/projects/{id}/memory-files/rebuild-index` | ✅ |
 
 `list_projects_cmd` / `GET /api/projects` 接受可选 `active_session_id`（HTTP query `activeSessionId`）：正在打开的那个会话会从其所属项目的未读聚合里排除（在 SQL 里按已读处理），使项目徽标与“当前会话读作 0”一致，无需前端跨数据源相减。
+
+项目指令以项目工作目录根 `AGENTS.md` 为唯一真相源，`Project` / `CreateProjectInput` / `UpdateProjectInput` 均不再携带 `instructions`。创建项目、切换 `workingDir` 和启动迁移会确保文件存在；GET 返回 `{ path, content, contentHash, created }`，PUT body 为 `{ content, expectedFileHash }` 并原样保留 Markdown 空白。保存前以磁盘 raw BLAKE3 校验 `expectedFileHash`，不一致返回 `409 project_instructions_stale`，防止覆盖 Agent / 外部编辑器的并发修改。
 
 **项目文件浏览器（workspace-scoped filesystem）**——上传/读写改走作用域文件管理 API（旧的 `list_project_files_cmd` / `upload_project_file_cmd` / `delete_project_file_cmd` / `rename_project_file_cmd` / `read_project_file_content_cmd` 五条命令与对应 `/api/projects/{id}/files*` 路由已删除）。命令以 `{ scope: "session"|"project", scopeId, ... }` 寻址，后端 `WorkspaceScope` 解析工作目录并做越界校验：
 
@@ -1243,7 +1247,7 @@ Agent 执行准入采用两层 guard：Desktop / HTTP / Channel / Cron 等调用
 | Context | `messages` 最后一条 assistant 行的 `tokens_in_last`（fallback `tokens_in`）vs 该行 `model` 对应的 `context_window` | `- **Context**: 42k / 200k (21%)`；window=0 时仅显示已用值 |
 | Cache (last round) | 最后一条 assistant 的 `tokens_cache_creation` / `tokens_cache_read`（**不累计**；来自该 turn 最后一次 API round） | `- **Cache (last round)**: write 2k · hit 38k`；字段存在时即使两值都是 0 也显示，字段缺失时整行省略 |
 | Updated | `sessions.updated_at` 相对时间 | `- **Updated**: just now` / `Nm ago` / `Nh ago` / `Nd ago` |
-| Current Project | `sessions.project_id` | 单独一段（项目名 / desc / agent / working dir / instructions / agent source） |
+| Current Project | `sessions.project_id` | 单独一段（项目名 / desc / agent / working dir / `AGENTS.md` 指令预览 / agent source） |
 | Attached IM Channels | `channel_db.list_attached(session_id)` | 单独一段（每行 `★` primary 标记 + channel:account:chat:thread + `attached_at`） |
 
 Context / Cache 共用单 SQL `get_session_last_assistant_token_row`，避免渲染时多次扫表。Context window 在当前激活模型与该行 `model` 列名不同时，按 `cached_config().providers` 反查兜底。

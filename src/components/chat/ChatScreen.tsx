@@ -3604,7 +3604,6 @@ export default function ChatScreen({
           void handleNewChatInProject(projectId, defaultAgentId)
         }}
         onOpenSession={(sid) => void handleSwitchSession(sid)}
-        onUpdateProject={updateProject}
       />
 
       {/* Project delete confirmation */}

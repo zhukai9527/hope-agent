@@ -25,12 +25,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
-import type { Project, ProjectMeta, UpdateProjectInput } from "@/types/project"
+import type { Project, ProjectMeta } from "@/types/project"
 
 import { FileBrowserView } from "./file-browser/FileBrowserView"
 import ProjectIcon from "./ProjectIcon"
 import { ProjectMemorySection } from "./ProjectMemorySection"
+import ProjectInstructionsEditor from "./ProjectInstructionsEditor"
 
 interface ProjectOverviewDialogProps {
   open: boolean
@@ -45,7 +45,6 @@ interface ProjectOverviewDialogProps {
    * was removed because the sidebar now lists project sessions inline.
    */
   onOpenSession?: (sessionId: string) => void
-  onUpdateProject: (id: string, patch: UpdateProjectInput) => Promise<Project | null>
 }
 
 export default function ProjectOverviewDialog({
@@ -56,37 +55,15 @@ export default function ProjectOverviewDialog({
   onDelete,
   onArchive,
   onNewSessionInProject,
-  onUpdateProject,
 }: ProjectOverviewDialogProps) {
   const { t } = useTranslation()
   const [tab, setTab] = useState("overview")
-  const [instructionsDraft, setInstructionsDraft] = useState("")
-  const [savingInstructions, setSavingInstructions] = useState(false)
-  const [instructionsSaveStatus, setInstructionsSaveStatus] = useState<"idle" | "saved" | "failed">(
-    "idle",
-  )
 
   useEffect(() => {
     if (!open || !project) return
     setTab("overview")
-    setInstructionsDraft(project.instructions ?? "")
-    setInstructionsSaveStatus("idle")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, project?.id])
-
-  async function handleSaveInstructions() {
-    if (!project) return
-    setSavingInstructions(true)
-    try {
-      const updated = await onUpdateProject(project.id, {
-        instructions: instructionsDraft.trim(),
-      })
-      setInstructionsSaveStatus(updated ? "saved" : "failed")
-    } finally {
-      setSavingInstructions(false)
-      setTimeout(() => setInstructionsSaveStatus("idle"), 2000)
-    }
-  }
 
   if (!project) return null
 
@@ -190,41 +167,12 @@ export default function ProjectOverviewDialog({
           </TabsContent>
 
           {/* Instructions */}
-          <TabsContent value="instructions" className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
-            <p className="text-xs text-muted-foreground">{t("project.projectInstructionsHint")}</p>
-            <Textarea
-              value={instructionsDraft}
-              onChange={(e) => setInstructionsDraft(e.target.value)}
-              rows={12}
-              className="font-mono text-sm"
-              placeholder={t("project.projectInstructionsPlaceholder")}
-            />
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setInstructionsDraft(project.instructions ?? "")}
-                disabled={savingInstructions}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button
-                onClick={handleSaveInstructions}
-                disabled={savingInstructions}
-                className={
-                  instructionsSaveStatus === "saved"
-                    ? "bg-emerald-600 hover:bg-emerald-600"
-                    : instructionsSaveStatus === "failed"
-                      ? "bg-destructive hover:bg-destructive"
-                      : ""
-                }
-              >
-                {savingInstructions
-                  ? t("common.saving")
-                  : instructionsSaveStatus === "saved"
-                    ? t("common.saved")
-                    : t("common.save")}
-              </Button>
-            </div>
+          <TabsContent
+            value="instructions"
+            forceMount
+            className="min-h-0 flex-1 overflow-hidden px-5 py-3"
+          >
+            <ProjectInstructionsEditor projectId={project.id} />
           </TabsContent>
 
           {/* Project auto memory: bounded index + on-demand topic files. */}

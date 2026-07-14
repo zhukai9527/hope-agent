@@ -1,9 +1,10 @@
 //! Project types.
 //!
 //! A `Project` is an optional container that groups multiple sessions so they
-//! can share memories (`MemoryScope::Project`), custom instructions, and
-//! uploaded files. Sessions with `project_id = NULL` keep the pre-project
-//! behavior and are unaffected.
+//! can share memories (`MemoryScope::Project`) and a working directory.
+//! Project instructions are not stored in this record: the project root's
+//! `AGENTS.md` is the sole source of truth. Sessions with `project_id = NULL`
+//! keep the pre-project behavior and are unaffected.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,9 +18,6 @@ pub struct Project {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Custom instructions appended to the system prompt for every session in the project.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instructions: Option<String>,
     /// Optional project logo stored as a `data:image/...;base64,...` URL.
     /// Rendered in the sidebar row and overview header when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,8 +72,6 @@ pub struct CreateProjectInput {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub instructions: Option<String>,
-    #[serde(default)]
     pub logo: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
@@ -102,8 +98,6 @@ pub struct UpdateProjectInput {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub instructions: Option<String>,
     #[serde(default)]
     pub logo: Option<String>,
     #[serde(default)]

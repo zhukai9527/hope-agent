@@ -13,7 +13,6 @@ import {
   Camera,
   Check,
   CircleSlash,
-  FileText,
   FolderOpen,
   FolderPlus,
   ImagePlus,
@@ -125,7 +124,6 @@ export default function ProjectDialog({
 
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
-  const [instructions, setInstructions] = useState("")
   const [logo, setLogo] = useState<string>("")
   const [color, setColor] = useState<string>("")
   const [defaultAgentId, setDefaultAgentId] = useState<string>("")
@@ -148,7 +146,6 @@ export default function ProjectDialog({
     if (mode === "edit" && initialProject) {
       setName(initialProject.name ?? "")
       setDescription(initialProject.description ?? "")
-      setInstructions(initialProject.instructions ?? "")
       setLogo(initialProject.logo ?? "")
       setColor(initialProject.color ?? "")
       setDefaultAgentId(initialProject.defaultAgentId ?? "")
@@ -156,7 +153,6 @@ export default function ProjectDialog({
     } else {
       setName("")
       setDescription("")
-      setInstructions("")
       setLogo("")
       setColor("")
       setDefaultAgentId("")
@@ -235,7 +231,6 @@ export default function ProjectDialog({
         const created = await onCreate({
           name: name.trim(),
           description: description.trim() || null,
-          instructions: instructions.trim() || null,
           logo: logo || null,
           color: color || null,
           defaultAgentId: defaultAgentId || null,
@@ -251,7 +246,6 @@ export default function ProjectDialog({
         const updated = await onUpdate(initialProject.id, {
           name: name.trim(),
           description: description.trim(),
-          instructions: instructions.trim(),
           logo: logo,
           color: color,
           defaultAgentId: defaultAgentId,
@@ -526,24 +520,6 @@ export default function ProjectDialog({
               {mode === "edit" && initialProject?.id && (
                 <ProjectKnowledgeSection projectId={initialProject.id} />
               )}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="project-instructions" className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                  {t("project.projectInstructions")}
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  {t("project.projectInstructionsHint")}
-                </p>
-                <Textarea
-                  id="project-instructions"
-                  value={instructions}
-                  onChange={(e) => setInstructions(e.target.value)}
-                  placeholder={t("project.projectInstructionsPlaceholder")}
-                  rows={7}
-                  className="max-h-52 min-h-36 font-mono text-sm"
-                />
-              </div>
 
               {error && (
                 <p className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">

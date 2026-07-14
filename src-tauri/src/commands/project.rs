@@ -6,7 +6,9 @@
 
 use crate::commands::CmdError;
 use ha_core::project::{
-    delete_project_cascade, CreateProjectInput, Project, ProjectMeta, UpdateProjectInput,
+    create_project_with_instructions_file, delete_project_cascade, read_project_instructions,
+    save_project_instructions, update_project_with_instructions_file, CreateProjectInput, Project,
+    ProjectInstructionsFile, ProjectMeta, UpdateProjectInput,
 };
 use ha_core::session::SessionMeta;
 use tauri::State;
@@ -58,7 +60,10 @@ pub async fn create_project_cmd(
     state: State<'_, AppState>,
 ) -> Result<Project, CmdError> {
     let project_db = state.project_db.clone();
-    let project = ha_core::blocking::run_blocking(move || project_db.create(input)).await?;
+    let project = ha_core::blocking::run_blocking(move || {
+        create_project_with_instructions_file(input, &project_db)
+    })
+    .await?;
 
     if let Some(bus) = ha_core::get_event_bus() {
         let _ = bus.emit(
@@ -76,7 +81,10 @@ pub async fn update_project_cmd(
     state: State<'_, AppState>,
 ) -> Result<Project, CmdError> {
     let project_db = state.project_db.clone();
-    let project = ha_core::blocking::run_blocking(move || project_db.update(&id, patch)).await?;
+    let project = ha_core::blocking::run_blocking(move || {
+        update_project_with_instructions_file(&id, patch, &project_db)
+    })
+    .await?;
 
     if let Some(bus) = ha_core::get_event_bus() {
         let _ = bus.emit(
@@ -85,6 +93,42 @@ pub async fn update_project_cmd(
         );
     }
     Ok(project)
+}
+
+/// Read `<project-root>/AGENTS.md`, creating an empty file when missing.
+#[tauri::command]
+pub async fn get_project_instructions_cmd(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<ProjectInstructionsFile, CmdError> {
+    let project_db = state.project_db.clone();
+    ha_core::blocking::run_blocking(move || read_project_instructions(&id, &project_db))
+        .await
+        .map_err(Into::into)
+}
+
+/// Atomically replace `<project-root>/AGENTS.md` with Markdown source.
+#[tauri::command]
+pub async fn save_project_instructions_cmd(
+    id: String,
+    content: String,
+    expected_file_hash: String,
+    state: State<'_, AppState>,
+) -> Result<ProjectInstructionsFile, CmdError> {
+    let event_id = id.clone();
+    let project_db = state.project_db.clone();
+    let file = ha_core::blocking::run_blocking(move || {
+        save_project_instructions(&id, &content, &expected_file_hash, &project_db)
+    })
+    .await?;
+
+    if let Some(bus) = ha_core::get_event_bus() {
+        let _ = bus.emit(
+            "project:fs_changed",
+            serde_json::json!({ "scope": "project", "scopeId": event_id, "dir": "" }),
+        );
+    }
+    Ok(file)
 }
 
 #[tauri::command]

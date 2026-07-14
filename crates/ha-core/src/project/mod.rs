@@ -1,5 +1,6 @@
-//! Project — optional containers that group sessions with shared memories,
-//! custom instructions, and uploaded files.
+//! Project — optional containers that group sessions with shared memories and
+//! a shared working directory. Project instructions live only in the working
+//! directory's `AGENTS.md`.
 //!
 //! See `AGENTS.md` (architecture section) for the full design.
 
@@ -11,6 +12,9 @@ mod types;
 
 pub use db::ProjectDB;
 pub use files::{
-    delete_project_cascade, purge_project_dir, resolve_project_dir, MAX_PROJECT_FILE_BYTES,
+    create_project_with_instructions_file, delete_project_cascade, ensure_project_instructions,
+    purge_project_dir, read_project_instructions, resolve_project_dir, save_project_instructions,
+    update_project_with_instructions_file, ProjectInstructionsFile, StaleProjectInstructionsError,
+    MAX_PROJECT_FILE_BYTES,
 };
 pub use types::{CreateProjectInput, Project, ProjectMeta, UpdateProjectInput};

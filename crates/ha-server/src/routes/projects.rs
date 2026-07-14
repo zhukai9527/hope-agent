@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use ha_core::memory::{MemoryEntry, MemoryScope};
 use ha_core::project::{
-    delete_project_cascade, CreateProjectInput, Project, ProjectMeta, UpdateProjectInput,
+    create_project_with_instructions_file, delete_project_cascade, read_project_instructions,
+    save_project_instructions, update_project_with_instructions_file, CreateProjectInput, Project,
+    ProjectInstructionsFile, ProjectMeta, StaleProjectInstructionsError, UpdateProjectInput,
 };
 use ha_core::session::{ParentSessionFilter, ProjectFilter, SessionMeta};
 
@@ -49,6 +51,13 @@ pub struct UpdateProjectBody {
 #[derive(Debug, Deserialize)]
 pub struct CreateProjectBody {
     pub input: CreateProjectInput,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveProjectInstructionsBody {
+    pub content: String,
+    pub expected_file_hash: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,7 +158,10 @@ pub async fn create_project(
 ) -> Result<Json<Project>, AppError> {
     let project = {
         let project_db = ctx.project_db.clone();
-        ha_core::blocking::run_blocking(move || project_db.create(body.input)).await?
+        ha_core::blocking::run_blocking(move || {
+            create_project_with_instructions_file(body.input, &project_db)
+        })
+        .await?
     };
 
     ctx.event_bus
@@ -165,11 +177,60 @@ pub async fn update_project(
 ) -> Result<Json<Project>, AppError> {
     let project = {
         let project_db = ctx.project_db.clone();
-        ha_core::blocking::run_blocking(move || project_db.update(&id, body.patch)).await?
+        ha_core::blocking::run_blocking(move || {
+            update_project_with_instructions_file(&id, body.patch, &project_db)
+        })
+        .await?
     };
     ctx.event_bus
         .emit("project:updated", json!({ "projectId": project.id }));
     Ok(Json(project))
+}
+
+/// `GET /api/projects/:id/instructions` — read (and lazily create) root AGENTS.md.
+pub async fn get_project_instructions(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<ProjectInstructionsFile>, AppError> {
+    let project_db = ctx.project_db.clone();
+    let file = ha_core::blocking::run_blocking(move || read_project_instructions(&id, &project_db))
+        .await?;
+    Ok(Json(file))
+}
+
+/// `PUT /api/projects/:id/instructions` — atomically replace root AGENTS.md.
+/// This is an authenticated owner setting, so it is intentionally independent
+/// of the generic `filesystem.allow_remote_writes` file-browser gate.
+pub async fn save_project_instructions_file(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+    Json(body): Json<SaveProjectInstructionsBody>,
+) -> Result<Json<ProjectInstructionsFile>, AppError> {
+    let event_id = id.clone();
+    let project_db = ctx.project_db.clone();
+    let result = ha_core::blocking::run_blocking(move || {
+        save_project_instructions(&id, &body.content, &body.expected_file_hash, &project_db)
+    })
+    .await;
+    let file = match result {
+        Ok(file) => file,
+        Err(error)
+            if error
+                .downcast_ref::<StaleProjectInstructionsError>()
+                .is_some() =>
+        {
+            return Err(AppError::conflict_with_code(
+                "project_instructions_stale",
+                error.to_string(),
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    ctx.event_bus.emit(
+        "project:fs_changed",
+        json!({ "scope": "project", "scopeId": event_id, "dir": "" }),
+    );
+    Ok(Json(file))
 }
 
 /// `DELETE /api/projects/:id`
