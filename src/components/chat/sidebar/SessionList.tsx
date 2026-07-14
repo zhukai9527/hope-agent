@@ -60,6 +60,8 @@ interface SessionListProps {
   onMoveToProject?: (sessionId: string, projectId: string | null) => void
   onToggleSessionPinned?: (sessionId: string, pinned: boolean) => void
   displayMode: SidebarDisplayMode
+  /** Number of visible 32px sticky section headers above the filter tabs. */
+  stickyHeaderCount?: number
 }
 
 export default function SessionList({
@@ -94,6 +96,7 @@ export default function SessionList({
   onMoveToProject,
   onToggleSessionPinned,
   displayMode,
+  stickyHeaderCount = 0,
 }: SessionListProps) {
   const { t } = useTranslation()
 
@@ -124,7 +127,16 @@ export default function SessionList({
       {/* Browsing tabs are hidden during search because search always spans all
           supported conversation types, regardless of the previously active tab. */}
       {!isSearching && (
-        <div className="sticky top-16 z-20 flex items-center gap-0.5 px-3 py-1.5 border-b border-border/40 bg-surface-panel overflow-x-auto scrollbar-none">
+        <div
+          className={cn(
+            "sticky z-20 flex items-center gap-0.5 px-3 py-1.5 border-b border-border/40 bg-surface-panel overflow-x-auto scrollbar-none",
+            stickyHeaderCount === 0
+              ? "top-0"
+              : stickyHeaderCount === 1
+                ? "top-8"
+                : "top-16",
+          )}
+        >
           {(["session", "subagent"] as const).map((filter) => {
             const label = {
               session: t("chat.filterSessions"),
