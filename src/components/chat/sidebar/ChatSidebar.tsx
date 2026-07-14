@@ -444,6 +444,10 @@ export default function ChatSidebar({
     [searchQuery],
   )
 
+  const showAgentSection = agents.length > 1
+  const showProjectSection = projects.length > 0 || !!onAddProject
+  const stickySidebarHeaderCount = Number(showAgentSection) + Number(showProjectSection)
+
   const sessionListNode = (
     <SessionList
       sessions={sessions}
@@ -477,6 +481,7 @@ export default function ChatSidebar({
       onMoveToProject={handleSidebarMoveSession}
       onToggleSessionPinned={onToggleSessionPinned}
       displayMode={sidebarDisplayMode}
+      stickyHeaderCount={stickySidebarHeaderCount}
     />
   )
 
@@ -662,7 +667,7 @@ export default function ChatSidebar({
               ) : (
                 <>
                   {/* Collapsible Agents section */}
-                  {agents.length > 1 && (
+                  {showAgentSection && (
                     <AgentSection
                       agents={agents}
                       agentsExpanded={agentsExpanded}
@@ -680,7 +685,7 @@ export default function ChatSidebar({
 
                   {/* Projects section — shown below agents. Falls back silently
                       when no handler is wired (backwards-compat). */}
-                  {(projects.length > 0 || onAddProject) && (
+                  {showProjectSection && (
                     <ProjectSection
                       projects={projects}
                       sessions={sessions}
@@ -710,6 +715,7 @@ export default function ChatSidebar({
                       formatRelativeTime={formatRelativeTime}
                       displayMode={sidebarDisplayMode}
                       motionDisabled={sidebarMotionDisabled}
+                      hasAgentHeader={showAgentSection}
                     />
                   )}
 
