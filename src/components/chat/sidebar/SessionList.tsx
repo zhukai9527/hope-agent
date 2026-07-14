@@ -17,10 +17,11 @@ import type { ProjectMeta } from "@/types/project"
 import type { SessionFilterType, SidebarDisplayMode } from "./types"
 import SessionItem from "./SessionItem"
 import SearchResultItem from "./SearchResultItem"
-import { filterGlobalSessionSearchResults, filterSessionsForSidebarTab } from "./sessionListModel"
+import { filterGlobalSessionSearchResults } from "./sessionListModel"
 
 interface SessionListProps {
   sessions: SessionMeta[]
+  sessionsByFilter: Record<SessionFilterType, SessionMeta[]>
   filteredSessions: SessionMeta[]
   sessionFilter: SessionFilterType
   setSessionFilter: (filter: SessionFilterType) => void
@@ -63,6 +64,7 @@ interface SessionListProps {
 
 export default function SessionList({
   sessions,
+  sessionsByFilter,
   filteredSessions,
   sessionFilter,
   setSessionFilter,
@@ -109,6 +111,13 @@ export default function SessionList({
 
   const highlightTerms = useMemo(() => parseHighlightTerms(searchQuery), [searchQuery])
   const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects])
+  const sessionContext = useMemo(() => {
+    const byId = new Map(sessions.map((session) => [session.id, session]))
+    for (const session of [...sessionsByFilter.session, ...sessionsByFilter.subagent]) {
+      byId.set(session.id, session)
+    }
+    return [...byId.values()]
+  }, [sessions, sessionsByFilter])
 
   return (
     <>
@@ -122,7 +131,7 @@ export default function SessionList({
               subagent: t("chat.filterSubagent"),
             }[filter]
 
-            const filterSessions = filterSessionsForSidebarTab(sessions, filter, selectedAgentId)
+            const filterSessions = sessionsByFilter[filter]
             const count = filterSessions.reduce(
               (sum, session) => sum + desktopUnreadCount(session, currentSessionId),
               0,
@@ -263,7 +272,7 @@ export default function SessionList({
                 <SessionItem
                   key={session.id}
                   session={session}
-                  sessions={sessions}
+                  sessions={sessionContext}
                   agent={agent}
                   projects={projects}
                   isActive={isActive}

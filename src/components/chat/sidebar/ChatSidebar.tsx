@@ -42,7 +42,8 @@ import { SEARCH_LIMIT } from "../hooks/constants"
 import AgentSection from "./AgentSection"
 import SessionList from "./SessionList"
 import ProjectSection from "../project/ProjectSection"
-import { filterSessionsForSidebarTab, GLOBAL_SESSION_SEARCH_TYPES } from "./sessionListModel"
+import { GLOBAL_SESSION_SEARCH_TYPES } from "./sessionListModel"
+import { useSidebarSessionPagination } from "./useSidebarSessionPagination"
 
 const AGENTS_EXPANDED_STORAGE_KEY = "hope.chatSidebarAgentsExpanded"
 const PROJECTS_EXPANDED_STORAGE_KEY = "hope.chatSidebarProjectsExpanded"
@@ -87,9 +88,6 @@ export default function ChatSidebar({
   onReorderProjects,
   onMarkAllRead,
   onRenameSession,
-  hasMoreSessions,
-  loadingMoreSessions,
-  onLoadMoreSessions,
   onOpenProjectSettings,
   onAddProject,
   onNewChatInProject,
@@ -252,9 +250,23 @@ export default function ChatSidebar({
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  // The flat list owns unassigned sessions only. Project sessions stay in the
-  // independently-paginated project tree above, while search remains global.
-  const filteredSessions = filterSessionsForSidebarTab(sessions, sessionFilter, selectedAgentId)
+  // Browsing pages must apply their ownership/type filters before LIMIT/OFFSET.
+  // The global recent page remains a project-tree change signal and search
+  // metadata cache; it is deliberately not the flat list's rendering source.
+  const {
+    sessionsByFilter,
+    loading: sidebarSessionsLoading,
+    loadingMoreByFilter,
+    hasMoreByFilter,
+    loadMore: loadMoreSidebarSessions,
+    reload: reloadSidebarSessions,
+  } = useSidebarSessionPagination({
+    selectedAgentId,
+    currentSessionId,
+    enabled: !sessionsLoading,
+    refreshSignal: sessions,
+  })
+  const filteredSessions = sessionsByFilter[sessionFilter]
 
   const toggleAgentFilter = useCallback(
     (agentId: string) => {
@@ -367,9 +379,25 @@ export default function ChatSidebar({
 
   function confirmDelete() {
     if (!deleteConfirmSessionId) return
-    onDeleteSession(deleteConfirmSessionId)
+    const sessionId = deleteConfirmSessionId
     setDeleteConfirmSessionId(null)
+    void Promise.resolve(onDeleteSession(sessionId)).finally(() => reloadSidebarSessions())
   }
+
+  const handleSidebarUnreadChanged = useCallback(() => {
+    onMarkAllRead?.()
+    void reloadSidebarSessions()
+  }, [onMarkAllRead, reloadSidebarSessions])
+
+  const handleSidebarMoveSession = useCallback(
+    (sessionId: string, projectId: string | null) => {
+      if (!onMoveSessionToProject) return
+      void Promise.resolve(onMoveSessionToProject(sessionId, projectId)).finally(() =>
+        reloadSidebarSessions(),
+      )
+    },
+    [onMoveSessionToProject, reloadSidebarSessions],
+  )
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true })
@@ -419,17 +447,18 @@ export default function ChatSidebar({
   const sessionListNode = (
     <SessionList
       sessions={sessions}
+      sessionsByFilter={sessionsByFilter}
       filteredSessions={filteredSessions}
       sessionFilter={sessionFilter}
       setSessionFilter={setSessionFilter}
       selectedAgentId={selectedAgentId}
       currentSessionId={currentSessionId}
       loadingSessionIds={loadingSessionIds}
-      sessionsLoading={sessionsLoading}
-      loadingMoreSessions={loadingMoreSessions}
+      sessionsLoading={sessionsLoading || sidebarSessionsLoading}
+      loadingMoreSessions={loadingMoreByFilter[sessionFilter]}
       onSwitchSession={onSwitchSession}
       onDeleteClick={handleDeleteClick}
-      onMarkAllRead={onMarkAllRead}
+      onMarkAllRead={handleSidebarUnreadChanged}
       renamingSessionId={renamingSessionId}
       renameValue={renameValue}
       renameInputRef={renameInputRef}
@@ -445,7 +474,7 @@ export default function ChatSidebar({
       searching={searching}
       agents={agents}
       projects={projects}
-      onMoveToProject={onMoveSessionToProject}
+      onMoveToProject={handleSidebarMoveSession}
       onToggleSessionPinned={onToggleSessionPinned}
       displayMode={sidebarDisplayMode}
     />
@@ -614,11 +643,13 @@ export default function ChatSidebar({
               )}
               onScroll={(e) => {
                 if (isHistorySearching) return
-                if (!hasMoreSessions || loadingMoreSessions || !onLoadMoreSessions) return
+                if (!hasMoreByFilter[sessionFilter] || loadingMoreByFilter[sessionFilter]) {
+                  return
+                }
                 const el = e.currentTarget
                 // Trigger when scrolled within 100px of the bottom
                 if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
-                  onLoadMoreSessions()
+                  void loadMoreSidebarSessions(sessionFilter)
                 }
               }}
             >

@@ -5,6 +5,7 @@ import {
   filterGlobalSessionSearchResults,
   filterSessionsForSidebarTab,
   GLOBAL_SESSION_SEARCH_TYPES,
+  sidebarSessionPageArgs,
 } from "./sessionListModel"
 
 function session(id: string, patch: Partial<SessionMeta> = {}): SessionMeta {
@@ -84,6 +85,25 @@ describe("sidebar session list model", () => {
     expect(
       filterSessionsForSidebarTab(sessions, "session", "agent-b").map((item) => item.id),
     ).toEqual(["other-agent"])
+  })
+
+  it("pushes project, parent, and agent filters into the paginated query", () => {
+    expect(sidebarSessionPageArgs("session", "agent-b", 50, 50, "active")).toEqual({
+      unassigned: true,
+      parentSession: false,
+      agentId: "agent-b",
+      limit: 50,
+      offset: 50,
+      activeSessionId: "active",
+    })
+    expect(sidebarSessionPageArgs("subagent", null, 0, 50)).toEqual({
+      unassigned: true,
+      parentSession: true,
+      agentId: undefined,
+      limit: 50,
+      offset: 0,
+      activeSessionId: undefined,
+    })
   })
 
   it("keeps global search broad across project, channel, and subagent results", () => {

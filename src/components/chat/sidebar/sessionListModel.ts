@@ -8,6 +8,23 @@ import type { SessionFilterType } from "./types"
  */
 export const GLOBAL_SESSION_SEARCH_TYPES: SessionSearchType[] = ["regular", "subagent", "channel"]
 
+export function sidebarSessionPageArgs(
+  filter: SessionFilterType,
+  selectedAgentId: string | null,
+  offset: number,
+  limit: number,
+  activeSessionId?: string | null,
+): Record<string, unknown> {
+  return {
+    unassigned: true,
+    parentSession: filter === "subagent",
+    agentId: selectedAgentId ?? undefined,
+    limit,
+    offset,
+    activeSessionId: activeSessionId ?? undefined,
+  }
+}
+
 /**
  * The flat list below the project tree owns only unassigned sessions. Project
  * sessions render exclusively inside their project group, avoiding duplicate
