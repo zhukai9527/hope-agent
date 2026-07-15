@@ -748,6 +748,16 @@ export default function App() {
                     onOpenSettings={handleOpenSettings}
                     initialTab={dashboardInitialTab}
                     initialRecapReportId={dashboardInitialReportId}
+                    onOpenPlanHistory={() => setView("plans")}
+                    onOpenControlItem={(item) => {
+                      handleChatFocus({
+                        sessionId: item.sessionId,
+                        controlTarget: {
+                          kind: item.kind,
+                          itemId: item.id,
+                        },
+                      })
+                    }}
                   />
                 </Suspense>
               )}
