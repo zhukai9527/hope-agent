@@ -45,6 +45,7 @@ import ServerDirectoryBrowser from "@/components/chat/input/ServerDirectoryBrows
 import { useDirectoryPicker } from "@/components/chat/input/useDirectoryPicker"
 import ProjectInstructionsField from "./ProjectInstructionsField"
 import ProjectKnowledgeSection from "./ProjectKnowledgeSection"
+import { shouldSubmitProjectInstructions } from "./projectInstructionsDraft"
 
 import type {
   CreateProjectInput,
@@ -68,7 +69,7 @@ export interface ProjectDialogProps {
   onUpdate?: (
     id: string,
     patch: UpdateProjectInput,
-    instructions: ProjectInstructionsDraft,
+    instructions?: ProjectInstructionsDraft,
   ) => Promise<Project | null>
 }
 
@@ -135,6 +136,7 @@ export default function ProjectDialog({
   const [defaultAgentId, setDefaultAgentId] = useState<string>("")
   const [workingDir, setWorkingDir] = useState<string>("")
   const [instructions, setInstructions] = useState("")
+  const [loadedInstructions, setLoadedInstructions] = useState("")
   const [instructionsHash, setInstructionsHash] = useState("")
   const [instructionsPath, setInstructionsPath] = useState("AGENTS.md")
   const [instructionsLoading, setInstructionsLoading] = useState(false)
@@ -152,6 +154,7 @@ export default function ProjectDialog({
   const resetInstructionsForNewWorkspace = useCallback(() => {
     instructionsRequestSeq.current += 1
     setInstructions("")
+    setLoadedInstructions("")
     setInstructionsHash("")
     setInstructionsPath("AGENTS.md")
     setInstructionsLoading(false)
@@ -169,6 +172,7 @@ export default function ProjectDialog({
       setInstructionsLoading(true)
       setInstructionsReady(false)
       setInstructions("")
+      setLoadedInstructions("")
       setInstructionsHash("")
       setInstructionsError("")
       setInstructionsPath(pendingPath)
@@ -176,6 +180,7 @@ export default function ProjectDialog({
         const file = await getTransport().call<ProjectInstructionsFile>(command, args)
         if (seq !== instructionsRequestSeq.current) return
         setInstructions(file.content)
+        setLoadedInstructions(file.content)
         setInstructionsHash(file.contentHash)
         setInstructionsPath(file.path)
         setInstructionsReady(true)
@@ -326,6 +331,14 @@ export default function ProjectDialog({
           setSaveStatus("failed")
         }
       } else if (mode === "edit" && initialProject && onUpdate) {
+        const instructionsDraft = shouldSubmitProjectInstructions(
+          instructions,
+          loadedInstructions,
+          workingDir,
+          initialProject.workingDir,
+        )
+          ? { content: instructions, expectedFileHash: instructionsHash }
+          : undefined
         const updated = await onUpdate(
           initialProject.id,
           {
@@ -336,7 +349,7 @@ export default function ProjectDialog({
             defaultAgentId: defaultAgentId,
             workingDir: workingDir.trim(),
           },
-          { content: instructions, expectedFileHash: instructionsHash },
+          instructionsDraft,
         )
         if (updated) {
           setSaveStatus("saved")

@@ -34,7 +34,7 @@ export interface UseProjectsReturn {
   updateProject: (
     id: string,
     patch: UpdateProjectInput,
-    instructions: ProjectInstructionsDraft,
+    instructions?: ProjectInstructionsDraft,
   ) => Promise<Project | null>
   deleteProject: (id: string) => Promise<boolean>
   archiveProject: (id: string, archived: boolean) => Promise<Project | null>
@@ -147,14 +147,11 @@ export function useProjects(
     async (
       id: string,
       patch: UpdateProjectInput,
-      instructions: ProjectInstructionsDraft,
+      instructions?: ProjectInstructionsDraft,
     ): Promise<Project | null> => {
       try {
-        const updated = await getTransport().call<Project>("update_project_cmd", {
-          id,
-          patch,
-          instructions,
-        })
+        const args = instructions ? { id, patch, instructions } : { id, patch }
+        const updated = await getTransport().call<Project>("update_project_cmd", args)
         await reloadProjects()
         return updated
       } catch (e) {
