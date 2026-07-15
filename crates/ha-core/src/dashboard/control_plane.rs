@@ -189,6 +189,10 @@ impl Scope {
     fn for_sessions(filter: &ControlPlaneDashboardFilter, alias: &str) -> Self {
         let mut scope = Self::default();
         scope.clauses.push(format!("{alias}.incognito = 0"));
+        scope.clauses.push(format!("{alias}.is_cron = 0"));
+        scope
+            .clauses
+            .push(format!("{alias}.parent_session_id IS NULL"));
         if let Some(agent_id) = present(filter.agent_id.as_deref()) {
             scope.clauses.push(format!("{alias}.agent_id = ?"));
             scope.params.push(agent_id.to_string().into());
@@ -1135,14 +1139,18 @@ mod tests {
     }
 
     #[test]
-    fn fixture_respects_terminal_denominators_progress_and_incognito() {
+    fn fixture_respects_terminal_denominators_and_excludes_non_user_sessions() {
         let (db, path) = test_db("metrics");
         {
             let conn = db.conn.lock().expect("lock fixture db");
             conn.execute_batch(
-                "INSERT INTO sessions (id, title, agent_id, created_at, updated_at, incognito)
-                 VALUES ('main', 'Main', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 0),
-                        ('private', 'Private', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 1);
+                "INSERT INTO sessions
+                    (id, title, agent_id, created_at, updated_at, incognito, is_cron, parent_session_id)
+                 VALUES
+                    ('main', 'Main', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 0, 0, NULL),
+                    ('private', 'Private', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 1, 0, NULL),
+                    ('cron', 'Cron', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 0, 1, NULL),
+                    ('child', 'Child', 'agent-a', '2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z', 0, 0, 'main');
 
                  INSERT INTO goals
                     (id, session_id, objective, state, created_at, updated_at, completed_at,
@@ -1154,7 +1162,9 @@ mod tests {
                     ('g-superseded', 'main', 'superseded', 'completed', '2026-01-01T00:00:00Z', '2026-02-03T00:00:00Z', '2026-02-03T00:00:00Z', '{}', '{}', 'superseded', '2026-02-03T00:00:00Z'),
                     ('g-failed', 'main', 'failed', 'failed', '2026-01-01T00:00:00Z', '2026-02-04T00:00:00Z', '2026-02-04T00:00:00Z', '{}', '{}', NULL, NULL),
                     ('g-blocked', 'main', 'blocked', 'blocked', '2026-01-01T00:00:00Z', '2026-02-05T00:00:00Z', NULL, '{}', '{}', NULL, NULL),
-                    ('g-private', 'private', 'private accepted', 'completed', '2026-01-01T00:00:00Z', '2026-02-06T00:00:00Z', '2026-02-06T00:00:00Z', '{}', '{}', 'accepted_v1', '2026-02-06T00:00:00Z');
+                    ('g-private', 'private', 'private accepted', 'completed', '2026-01-01T00:00:00Z', '2026-02-06T00:00:00Z', '2026-02-06T00:00:00Z', '{}', '{}', 'accepted_v1', '2026-02-06T00:00:00Z'),
+                    ('g-cron', 'cron', 'cron accepted', 'completed', '2026-01-01T00:00:00Z', '2026-02-07T00:00:00Z', '2026-02-07T00:00:00Z', '{}', '{}', 'accepted_v1', '2026-02-07T00:00:00Z'),
+                    ('g-child', 'child', 'child blocked', 'blocked', '2026-01-01T00:00:00Z', '2026-02-08T00:00:00Z', NULL, '{}', '{}', NULL, NULL);
 
                  INSERT INTO workflow_runs
                     (id, session_id, kind, state, execution_mode, script_hash, script_source,
@@ -1163,7 +1173,9 @@ mod tests {
                     ('w-ok', 'main', 'dynamic', 'completed', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:01:00Z', '2026-03-01T00:01:00Z'),
                     ('w-fail', 'main', 'dynamic', 'failed', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:02:00Z', '2026-03-01T00:02:00Z'),
                     ('w-block', 'main', 'dynamic', 'blocked', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:03:00Z', '2026-03-01T00:03:00Z'),
-                    ('w-cancel', 'main', 'dynamic', 'cancelled', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:04:00Z', '2026-03-01T00:04:00Z');
+                    ('w-cancel', 'main', 'dynamic', 'cancelled', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:04:00Z', '2026-03-01T00:04:00Z'),
+                    ('w-cron', 'cron', 'dynamic', 'completed', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:05:00Z', '2026-03-01T00:05:00Z'),
+                    ('w-child', 'child', 'dynamic', 'blocked', 'safe', 'h', '', '2026-03-01T00:00:00Z', '2026-03-01T00:06:00Z', '2026-03-01T00:06:00Z');
                  INSERT INTO workflow_ops
                     (id, run_id, op_key, op_type, effect_class, input_hash, input_json, state, started_at, completed_at)
                  VALUES ('op-ok', 'w-ok', 'ok', 'tool', 'read', 'h', '{}', 'completed', '2026-03-01T00:00:00Z', '2026-03-01T00:00:30Z'),
@@ -1173,6 +1185,10 @@ mod tests {
                     (id, session_id, cron_job_id, prompt, trigger_kind, execution_strategy,
                      state, created_at, updated_at)
                  VALUES ('loop', 'main', 'cron-loop', 'keep going', 'interval', 'continue',
+                         'blocked', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z'),
+                        ('loop-cron', 'cron', 'cron-loop-child', 'cron loop', 'interval', 'continue',
+                         'blocked', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z'),
+                        ('loop-child', 'child', 'child-loop', 'child loop', 'interval', 'continue',
                          'blocked', '2026-04-01T00:00:00Z', '2026-04-01T00:00:00Z');
                  INSERT INTO loop_runs
                     (id, loop_id, cron_job_id, session_id, seq, state, trigger_reason,
@@ -1183,7 +1199,9 @@ mod tests {
                     ('lr-3', 'loop', 'cron-loop', 'main', 3, 'completed', 'test', 'no_progress', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'),
                     ('lr-4', 'loop', 'cron-loop', 'main', 4, 'failed', 'test', 'blocked', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'),
                     ('lr-5', 'loop', 'cron-loop', 'main', 5, 'failed', 'test', 'failed', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'),
-                    ('lr-6', 'loop', 'cron-loop', 'main', 6, 'paused', 'test', 'awaiting_approval', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z');",
+                    ('lr-6', 'loop', 'cron-loop', 'main', 6, 'paused', 'test', 'awaiting_approval', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'),
+                    ('lr-cron', 'loop-cron', 'cron-loop-child', 'cron', 1, 'completed', 'test', 'progressed', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z'),
+                    ('lr-child', 'loop-child', 'child-loop', 'child', 1, 'completed', 'test', 'progressed', '2026-04-01T00:00:00Z', '2026-04-01T00:01:00Z');",
             )
             .expect("seed control-plane fixture");
         }
@@ -1232,6 +1250,8 @@ mod tests {
             (1, 5)
         );
         assert_eq!(loops.current_blocked_schedules, 1);
+        let attention = query_attention(&conn, &filter).expect("attention metrics");
+        assert!(attention.iter().all(|item| item.session_id == "main"));
         drop(conn);
         drop(db);
         let _ = std::fs::remove_file(path);
@@ -1250,6 +1270,11 @@ mod tests {
                     ('assigned', 'Assigned', 'agent-a', 'project-x', '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', 0),
                     ('other-agent', 'Other', 'agent-b', NULL, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', 0),
                     ('private', 'Private', 'agent-a', NULL, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', 1);
+                 INSERT INTO sessions
+                    (id, title, agent_id, project_id, created_at, updated_at, incognito, is_cron, parent_session_id)
+                 VALUES
+                    ('cron', 'Cron', 'agent-a', NULL, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', 0, 1, NULL),
+                    ('child', 'Child', 'agent-a', NULL, '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', 0, 0, 'main');
 
                  INSERT INTO tasks
                     (session_id, content, status, created_at, updated_at, completed_at)
@@ -1260,7 +1285,9 @@ mod tests {
                     ('main', 'outside window', 'completed', '2025-12-01T00:00:00Z', '2025-12-01T00:00:00Z', NULL),
                     ('assigned', 'assigned', 'completed', '2026-02-04T00:00:00Z', '2026-02-04T00:00:00Z', NULL),
                     ('other-agent', 'other', 'completed', '2026-02-05T00:00:00Z', '2026-02-05T00:00:00Z', NULL),
-                    ('private', 'private', 'completed', '2026-02-06T00:00:00Z', '2026-02-06T00:00:00Z', NULL);",
+                    ('private', 'private', 'completed', '2026-02-06T00:00:00Z', '2026-02-06T00:00:00Z', NULL),
+                    ('cron', 'cron task', 'completed', '2026-02-07T00:00:00Z', '2026-02-07T00:00:00Z', NULL),
+                    ('child', 'child task', 'pending', '2026-02-08T00:00:00Z', '2026-02-08T00:00:00Z', NULL);",
             )
             .expect("seed task cohort fixture");
 

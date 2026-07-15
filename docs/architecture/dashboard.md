@@ -370,7 +370,7 @@ Tauri `dashboard_control_plane` 与 HTTP `POST /api/dashboard/control-plane` 接
 - Goal required criteria 只读当前 revision、且 `goalLinkedEventSeq` 未落后于最新 `goal_linked` event 的 final audit；过期 audit 不统计。
 - Task / Plan 使用 created-cohort 完成率，同时单列不受时间窗限制的 current backlog / activeNow。二者没有可靠 Goal / Workflow / Loop 外键，禁止按 session 猜测因果归因。
 - 所有比例零分母返回 `null`；所有耗时用 P50。Task `tasks.completed_at` 与 Plan `sessions.plan_completed_at` 只从本版本开始积累，返回 `sampleCount / eligibleCount` 供 UI 明示精确覆盖率，旧数据不从 `updated_at` 伪造。
-- `attention.total` 是当前全集去重数量，`items` 按更新时间倒序、severity 破同时间并截断 20；包含 Goal blocked/待关闭、Workflow awaiting approval/user/blocked、Loop blocked/连续无进展、Plan review。所有数据排除 incognito；无法确认所属 session 的 orphan Plan 仅留在 Plan 历史页，不进入大盘。
+- `attention.total` 是当前全集去重数量，`items` 按更新时间倒序、severity 破同时间并截断 20；包含 Goal blocked/待关闭、Workflow awaiting approval/user/blocked、Loop blocked/连续无进展、Plan review。所有数据排除 incognito；Goal / Workflow / Loop / Task / attention 还统一排除 Cron 与 `parent_session_id` 子会话，避免后台自动化和子 Agent 膨胀用户主会话指标。无法确认所属 session 的 orphan Plan 仅留在 Plan 历史页，不进入大盘。
 
 前端一级 Tab 位于“综合概览”之后，内部为“概览 / Goal / Workflow / Loop / Plan 与 Task”。attention 深链先切回所属 session，再打开 Workspace 对应 section；Workflow / Loop 同时定位具体 run / schedule，Plan review 打开 Plan 面板。旧 `initialTab="plans"` 映射到该页的“Plan 与 Task”。
 
