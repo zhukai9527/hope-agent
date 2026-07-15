@@ -448,6 +448,18 @@ mod tests {
         assert_eq!(left, vec!["note.md".to_string()]);
     }
 
+    #[test]
+    fn write_atomic_create_new_reports_existing_without_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("note.md");
+
+        write_atomic_create_new(&target, b"first").unwrap();
+        let error = write_atomic_create_new(&target, b"second").unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_atomic_new_file_gets_default_mode() {

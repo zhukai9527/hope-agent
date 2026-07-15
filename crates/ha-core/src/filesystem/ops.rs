@@ -807,9 +807,10 @@ pub fn project_claim_upload(
                 "workspace upload no longer satisfies the configured limit",
             ));
         }
-        std::fs::File::open(&staging)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| FilesystemError::internal(format!("sync upload: {error}")))?;
+        // `copy_completed_upload_create_new` flushes and fsyncs the staging
+        // file through its writable handle. Reopening it read-only and calling
+        // `sync_all` fails with ERROR_ACCESS_DENIED on Windows and adds no
+        // durability here.
         crate::platform::publish_atomic_file(&staging, &target, overwrite)
             .map_err(|error| FilesystemError::internal(format!("publish upload: {error}")))?;
         Ok(())

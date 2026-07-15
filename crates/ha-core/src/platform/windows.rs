@@ -250,8 +250,10 @@ pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Atomically create a user document without replacing an existing path.
-/// Windows `rename` fails when the destination already exists, which gives us
-/// the create-only publication guarantee after the sibling temp is fsynced.
+/// `hard_link` is the Windows no-clobber publication primitive: it either adds
+/// the destination name for the fully fsynced temp file or fails because that
+/// name already exists. `std::fs::rename` cannot be used here because Rust's
+/// Windows implementation replaces an existing destination.
 pub(super) fn write_atomic_create_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -269,11 +271,18 @@ pub(super) fn write_atomic_create_new(path: &Path, bytes: &[u8]) -> io::Result<(
         file.write_all(bytes)?;
         file.sync_all()?;
     }
-    if let Err(error) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(error);
-    }
-    Ok(())
+    let published = fs::hard_link(&tmp, path).map_err(|error| {
+        // Windows can surface either ERROR_FILE_EXISTS (80) or
+        // ERROR_ALREADY_EXISTS (183), depending on the filesystem. Normalize
+        // both so the cross-platform create-only contract stays stable.
+        if matches!(error.raw_os_error(), Some(80) | Some(183)) {
+            io::Error::new(io::ErrorKind::AlreadyExists, error)
+        } else {
+            error
+        }
+    });
+    let _ = fs::remove_file(&tmp);
+    published
 }
 
 pub(super) fn publish_atomic_file(source: &Path, target: &Path, overwrite: bool) -> io::Result<()> {
