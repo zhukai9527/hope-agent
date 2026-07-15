@@ -38,7 +38,6 @@ impl ProjectDB {
                 id                TEXT PRIMARY KEY,
                 name              TEXT NOT NULL,
                 description       TEXT,
-                instructions      TEXT,
                 color             TEXT,
                 default_agent_id  TEXT,
                 default_model_id  TEXT,
@@ -94,6 +93,16 @@ impl ProjectDB {
             conn.execute_batch("ALTER TABLE projects DROP COLUMN emoji;")?;
         }
 
+        // Project instructions moved to `<project-root>/AGENTS.md`. The old
+        // column is deliberately dropped without data migration: the file is
+        // now the only source of truth and is created on demand.
+        let has_instructions = conn
+            .prepare("SELECT instructions FROM projects LIMIT 1")
+            .is_ok();
+        if has_instructions {
+            conn.execute_batch("ALTER TABLE projects DROP COLUMN instructions;")?;
+        }
+
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_projects_archived_sort
                 ON projects(archived, sort_order ASC, updated_at DESC);",
@@ -122,6 +131,24 @@ impl ProjectDB {
              DROP TABLE IF EXISTS project_files;",
         )?;
 
+        // Release the SQLite mutex before resolving project roots (which reads
+        // project rows again). Existing projects get the same invariant as new
+        // ones: a root AGENTS.md always exists. Failure is non-fatal at startup
+        // (the directory may be temporarily unavailable); opening the settings
+        // tab or editing the project will retry and surface the concrete error.
+        drop(conn);
+        for project_id in self.list_all_ids()? {
+            if let Err(error) = super::files::ensure_project_instructions(&project_id, self) {
+                crate::app_warn!(
+                    "project",
+                    "agents_md",
+                    "could not ensure AGENTS.md for project {}: {}",
+                    project_id,
+                    error
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -148,15 +175,14 @@ impl ProjectDB {
         let sort_order = next_project_sort_order(&conn)?;
 
         conn.execute(
-            "INSERT INTO projects (id, name, description, instructions, color,
+            "INSERT INTO projects (id, name, description, color,
                 default_agent_id, default_model_id, created_at, updated_at, archived, logo,
                 working_dir, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
             params![
                 id,
                 name,
                 normalize_optional(input.description.as_deref()),
-                normalize_optional(input.instructions.as_deref()),
                 normalize_optional(input.color.as_deref()),
                 normalize_optional(input.default_agent_id.as_deref()),
                 normalize_optional(input.default_model_id.as_deref()),
@@ -172,7 +198,6 @@ impl ProjectDB {
             id,
             name,
             description: normalize_optional(input.description.as_deref()).map(str::to_string),
-            instructions: normalize_optional(input.instructions.as_deref()).map(str::to_string),
             logo,
             color: normalize_optional(input.color.as_deref()).map(str::to_string),
             default_agent_id: normalize_optional(input.default_agent_id.as_deref())
@@ -196,7 +221,7 @@ impl ProjectDB {
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
         let row = conn
             .query_row(
-                "SELECT id, name, description, instructions, color,
+                "SELECT id, name, description, color,
                         default_agent_id, default_model_id, created_at, updated_at, archived, logo,
                         working_dir, sort_order
                  FROM projects WHERE id = ?1",
@@ -261,12 +286,6 @@ impl ProjectDB {
             "description",
             &patch.description,
         );
-        push_str_field(
-            &mut sets,
-            &mut params_vec,
-            "instructions",
-            &patch.instructions,
-        );
         // Logo: size-validate before reaching the generic pusher.
         if let Some(raw) = &patch.logo {
             let validated = validate_logo(Some(raw))?;
@@ -321,7 +340,7 @@ impl ProjectDB {
         // Re-read to return the authoritative current state.
         let project = conn
             .query_row(
-                "SELECT id, name, description, instructions, color,
+                "SELECT id, name, description, color,
                         default_agent_id, default_model_id, created_at, updated_at, archived, logo,
                         working_dir, sort_order
                  FROM projects WHERE id = ?1",
@@ -364,7 +383,7 @@ impl ProjectDB {
 
     /// Lightweight listing of every project id (including archived). Used by
     /// the cross-database memory reconciler at startup, where loading the
-    /// full `ProjectMeta` (with file counts, instructions, etc.) for every
+    /// full `ProjectMeta` (with aggregate counts, etc.) for every
     /// row would be wasted work.
     pub fn list_all_ids(&self) -> Result<Vec<String>> {
         let conn = self
@@ -472,7 +491,7 @@ impl ProjectDB {
         // later by the caller that has the MemoryBackend in hand). Here we
         // return zero and let the command layer enrich it.
         let sql = format!(
-            "SELECT p.id, p.name, p.description, p.instructions, p.color,
+            "SELECT p.id, p.name, p.description, p.color,
                     p.default_agent_id, p.default_model_id, p.created_at, p.updated_at, p.archived,
                     p.logo, p.working_dir, p.sort_order,
                     (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
@@ -499,9 +518,8 @@ impl ProjectDB {
             let project = row_to_project(row)?;
             Ok(ProjectMeta {
                 project,
-                session_count: row.get::<_, i64>(13).unwrap_or(0) as u32,
-                unread_count: row.get::<_, i64>(14).unwrap_or(0) as u32,
-                memory_count: 0,
+                session_count: row.get::<_, i64>(12).unwrap_or(0) as u32,
+                unread_count: row.get::<_, i64>(13).unwrap_or(0) as u32,
             })
         })?;
 
@@ -520,16 +538,15 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
         id: row.get(0)?,
         name: row.get(1)?,
         description: row.get(2)?,
-        instructions: row.get(3)?,
-        color: row.get(4)?,
-        default_agent_id: row.get(5)?,
-        default_model_id: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        archived: row.get::<_, i64>(9).unwrap_or(0) != 0,
-        logo: row.get::<_, Option<String>>(10).unwrap_or(None),
-        working_dir: row.get::<_, Option<String>>(11).unwrap_or(None),
-        sort_order: row.get::<_, i64>(12).unwrap_or(0),
+        color: row.get(3)?,
+        default_agent_id: row.get(4)?,
+        default_model_id: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        archived: row.get::<_, i64>(8).unwrap_or(0) != 0,
+        logo: row.get::<_, Option<String>>(9).unwrap_or(None),
+        working_dir: row.get::<_, Option<String>>(10).unwrap_or(None),
+        sort_order: row.get::<_, i64>(11).unwrap_or(0),
     })
 }
 
@@ -645,6 +662,11 @@ mod tests {
             conn.prepare("SELECT emoji FROM projects LIMIT 1").is_err(),
             "emoji should be dropped"
         );
+        assert!(
+            conn.prepare("SELECT instructions FROM projects LIMIT 1")
+                .is_err(),
+            "legacy instructions should be dropped"
+        );
         // Index is gone.
         let count: i64 = conn
             .query_row(
@@ -695,7 +717,6 @@ mod tests {
                 .create(CreateProjectInput {
                     name: name.into(),
                     description: None,
-                    instructions: None,
                     logo: None,
                     color: None,
                     default_agent_id: None,
@@ -771,7 +792,6 @@ mod tests {
             .create(CreateProjectInput {
                 name: "Proj".into(),
                 description: None,
-                instructions: None,
                 logo: None,
                 color: None,
                 default_agent_id: None,
@@ -851,7 +871,6 @@ mod tests {
             .create(CreateProjectInput {
                 name: "Proj".into(),
                 description: None,
-                instructions: None,
                 logo: None,
                 color: None,
                 default_agent_id: None,

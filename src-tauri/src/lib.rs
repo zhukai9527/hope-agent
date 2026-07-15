@@ -687,9 +687,13 @@ pub fn run() {
             commands::session::export_session_cmd,
             // Project management
             commands::project::list_projects_cmd,
+            commands::project::get_project_overview_cmd,
             commands::project::get_project_cmd,
             commands::project::create_project_cmd,
             commands::project::update_project_cmd,
+            commands::project::inspect_project_instructions_cmd,
+            commands::project::get_project_instructions_cmd,
+            commands::project::save_project_instructions_cmd,
             commands::project::delete_project_cmd,
             commands::project::archive_project_cmd,
             commands::project::reorder_projects_cmd,
