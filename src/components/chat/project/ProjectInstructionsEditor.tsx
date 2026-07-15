@@ -142,7 +142,7 @@ export default function ProjectInstructionsEditor({
             {t("project.projectInstructionsHint")}
           </p>
           <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-muted-foreground/80">
-            <span className="min-w-0 truncate" title={filePath}>
+            <span className="min-w-0 truncate" data-ha-title-tip={filePath}>
               {filePath}
             </span>
             <span aria-hidden="true" className="shrink-0">

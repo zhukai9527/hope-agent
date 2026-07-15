@@ -168,10 +168,10 @@ describe("ProjectOverviewDialog", () => {
     expect(screen.queryByText("新建会话")).toBeNull()
     expect(screen.getByText("instructions-read-only")).toBeTruthy()
 
-    fireEvent.click(screen.getByText("文件"))
+    fireEvent.click(screen.getByRole("tab", { name: "文件" }))
     expect(await screen.findByText("file-browser-read-only")).toBeTruthy()
 
-    fireEvent.click(screen.getByText("自动记忆"))
+    fireEvent.click(screen.getByRole("tab", { name: "自动记忆" }))
     expect(await screen.findByText("auto-memory-read-only")).toBeTruthy()
   })
 

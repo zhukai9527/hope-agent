@@ -84,7 +84,7 @@ export default function ProjectInstructionsField({
       </div>
 
       <div className="flex min-w-0 items-center gap-2 font-mono text-[11px] text-muted-foreground/80">
-        <span className="min-w-0 truncate" title={path || "AGENTS.md"}>
+        <span className="min-w-0 truncate" data-ha-title-tip={path || "AGENTS.md"}>
           {path || "AGENTS.md"}
         </span>
         <span aria-hidden="true" className="shrink-0">

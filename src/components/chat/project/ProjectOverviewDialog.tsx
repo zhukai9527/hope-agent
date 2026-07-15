@@ -265,7 +265,7 @@ export default function ProjectOverviewDialog({
           aria-valuenow={Math.round(renderedSheetWidth)}
           data-dragging={resizing || undefined}
           tabIndex={0}
-          title={t("project.resizeSettingsSheet")}
+          data-ha-title-tip={t("project.resizeSettingsSheet")}
           onDoubleClick={() => applySheetWidth(DEFAULT_SHEET_WIDTH, true)}
           onKeyDown={handleResizeKeyDown}
           onPointerDown={handleResizePointerDown}
