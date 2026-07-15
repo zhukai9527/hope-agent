@@ -3616,6 +3616,9 @@ impl SessionDB {
     /// IM channel sessions are driven by an external counterparty whose
     /// messages must not vanish on close.
     pub fn update_session_incognito(&self, session_id: &str, incognito: bool) -> Result<()> {
+        let _artifact_privacy_guard = incognito
+            .then(crate::artifacts::lock_privacy_transition)
+            .transpose()?;
         if incognito {
             let meta = self
                 .get_session(session_id)?
@@ -3669,6 +3672,12 @@ impl SessionDB {
                 return Err(anyhow::anyhow!(
                     "Cannot enable incognito after workflow run {} was created",
                     run_id
+                ));
+            }
+            drop(conn);
+            if crate::artifacts::ArtifactService::open()?.has_for_session(session_id)? {
+                return Err(anyhow::anyhow!(
+                    "Cannot enable incognito while session has durable Artifacts"
                 ));
             }
         }
