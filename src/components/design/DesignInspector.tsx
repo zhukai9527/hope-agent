@@ -1,0 +1,954 @@
+/**
+ * 属性检视器（D1 可视化微调的可见半边）。
+ *
+ * 接收 iframe bridge 回传的选中元素，提供分区控件（文本/颜色/排版/间距/圆角）：
+ * 交互时**即时预览**（回调驱动 iframe live style），交互结束**提交**回写源码。
+ * 控件是纯受控组件，父层负责 preview / commit 两条通道。
+ */
+
+import { useState } from "react"
+import { useTranslation } from "react-i18next"
+import { X, AlignLeft, AlignCenter, AlignRight, Link2, Link, Unlink, Trash2, ImageUp, Loader2, MessagesSquare } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { NumberInput } from "@/components/ui/number-input"
+import { Textarea } from "@/components/ui/textarea"
+import { IconTip } from "@/components/ui/tooltip"
+import { Slider } from "@/components/ui/slider"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import type { DesignSelectedElement } from "@/types/design"
+import { formatSizeDisplay } from "./inspectorFormat"
+
+interface Props {
+  selected: DesignSelectedElement
+  onLiveStyle: (prop: string, value: string) => void
+  onCommitStyle: (prop: string, value: string) => void
+  onLiveText: (text: string) => void
+  onCommitText: (text: string) => void
+  /** B5：href/src/alt 即时预览（ds_preview_attr）。 */
+  onLiveAttr: (attr: string, value: string) => void
+  /** B5：href/src/alt 提交回写（确定性 patch）。 */
+  onCommitAttr: (attr: string, value: string) => void
+  /** B5：选本地图 → data-uri（桌面/HTTP 统一）；返回 null = 取消/失败。 */
+  onPickImage: () => Promise<string | null>
+  /** 删除选中元素（Wave 3-⑫）。 */
+  onDelete: () => void
+  /** 把选中元素（含 oid）一键带到对话，让 AI 就地精改——不必先进批注模式。 */
+  onAddToChat: () => void
+  onClose: () => void
+}
+
+/** 内置字体栈（Wave 3-⑫）。name 为字体本名（专有名词、无需 i18n）。 */
+const FONT_STACKS: { name: string; stack: string }[] = [
+  { name: "System", stack: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" },
+  { name: "Helvetica", stack: "'Helvetica Neue', Helvetica, Arial, sans-serif" },
+  { name: "Inter", stack: "Inter, 'Segoe UI', sans-serif" },
+  { name: "Georgia", stack: "Georgia, 'Times New Roman', serif" },
+  { name: "Menlo", stack: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace" },
+]
+
+const hex2 = (n: number) => Math.max(0, Math.min(255, n || 0)).toString(16).padStart(2, "0")
+
+function rgbStrToHex(inner: string): string {
+  const [r, g, b] = inner.split(",").map((x) => parseInt(x.trim(), 10))
+  return `#${hex2(r)}${hex2(g)}${hex2(b)}`
+}
+
+/**
+ * Any CSS color (`#rgb` / `#rrggbb` / `rgb()` / `rgba()` / named / `hsl()`) →
+ * `#rrggbb`, which is all `<input type="color">` accepts. Named / hsl / 3-digit are
+ * resolved via a canvas (best-effort) instead of collapsing to black, so the swatch
+ * reflects the real color and a stray drag can't silently repaint an element black.
+ */
+function toHex(v: string): string {
+  const s = (v || "").trim()
+  if (!s) return "#000000"
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase()
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+    const [r, g, b] = [s[1], s[2], s[3]]
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase()
+  }
+  const m = s.match(/rgba?\(([^)]+)\)/)
+  if (m) return rgbStrToHex(m[1])
+  try {
+    const ctx = document.createElement("canvas").getContext("2d")
+    if (ctx) {
+      ctx.fillStyle = "#000000"
+      ctx.fillStyle = s // invalid input leaves the previous (#000000)
+      const resolved = ctx.fillStyle
+      if (/^#[0-9a-fA-F]{6}$/.test(resolved)) return resolved.toLowerCase()
+      const rm = resolved.match(/rgba?\(([^)]+)\)/)
+      if (rm) return rgbStrToHex(rm[1])
+    }
+  } catch {
+    /* ignore — fall through */
+  }
+  return "#000000"
+}
+
+function px(v: string): number {
+  return Math.round(parseFloat(v) || 0)
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="border-b px-3 py-3">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  )
+}
+
+// 最近使用色（模块级，跨 ColorRow 实例共享）：提交即记，点 swatch 一键复用（W2-N）——此前只有 hex 手输
+// + 裸 picker，换品牌主色要跨面板查 hex 再粘、连改多个元素反复粘。commit 后面板重渲染即刷新此条。
+const recentColors: string[] = []
+function pushRecentColor(hex: string) {
+  const h = hex.toLowerCase()
+  if (!/^#[0-9a-f]{6}$/.test(h)) return
+  const i = recentColors.indexOf(h)
+  if (i >= 0) recentColors.splice(i, 1)
+  recentColors.unshift(h)
+  if (recentColors.length > 8) recentColors.pop()
+}
+
+function ColorRow({
+  label,
+  prop,
+  value,
+  onLive,
+  onCommit,
+}: {
+  label: string
+  prop: string
+  value: string
+  onLive: (prop: string, v: string) => void
+  onCommit: (prop: string, v: string) => void
+}) {
+  const hex = toHex(value)
+  // 可编辑 hex 手输（Wave 3-⑫）：粘贴品牌色不必再回对话。非法回退当前值。渲染期 prev-prop
+  // 同步（与 NumberRow 一致，避免 setState-in-effect 级联渲染）。
+  const [draft, setDraft] = useState(hex)
+  const [prevHex, setPrevHex] = useState(hex)
+  if (hex !== prevHex) {
+    setPrevHex(hex)
+    setDraft(hex)
+  }
+  const commit = (v: string) => {
+    pushRecentColor(v)
+    onCommit(prop, v)
+  }
+  const commitDraft = () => {
+    let v = draft.trim()
+    if (v && !v.startsWith("#")) v = `#${v}`
+    if (/^#[0-9a-fA-F]{3}$/.test(v) || /^#[0-9a-fA-F]{6}$/.test(v)) commit(v.toLowerCase())
+    else setDraft(hex)
+  }
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center justify-between gap-2 text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="flex items-center gap-1.5">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur()
+            }}
+            className="h-6 w-[72px] px-1.5 font-mono text-[11px]"
+          />
+          <input
+            type="color"
+            value={hex}
+            onInput={(e) => onLive(prop, (e.target as HTMLInputElement).value)}
+            onChange={(e) => commit(e.target.value)}
+            className="h-6 w-8 cursor-pointer rounded border bg-transparent p-0"
+          />
+        </span>
+      </label>
+      {recentColors.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-1">
+          {recentColors.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-label={c}
+              data-ha-title-tip={c}
+              onClick={() => commit(c)}
+              className="h-4 w-4 rounded border border-border/60 transition-transform hover:scale-110"
+              style={{ backgroundColor: c }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const QUAD_SIDES = ["top", "right", "bottom", "left"] as const
+
+/** 四向数值控件（Wave 3-⑫）：内 / 外边距逐边可调 + 联动锁（锁时改一边=改全等）。
+ *  本地草稿 + blur/Enter 才 commit（避免逐键 patch+reload 丢焦点）；渲染期 prev-prop 同步
+ *  草稿与联动锁（切元素时不留旧状态，inspector 未按选中重挂）。 */
+function QuadRow({
+  label,
+  prop,
+  styles,
+  onCommit,
+  onLive,
+  sideKey = (side) => `${prop}-${side}`,
+}: {
+  label: string
+  /** 联动锁定态提交的 shorthand（padding / margin / border-width）。 */
+  prop: string
+  styles: Record<string, string>
+  onCommit: (prop: string, v: string) => void
+  onLive?: (prop: string, v: string) => void
+  /** 逐边 longhand 键（默认 `${prop}-${side}`；border 走 `border-${side}-width`）。 */
+  sideKey?: (side: string) => string
+}) {
+  const { t } = useTranslation()
+  const vals = QUAD_SIDES.map((side) => px(styles[sideKey(side)] || styles[prop] || "0"))
+  const allEqual = vals.every((v) => v === vals[0])
+  const [draft, setDraft] = useState<string[]>(vals.map(String))
+  const [linked, setLinked] = useState(allEqual)
+  const [prev, setPrev] = useState(vals)
+  if (vals.some((v, i) => v !== prev[i])) {
+    setPrev(vals)
+    setDraft(vals.map(String))
+    setLinked(allEqual)
+  }
+  const commit = (i: number) => {
+    const n = Math.round(parseFloat(draft[i]) || 0)
+    if (!linked && n === vals[i]) {
+      onLive?.(sideKey(QUAD_SIDES[i]), `${vals[i]}px`) // 未变 → 回滚 live 预览（review LOW）
+      return
+    }
+    if (linked) {
+      // **单条 shorthand patch**（review HIGH）：锁定态改一边=四边全等，写 `padding: Npx` 一次
+      // 即可——绝不发 4 条共用同一 bodyHash 的 longhand patch（后 3 条必被 stale-write 守卫拒、
+      // 弹错关面板）。commitPatch 非串行、bodyHash 需异步刷新，逐条会撞。
+      setDraft(QUAD_SIDES.map(() => String(n)))
+      onCommit(prop, `${n}px`)
+    } else {
+      onCommit(sideKey(QUAD_SIDES[i]), `${n}px`)
+    }
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">{label}</span>
+        <IconTip
+          label={
+            linked
+              ? t("design.insp.quadLinked", "四边联动（点击解锁逐边）")
+              : t("design.insp.quadUnlinked", "逐边独立（点击锁定四边）")
+          }
+          side="left"
+        >
+          <button
+            type="button"
+            onClick={() => setLinked((v) => !v)}
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {linked ? <Link className="h-3.5 w-3.5" /> : <Unlink className="h-3.5 w-3.5" />}
+          </button>
+        </IconTip>
+      </div>
+      <div className="grid grid-cols-4 gap-1">
+        {QUAD_SIDES.map((side, i) => (
+          <NumberInput
+            key={side}
+            value={draft[i]}
+            onChange={(e) => {
+              const val = e.target.value
+              // 联动态改一边=四边同步（草稿 + live 预览走 shorthand）；逐边态只动该边。
+              setDraft((d) => (linked ? d.map(() => val) : d.map((x, j) => (j === i ? val : x))))
+              const n = parseFloat(val)
+              if (Number.isFinite(n) && onLive) {
+                if (linked) onLive(prop, `${Math.round(n)}px`)
+                else onLive(sideKey(QUAD_SIDES[i]), `${Math.round(n)}px`)
+              }
+            }}
+            onBlur={() => commit(i)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit(i)
+            }}
+            className="h-7 px-1 text-center text-xs"
+            aria-label={side}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function NumberRow({
+  label,
+  prop,
+  value,
+  suffix = "px",
+  onCommit,
+  onLive,
+}: {
+  label: string
+  prop: string
+  value: number
+  suffix?: string
+  onCommit: (prop: string, v: string) => void
+  /** 逐键 / 步进即时预览（ds_preview_style，不落盘）；blur/Enter 才 commit（W2-D 手感）。 */
+  onLive?: (prop: string, v: string) => void
+}) {
+  const [v, setV] = useState(String(value))
+  // Sync local input when the selected element's value changes (render-phase
+  // prev-prop tracking — avoids setState-in-effect cascading renders).
+  const [prevValue, setPrevValue] = useState(value)
+  if (value !== prevValue) {
+    setPrevValue(value)
+    setV(String(value))
+  }
+  // 脏值守卫：未改不 commit（防聚焦+失焦把 computed 值原样写回源码，review #4）。
+  // NaN / 空守卫（B0-7）：非法输入回填原值、绝不静默 commit 成 0 抹掉尺寸；负值仍合法（不钳）。
+  const commit = () => {
+    const n = parseFloat(v)
+    if (Number.isFinite(n) && n !== value) {
+      onCommit(prop, `${n}${suffix}`)
+      return
+    }
+    // 未提交（非法 / 未变）：回滚输入框 + iframe live 预览到原值——打字中途 onLive 可能已把画布改成
+    // 别的值，若不回滚画布会停在未落盘的预览、与源码不一致（review LOW）。
+    setV(String(value))
+    onLive?.(prop, `${value}${suffix}`)
+  }
+  return (
+    <label className="flex items-center justify-between gap-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <NumberInput
+        value={v}
+        onChange={(e) => {
+          setV(e.target.value)
+          // 逐键 / 原生 spinner 步进即时预览——此前只 setV、画布纹丝不动、要 blur 才见效（W2-D）。
+          const n = parseFloat(e.target.value)
+          if (Number.isFinite(n)) onLive?.(prop, `${n}${suffix}`)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit()
+        }}
+        className="h-7 w-20 text-xs"
+      />
+    </label>
+  )
+}
+
+/** 自由 CSS 值输入（宽/高等，允许 `auto` / `%` / `px`）；渲染期 prev-prop 同步。 */
+function TextRow({
+  label,
+  prop,
+  value,
+  placeholder,
+  onCommit,
+  onLive,
+}: {
+  label: string
+  prop: string
+  value: string
+  placeholder?: string
+  onCommit: (prop: string, v: string) => void
+  onLive?: (prop: string, v: string) => void
+}) {
+  const [v, setV] = useState(value)
+  const [prev, setPrev] = useState(value)
+  if (value !== prev) {
+    setPrev(value)
+    setV(value)
+  }
+  // 脏值守卫：未改不 commit（尺寸值来自 computed，聚焦+失焦不该把 `1440px` 写回一个 auto 元素，review #4）。
+  const commit = () => {
+    if (v.trim() !== value.trim()) {
+      onCommit(prop, v.trim())
+      return
+    }
+    // 未提交 → 回滚 iframe live 预览到原值（打字中途 onLive 可能已改画布，review LOW）。
+    setV(value)
+    onLive?.(prop, value)
+  }
+  return (
+    <label className="flex items-center justify-between gap-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <Input
+        value={v}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setV(e.target.value)
+          const t = e.target.value.trim()
+          if (t) onLive?.(prop, t) // 逐键即时预览（W2-D）
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit()
+        }}
+        className="h-7 w-24 text-xs"
+      />
+    </label>
+  )
+}
+
+/** 带标签的枚举下拉（display / border-style 等）。 */
+function SelectRow({
+  label,
+  prop,
+  value,
+  options,
+  onCommit,
+}: {
+  label: string
+  prop: string
+  value: string
+  options: [string, string][]
+  onCommit: (prop: string, v: string) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <Select value={value} onValueChange={(v) => onCommit(prop, v)}>
+        <SelectTrigger className="h-7 w-28 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([val, lbl]) => (
+            <SelectItem key={val} value={val} className="text-xs">
+              {lbl}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+/** 不透明度滑杆：本地拖动 state（受控 Slider 拇指随指针走）+ 渲染期 prev-prop 同步。 */
+function OpacityRow({
+  value,
+  onLive,
+  onCommit,
+}: {
+  value: number
+  onLive: (prop: string, v: string) => void
+  onCommit: (prop: string, v: string) => void
+}) {
+  const { t } = useTranslation()
+  const [local, setLocal] = useState(value)
+  const [prev, setPrev] = useState(value)
+  if (value !== prev) {
+    setPrev(value)
+    setLocal(value)
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{t("design.insp.opacity", "不透明度")}</span>
+        <span className="font-mono text-xs text-muted-foreground">{Math.round(local * 100)}%</span>
+      </div>
+      <Slider
+        min={0}
+        max={1}
+        step={0.01}
+        value={[local]}
+        onValueChange={(v) => {
+          setLocal(v[0])
+          onLive("opacity", String(v[0]))
+        }}
+        onValueCommit={(v) => onCommit("opacity", String(v[0]))}
+      />
+    </div>
+  )
+}
+
+export default function DesignInspector({
+  selected,
+  onLiveStyle,
+  onCommitStyle,
+  onLiveText,
+  onCommitText,
+  onLiveAttr,
+  onCommitAttr,
+  onPickImage,
+  onDelete,
+  onAddToChat,
+  onClose,
+}: Props) {
+  const { t } = useTranslation()
+  const s = selected.styles
+  const [text, setText] = useState(selected.text)
+  // B5：链接 / 图片属性本地草稿。
+  const [href, setHref] = useState(selected.attrs?.href ?? "")
+  const [imgSrc, setImgSrc] = useState(selected.attrs?.src ?? "")
+  const [imgAlt, setImgAlt] = useState(selected.attrs?.alt ?? "")
+  const [uploading, setUploading] = useState(false)
+  // 草稿跟随**外部值变化**（不只 oid）——否则 undo/redo 改了同一元素的 text/href/src/alt 后，输入框
+  // 还停在旧草稿，一次失焦会把旧值重新提交、把 undo 抵消（review 修复）。渲染期 prev-prop 对账，
+  // 只重置真正变了的字段；打字期（onLive* 不改 selected）外部值不变故不与用户输入相争。
+  const extText = selected.text
+  const extHref = selected.attrs?.href ?? ""
+  const extSrc = selected.attrs?.src ?? ""
+  const extAlt = selected.attrs?.alt ?? ""
+  const [prevExt, setPrevExt] = useState({
+    text: extText,
+    href: extHref,
+    src: extSrc,
+    alt: extAlt,
+  })
+  if (
+    prevExt.text !== extText ||
+    prevExt.href !== extHref ||
+    prevExt.src !== extSrc ||
+    prevExt.alt !== extAlt
+  ) {
+    if (prevExt.text !== extText) setText(extText)
+    if (prevExt.href !== extHref) setHref(extHref)
+    if (prevExt.src !== extSrc) setImgSrc(extSrc)
+    if (prevExt.alt !== extAlt) setImgAlt(extAlt)
+    setPrevExt({ text: extText, href: extHref, src: extSrc, alt: extAlt })
+  }
+
+  const align = s["text-align"] || "left"
+  const display = s["display"] || "block"
+  const isFlexish = display === "flex" || display === "inline-flex" || display === "grid"
+  // 字体族匹配（W2-N 修）：取 computed 的**首个**字体族精确比对内置栈，匹配不到则把真实字体族作为
+  // 附加选项显示**真值**——绝不再报假「System」。此前用 substring-includes，品牌栈的 `-apple-system`
+  // fallback 会被 System（栈首）子串命中，几乎所有品牌/设计系统字体都被误显示成 System（audit）。
+  const rawFamily = s["font-family"] || ""
+  const primaryFamily = rawFamily
+    .split(",")[0]
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+  const norm = (x: string) =>
+    x
+      .split(",")[0]
+      .trim()
+      .replace(/^['"]|['"]$/g, "")
+      .toLowerCase()
+  const matchedStack = FONT_STACKS.find(
+    (f) => f.name.toLowerCase() === primaryFamily.toLowerCase() || norm(f.stack) === norm(rawFamily),
+  )
+  const fontFamilyKey = matchedStack?.stack ?? rawFamily
+  // 未匹配内置栈 → 把当前真实字体族作首个选项，下拉显示真值、且选走后仍能选回来。
+  const fontOptions: [string, string][] = matchedStack
+    ? FONT_STACKS.map((f) => [f.stack, f.name] as [string, string])
+    : [
+        [rawFamily, primaryFamily || t("design.insp.fontCurrent", "当前")] as [string, string],
+        ...FONT_STACKS.map((f) => [f.stack, f.name] as [string, string]),
+      ]
+  const opacity = parseFloat(s["opacity"] || "1")
+  // 人类可读元素名：优先可见文本片段（折叠空白），其次 img alt，再回落 tag。让面板顶部
+  // 一眼看出「选的是哪块内容」，而非只有 `<h1> #3` 这种技术标识（tag/oid 降为副标）。
+  const readableName = ((selected.text || "").replace(/\s+/g, " ").trim() ||
+    selected.attrs?.alt?.trim() ||
+    "").slice(0, 40)
+
+  return (
+    <div className="flex h-full w-72 shrink-0 flex-col overflow-y-auto border-l bg-background">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+        <IconTip label={`${readableName || selected.tag} · <${selected.tag}> #${selected.oid}`} side="bottom">
+          <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <span className="truncate text-xs font-semibold">
+              {readableName || `<${selected.tag}>`}
+            </span>
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+              &lt;{selected.tag}&gt;·{selected.oid}
+            </span>
+          </div>
+        </IconTip>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 gap-1 px-1.5 text-xs text-primary hover:bg-primary/10 hover:text-primary"
+          onClick={onAddToChat}
+        >
+          <MessagesSquare className="h-3.5 w-3.5" />
+          {t("design.insp.addToChat", "添加到对话")}
+        </Button>
+        <IconTip label={t("design.insp.deleteEl", "删除元素")} side="bottom">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </IconTip>
+        <IconTip label={t("common.close", "关闭")} side="bottom">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </IconTip>
+      </div>
+
+      {selected.isLeaf && (
+        <Section title={t("design.insp.text", "文本")}>
+          <Textarea
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value)
+              onLiveText(e.target.value)
+            }}
+            onBlur={() => {
+              // dirty-guard：文本未变不提交，避免每次失焦都产生冗余 patch + 新版本（review Frontend-3）。
+              if (text !== (selected.text ?? "")) onCommitText(text)
+            }}
+            rows={2}
+            className="resize-none"
+          />
+        </Section>
+      )}
+
+      {/* B5：链接编辑（<a href>） */}
+      {selected.tag === "a" && (
+        <Section title={t("design.insp.link", "链接")}>
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Link2 className="h-3 w-3" />
+              {t("design.insp.href", "链接地址")}
+            </label>
+            <Input
+              value={href}
+              onChange={(e) => {
+                setHref(e.target.value)
+                onLiveAttr("href", e.target.value)
+              }}
+              onBlur={() => {
+                if (href !== (selected.attrs?.href ?? "")) onCommitAttr("href", href)
+              }}
+              placeholder="https://…"
+              className="h-8 text-xs"
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* B5：图片编辑（<img src/alt> + 本地上传→data-uri） */}
+      {selected.tag === "img" && (
+        <Section title={t("design.insp.image", "图片")}>
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-muted-foreground">
+                {t("design.insp.imageSrc", "图片地址")}
+              </label>
+              <Input
+                value={imgSrc}
+                onChange={(e) => {
+                  setImgSrc(e.target.value)
+                  onLiveAttr("src", e.target.value)
+                }}
+                onBlur={() => {
+                  if (imgSrc !== (selected.attrs?.src ?? "")) onCommitAttr("src", imgSrc)
+                }}
+                placeholder="https://… / data:image/…"
+                className="h-8 text-xs"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full gap-1.5 text-xs"
+              disabled={uploading}
+              onClick={async () => {
+                setUploading(true)
+                try {
+                  const dataUri = await onPickImage()
+                  if (dataUri) {
+                    setImgSrc(dataUri)
+                    onCommitAttr("src", dataUri)
+                  }
+                } finally {
+                  setUploading(false)
+                }
+              }}
+            >
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <ImageUp className="h-3.5 w-3.5" />
+              )}
+              {t("design.insp.uploadImage", "上传本地图片")}
+            </Button>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-muted-foreground">
+                {t("design.insp.imageAlt", "替代文本 (alt)")}
+              </label>
+              <Input
+                value={imgAlt}
+                onChange={(e) => setImgAlt(e.target.value)}
+                onBlur={() => {
+                  if (imgAlt !== (selected.attrs?.alt ?? "")) onCommitAttr("alt", imgAlt)
+                }}
+                placeholder={t("design.insp.imageAltHint", "图片描述")}
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+        </Section>
+      )}
+
+      <Section title={t("design.insp.color", "颜色")}>
+        <ColorRow
+          label={t("design.insp.textColor", "文字")}
+          prop="color"
+          value={s["color"] || ""}
+          onLive={onLiveStyle}
+          onCommit={onCommitStyle}
+        />
+        <ColorRow
+          label={t("design.insp.bgColor", "背景")}
+          prop="background-color"
+          value={s["background-color"] || ""}
+          onLive={onLiveStyle}
+          onCommit={onCommitStyle}
+        />
+      </Section>
+
+      <Section title={t("design.insp.typography", "排版")}>
+        <SelectRow
+          label={t("design.insp.fontFamily", "字体")}
+          prop="font-family"
+          value={fontFamilyKey}
+          options={fontOptions}
+          onCommit={onCommitStyle}
+        />
+        <NumberRow
+          label={t("design.insp.fontSize", "字号")}
+          prop="font-size"
+          value={px(s["font-size"] || "16")}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <NumberRow
+          label={t("design.insp.fontWeight", "字重")}
+          prop="font-weight"
+          value={parseInt(s["font-weight"] || "400", 10)}
+          suffix=""
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <TextRow
+          label={t("design.insp.lineHeight", "行高")}
+          prop="line-height"
+          value={formatSizeDisplay(s["line-height"] || "")}
+          placeholder="1.5 / 24px"
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <TextRow
+          label={t("design.insp.letterSpacing", "字距")}
+          prop="letter-spacing"
+          value={formatSizeDisplay(s["letter-spacing"] || "")}
+          placeholder="normal"
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">{t("design.insp.align", "对齐")}</span>
+          <div className="flex gap-0.5">
+            {(
+              [
+                ["left", AlignLeft],
+                ["center", AlignCenter],
+                ["right", AlignRight],
+              ] as const
+            ).map(([a, Icon]) => (
+              <Button
+                key={a}
+                variant={align === a ? "default" : "ghost"}
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => onCommitStyle("text-align", a)}
+              >
+                <Icon className="h-3.5 w-3.5" />
+              </Button>
+            ))}
+          </div>
+        </div>
+      </Section>
+
+      <Section title={t("design.insp.spacing", "间距与圆角")}>
+        <QuadRow
+          label={t("design.insp.padding", "内边距")}
+          prop="padding"
+          styles={s}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <QuadRow
+          label={t("design.insp.margin", "外边距")}
+          prop="margin"
+          styles={s}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <NumberRow
+          label={t("design.insp.radius", "圆角")}
+          prop="border-radius"
+          value={px(s["border-radius"] || "0")}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+      </Section>
+
+      <Section title={t("design.insp.layout", "布局")}>
+        <SelectRow
+          label={t("design.insp.display", "显示")}
+          prop="display"
+          value={display}
+          options={[
+            ["block", "block"],
+            ["flex", "flex"],
+            ["inline-flex", "inline-flex"],
+            ["grid", "grid"],
+            ["inline-block", "inline-block"],
+            ["none", "none"],
+          ]}
+          onCommit={onCommitStyle}
+        />
+        {isFlexish && (
+          <>
+            <SelectRow
+              label={t("design.insp.alignItems", "纵向对齐")}
+              prop="align-items"
+              value={s["align-items"] || "stretch"}
+              options={[
+                ["flex-start", t("design.insp.start", "起始")],
+                ["center", t("design.insp.center", "居中")],
+                ["flex-end", t("design.insp.end", "末尾")],
+                ["stretch", t("design.insp.stretch", "拉伸")],
+                ["baseline", t("design.insp.baseline", "基线")],
+              ]}
+              onCommit={onCommitStyle}
+            />
+            <SelectRow
+              label={t("design.insp.justify", "横向分布")}
+              prop="justify-content"
+              value={s["justify-content"] || "flex-start"}
+              options={[
+                ["flex-start", t("design.insp.start", "起始")],
+                ["center", t("design.insp.center", "居中")],
+                ["flex-end", t("design.insp.end", "末尾")],
+                ["space-between", t("design.insp.between", "两端")],
+                ["space-around", t("design.insp.around", "环绕")],
+                ["space-evenly", t("design.insp.evenly", "均匀")],
+              ]}
+              onCommit={onCommitStyle}
+            />
+            <NumberRow
+              label={t("design.insp.gap", "间隙")}
+              prop="gap"
+              value={px(s["gap"] || "0")}
+              onCommit={onCommitStyle}
+              onLive={onLiveStyle}
+            />
+          </>
+        )}
+      </Section>
+
+      <Section title={t("design.insp.size", "尺寸")}>
+        <TextRow
+          label={t("design.insp.width", "宽")}
+          prop="width"
+          value={formatSizeDisplay(s["width"] || "")}
+          placeholder={t("common.auto", "自动")}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <TextRow
+          label={t("design.insp.height", "高")}
+          prop="height"
+          value={formatSizeDisplay(s["height"] || "")}
+          placeholder={t("common.auto", "自动")}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <TextRow
+          label={t("design.insp.maxWidth", "最大宽")}
+          prop="max-width"
+          value={formatSizeDisplay(s["max-width"] || "")}
+          placeholder={t("common.none", "无")}
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+        <TextRow
+          label={t("design.insp.minHeight", "最小高")}
+          prop="min-height"
+          value={formatSizeDisplay(s["min-height"] || "")}
+          placeholder="0"
+          onCommit={onCommitStyle}
+          onLive={onLiveStyle}
+        />
+      </Section>
+
+      <Section title={t("design.insp.stroke", "描边")}>
+        <QuadRow
+          label={t("design.insp.borderWidth", "边框宽")}
+          prop="border-width"
+          styles={s}
+          onCommit={onCommitStyle}
+          sideKey={(side) => `border-${side}-width`}
+        />
+        <SelectRow
+          label={t("design.insp.borderStyle", "边框样式")}
+          prop="border-style"
+          value={s["border-style"] || "none"}
+          options={[
+            ["none", "none"],
+            ["solid", "solid"],
+            ["dashed", "dashed"],
+            ["dotted", "dotted"],
+          ]}
+          onCommit={onCommitStyle}
+        />
+        <ColorRow
+          label={t("design.insp.borderColor", "边框色")}
+          prop="border-color"
+          value={s["border-color"] || ""}
+          onLive={onLiveStyle}
+          onCommit={onCommitStyle}
+        />
+      </Section>
+
+      <Section title={t("design.insp.effects", "效果")}>
+        <OpacityRow value={opacity} onLive={onLiveStyle} onCommit={onCommitStyle} />
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">{t("design.insp.shadow", "阴影")}</span>
+          <div className="flex gap-0.5">
+            {(
+              [
+                ["none", t("design.insp.shadowNone", "无")],
+                ["0 1px 2px rgba(0,0,0,.08)", "S"],
+                ["0 4px 12px rgba(0,0,0,.12)", "M"],
+                ["0 12px 32px rgba(0,0,0,.18)", "L"],
+              ] as const
+            ).map(([val, lbl]) => (
+              <Button
+                key={lbl}
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => onCommitStyle("box-shadow", val)}
+              >
+                {lbl}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </Section>
+    </div>
+  )
+}

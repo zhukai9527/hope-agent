@@ -114,6 +114,12 @@ pub struct ChatRequest {
     /// KB chat thread.
     #[serde(default)]
     pub kb_anchor_note: Option<String>,
+    /// Design-space per-project chat: the design project open when the
+    /// conversation started. Only honored on the auto-create branch (with
+    /// `tool_scope == "design"`) — promotes the new session into a design chat
+    /// thread anchored to this project.
+    #[serde(default)]
+    pub design_project_id: Option<String>,
     /// Lazy project binding: when a project draft sends its first message the
     /// client carries the project id here so the auto-create branch materializes
     /// the session inside the project. Ignored when `session_id` is set; mutually
@@ -181,6 +187,17 @@ pub struct ChatResponse {
     /// no stream was opened).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
+    /// True when a blocked first message caused the freshly auto-created session
+    /// (design / knowledge lazy-create) to be deleted before returning. The HTTP
+    /// transport reads this to SUPPRESS the synthesized `session_created` event,
+    /// so the UI does not switch to a session id that no longer exists (which
+    /// would break subsequent sends / history loads).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub session_deleted: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 struct ChatCancelRegistrationGuard {
@@ -867,7 +884,12 @@ pub async fn chat(
             // session behind (no hidden zombie, no stray regular row in the
             // main list / picker / FTS). Drop the freshly auto-created session;
             // `blocked_reason` still carries the notice to the transport.
-            if new_session_created && body.tool_scope.as_deref() == Some("knowledge") {
+            if new_session_created
+                && matches!(
+                    body.tool_scope.as_deref(),
+                    Some("knowledge") | Some("design")
+                )
+            {
                 let _ = {
                     let sid = sid.clone();
                     db.run(move |db| db.delete_session(&sid)).await
@@ -877,6 +899,8 @@ pub async fn chat(
                     response: notice.clone(),
                     turn_id,
                     blocked_reason: Some(notice),
+                    // Session was just deleted — tell the transport not to adopt it.
+                    session_deleted: true,
                 }));
             }
             let _ = {
@@ -896,6 +920,7 @@ pub async fn chat(
                 response: notice.clone(),
                 turn_id,
                 blocked_reason: Some(notice),
+                session_deleted: false,
             }));
         }
     };
@@ -933,6 +958,14 @@ pub async fn chat(
                 &kb_id,
                 body.kb_anchor_note.as_deref(),
             );
+        }
+    }
+
+    // Design-space per-project chat: promote the freshly-created session into a
+    // design thread anchored to the open project (mirrors the KB branch above).
+    if new_session_created && body.tool_scope.as_deref() == Some("design") {
+        if let Some(project_id) = body.design_project_id.as_deref() {
+            ha_core::design::service::mark_session_as_design_thread(&sid, project_id);
         }
     }
 
@@ -1254,6 +1287,7 @@ pub async fn chat(
         response: result.response,
         turn_id,
         blocked_reason: None,
+        session_deleted: false,
     }))
 }
 

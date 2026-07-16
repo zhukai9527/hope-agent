@@ -31,6 +31,7 @@ import {
   BarChart3,
   ClipboardList,
   Library,
+  Palette,
   Server,
   Sun,
   Moon,
@@ -63,6 +64,7 @@ interface IconSidebarProps {
     | "dashboard"
     | "plans"
     | "knowledge"
+    | "design"
     | "artifacts"
   onOpenSettings: (section?: SettingsSection) => void
   onOpenChat: () => void
@@ -76,6 +78,7 @@ interface IconSidebarProps {
   onOpenDashboard: () => void
   onOpenPlans: () => void
   onOpenKnowledge: () => void
+  onOpenDesign: () => void
   onOpenArtifacts: () => void
   userAvatar?: string | null
   totalUnreadCount?: number
@@ -96,6 +99,7 @@ export default function IconSidebar({
   onOpenDashboard,
   onOpenPlans,
   onOpenKnowledge,
+  onOpenDesign,
   onOpenArtifacts,
   userAvatar,
   totalUnreadCount,
@@ -201,6 +205,25 @@ export default function IconSidebar({
               </Button>
             </IconTip>
           </div>
+          {/* Design Space entry — grouped directly under Knowledge Space */}
+          <div className="w-full flex justify-center">
+            <IconTip label={t("design.title", "Design Space")} side="right">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "rounded-xl h-8 w-8",
+                  view === "design"
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={onOpenDesign}
+              >
+                <Palette className="h-4 w-4" />
+              </Button>
+            </IconTip>
+          </div>
+          {/* Artifacts entry — grouped directly under Knowledge Space */}
           <div className="w-full flex justify-center">
             <IconTip label={t("artifacts.title", "Artifacts")} side="right">
               <Button

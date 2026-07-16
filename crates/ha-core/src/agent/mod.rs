@@ -20,6 +20,7 @@ pub mod resolver;
 pub(crate) mod retrieval_planner;
 pub(crate) mod runtime_ledger;
 mod side_query;
+mod side_query_stream;
 mod streaming_adapter;
 mod streaming_loop;
 pub(crate) mod token_manifest;

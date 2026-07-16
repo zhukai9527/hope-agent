@@ -25,6 +25,7 @@ import type {
   FileUploadLease,
   FileUploadPurpose,
   UploadResult,
+  SaveResult,
   SessionArtifacts,
   WorkspaceEnvironmentSnapshot,
   ArtifactRecord,
@@ -39,6 +40,41 @@ import type {
 } from "@/lib/transport";
 import { uploadFileInChunks } from "@/lib/fileUpload";
 import type { FileChangesMetadata, MediaItem } from "@/types/chat";
+
+/** localStorage key remembering the last directory the user saved an export to. */
+const EXPORT_DIR_KEY = "design_export_dir";
+
+function readLastExportDir(): string {
+  try {
+    return localStorage.getItem(EXPORT_DIR_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberExportDir(savedPath: string): void {
+  // Strip the trailing filename segment (handles both / and \ separators).
+  const dir = savedPath.replace(/[/\\][^/\\]*$/, "");
+  if (!dir || dir === savedPath) return;
+  try {
+    localStorage.setItem(EXPORT_DIR_KEY, dir);
+  } catch {
+    /* private mode / quota — best-effort memory only */
+  }
+}
+
+/** Blob → base64 (no data-uri prefix) via FileReader — native + handles large blobs. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = String(reader.result);
+      resolve(s.slice(s.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("blob read failed"));
+    reader.readAsDataURL(blob);
+  });
+}
 
 export class TauriTransport implements Transport {
   // ----- call -----
@@ -168,6 +204,28 @@ export class TauriTransport implements Transport {
     return true;
   }
 
+  async saveFileAs(blob: Blob, filename: string): Promise<SaveResult> {
+    // Native "Save As" dialog, pre-filled with the last-used directory so repeat
+    // exports don't force the user to re-navigate each time.
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const lastDir = readLastExportDir();
+    const sep = lastDir.includes("\\") ? "\\" : "/";
+    const defaultPath = lastDir ? `${lastDir.replace(/[/\\]+$/, "")}${sep}${filename}` : filename;
+    const path = await save({ defaultPath, title: filename });
+    if (!path) return { status: "canceled" };
+    // Write via a dedicated Tauri command (user already chose the path through the
+    // native dialog). base64 keeps the IPC payload compact for large exports (MP4).
+    const dataBase64 = await blobToBase64(blob);
+    await invoke("save_exported_file", { path, dataBase64 });
+    rememberExportDir(path);
+    return { status: "saved", path };
+  }
+
+  async revealFile(path: string): Promise<void> {
+    if (!path) return;
+    await invoke("reveal_in_folder", { path });
+  }
+
   fileRuntime(): FileRuntime {
     return { workspaceHost: "local", openMode: "system", canReveal: true };
   }
@@ -210,7 +268,7 @@ export class TauriTransport implements Transport {
       filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
     });
     if (!selected || typeof selected !== "string") return null;
-    return { src: convertFileSrc(selected) };
+    return { src: convertFileSrc(selected), path: selected };
   }
 
   async pickLocalDirectory(): Promise<string | null> {

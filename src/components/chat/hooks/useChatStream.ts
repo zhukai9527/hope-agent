@@ -318,10 +318,18 @@ export interface UseChatStreamOptions {
   draftKbAnchorNote?: string | null
   /**
    * Tool-visibility scope forwarded to the `chat` command. The knowledge-space
-   * sidebar passes `"knowledge"` to trim the injected tool set; omitted for the
-   * main / quick chat (full tools).
+   * sidebar passes `"knowledge"`, the design-space per-project chat passes
+   * `"design"`, to trim the injected tool set; omitted for the main / quick chat
+   * (full tools).
    */
-  toolScope?: "knowledge"
+  toolScope?: "knowledge" | "design"
+  /**
+   * Design-space per-project chat: the design project open when the conversation
+   * started. Sent only on the auto-create send (with `toolScope === "design"`)
+   * so the backend promotes the new session into a design chat thread anchored
+   * to this project (history / default-load key). Mirrors `draftKbAnchorNote`.
+   */
+  draftDesignProjectId?: string | null
   /**
    * Per-turn extra attachments merged at send time, AFTER the visible composer
    * quotes/files. The knowledge panel uses this to inject the currently-open
@@ -423,6 +431,7 @@ export function useChatStream({
   draftKbAttachments = [],
   draftKbAnchorNote = null,
   toolScope,
+  draftDesignProjectId = null,
   getExtraAttachments,
   onSandboxModeSynced,
   parentInjectionDeltasViaChatStream = false,
@@ -1721,6 +1730,10 @@ export function useChatStream({
           ...(toolScope && !sendSessionId && draftKbAnchorNote
             ? { kbAnchorNote: draftKbAnchorNote }
             : {}),
+          // Design-space anchor: promote the new session into a project thread.
+          ...(toolScope === "design" && !currentSessionId && draftDesignProjectId
+            ? { designProjectId: draftDesignProjectId }
+            : {}),
         },
         onEvent,
       )
@@ -1822,7 +1835,9 @@ export function useChatStream({
           if (last && last.role === "assistant" && last.content === "" && !last.toolCalls?.length) {
             updated.pop()
           }
-          updated.push({ role: "event", content: `${e}` })
+          // isTurnError：可靠的失败信号（仅真抛错才 push，绝非 reconcile 未决的空成功）——
+          // 让设计对话等消费端可给出一键重试，而不必用会误报的「空内容」启发式。
+          updated.push({ role: "event", content: `${e}`, isTurnError: true })
           return updated
         })
       }

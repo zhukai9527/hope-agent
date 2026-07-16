@@ -359,6 +359,13 @@ interface ChatInputProps {
   workspacePanelVisible?: boolean
   /** Larger centered presentation for a brand-new empty conversation. */
   hero?: boolean
+  /** Optional consumer-supplied items rendered at the **top of the "+" overflow
+   *  menu** (before the built-in overflow actions). Off by default so every
+   *  existing surface is unchanged; the design chat puts its next-step actions
+   *  here. When present it also forces the "+" trigger visible even when the
+   *  toolbar is not compact, so the items stay reachable at any width. Clicking
+   *  any child closes the overflow menu. */
+  overflowLeadingItems?: ReactNode
   /** Optional surface fused to the top of the input dock. */
   topAccessory?: ReactNode
   /** Context-window fullness, rendered as a thin bar fused into the dock's
@@ -554,6 +561,7 @@ export default function ChatInput({
   hero = false,
   topAccessory,
   contextUsage,
+  overflowLeadingItems,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const maxAttachmentMb = Math.round(maxAttachmentBytes / MEBIBYTE_BYTES)
@@ -2848,7 +2856,10 @@ export default function ChatInput({
                 <div
                   ref={overflowTriggerRef}
                   className={
-                    toolbarCompact ? "relative block shrink-0" : CHAT_INPUT_OVERFLOW_MENU_CLASS
+                    // 消费方注入了前导项时，即便非 compact 也让「+」可见，让注入项在任意宽度可达。
+                    toolbarCompact || overflowLeadingItems
+                      ? "relative block shrink-0"
+                      : CHAT_INPUT_OVERFLOW_MENU_CLASS
                   }
                 >
                   <Tooltip>
@@ -2873,7 +2884,18 @@ export default function ChatInput({
                     onEscapeKeyDown={() => setShowOverflowMenu(false)}
                     role="menu"
                   >
-                    <div className="flex flex-col gap-0.5">{renderOverflowMenuItems()}</div>
+                    <div className="flex flex-col gap-0.5">
+                      {/* 消费方前导项（design next-step）：置顶；点任意子项冒泡到此处收起「+」菜单
+                          （注入项无法访问内部 setShowOverflowMenu）。内置溢出项仅 compact 时渲染
+                          （非 compact 时它们已内联，避免重复）。 */}
+                      {overflowLeadingItems && (
+                        <div onClick={() => setShowOverflowMenu(false)}>{overflowLeadingItems}</div>
+                      )}
+                      {overflowLeadingItems && toolbarCompact && (
+                        <div className="my-1 h-px bg-border-soft" />
+                      )}
+                      {toolbarCompact && renderOverflowMenuItems()}
+                    </div>
                   </FloatingMenu>
                 </div>
 

@@ -1,0 +1,7971 @@
+/**
+ * 设计空间独立视图（侧边栏入口）。
+ *
+ * 形态：首页（项目墙）↔ 工作室（产物库 + 单产物稳定预览）。
+ * 刻意**不做无限画布**——多产物概览用纯 CSS grid 缩略图墙，单产物聚焦用一个
+ * 稳定 iframe + CSS 缩放，从架构上规避旧版画布卡顿。见 docs/architecture/design-space.md。
+ */
+
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import type { CSSProperties, ReactNode } from "react"
+import { useTranslation } from "react-i18next"
+import {
+  ArrowLeft,
+  Plus,
+  Braces,
+  Trash2,
+  RefreshCw,
+  Settings2,
+  Palette,
+  PanelLeft,
+  PanelLeftDashed,
+  ShieldAlert,
+  GitCompareArrows,
+  Loader2,
+  Monitor,
+  ChevronLeft,
+  ChevronRight,
+  TriangleAlert,
+  RotateCcw,
+  Smartphone,
+  Presentation,
+  LayoutDashboard,
+  Image as ImageIcon,
+  FileText,
+  Mail,
+  Brush,
+  GitFork,
+  Layers,
+  ListChecks,
+  Paintbrush,
+  CheckCircle2,
+  Sparkles,
+  StickyNote,
+  MousePointerClick,
+  MessageSquare,
+  MessagesSquare,
+  Highlighter,
+  SlidersHorizontal,
+  Download,
+  Gauge,
+  Film,
+  Music,
+  Blocks,
+  History,
+  Search,
+  LayoutGrid,
+  List as ListIcon,
+  MoreHorizontal,
+  Pencil,
+  Copy,
+  Check,
+  CheckSquare,
+  FolderOpen,
+  Tablet,
+  Maximize2,
+  Undo2,
+  Redo2,
+  Square,
+  ClipboardCopy,
+  Share2,
+  Cloud,
+  Wand2,
+  FileImage,
+  FileType2,
+  FileArchive,
+  FileCode,
+  Frame,
+  Link2,
+  Code2,
+  AlertCircle,
+  X,
+  ImagePlus,
+  Loader2 as Loader2Icon,
+  FolderGit2,
+  Hammer,
+} from "lucide-react"
+import { toast } from "sonner"
+import { getTransport } from "@/lib/transport-provider"
+import { parsePayload } from "@/lib/transport"
+import DesignInspector from "@/components/design/DesignInspector"
+import DesignChatPanel, {
+  type DesignChatPanelHandle,
+} from "@/components/design/chat/DesignChatPanel"
+import type { PendingFileQuote } from "@/types/chat"
+import DesignCommentPanel from "@/components/design/DesignCommentPanel"
+import { DesignSystemPicker } from "@/components/design/DesignSystemPicker"
+import { ModelSelector, type AvailableModel } from "@/components/ui/model-selector"
+import type { ActiveModel } from "@/types/chat"
+import DesignKitModal from "@/components/design/DesignKitModal"
+import DesignVersionHistoryModal from "@/components/design/DesignVersionHistoryModal"
+import DesignDeployModal from "@/components/design/DesignDeployModal"
+import DesignInpaintModal from "@/components/design/DesignInpaintModal"
+import { DesignTokenEditor } from "@/components/design/DesignTokenEditor"
+import { DesignTokenExport } from "@/components/design/DesignTokenExport"
+import { DesignFigmaImport } from "@/components/design/DesignFigmaImport"
+import { DesignCodeBinding } from "@/components/design/DesignCodeBinding"
+import { DesignRepoBinding } from "@/components/design/DesignRepoBinding"
+import { logger } from "@/lib/logger"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
+import { Input } from "@/components/ui/input"
+import { SearchInput } from "@/components/ui/search-input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { IconTip } from "@/components/ui/tooltip"
+import { AnimatedCollapse, AnimatedPresenceBox } from "@/components/ui/animated-presence"
+import { UI_EASING, UI_MOTION } from "@/components/ui/motion"
+import { useLightbox } from "@/components/common/ImageLightbox"
+import { FloatingMenu } from "@/components/ui/floating-menu"
+import { useDragWidth } from "@/hooks/useDragWidth"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import type {
+  ArtifactKind,
+  DesignArtifact,
+  DesignArtifactView,
+  DesignProject,
+  DesignSystemMeta,
+  DesignRecipe,
+  DesignSelectedElement,
+  DesignDirection,
+  DesignConfig,
+  CritiqueResult,
+  DesignComment,
+  CommentPlacement,
+  CodeBindingInfo,
+  ImplementToCodeResult,
+} from "@/types/design"
+import {
+  ARTIFACT_KINDS,
+  parseSelfCheck,
+  parseCodeDrift,
+  parsePresenterNotes,
+  parseDerivedFrom,
+  parseIsRtl,
+} from "@/types/design"
+import type { ArtifactDriftStatus, CodeDriftChanges } from "@/types/design"
+import { DesignCodeDriftModal } from "@/components/design/DesignCodeDriftModal"
+import {
+  exportPng,
+  exportPdf,
+  exportPptx,
+  base64ToBlob,
+  safeFilename,
+  rasterizeArtifactFull,
+} from "@/lib/designExport"
+import { presentSaveResult } from "./exportSave"
+import { exportVideo } from "@/lib/designVideo"
+import DesignDrawOverlay, { type DesignDrawSubmit } from "@/components/design/DesignDrawOverlay"
+import { DeckSlideThumb } from "@/components/design/DeckSlideThumb"
+import { ArtifactThumb } from "@/components/design/ArtifactThumb"
+import DesignFilesPanel from "@/components/design/DesignFilesPanel"
+import DesignSharePanel from "@/components/design/DesignSharePanel"
+import { useTypewriterPlaceholder } from "./useTypewriterPlaceholder"
+import { useClickOutside } from "@/hooks/useClickOutside"
+
+interface DesignViewProps {
+  onBack: () => void
+  onOpenSettings: () => void
+  /** 「实现到代码」：跳到主对话该会话并把 prompt 作首条消息自动发送（App 层接线）。 */
+  onImplementToCode?: (sessionId: string, prompt: string) => void
+}
+
+const KIND_ICON: Record<ArtifactKind, typeof Monitor> = {
+  web: Monitor,
+  mobile: Smartphone,
+  deck: Presentation,
+  dashboard: LayoutDashboard,
+  poster: ImageIcon,
+  document: FileText,
+  email: Mail,
+  image: Sparkles,
+  motion: Film,
+  audio: Music,
+  component: Blocks,
+}
+
+// 仅纯静态 HTML kind 支持可视化 oid 微调；image/audio 是媒体（data-uri）、component 是编译产物
+// （产物≠源码），后端 render() 都不注 inspector bridge/oid，前端也不该暴露微调入口（否则 editMode
+// 发 ds_activate 给无接收脚本的 iframe，「点选元素开始微调」横幅常驻点不掉）。与后端 editable 对齐。
+function isEditableKind(kind: ArtifactKind): boolean {
+  return kind !== "image" && kind !== "audio" && kind !== "component"
+}
+
+/** 产物类型徽标：icon + 本地化类型名——tab 上只有小 icon 不足以辨认类型，预览工具栏明示。 */
+function KindBadge({ kind, label }: { kind: ArtifactKind; label: string }) {
+  const Icon = KIND_ICON[kind] ?? Monitor
+  return (
+    <span className="flex shrink-0 items-center gap-1 rounded-md border border-border/50 bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <Icon className="h-3 w-3" />
+      {label}
+    </span>
+  )
+}
+
+type ZoomMode = "fit" | number
+
+// 手势缩放（捏合 / Ctrl·⌘+滚轮）边界与灵敏度。产物墙非无限画布，只对单产物预览的
+// CSS scale 做连续驱动——刻意留有界档位，避免缩到不可用。
+const ZOOM_MIN = 0.2
+const ZOOM_MAX = 4
+const ZOOM_WHEEL_SENSITIVITY = 0.0022
+const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+
+// 右侧面板（Inspector / Comment）宽度，须与根节点 `w-72` 一致；width 动画需显式 px（不能 auto）。
+const RIGHT_PANEL_WIDTH_PX = 288
+
+/** 归一化不同 deltaMode 的滚轮增量到像素并钳幅，避免行/页模式或一格大 delta 造成跳变。 */
+function normalizeWheelDelta(deltaY: number, deltaMode: number): number {
+  const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY
+  return Math.sign(px) * Math.min(Math.abs(px), 60)
+}
+
+// 预览设备视口（B4-3，源码级对标参照 PREVIEW_VIEWPORT_PRESETS）。`auto` = 沿用产物自然
+// viewportW/H（默认，零回归）；其余固定逻辑宽高、居中缩放适配 + 设备框。
+type PreviewDevice = "auto" | "desktop" | "tablet" | "mobile"
+const DEVICE_PRESETS: Record<Exclude<PreviewDevice, "auto">, { w: number; h: number | null }> = {
+  desktop: { w: 1440, h: null },
+  tablet: { w: 820, h: 1180 },
+  mobile: { w: 390, h: 844 },
+}
+
+/** 可视化编辑 undo/redo 的 inverse-patch 载荷 / 记录（B5）。
+ * 结构型（P0-A）：`remove` 整段删元素、`insert` 重插被删片段（撤销删除）。线性栈按严格
+ * LIFO/FIFO 回放，每个 op 只在其录制时的源码状态上执行故 oid 稳定；外部替换源（AI 改稿 /
+ * 版本回滚）会清栈避免 oid 错位（见 clearHistory 接线）。 */
+type PatchPayload = {
+  styles?: [string, string][]
+  text?: string
+  attrs?: [string, string][]
+  /** span 直属文本节点编辑（决策4A）：改非叶子元素某 childNode 下标的裸文本、保留内部子树。 */
+  textNode?: { index: number; text: string }
+  /** 整段删元素（结构 undo redo 侧）。 */
+  remove?: boolean
+  /** 重插被删元素（结构 undo 撤销侧）。insertOffset 跳过删除时留在原地的前导文本 gap。 */
+  insert?: RemovedCtx
+}
+/** 后端 remove_design_element_cmd 回传的重建上下文（结构 undo）。 */
+type RemovedCtx = {
+  parentOid: number | null
+  afterOid: number | null
+  insertOffset: number
+  html: string
+}
+type EditOp = { oid: number; before: PatchPayload; after: PatchPayload }
+
+/** 平台修饰键符号（快捷键提示可发现性，P1-E）：mac 用 ⌘、其余 Ctrl+。 */
+const MOD_KEY =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+"
+
+/** 单条后端调用超时兜底（结构 undo / 提交串行化用）：backend 永久挂起时 reject，让提交队列前进而非
+ * 静默死锁（review MEDIUM）。30s 远超正常本机 IO / HTTP 往返。 */
+function withCallTimeout<T>(p: Promise<T>, ms = 30000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("design call timed out")), ms)),
+  ])
+}
+
+/**
+ * 本地图片 → 自包含 data-uri（B5）。fetch src（objectURL / Tauri convertFileSrc 均可 fetch）
+ * → blob → canvas 降采样 + 字节预算，PNG 保留透明（logo）/ 其余 JPEG 压缩。产物须自包含故
+ * 用 data-uri（与参照的项目相对路径分歧、记账本）。失败返回 null。
+ */
+async function imageToDataUri(src: string): Promise<string | null> {
+  const blob = await (await fetch(src)).blob()
+  if (!blob.type.startsWith("image/")) return null
+  const needsAlpha = /png|gif|webp|svg/.test(blob.type)
+  const bmp = await createImageBitmap(blob)
+  const BUDGET = 700 * 1024 // data-uri 字符上限，控源码体积
+  let last: string | null = null
+  try {
+    for (const maxEdge of [1600, 1200, 800, 512]) {
+      const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height))
+      const w = Math.max(1, Math.round(bmp.width * scale))
+      const h = Math.max(1, Math.round(bmp.height * scale))
+      const canvas = document.createElement("canvas")
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return null
+      ctx.drawImage(bmp, 0, 0, w, h)
+      const candidates = needsAlpha
+        ? [canvas.toDataURL("image/png")]
+        : [0.85, 0.7, 0.55].map((q) => canvas.toDataURL("image/jpeg", q))
+      for (const uri of candidates) {
+        last = uri
+        if (uri.length <= BUDGET) return uri
+      }
+    }
+  } finally {
+    bmp.close?.()
+  }
+  return last // 尽力而为：仍超预算也返回最小的一版
+}
+
+/** 涂画命中的元素成员（`ds_draw_hit` 桥回传）：oid + tag + 文本片段，带给模型做 edit_element。 */
+interface DrawMember {
+  oid: number
+  tag: string
+  snippet: string
+}
+
+/** 把 oid 元素的当前 computedStyle 压成一行紧凑提示（带给模型省一次 get_artifact）。空则 ""。 */
+function formatStyleLine(styles: Record<string, string> | undefined): string {
+  if (!styles) return ""
+  const entries = Object.entries(styles).filter(([, v]) => v && v.trim())
+  if (entries.length === 0) return ""
+  return "\n当前样式：" + entries.map(([k, v]) => `${k}=${v}`).join("; ")
+}
+
+/** iframe 视口/滚动度量（B4-1，经 `ds_viewport` 桥回传；父层跨源无法直接读）。 */
+interface ViewportMetrics {
+  scrollX: number
+  scrollY: number
+  clientWidth: number
+  clientHeight: number
+  scrollWidth: number
+  scrollHeight: number
+}
+
+/**
+ * 把归一化画框批注合成到离屏整页渲染上并裁剪成聚焦 PNG（B4-1）。
+ * 坐标：归一化(视口 0..1) → 产物 CSS px `ax=scrollX+nx*clientWidth` → 画布 px `ax*renderScale`
+ *（`bg` 由 rasterizeArtifactFull 按 `clientWidth` 视口、`renderScale` 倍率整页渲染，故此式 1:1 对齐）。
+ * 裁剪到 marks 并union bbox + 15% padding，输出封顶 1600px 长边控 token 预算。无 marks 返回 null。
+ */
+async function compositeAnnotation(
+  bg: HTMLCanvasElement,
+  renderScale: number,
+  vp: ViewportMetrics,
+  payload: DesignDrawSubmit,
+): Promise<File | null> {
+  const ctx = bg.getContext("2d")
+  if (!ctx) return null
+  const W = bg.width
+  const H = bg.height
+  const toPx = (nx: number, ny: number): [number, number] => [
+    (vp.scrollX + nx * vp.clientWidth) * renderScale,
+    (vp.scrollY + ny * vp.clientHeight) * renderScale,
+  ]
+  const STROKE = "#ff3b30"
+  ctx.lineJoin = "round"
+  ctx.lineCap = "round"
+  const bboxes: [number, number, number, number][] = []
+  for (const b of payload.boxes) {
+    const [x0, y0] = toPx(b.x, b.y)
+    const [x1, y1] = toPx(b.x + b.width, b.y + b.height)
+    const x = Math.min(x0, x1)
+    const y = Math.min(y0, y1)
+    const w = Math.abs(x1 - x0)
+    const h = Math.abs(y1 - y0)
+    ctx.fillStyle = "rgba(255,59,48,0.10)"
+    ctx.fillRect(x, y, w, h)
+    ctx.strokeStyle = STROKE
+    ctx.lineWidth = Math.max(2, 2 * renderScale)
+    ctx.setLineDash([10 * renderScale, 6 * renderScale])
+    ctx.strokeRect(x, y, w, h)
+    ctx.setLineDash([])
+    bboxes.push([x, y, w, h])
+  }
+  ctx.strokeStyle = STROKE
+  ctx.lineWidth = Math.max(2, 3 * renderScale)
+  for (const pts of payload.strokes) {
+    if (pts.length < 2) continue
+    let minx = Infinity
+    let miny = Infinity
+    let maxx = -Infinity
+    let maxy = -Infinity
+    ctx.beginPath()
+    pts.forEach((p, i) => {
+      const [px, py] = toPx(p.x, p.y)
+      if (i === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+      minx = Math.min(minx, px)
+      miny = Math.min(miny, py)
+      maxx = Math.max(maxx, px)
+      maxy = Math.max(maxy, py)
+    })
+    ctx.stroke()
+    bboxes.push([minx, miny, maxx - minx, maxy - miny])
+  }
+  if (bboxes.length === 0) return null
+  let minx = Infinity
+  let miny = Infinity
+  let maxx = -Infinity
+  let maxy = -Infinity
+  for (const [x, y, w, h] of bboxes) {
+    minx = Math.min(minx, x)
+    miny = Math.min(miny, y)
+    maxx = Math.max(maxx, x + w)
+    maxy = Math.max(maxy, y + h)
+  }
+  const padX = Math.max(24, (maxx - minx) * 0.15)
+  const padY = Math.max(24, (maxy - miny) * 0.15)
+  const cx = Math.max(0, Math.floor(minx - padX))
+  const cy = Math.max(0, Math.floor(miny - padY))
+  const cw = Math.min(W - cx, Math.ceil(maxx - minx + padX * 2))
+  const ch = Math.min(H - cy, Math.ceil(maxy - miny + padY * 2))
+  if (cw <= 0 || ch <= 0) return null
+  const MAX_EDGE = 1600
+  const outScale = Math.min(1, MAX_EDGE / Math.max(cw, ch))
+  const ow = Math.max(1, Math.round(cw * outScale))
+  const oh = Math.max(1, Math.round(ch * outScale))
+  const out = document.createElement("canvas")
+  out.width = ow
+  out.height = oh
+  const octx = out.getContext("2d")
+  if (!octx) return null
+  octx.drawImage(bg, cx, cy, cw, ch, 0, 0, ow, oh)
+  const blob: Blob | null = await new Promise((r) => out.toBlob((b) => r(b), "image/png"))
+  if (!blob) return null
+  return new File([blob], "design-annotation.png", { type: "image/png" })
+}
+
+/** 首页参考图上限（与后端 MAX_REFERENCE_IMAGES 对齐：≤5 张视觉附件）。 */
+const MAX_HOME_REF_IMAGES = 5
+
+// ── 已打开标签（编辑器式）：顶部标签条=「打开的产物」，非「全部产物」。关闭≠删除——
+// 只把产物从标签条收起（不碰文件），从产物库墙可随时重新打开。每项目一份、纯视图状态、
+// 落 localStorage 记住上次工作区，无后端 / 无迁移（`design.db` 仍是全部产物的真相源）。
+const OPEN_TABS_LS_PREFIX = "ha.design.openTabs."
+// 返回 null = 无记录（首次进项目，调用方默认打开最近一个）；返回数组（含 []）= 有记录，
+// 精确恢复上次留下的标签——用户主动关到空则 [] 会被尊重、进来保持空态，不再擅自打开。
+function readOpenTabs(projectId: string): string[] | null {
+  try {
+    const raw = localStorage.getItem(OPEN_TABS_LS_PREFIX + projectId)
+    if (raw == null) return null
+    const arr: unknown = JSON.parse(raw)
+    if (!Array.isArray(arr)) return null
+    return arr.filter((x): x is string => typeof x === "string")
+  } catch {
+    return null
+  }
+}
+function writeOpenTabs(projectId: string, ids: string[]): void {
+  try {
+    localStorage.setItem(OPEN_TABS_LS_PREFIX + projectId, JSON.stringify(ids))
+  } catch {
+    /* 无痕 / 配额满：标签持久化尽力而为，失败退化为「本次会话内有效」 */
+  }
+}
+
+export default function DesignView({ onBack, onOpenSettings, onImplementToCode }: DesignViewProps) {
+  const { t } = useTranslation()
+  const tx = getTransport()
+
+  const [projects, setProjects] = useState<DesignProject[]>([])
+  const [systems, setSystems] = useState<DesignSystemMeta[]>([])
+  const [activeProject, setActiveProject] = useState<DesignProject | null>(null)
+  const [artifacts, setArtifacts] = useState<DesignArtifact[]>([])
+  const [activeArtifact, setActiveArtifact] = useState<DesignArtifactView | null>(null)
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [loadingArtifacts, setLoadingArtifacts] = useState(false)
+  const [artifactsError, setArtifactsError] = useState(false) // Wave 2-⑨：库加载失败显式态
+
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
+  const [newProjectTitle, setNewProjectTitle] = useState("")
+  const [creatingProject, setCreatingProject] = useState(false)
+  const [systemPickerOpen, setSystemPickerOpen] = useState(false)
+  const [tokenEditorOpen, setTokenEditorOpen] = useState(false)
+  const [tokenEditorSystem, setTokenEditorSystem] = useState<DesignSystemMeta | null>(null)
+  const [tokenExportOpen, setTokenExportOpen] = useState(false)
+  const [tokenExportSystem, setTokenExportSystem] = useState<DesignSystemMeta | null>(null)
+  const [figmaImportOpen, setFigmaImportOpen] = useState(false)
+  const [codeBindOpen, setCodeBindOpen] = useState(false)
+  const [codeBindSystem, setCodeBindSystem] = useState<DesignSystemMeta | null>(null)
+  const [repoBindOpen, setRepoBindOpen] = useState(false)
+  // 项目级代码仓库绑定的生效目录（双源解析结果）：提取预填 / token 同步预填 / 实现到代码门。
+  const [boundRepoDir, setBoundRepoDir] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    if (!activeProject) {
+      setBoundRepoDir(null)
+      return
+    }
+    void tx
+      .call<CodeBindingInfo>("get_design_project_code_binding_cmd", {
+        projectId: activeProject.id,
+      })
+      .then((info) => {
+        if (!cancelled) setBoundRepoDir(info?.resolvedDir ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setBoundRepoDir(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    // 绑定源字段变化（onBound 回写 activeProject）时重取生效目录。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, activeProject?.codeDir, activeProject?.haProjectId])
+
+  // 「实现到代码」：未绑定先引导关联；已绑定 → 建实现会话 + 跳主对话自动发 pack。
+  const implementToCode = useCallback(
+    async (artifactId: string) => {
+      if (!boundRepoDir) {
+        toast.info(t("design.implement.needBind", "请先为该项目关联代码仓库"))
+        setRepoBindOpen(true)
+        return
+      }
+      try {
+        const res = await tx.call<ImplementToCodeResult>("design_implement_to_code_cmd", {
+          artifactId,
+        })
+        toast.success(
+          t("design.implement.started", "已在 {{dir}} 创建实现会话", {
+            dir: res.codeDir.split("/").pop() || res.codeDir,
+          }),
+        )
+        onImplementToCode?.(res.sessionId, res.prompt)
+      } catch (e) {
+        logger.error("design", "DesignView::implementToCode", "implement failed", e)
+        toast.error(
+          t("design.implement.err", "创建实现会话失败") + `: ${e instanceof Error ? e.message : e}`,
+        )
+      }
+    },
+    [boundRepoDir, onImplementToCode, t, tx],
+  )
+
+  // code→design 回灌状态（handlers 在 refreshView / enqueueChatQuote 定义之后声明，避免 TDZ）。
+  const [driftModalOpen, setDriftModalOpen] = useState(false)
+  const [driftChecking, setDriftChecking] = useState(false)
+
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { type: "project"; id: string; title: string }
+    | { type: "artifact"; id: string; title: string }
+    | { type: "artifacts-batch"; ids: string[]; title: string }
+    | null
+  >(null)
+  // 页面组织（本轮）：产物总览网格 / 就地改名（产物 + 项目）/ 拖动排序。
+  const [showGrid, setShowGrid] = useState(false)
+  // 已打开标签的有序 id 列表（编辑器式工作区）。顶部标签条只渲染这些，非全部产物。
+  const [openTabIds, setOpenTabIds] = useState<string[]>([])
+  const [folders, setFolders] = useState<string[]>([]) // 页面分组文件夹路径
+  const [renamingArtifactId, setRenamingArtifactId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState("")
+  const [renamingProject, setRenamingProject] = useState(false)
+
+  const [zoom, setZoom] = useState<ZoomMode>("fit")
+  const [previewKey, setPreviewKey] = useState(0)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  // 预览重载中（Wave 2-⑥）：src 变→true，onLoad→false；驱动叠层 spinner，让改稿读作「更新中」
+  // 而非白屏/坏页。旧帧因 iframe 不再按 key 重挂而垫在下面直到新帧就绪。
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const previewLoadingRef = useRef(false)
+  previewLoadingRef.current = previewLoading
+  // 各产物最近滚动位置（桥经 ds_scroll 上报），重载 onLoad 后回写实现滚动保温。
+  const previewScrollRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+  // Deck 演示导航（Wave 2-⑧）：当前 slide 状态（桥 ds_slide_state 上报）+ 演示态独立 iframe ref。
+  const presentIframeRef = useRef<HTMLIFrameElement>(null)
+  const [deckState, setDeckState] = useState<{ active: number; count: number } | null>(null)
+  const deckStateRef = useRef(deckState)
+  deckStateRef.current = deckState
+  // 预览设备视口（B4-3）+ 演示态（B4-4）。
+  const [previewDevice, setPreviewDevice] = useState<PreviewDevice>("auto")
+  const [presentMode, setPresentMode] = useState(false) // 本标签无 chrome 演示
+  // 演讲者备注（deck，按 slide 顺序，存产物 metadata.presenterNotes）+ 演示计时器 + 备注面板开关。
+  const [presenterNotes, setPresenterNotes] = useState<string[]>([])
+  const [presenterOpen, setPresenterOpen] = useState(true)
+  const [presentElapsed, setPresentElapsed] = useState(0)
+  const previewPaneRef = useRef<HTMLDivElement>(null)
+  const [paneSize, setPaneSize] = useState({ w: 0, h: 0 })
+  // 手势缩放入口（渲染期赋值，收 iframe 桥 ds_zoom 与父层原生 wheel 两路）。用 ref 避免
+  // 让常驻消息/滚轮监听随 zoom/设备/模式频繁重挂。
+  const applyZoomDeltaRef = useRef<(deltaY: number, deltaMode: number) => void>(() => {})
+
+  // 设计系统套件（Kit）预览模态：选择器行内「预览套件」触发（B1-1）。
+  const [kitSystem, setKitSystem] = useState<{ id: string; name: string } | null>(null)
+
+  // AI 对话左栏（chat-to-edit：左对话 / 右预览，可拖宽 · 可折叠）。宽度持久化。
+  const chatPanelRef = useRef<DesignChatPanelHandle>(null)
+  const [chatOpen, setChatOpen] = useState(true)
+  // 带 quote 到对话（B4 review 修复）：面板折叠时 chatPanelRef 为 null，直接 addQuote 会丢。
+  // 打开面板 + 缓冲 quote，待面板挂载后经 chatOpen 副作用 flush（恰好一次）。
+  const pendingQuotesRef = useRef<PendingFileQuote[]>([])
+  const enqueueChatQuote = useCallback((quote: PendingFileQuote) => {
+    setChatOpen(true)
+    if (chatPanelRef.current) chatPanelRef.current.addQuote(quote)
+    else pendingQuotesRef.current.push(quote)
+  }, [])
+  useEffect(() => {
+    if (!chatOpen || !chatPanelRef.current || pendingQuotesRef.current.length === 0) return
+    const queued = pendingQuotesRef.current
+    pendingQuotesRef.current = []
+    for (const q of queued) chatPanelRef.current.addQuote(q)
+  }, [chatOpen])
+  // 画框批注合成图作对话图附件（同 quote 缓冲：面板未挂载先缓冲、chatOpen 后 flush 恰好一次）。
+  const pendingImagesRef = useRef<File[]>([])
+  const enqueueChatImage = useCallback((file: File) => {
+    setChatOpen(true)
+    if (chatPanelRef.current) chatPanelRef.current.addImageAttachment(file)
+    else pendingImagesRef.current.push(file)
+  }, [])
+  useEffect(() => {
+    if (!chatOpen || !chatPanelRef.current || pendingImagesRef.current.length === 0) return
+    const queued = pendingImagesRef.current
+    pendingImagesRef.current = []
+    for (const f of queued) chatPanelRef.current.addImageAttachment(f)
+  }, [chatOpen])
+  // 「让 AI 修复」缓冲（同 quote/image：面板折叠时 ref 为 null，先打开面板缓冲，挂载后 flush 发送）。
+  const pendingFixRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!chatOpen || !chatPanelRef.current || !pendingFixRef.current) return
+    const prompt = pendingFixRef.current
+    pendingFixRef.current = null
+    chatPanelRef.current.submitPrompt(prompt)
+  }, [chatOpen])
+  const [chatWidth, setChatWidth] = useState(() => {
+    const saved = Number(localStorage.getItem("design_chat_width"))
+    return Number.isFinite(saved) && saved >= 320 && saved <= 640 ? saved : 400
+  })
+  useEffect(() => {
+    localStorage.setItem("design_chat_width", String(chatWidth))
+  }, [chatWidth])
+  // 统一 resize 把手（对齐主分支 #458）：共享 useDragWidth——拖拽期挂起全部 iframe 指针事件
+  //（预览 iframe 不再吃 mousemove，等效替代旧 setPointerCapture）、window blur 兜底收尾、
+  // min/max 钳制；isChatResizing 驱动分隔线拖拽态颜色（bg-primary/50）。
+  const [isChatResizing, setIsChatResizing] = useState(false)
+  const startChatResize = useDragWidth({
+    width: chatWidth,
+    min: 320,
+    max: 640,
+    onChange: setChatWidth,
+    onResizingChange: setIsChatResizing,
+  })
+
+  // 可视化微调（D1）
+  const [editMode, setEditMode] = useState(false)
+  const [selected, setSelected] = useState<DesignSelectedElement | null>(null)
+  const selectedRef = useRef<DesignSelectedElement | null>(null)
+  selectedRef.current = selected
+  const editModeRef = useRef(false)
+  editModeRef.current = editMode
+  // 编辑态预览右键菜单：bridge ds_context_menu 回传 iframe 内坐标，父层按当前预览缩放换算成
+  // 窗口坐标弹菜单（非编辑态 bridge 零拦截，原生右键不受影响）。previewScaleRef 在缩放计算处赋值。
+  const [previewCtxMenu, setPreviewCtxMenu] = useState<{ x: number; y: number } | null>(null)
+  const previewScaleRef = useRef(1)
+  // 批注钉：模式 / 数据 / 待填新钉锚点。与 editMode 互斥（都用 bridge + 右面板）。
+  const [commentMode, setCommentMode] = useState(false)
+  const commentModeRef = useRef(false)
+  commentModeRef.current = commentMode
+  const [comments, setComments] = useState<DesignComment[]>([])
+  const commentsRef = useRef<DesignComment[]>([])
+  commentsRef.current = comments
+  const [pendingPlacement, setPendingPlacement] = useState<CommentPlacement | null>(null)
+  // 点预览钉时要在面板里聚焦/编辑的批注 id（B0-3）；面板消费后回调清空。
+  const [focusCommentId, setFocusCommentId] = useState<number | null>(null)
+  // 画框批注（B4-1）：父层 canvas 叠层，与 editMode/commentMode 三态互斥；drawBusy=捕获/合成在途。
+  const [drawMode, setDrawMode] = useState(false)
+  const drawModeRef = useRef(false)
+  drawModeRef.current = drawMode
+  const [drawBusy, setDrawBusy] = useState(false)
+  // Live refs so the EventBus subscription can read current project/artifact without
+  // being a dependency (avoids re-subscribing — and dropping events — on every edit).
+  const activeProjectRef = useRef<DesignProject | null>(null)
+  activeProjectRef.current = activeProject
+  const activeArtifactRef = useRef<DesignArtifactView | null>(null)
+  activeArtifactRef.current = activeArtifact
+  const openTabIdsRef = useRef<string[]>([])
+  openTabIdsRef.current = openTabIds
+  // 顶部标签条渲染的产物（已打开、保序、滤掉已删）；产物库墙里未打开的 = 可重新打开的。
+  const openTabs = useMemo(
+    () =>
+      openTabIds
+        .map((id) => artifacts.find((a) => a.id === id))
+        .filter((a): a is DesignArtifact => !!a),
+    [openTabIds, artifacts],
+  )
+  const closedArtifacts = useMemo(
+    () => artifacts.filter((a) => !openTabIds.includes(a.id)),
+    [openTabIds, artifacts],
+  )
+
+  // 提前声明（commit handlers 在历史块之前引用；实体在 undo/redo 块内赋值）。
+  const pushHistoryRef = useRef<(op: EditOp) => void>(() => {})
+  const activeArtifactId = activeArtifact?.id
+  const postToIframe = useCallback((msg: Record<string, unknown>) => {
+    iframeRef.current?.contentWindow?.postMessage(msg, "*")
+  }, [])
+
+  // Deck 翻页指令 → 当前有效 iframe（演示态发演示 iframe，否则预览 iframe）（Wave 2-⑧）。
+  const presentModeRef = useRef(false)
+  presentModeRef.current = presentMode
+  const deckNav = useCallback((type: string, index?: number) => {
+    const win = (presentModeRef.current ? presentIframeRef.current : iframeRef.current)
+      ?.contentWindow
+    win?.postMessage(index != null ? { type, index } : { type }, "*")
+  }, [])
+  // Deck 宿主级键盘翻页（Wave 2-⑧）：无需先点 iframe 拿焦点。编辑/批注/画框态不劫持方向键；
+  // 跳过 input/textarea/contenteditable 焦点；带修饰键放行（避免抢 Cmd+Z 等）。演示态也生效。
+  useEffect(() => {
+    if (activeArtifact?.kind !== "deck") return
+    if (!presentMode && (editMode || commentMode || drawMode)) return
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable))
+        return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      // 收窄劫持范围（review LOW）：演示态全局生效；预览态仅当焦点在预览区内或无特定焦点时，
+      // 避免抢走侧栏 / 对话面板等无关 UI 的方向键。
+      if (!presentMode) {
+        const a = document.activeElement
+        if (a && a !== document.body && !previewPaneRef.current?.contains(a)) return
+      }
+      if (e.key === "ArrowRight" || e.key === "PageDown") {
+        e.preventDefault()
+        deckNav("ds_slide_next")
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault()
+        deckNav("ds_slide_prev")
+      } else if (e.key === "Home") {
+        e.preventDefault()
+        deckNav("ds_slide_go", 0)
+      } else if (e.key === "End" && deckStateRef.current) {
+        e.preventDefault()
+        deckNav("ds_slide_go", deckStateRef.current.count - 1)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [activeArtifact?.kind, presentMode, editMode, commentMode, drawMode, deckNav])
+
+  // 退出演示 → 预览 iframe 同步到演示时停留的那页（Wave 2-⑧ review MED）：否则宿主页码/翻页
+  // 边界与实际预览页脱节（演示里翻到第 7 页，退出后预览仍停在进入前那页）。
+  const wasPresentRef = useRef(false)
+  useEffect(() => {
+    if (wasPresentRef.current && !presentMode) {
+      const s = deckStateRef.current
+      if (activeArtifactRef.current?.kind === "deck" && s) {
+        requestAnimationFrame(() =>
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: "ds_slide_go", index: s.active },
+            "*",
+          ),
+        )
+      }
+    }
+    wasPresentRef.current = presentMode
+  }, [presentMode])
+
+  // ── 画框批注 orchestration（B4-1）──
+  // ds_viewport round-trip：跨源无法直接读 iframe 滚动/视口，postMessage 请求 → 回传 resolve。
+  const viewportReqRef = useRef(new Map<number, (m: ViewportMetrics) => void>())
+  const viewportReqIdRef = useRef(0)
+  const requestViewportMetrics = useCallback((): Promise<ViewportMetrics | null> => {
+    const win = iframeRef.current?.contentWindow
+    if (!win) return Promise.resolve(null)
+    const id = ++viewportReqIdRef.current
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        viewportReqRef.current.delete(id)
+        resolve(null)
+      }, 1500)
+      viewportReqRef.current.set(id, (m) => {
+        window.clearTimeout(timer)
+        viewportReqRef.current.delete(id)
+        resolve(m)
+      })
+      win.postMessage({ type: "ds_viewport", id }, "*")
+    })
+  }, [])
+  const forwardScrollToIframe = useCallback(
+    (dx: number, dy: number) => postToIframe({ type: "ds_scroll_by", dx, dy }),
+    [postToIframe],
+  )
+  // 涂画+元素身份合一：把归一化绘制区域映射到 iframe **内容坐标系**（scrollX+n*clientWidth，与
+  // compositeAnnotation 同口径，不含 renderScale），请 bridge 回传被覆盖的 oid 成员 → 带给模型做
+  // edit_element 精改。跨源经 postMessage round-trip（镜像 requestViewportMetrics）。
+  const drawHitReqRef = useRef(new Map<number, (m: DrawMember[]) => void>())
+  const drawHitIdRef = useRef(0)
+  const requestDrawHits = useCallback(
+    (vp: ViewportMetrics, payload: DesignDrawSubmit): Promise<DrawMember[]> => {
+      const win = iframeRef.current?.contentWindow
+      const cw = vp.clientWidth
+      const ch = vp.clientHeight
+      if (!win || cw <= 0 || ch <= 0) return Promise.resolve([])
+      const regions: { x: number; y: number; w: number; h: number }[] = []
+      for (const b of payload.boxes)
+        regions.push({
+          x: vp.scrollX + b.x * cw,
+          y: vp.scrollY + b.y * ch,
+          w: b.width * cw,
+          h: b.height * ch,
+        })
+      for (const pts of payload.strokes) {
+        if (pts.length < 1) continue
+        let minx = Infinity,
+          miny = Infinity,
+          maxx = -Infinity,
+          maxy = -Infinity
+        for (const p of pts) {
+          minx = Math.min(minx, p.x)
+          miny = Math.min(miny, p.y)
+          maxx = Math.max(maxx, p.x)
+          maxy = Math.max(maxy, p.y)
+        }
+        regions.push({
+          x: vp.scrollX + minx * cw,
+          y: vp.scrollY + miny * ch,
+          w: (maxx - minx) * cw,
+          h: (maxy - miny) * ch,
+        })
+      }
+      if (regions.length === 0) return Promise.resolve([])
+      const id = ++drawHitIdRef.current
+      return new Promise((resolve) => {
+        const timer = window.setTimeout(() => {
+          drawHitReqRef.current.delete(id)
+          resolve([])
+        }, 1500)
+        drawHitReqRef.current.set(id, (m) => {
+          window.clearTimeout(timer)
+          drawHitReqRef.current.delete(id)
+          resolve(m)
+        })
+        win.postMessage({ type: "ds_draw_hit", id, regions }, "*")
+      })
+    },
+    [],
+  )
+  // 钉/批注带到对话时按 oid 取当前 computedStyle（省模型一次 get_artifact；富化 scope）。
+  const styleReqRef = useRef(new Map<number, (m: Record<string, Record<string, string>>) => void>())
+  const styleReqIdRef = useRef(0)
+  const requestElementStyles = useCallback(
+    (oids: number[]): Promise<Record<string, Record<string, string>>> => {
+      const win = iframeRef.current?.contentWindow
+      if (!win || oids.length === 0) return Promise.resolve({})
+      const id = ++styleReqIdRef.current
+      return new Promise((resolve) => {
+        const timer = window.setTimeout(() => {
+          styleReqRef.current.delete(id)
+          resolve({})
+        }, 1500)
+        styleReqRef.current.set(id, (m) => {
+          window.clearTimeout(timer)
+          styleReqRef.current.delete(id)
+          resolve(m)
+        })
+        win.postMessage({ type: "ds_style_query", id, oids }, "*")
+      })
+    },
+    [],
+  )
+  const describeMarks = useCallback(
+    (
+      payload: DesignDrawSubmit,
+      hasImage: boolean,
+      title: string,
+      members: DrawMember[],
+    ): string => {
+      const lines: string[] = [
+        t(
+          "design.draw.scopeHeader",
+          "【画框批注】用户在产物「{{title}}」的预览上标注了要修改的区域。",
+          {
+            title,
+          },
+        ),
+      ]
+      if (hasImage) lines.push(t("design.draw.scopeImage", "随附截图中的红框 / 红线即标注区域。"))
+      else {
+        const n = payload.boxes.length + payload.strokes.length
+        lines.push(
+          t("design.draw.scopeNoImage", "共 {{n}} 处标注（截图未生成，仅文字说明）。", { n }),
+        )
+      }
+      if (payload.note)
+        lines.push(t("design.draw.scopeNote", "用户说明：{{note}}", { note: payload.note }))
+      // 涂画+元素身份合一：命中元素带上 oid，让模型对每个用 edit_element(oid) 就地精改（保留其它一切），
+      // 而非靠位图/区域描述猜元素、改错相邻元素。
+      if (members.length) {
+        const list = members
+          .map((m) => `<${m.tag}>（oid=${m.oid}）${m.snippet ? "：" + m.snippet.slice(0, 30) : ""}`)
+          .join("、")
+        lines.push(t("design.draw.scopeElements", "标注命中元素：{{list}}。", { list }))
+        lines.push(
+          t(
+            "design.draw.scopeEdit",
+            "逐个用 design 工具 edit_element(oid, style/text/...) 就地精改，不确定当前样式先 get_artifact 读 source；别重造整个产物。",
+          ),
+        )
+      }
+      lines.push(t("design.draw.scopeInstruction", "请只针对标注区域修改，其余部分保持不变。"))
+      return lines.join("\n")
+    },
+    [t],
+  )
+  // 提交：捕获底图（离屏整页栅格化，跨源/无 Chrome 通用）→ 合成红框/红线 → 裁剪 → 图附件 + 区域
+  // 描述 quote 一起带到对话（draft 语义：用户审后手动发）。捕获失败静默降级为「区域+文字」，永不阻塞。
+  const handleDrawSubmit = useCallback(
+    async (payload: DesignDrawSubmit) => {
+      const art = activeArtifactRef.current
+      if (!art) return
+      setDrawBusy(true)
+      try {
+        let file: File | null = null
+        const vp = await requestViewportMetrics()
+        const hasMarks = payload.boxes.length > 0 || payload.strokes.length > 0
+        // 涂画命中的 oid 成员（跨源 round-trip；bridge 对非 oid 内容回空、安全降级为纯区域描述）。
+        const members = vp && hasMarks ? await requestDrawHits(vp, payload) : []
+        // deck / motion 是**多帧/多态**产物：离屏 fresh render 只会渲默认态（deck slide 1 /
+        // motion 首帧），与用户所看的当前帧不符 → 底图会误导（review MED）。这类只发文字标注、
+        // 不烧底图（describeMarks 的 !file 分支给「仅文字说明」），宁缺勿错。
+        const captureable = art.kind !== "deck" && art.kind !== "motion"
+        if (captureable && vp && vp.clientWidth > 0 && vp.clientHeight > 0 && hasMarks) {
+          try {
+            const res = await tx.call<{ content: string }>("export_design_artifact_cmd", {
+              id: art.id,
+              format: "html",
+            })
+            if (res?.content) {
+              const { canvas, scale } = await rasterizeArtifactFull(res.content, vp.clientWidth, {
+                scale: 2,
+              })
+              file = await compositeAnnotation(canvas, scale, vp, payload)
+            }
+          } catch (e) {
+            logger.warn(
+              "design",
+              "DesignView::handleDrawSubmit",
+              "capture/composite failed; degrading to text-only",
+              e,
+            )
+          }
+        }
+        // 截图降级告知（此前失败只 log，用户不知截图没成）：仅在**尝试过**捕获（可截 kind）却
+        // 失败时提示；deck/motion 本就刻意不截图（多帧误导），不提示。
+        if (captureable && hasMarks && vp && !file) {
+          toast.info(t("design.draw.captureFailed", "截图未生成，已仅发送区域文字说明"))
+        }
+        enqueueChatQuote({
+          path: `design-draw:${art.id}:${viewportReqIdRef.current}`,
+          name: t("design.draw.quoteName", "画框批注"),
+          startLine: 0,
+          endLine: 0,
+          content: describeMarks(payload, !!file, art.title, members),
+        })
+        if (file) enqueueChatImage(file)
+        setDrawMode(false)
+      } finally {
+        setDrawBusy(false)
+      }
+    },
+    [
+      tx,
+      t,
+      requestViewportMetrics,
+      requestDrawHits,
+      describeMarks,
+      enqueueChatQuote,
+      enqueueChatImage,
+    ],
+  )
+
+  // 流式生成态：streamRef 追当前流（streamId 变化=新流重置、seq 丢乱序帧）；
+  // snapshotRef 存最新 css/body 供 iframe 加载完 `ds_stream_ready` 时补投。
+  const streamRef = useRef<{ artifactId: string; streamId: string; seq: number } | null>(null)
+  const streamSnapshotRef = useRef<{ artifactId: string; css: string; bodyHtml: string } | null>(
+    null,
+  )
+
+  const kindLabel = useCallback((kind: ArtifactKind) => t(`design.kind.${kind}`, kind), [t])
+
+  // ── Projects ─────────────────────────────────────────────────
+
+  const loadProjects = useCallback(async () => {
+    setLoadingProjects(true)
+    try {
+      const list = await tx.call<DesignProject[]>("list_design_projects_cmd")
+      setProjects(list ?? [])
+    } catch (e) {
+      logger.error("design", "DesignView::loadProjects", "list projects failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+    } finally {
+      setLoadingProjects(false)
+    }
+  }, [tx, t])
+
+  useEffect(() => {
+    void loadProjects()
+  }, [loadProjects])
+
+  const loadSystems = useCallback(async () => {
+    try {
+      const list = await tx.call<DesignSystemMeta[]>("list_design_systems_cmd")
+      setSystems(list ?? [])
+    } catch (e) {
+      logger.error("design", "DesignView::loadSystems", "list systems failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+    }
+  }, [tx, t])
+
+  useEffect(() => {
+    void loadSystems()
+  }, [loadSystems])
+
+  // 设计模板目录（首屏模板快选）。
+  const [recipes, setRecipes] = useState<DesignRecipe[]>([])
+  useEffect(() => {
+    getTransport()
+      .call<DesignRecipe[]>("list_design_recipes_cmd")
+      .then((list) => setRecipes(list ?? []))
+      .catch(() => {})
+  }, [])
+
+  // Export clarity/quality prefs (config-driven; undefined → export defaults).
+  const [designConfig, setDesignConfig] = useState<DesignConfig | null>(null)
+  useEffect(() => {
+    tx.call<DesignConfig>("get_design_config_cmd")
+      .then(setDesignConfig)
+      .catch(() => {})
+  }, [tx])
+
+  // ── 生成模型选择（首页 + 涉图入口共享一份「上次使用」记忆）────────────
+  // `genModel = null` 表示跟随默认链；显式选择 = 单模型（后端失败即报错不降级）。
+  const [homeModels, setHomeModels] = useState<AvailableModel[]>([])
+  useEffect(() => {
+    const load = () =>
+      tx
+        .call<AvailableModel[]>("get_available_models")
+        .then((m) => setHomeModels(m ?? []))
+        .catch(() => {})
+    void load()
+    // Provider 增删 / 模型改动即刷新（置灰 / 拦截 / 自动切换基于此列表，陈旧会误判）。
+    const unlisten = tx.listen("config:changed", () => void load())
+    return unlisten
+  }, [tx])
+  // 空 inputTypes = 「未配置,假定支持」——对齐后端 `model_supports_vision` 三态语义
+  // (自定义 provider 手填模型默认空列表,按「不支持」处理会整体误封涉图功能)。
+  const modelMaySupportVision = useCallback(
+    (m: AvailableModel) => m.inputTypes.length === 0 || m.inputTypes.includes("image"),
+    [],
+  )
+  const visionModels = useMemo(
+    () => homeModels.filter(modelMaySupportVision),
+    [homeModels, modelMaySupportVision],
+  )
+  const [genModel, setGenModel] = useState<ActiveModel | null>(null)
+  const genModelInitRef = useRef(false)
+  useEffect(() => {
+    // 从 config 恢复「上次使用」恰好一次（等模型列表就绪后校验存在性——弱引用：
+    // provider / 模型已删则不恢复，回落「跟随默认链」，避免每次生成都撞已删模型报错）。
+    if (genModelInitRef.current || !designConfig || homeModels.length === 0) return
+    genModelInitRef.current = true
+    const lm = designConfig.lastModel
+    if (lm && homeModels.some((m) => m.providerId === lm.providerId && m.modelId === lm.modelId)) {
+      setGenModel(lm)
+    }
+  }, [designConfig, homeModels])
+  const rememberGenModel = useCallback(
+    (m: ActiveModel) => {
+      setGenModel(m)
+      // 行为记忆：隐式写回 config（照 defaultSystemId 先例），失败静默。
+      setDesignConfig((prev) => {
+        if (!prev) return prev
+        const next = { ...prev, lastModel: m }
+        void tx.call("save_design_config_cmd", { config: next }).catch(() => {})
+        return next
+      })
+    },
+    [tx],
+  )
+  // 回到「跟随默认模型」（清显式选择 + 清持久记忆）——显式选择必须有出口，
+  // 否则一次误选就永久失去默认链的跨模型降级语义。
+  const clearGenModel = useCallback(() => {
+    setGenModel(null)
+    setDesignConfig((prev) => {
+      if (!prev) return prev
+      const next = { ...prev, lastModel: undefined }
+      void tx.call("save_design_config_cmd", { config: next }).catch(() => {})
+      return next
+    })
+  }, [tx])
+  const isVisionModel = useCallback(
+    (m: ActiveModel | null | undefined) =>
+      !!m &&
+      homeModels.some(
+        (am) =>
+          am.providerId === m.providerId && am.modelId === m.modelId && modelMaySupportVision(am),
+      ),
+    [homeModels, modelMaySupportVision],
+  )
+  // 传图瞬间**用户显式选中的**模型不认图 → 自动切到可用视觉模型 + toast（因果清楚：
+  // 刚粘了图）。删图**不切回**（模型选择保持粘性，状态机简单可预测）。
+  // `genModel === null`（跟随默认链）**不切换不持久化**——后端 `run_vision*` 会自动
+  // 跳过链上非视觉候选，null 本身涉图可用；强切会凭空制造一次用户从未做过的
+  // 「显式选择」，让之后所有生成变成单模型不降级。
+  const ensureVisionGenModel = useCallback(() => {
+    if (!genModel || isVisionModel(genModel)) return
+    const fallback = visionModels[0]
+    if (!fallback) return // 无视觉模型：涉图入口已在上游置灰/拦截，防御兜底
+    rememberGenModel({ providerId: fallback.providerId, modelId: fallback.modelId })
+    toast.info(
+      t("design.model.autoSwitched", "已切换到 {{model}}（支持图片）", {
+        model: fallback.modelName,
+      }),
+    )
+  }, [genModel, isVisionModel, visionModels, rememberGenModel, t])
+
+  // 设为新对话/新项目默认设计系统（B1-3）：写 design.default_system_id；解析链 explicit >
+  // 项目 default > **此全局 default** 已在后端就绪，LaunchHome 生成也已 seed 此值。
+  const setDefaultSystem = useCallback(
+    async (systemId: string | null) => {
+      if (!designConfig) return
+      const next: DesignConfig = { ...designConfig, defaultSystemId: systemId ?? undefined }
+      setDesignConfig(next) // 乐观更新
+      try {
+        await tx.call("save_design_config_cmd", { config: next })
+        toast.success(
+          systemId
+            ? t("design.setDefaultDone", "已设为新对话默认设计系统")
+            : t("design.clearDefaultDone", "已清除默认设计系统"),
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::setDefault", "save default system failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, designConfig, t],
+  )
+
+  const setProjectSystem = useCallback(
+    async (systemId: string | null) => {
+      if (!activeProject) return
+      try {
+        const updated = await tx.call<DesignProject>("update_design_project_cmd", {
+          input: { id: activeProject.id, defaultSystemId: systemId ?? "" },
+        })
+        if (updated) setActiveProject(updated)
+      } catch (e) {
+        logger.error("design", "DesignView::setProjectSystem", "set system failed", e)
+        toast.error(t("design.err.setSystem", "设置设计系统失败"))
+      }
+    },
+    [tx, activeProject, t],
+  )
+
+  // 就地换设计系统：对当前打开的产物 restyle（后端重渲染 + 落新版本，源码不变）。
+  // in-flight 态 + 防重入（W4-O）：restyle 是整页重渲染，连点会并发多份 / 相互覆盖。
+  const [restyling, setRestyling] = useState(false)
+  const restylingRef = useRef(false)
+  const restyleActiveArtifact = useCallback(
+    async (systemId: string | null) => {
+      if (!activeArtifactRef.current || activeArtifactRef.current.status === "generating") return
+      if (restylingRef.current) return // 防重入：一次 restyle 未完成不再触发
+      restylingRef.current = true
+      setRestyling(true)
+      const tid = toast.loading(t("design.restyling", "正在换设计系统…"))
+      try {
+        await tx.call<DesignArtifact>("restyle_design_artifact_cmd", {
+          id: activeArtifactRef.current.id,
+          systemId: systemId ?? undefined,
+        })
+        await refreshView()
+        setPreviewKey((k) => k + 1)
+        toast.success(t("design.ok.restyled", "已换设计系统"), { id: tid })
+      } catch (e) {
+        logger.error("design", "DesignView::restyle", "restyle failed", e)
+        toast.error(t("design.err.restyle", "换设计系统失败"), { id: tid })
+      } finally {
+        restylingRef.current = false
+        setRestyling(false)
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tx, t],
+  )
+
+  const createProject = useCallback(async () => {
+    setCreatingProject(true)
+    try {
+      const project = await tx.call<DesignProject>("create_design_project_cmd", {
+        input: { title: newProjectTitle.trim() || t("design.untitledProject", "未命名项目") },
+      })
+      setNewProjectOpen(false)
+      setNewProjectTitle("")
+      await loadProjects()
+      if (project) openProject(project)
+    } catch (e) {
+      logger.error("design", "DesignView::createProject", "create project failed", e)
+      toast.error(t("design.err.create", "创建失败"))
+    } finally {
+      setCreatingProject(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tx, newProjectTitle, t, loadProjects])
+
+  // 改名（复用 update_design_project_cmd 的 title 更新；空 / 未变 no-op）。
+  const renameProject = useCallback(
+    async (id: string, title: string) => {
+      const next = title.trim()
+      if (!next) return
+      try {
+        await tx.call<DesignProject>("update_design_project_cmd", { input: { id, title: next } })
+        // 就地改名后同步当前打开项目（工作室标题读 activeProject）+ 刷新项目墙列表。
+        setActiveProject((prev) => (prev && prev.id === id ? { ...prev, title: next } : prev))
+        await loadProjects()
+      } catch (e) {
+        logger.error("design", "DesignView::renameProject", "rename failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadProjects],
+  )
+
+  // 复制项目（后端深拷贝产物 + 版本快照 + 溯源）。
+  // 复制在途集合（W3-M）：防重入——大产物/项目深拷贝耗时可感，此前无 busy 态、连点两下出两份副本。
+  const duplicatingRef = useRef(new Set<string>())
+  const duplicateProject = useCallback(
+    async (id: string) => {
+      if (duplicatingRef.current.has(id)) return
+      duplicatingRef.current.add(id)
+      try {
+        await tx.call<DesignProject>("duplicate_design_project_cmd", { id })
+        await loadProjects()
+        toast.success(t("design.ok.duplicated", "已复制项目"))
+      } catch (e) {
+        logger.error("design", "DesignView::duplicateProject", "duplicate failed", e)
+        toast.error(t("design.err.duplicate", "复制失败"))
+      } finally {
+        duplicatingRef.current.delete(id)
+      }
+    },
+    [tx, t, loadProjects],
+  )
+
+  // ── Artifacts ────────────────────────────────────────────────
+
+  // 把某产物纳入「已打开标签」集合（幂等 append，保序）并持久化。openArtifact / 生成 / 新建 /
+  // 复制 / 库墙点开都经此，故任何激活入口都天然把产物挂成一个标签。
+  const ensureTabOpen = useCallback((artifactId: string) => {
+    const pid = activeProjectRef.current?.id
+    setOpenTabIds((prev) => {
+      if (prev.includes(artifactId)) return prev
+      const next = [...prev, artifactId]
+      if (pid) writeOpenTabs(pid, next)
+      return next
+    })
+  }, [])
+
+  const openArtifact = useCallback(
+    async (artifact: DesignArtifact) => {
+      try {
+        const view = await tx.call<DesignArtifactView | null>("get_design_artifact_cmd", {
+          id: artifact.id,
+        })
+        if (view) {
+          setActiveArtifact(view)
+          setPreviewKey((k) => k + 1)
+          ensureTabOpen(view.id)
+          // 上报「最近查看」（MCP active-context 事实源）：fire-and-forget，失败静默、零阻塞。
+          void tx.call("mark_design_artifact_opened_cmd", { id: view.id }).catch(() => {})
+        }
+      } catch (e) {
+        logger.error("design", "DesignView::openArtifact", "open artifact failed", e)
+        toast.error(t("design.err.load", "加载失败"))
+      }
+    },
+    [tx, t, ensureTabOpen],
+  )
+
+  const loadArtifacts = useCallback(
+    // `selectFirst`：打开项目时恢复上次留下的标签（编辑器式工作区），无记录则默认打开最近一个；
+    // 其余调用方（新建 / 刷新后重载）不传，保留当前标签与选中不被顶掉（重载后的孤儿标签由 prune effect 清理）。
+    async (projectId: string, selectFirst = false) => {
+      setLoadingArtifacts(true)
+      setArtifactsError(false)
+      try {
+        const list = await tx.call<DesignArtifact[]>("list_design_artifacts_cmd", {
+          projectId,
+        })
+        // 防竞态：await 期间用户可能已切走项目（尤其 HTTP transport 高延迟），晚到的响应不得把
+        // 产物 / 标签 / 选中覆盖成已离开项目的内容。
+        if (activeProjectRef.current?.id !== projectId) return
+        const all = list ?? []
+        setArtifacts(all)
+        if (selectFirst) {
+          // 有记录：精确恢复上次留下的标签（滤掉已删产物、保序，[] 保持空态）；
+          // 无记录（首次进）：默认打开最近一个产物。
+          const saved = readOpenTabs(projectId)
+          const restored =
+            saved === null
+              ? all.length > 0
+                ? [all[0].id]
+                : []
+              : saved.filter((id) => all.some((a) => a.id === id))
+          setOpenTabIds(restored)
+          writeOpenTabs(projectId, restored)
+          const first = restored[0] ? all.find((a) => a.id === restored[0]) : undefined
+          if (first) void openArtifact(first)
+        }
+      } catch (e) {
+        // Wave 2-⑨：置显式 error 态，让产物墙显示「加载失败 + 重试」而非误当空库。
+        logger.error("design", "DesignView::loadArtifacts", "list artifacts failed", e)
+        setArtifactsError(true)
+        toast.error(t("design.err.load", "加载失败"))
+      } finally {
+        setLoadingArtifacts(false)
+      }
+    },
+    [tx, t, openArtifact],
+  )
+
+  // ── 产物（页面）改名 / 复制 / 拖动排序（本轮）──
+  const renameArtifact = useCallback(
+    async (id: string, title: string) => {
+      const next = title.trim()
+      if (!next) return
+      try {
+        await tx.call("rename_design_artifact_cmd", { id, title: next })
+        const pid = activeProjectRef.current?.id
+        if (pid) await loadArtifacts(pid)
+        setActiveArtifact((prev) => (prev && prev.id === id ? { ...prev, title: next } : prev))
+      } catch (e) {
+        logger.error("design", "DesignView::renameArtifact", "rename failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadArtifacts],
+  )
+  const duplicateArtifact = useCallback(
+    async (id: string) => {
+      if (duplicatingRef.current.has(id)) return
+      duplicatingRef.current.add(id)
+      try {
+        const dup = await tx.call<DesignArtifact>("duplicate_design_artifact_cmd", { id })
+        const pid = activeProjectRef.current?.id
+        if (pid) await loadArtifacts(pid)
+        if (dup) void openArtifact(dup)
+        toast.success(t("design.ok.duplicatedArtifact", "已复制页面"))
+      } catch (e) {
+        logger.error("design", "DesignView::duplicateArtifact", "duplicate failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      } finally {
+        duplicatingRef.current.delete(id)
+      }
+    },
+    [tx, t, loadArtifacts, openArtifact],
+  )
+
+  // 关闭标签（非破坏）：仅从标签条移除，产物文件与 design.db 行不动，可从产物库墙重新打开。
+  // 关闭的是当前激活产物时，把激活切到相邻标签（优先右侧、否则左侧）；关到空则回落库墙。
+  const closeTab = useCallback(
+    (id: string) => {
+      const pid = activeProjectRef.current?.id
+      const prev = openTabIdsRef.current
+      const idx = prev.indexOf(id)
+      const next = prev.filter((x) => x !== id)
+      setOpenTabIds(next)
+      if (pid) writeOpenTabs(pid, next)
+      if (activeArtifactRef.current?.id === id) {
+        const neighborId = idx >= 0 ? (prev[idx + 1] ?? prev[idx - 1]) : undefined
+        const neighbor = neighborId ? artifacts.find((a) => a.id === neighborId) : undefined
+        if (neighbor) void openArtifact(neighbor)
+        else {
+          setActiveArtifact(null) // 空标签态 → 预览区呈现「从产物库打开」空态
+          setShowGrid(false)
+        }
+      }
+    },
+    [artifacts, openArtifact],
+  )
+
+  // 关闭其他标签：只保留 id 一个，其余收进产物库；被关的若含当前激活产物则切到 id。
+  const closeOtherTabs = useCallback(
+    (id: string) => {
+      const pid = activeProjectRef.current?.id
+      const next = openTabIdsRef.current.includes(id) ? [id] : [...openTabIdsRef.current]
+      setOpenTabIds(next)
+      if (pid) writeOpenTabs(pid, next)
+      if (activeArtifactRef.current?.id !== id) {
+        const target = artifacts.find((a) => a.id === id)
+        if (target) void openArtifact(target)
+      }
+    },
+    [artifacts, openArtifact],
+  )
+
+  // 产物列表变化后修剪孤儿标签（删除 / 批量删 / 外部变更留下的已关闭 id）。读 ref 避免把
+  // openTabIds 放进 deps 造成循环；activeProject 经 ref 取（非响应式），故 deps 只跟 artifacts。
+  useEffect(() => {
+    const pid = activeProjectRef.current?.id
+    if (!pid) return
+    const cur = openTabIdsRef.current
+    const pruned = cur.filter((id) => artifacts.some((a) => a.id === id))
+    if (pruned.length !== cur.length) {
+      setOpenTabIds(pruned)
+      writeOpenTabs(pid, pruned)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifacts])
+
+  const reorderArtifacts = useCallback(
+    async (orderedIds: string[]) => {
+      const pid = activeProjectRef.current?.id
+      if (!pid) return
+      // 乐观更新：立即按新顺序重排本地 artifacts，拖拽结果即时反映（review MED），
+      // 失败再 loadArtifacts 回滚到服务器真相。
+      setArtifacts((prev) => {
+        const rank = new Map(orderedIds.map((id, i) => [id, i]))
+        return [...prev].sort((a, b) => {
+          const ra = rank.get(a.id)
+          const rb = rank.get(b.id)
+          if (ra == null && rb == null) return 0
+          if (ra == null) return 1
+          if (rb == null) return -1
+          return ra - rb
+        })
+      })
+      try {
+        await tx.call("reorder_design_artifacts_cmd", { projectId: pid, orderedIds })
+      } catch (e) {
+        logger.error("design", "DesignView::reorderArtifacts", "reorder failed", e)
+        await loadArtifacts(pid) // 回滚到服务器真相
+      }
+    },
+    [tx, loadArtifacts],
+  )
+  // ── 页面分组文件夹（本轮·复刻 OD）──
+  const loadFolders = useCallback(
+    async (projectId: string) => {
+      try {
+        const list = await tx.call<string[]>("list_design_folders_cmd", { projectId })
+        setFolders(list ?? [])
+      } catch (e) {
+        logger.error("design", "DesignView::loadFolders", "list folders failed", e)
+      }
+    },
+    [tx],
+  )
+  const createFolder = useCallback(
+    async (path: string) => {
+      const pid = activeProjectRef.current?.id
+      if (!pid) return
+      try {
+        await tx.call("create_design_folder_cmd", { projectId: pid, name: path })
+        await loadFolders(pid)
+      } catch (e) {
+        logger.error("design", "DesignView::createFolder", "create folder failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadFolders],
+  )
+  const deleteFolder = useCallback(
+    async (path: string) => {
+      const pid = activeProjectRef.current?.id
+      if (!pid) return
+      try {
+        await tx.call("delete_design_folder_cmd", { projectId: pid, path })
+        await Promise.all([loadFolders(pid), loadArtifacts(pid)]) // 页面已移到根
+      } catch (e) {
+        logger.error("design", "DesignView::deleteFolder", "delete folder failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadFolders, loadArtifacts],
+  )
+  const renameFolder = useCallback(
+    async (from: string, to: string) => {
+      const pid = activeProjectRef.current?.id
+      if (!pid) return
+      try {
+        await tx.call("rename_design_folder_cmd", { projectId: pid, from, to })
+        await Promise.all([loadFolders(pid), loadArtifacts(pid)])
+      } catch (e) {
+        logger.error("design", "DesignView::renameFolder", "rename folder failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadFolders, loadArtifacts],
+  )
+  const moveArtifactToFolder = useCallback(
+    async (id: string, folder: string) => {
+      const pid = activeProjectRef.current?.id
+      if (!pid) return
+      try {
+        await tx.call("move_design_artifact_cmd", { id, folder })
+        await Promise.all([loadFolders(pid), loadArtifacts(pid)])
+      } catch (e) {
+        logger.error("design", "DesignView::moveArtifact", "move failed", e)
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [tx, t, loadFolders, loadArtifacts],
+  )
+  // 文件夹随项目/产物变化重载（folder 由产物路径 ∪ 持久化空文件夹派生，产物增删移都可能改动）。
+  useEffect(() => {
+    const pid = activeProject?.id
+    if (pid) void loadFolders(pid)
+  }, [activeProject?.id, artifacts, loadFolders])
+
+  const openProject = useCallback(
+    (project: DesignProject) => {
+      setActiveProject(project)
+      setActiveArtifact(null)
+      setShowGrid(false)
+      setRenamingProject(false)
+      setRenamingArtifactId(null)
+      setOpenTabIds([]) // 清上一个项目的标签，随后 loadArtifacts(selectFirst) 恢复本项目的
+      void loadArtifacts(project.id, true)
+    },
+    [loadArtifacts],
+  )
+
+  const backToHome = useCallback(() => {
+    setActiveProject(null)
+    setActiveArtifact(null)
+    setArtifacts([])
+    void loadProjects()
+  }, [loadProjects])
+
+  // 批量删项目（LaunchHome 内已二次确认；此处 settle-all + 汇总提示 + 重载）。
+  const batchDeleteProjects = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return
+      const results = await Promise.allSettled(
+        ids.map((id) => tx.call("delete_design_project_cmd", { id })),
+      )
+      const failed = results.filter((r) => r.status === "rejected").length
+      if (activeProject && ids.includes(activeProject.id)) backToHome()
+      await loadProjects()
+      if (failed > 0) {
+        toast.error(t("design.err.batchDeletePartial", "{{n}} 个项目删除失败", { n: failed }))
+      } else {
+        toast.success(t("design.ok.batchDeleted", "已删除 {{n}} 个项目", { n: ids.length }))
+      }
+    },
+    [tx, t, loadProjects, activeProject, backToHome],
+  )
+
+  const createArtifact = useCallback(
+    async (kind: ArtifactKind, prompt?: string) => {
+      if (!activeProject) return
+      try {
+        // 有 brief → 走流式生成（返回 generating 壳，内容经 design:generate_delta 回填）；
+        // 无 brief 的空白产物走原阻塞建。image 由后端回落阻塞出图。
+        const cmd = prompt ? "generate_design_artifact_cmd" : "create_design_artifact_cmd"
+        const artifact = await tx.call<DesignArtifact>(cmd, {
+          input: {
+            projectId: activeProject.id,
+            title: kind === "image" && prompt ? prompt.slice(0, 40) : `${kindLabel(kind)}`,
+            kind,
+            prompt,
+          },
+        })
+        await loadArtifacts(activeProject.id)
+        if (artifact) {
+          // 关掉产物墙面板：新产物落在根文件夹，若面板正停在某子文件夹里，新建结果既不在
+          // 当前面板视图、又被面板盖住单产物预览 = 用户看不到反馈（review MED）。收起面板
+          // 直接呈现新产物预览。
+          setShowGrid(false)
+          void openArtifact(artifact)
+        }
+      } catch (e) {
+        logger.error("design", "DesignView::createArtifact", "create artifact failed", e)
+        toast.error(
+          t(
+            kind === "image" ? "design.err.imageGen" : "design.err.create",
+            kind === "image" ? "图像生成失败，请重试" : "创建失败",
+          ),
+        )
+        throw e // let image-prompt flow keep its dialog open on failure
+      }
+    },
+    [tx, activeProject, kindLabel, loadArtifacts, openArtifact, t],
+  )
+
+  // 拖入导入：把拖进来的图片文件建成 image 形态产物（自包含 data-uri）。
+  const [dropActive, setDropActive] = useState(false)
+  const importImageFiles = useCallback(
+    async (files: File[]) => {
+      if (!activeProject) return
+      const images = files.filter((f) => f.type.startsWith("image/"))
+      if (images.length === 0) {
+        toast.error(t("design.dropImport.onlyImages", "只能拖入图片文件"))
+        return
+      }
+      let last: DesignArtifact | null = null
+      for (const f of images) {
+        try {
+          const dataB64 = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader()
+            r.onload = () => {
+              const s = String(r.result || "")
+              const i = s.indexOf(",")
+              resolve(i >= 0 ? s.slice(i + 1) : s)
+            }
+            r.onerror = () => reject(r.error)
+            r.readAsDataURL(f)
+          })
+          const art = await tx.call<DesignArtifact>("import_design_image_cmd", {
+            projectId: activeProject.id,
+            title: f.name.replace(/\.[^.]+$/, "").slice(0, 40) || "Imported image",
+            mime: f.type,
+            dataB64,
+          })
+          if (art) last = art
+        } catch (e) {
+          logger.error("design", "DesignView::importImage", "import failed", e)
+          toast.error(t("design.dropImport.failed", "导入失败：{{name}}", { name: f.name }))
+        }
+      }
+      await loadArtifacts(activeProject.id)
+      if (last) {
+        setShowGrid(false)
+        void openArtifact(last)
+        toast.success(
+          t("design.dropImport.done", "已导入 {{count}} 张图片", { count: images.length }),
+        )
+      }
+    },
+    [tx, activeProject, loadArtifacts, openArtifact, t],
+  )
+
+  // image 形态需要描述 prompt → 弹小对话框收集。
+  const [imagePromptOpen, setImagePromptOpen] = useState(false)
+  const [imagePrompt, setImagePrompt] = useState("")
+  const [creatingImage, setCreatingImage] = useState(false)
+  const [promptKind, setPromptKind] = useState<ArtifactKind>("image")
+  const onPickKind = useCallback(
+    (kind: ArtifactKind) => {
+      // image / audio 是媒体形态：需要一段描述（图像描述 / 旁白文本或音乐提示）→ 收集 prompt。
+      if (kind === "image" || kind === "audio") {
+        setPromptKind(kind)
+        setImagePrompt("")
+        setImagePromptOpen(true)
+      } else {
+        // error already surfaced via toast in createArtifact; swallow the rejection
+        void createArtifact(kind).catch(() => {})
+      }
+    },
+    [createArtifact],
+  )
+  const confirmImagePrompt = useCallback(async () => {
+    if (!imagePrompt.trim()) return
+    setCreatingImage(true)
+    try {
+      await createArtifact(promptKind, imagePrompt.trim())
+      setImagePromptOpen(false) // only on success — createArtifact throws on failure
+    } catch {
+      // error already surfaced via toast in createArtifact; keep dialog open to retry
+    } finally {
+      setCreatingImage(false)
+    }
+  }, [createArtifact, imagePrompt, promptKind])
+
+  // ── 从参考图生成匹配产物（「照着这张图做」）─────────────────
+  const [refDialogOpen, setRefDialogOpen] = useState(false)
+  const [refKind, setRefKind] = useState<ArtifactKind>("web")
+  const [refImage, setRefImage] = useState<{ b64: string; mime: string; url: string } | null>(null)
+  const [refExtra, setRefExtra] = useState("")
+  const [refGenerating, setRefGenerating] = useState(false)
+
+  // 客户端**自适应降采样 + 压到字节预算**再 base64：逐步降边长(1600→…)+ 质量(0.85→0.55)，
+  // 保证 payload 稳在服务端 16 MiB body 限内、上传快（后端 downscale_for_vision 再兜一次）；
+  // 任何读取 / 编码失败给明确 toast（不静默留空）。首页传图与「照着图做」弹窗共用。
+  const compressPickedImage = useCallback(
+    (file: File | null, onDone: (img: { b64: string; mime: string; url: string }) => void) => {
+      if (!file || !file.type.startsWith("image/")) return
+      const fail = () => toast.error(t("design.fromImageReadErr", "无法读取该图片，请换一张"))
+      const BUDGET = 4_000_000 // base64 字符数上限（≈4 MB，远低于服务端 16 MiB）
+      const img = new window.Image()
+      const objUrl = URL.createObjectURL(file)
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl)
+        let edge = 1600
+        for (let attempt = 0; attempt < 4; attempt++) {
+          let w = img.naturalWidth || img.width
+          let h = img.naturalHeight || img.height
+          if (Math.max(w, h) > edge) {
+            const s = edge / Math.max(w, h)
+            w = Math.round(w * s)
+            h = Math.round(h * s)
+          }
+          const canvas = document.createElement("canvas")
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext("2d")
+          if (!ctx) return fail()
+          ctx.drawImage(img, 0, 0, w, h)
+          for (const q of [0.85, 0.7, 0.55]) {
+            let url: string
+            try {
+              url = canvas.toDataURL("image/jpeg", q)
+            } catch {
+              return fail()
+            }
+            const b64 = url.split(",")[1] || ""
+            if (b64 && b64.length <= BUDGET) {
+              onDone({ b64, mime: "image/jpeg", url })
+              return
+            }
+          }
+          edge = Math.round(edge * 0.75) // 仍超预算 → 再缩边长重试
+        }
+        fail() // 4 轮仍超预算（极端大图）
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl)
+        fail()
+      }
+      img.src = objUrl
+    },
+    [t],
+  )
+  const onPickRefImage = useCallback(
+    (file: File | null) => {
+      if (file && visionModels.length === 0) {
+        toast.error(
+          t("design.model.noVisionAvailable", "未配置支持图片的模型，请到 设置 → 模型 添加"),
+        )
+        return
+      }
+      compressPickedImage(file, (img) => {
+        setRefImage(img)
+        ensureVisionGenModel()
+      })
+    },
+    [compressPickedImage, ensureVisionGenModel, visionModels, t],
+  )
+
+  // ── 首页参考图（+ / 粘贴 / 拖拽收单张；无视觉模型时拦截并提示）──────────
+  const [homeRefImages, setHomeRefImages] = useState<{ b64: string; mime: string; url: string }[]>(
+    [],
+  )
+  // 批量收图（+ 多选 / 多图拖入 / 粘贴各一张）：一次性过滤非图 + 按当前张数算可加名额，超限
+  // **只弹一次** max toast、只切一次视觉模型（此前逐文件 forEach 会 N 次弹「已切换模型」/ N 次
+  // 写配置 / 静默丢多余图，review #4/#5/#13）。setter 内仍守上限防 compress 异步竞态。
+  const onPickHomeImages = useCallback(
+    (files: File[]) => {
+      const images = files.filter((f) => f.type.startsWith("image/"))
+      if (images.length === 0) return
+      if (visionModels.length === 0) {
+        toast.error(
+          t("design.model.noVisionAvailable", "未配置支持图片的模型，请到 设置 → 模型 添加"),
+        )
+        return
+      }
+      const available = MAX_HOME_REF_IMAGES - homeRefImages.length
+      if (available <= 0 || images.length > available) {
+        toast.error(t("design.refImage.max", "最多添加 {{n}} 张参考图", { n: MAX_HOME_REF_IMAGES }))
+        if (available <= 0) return
+      }
+      let switched = false
+      images.slice(0, available).forEach((file) => {
+        compressPickedImage(file, (img) => {
+          setHomeRefImages((prev) => (prev.length >= MAX_HOME_REF_IMAGES ? prev : [...prev, img]))
+          if (!switched) {
+            switched = true
+            ensureVisionGenModel()
+          }
+        })
+      })
+    },
+    [compressPickedImage, ensureVisionGenModel, visionModels, homeRefImages.length, t],
+  )
+
+  const createFromReferenceImage = useCallback(async () => {
+    if (!activeProject || !refImage) return
+    setRefGenerating(true)
+    try {
+      const artifact = await tx.call<DesignArtifact>("generate_design_artifact_cmd", {
+        input: {
+          projectId: activeProject.id,
+          title: kindLabel(refKind),
+          kind: refKind,
+          referenceImageB64: refImage.b64,
+          referenceImageMime: refImage.mime,
+          prompt: refExtra.trim() || undefined,
+          // 弹窗选的视觉模型（与首页共享「上次使用」记忆）；真多模态直接看原图。
+          modelOverride: genModel ?? undefined,
+        },
+      })
+      setRefDialogOpen(false)
+      setRefImage(null)
+      setRefExtra("")
+      await loadArtifacts(activeProject.id)
+      if (artifact) void openArtifact(artifact)
+    } catch (e) {
+      logger.error(
+        "design",
+        "DesignView::createFromReferenceImage",
+        "generate from image failed",
+        e,
+      )
+      toast.error(t("design.fromImageErr", "从参考图生成失败"))
+    } finally {
+      setRefGenerating(false)
+    }
+  }, [
+    tx,
+    activeProject,
+    refImage,
+    refKind,
+    refExtra,
+    genModel,
+    kindLabel,
+    loadArtifacts,
+    openArtifact,
+    t,
+  ])
+
+  // ── Prompt-first launch (home hero → generate) ───────────────
+
+  const [homePrompt, setHomePrompt] = useState("")
+  const [homeKind, setHomeKind] = useState<ArtifactKind>("web")
+  const [homeSystemId, setHomeSystemId] = useState<string | null>(null)
+  // 首屏选中的 recipe（模板）id：点模板卡时置入，随生成传给后端让「选不同模板产出可辨差异」。
+  // 后端按 (id, kind) 匹配、不匹配即回退，故换 kind 无需清空。
+  const [homeRecipeId, setHomeRecipeId] = useState<string | null>(null)
+  const [generatingHome, setGeneratingHome] = useState(false)
+
+  // 首屏「一句话 → 生成」：建项目 → 带 prompt 建产物（后端一次模型生成完整自包含设计）→ 打开。
+  // 需求补全交给设计 Agent 在对话里按需追问（ask_user_question 的 discovery / direction-cards），
+  // 首屏只收一句话，不再叠加静态简报表单。
+  const generateFromHome = useCallback(async () => {
+    const base = homePrompt.trim()
+    // 有图无文也可生成（后端固定「照图复刻」指令）。
+    if ((!base && homeRefImages.length === 0) || generatingHome) return
+    const prompt = base
+    const systemId = homeSystemId ?? designConfig?.defaultSystemId ?? undefined
+    let createdProjectId: string | null = null
+    setGeneratingHome(true)
+    try {
+      const project = await tx.call<DesignProject>("create_design_project_cmd", {
+        input: {
+          title: base.slice(0, 40),
+          // 首页选的模型带入项目：作为项目对话的初始模型（会话内切换照常）。
+          defaultModel: genModel ?? undefined,
+        },
+      })
+      createdProjectId = project.id
+      // 首屏一句话 → 流式生成（返回 generating 壳，前端挂稳定 iframe 后逐帧灌入）。
+      // 带参考图时选中的视觉模型**直接看原图**（真多模态）。
+      const artifact = await tx.call<DesignArtifact>("generate_design_artifact_cmd", {
+        input: {
+          projectId: project.id,
+          title: kindLabel(homeKind),
+          kind: homeKind,
+          prompt: prompt || undefined,
+          systemId,
+          recipeId: homeRecipeId ?? undefined,
+          referenceImages: homeRefImages.map((i) => ({ b64: i.b64, mime: i.mime })),
+          modelOverride: genModel ?? undefined,
+        },
+      })
+      setHomePrompt("")
+      setHomeRecipeId(null)
+      setHomeRefImages([])
+      openProject(project)
+      if (artifact) void openArtifact(artifact)
+    } catch (e) {
+      logger.error("design", "DesignView::generateFromHome", "generate failed", e)
+      toast.error(t("design.err.create", "创建失败"))
+      // 回滚：产物没建成，删掉刚建的孤儿空项目（否则每次重试堆积隐藏空项目）。
+      if (createdProjectId) {
+        try {
+          await tx.call("delete_design_project_cmd", { id: createdProjectId })
+        } catch {
+          /* best effort */
+        }
+      }
+    } finally {
+      setGeneratingHome(false)
+    }
+  }, [
+    tx,
+    homePrompt,
+    homeKind,
+    homeSystemId,
+    homeRecipeId,
+    homeRefImages,
+    genModel,
+    generatingHome,
+    designConfig,
+    kindLabel,
+    openProject,
+    openArtifact,
+    t,
+  ])
+
+  // 品牌包：一句话 → 建项目 → 批量生成一组共享系统的协调产物（形态由弹窗自选）。
+  // 带参考图时每件产物都真看原图（N 件 = N 次带图视觉调用，用户主动选择）。
+  const generateBrandPackFromHome = useCallback(
+    async (kinds: ArtifactKind[]) => {
+      const base = homePrompt.trim()
+      if ((!base && homeRefImages.length === 0) || generatingHome || kinds.length === 0) return
+      const systemId = homeSystemId ?? designConfig?.defaultSystemId ?? undefined
+      let createdProjectId: string | null = null
+      setGeneratingHome(true)
+      const tid = toast.loading(
+        t("design.brandPack.generating", "正在生成品牌包（多个产物，请稍候）…"),
+      )
+      // 逐件进度：后端每开始一件 emit 一次，把「一直转圈」换成「正在生成 演示（2/3）」。
+      const unlisten = tx.listen("design:brand_pack_progress", (raw) => {
+        const p = parsePayload<{ index?: number; total?: number; kind?: string; done?: boolean }>(
+          raw,
+        )
+        if (!p || p.done) return
+        if (p.kind && p.index && p.total) {
+          toast.loading(
+            t("design.brandPack.progress", "正在生成 {{kind}}（{{index}}/{{total}}）…", {
+              kind: kindLabel(p.kind as ArtifactKind),
+              index: p.index,
+              total: p.total,
+            }),
+            { id: tid },
+          )
+        }
+      })
+      try {
+        const project = await tx.call<DesignProject>("create_design_project_cmd", {
+          input: {
+            title: base.slice(0, 40),
+            defaultModel: genModel ?? undefined,
+          },
+        })
+        createdProjectId = project.id
+        const arts = await tx.call<DesignArtifact[]>("generate_design_brand_pack_cmd", {
+          projectId: project.id,
+          brief: base,
+          kinds,
+          systemId,
+          referenceImages: homeRefImages.map((i) => ({ b64: i.b64, mime: i.mime })),
+          modelOverride: genModel ?? undefined,
+        })
+        setHomePrompt("")
+        setHomeRecipeId(null)
+        setHomeRefImages([])
+        openProject(project)
+        if (arts && arts.length > 0) void openArtifact(arts[0])
+        toast.success(
+          t("design.brandPack.done", "已生成 {{count}} 个产物", { count: arts?.length ?? 0 }),
+          {
+            id: tid,
+          },
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::brandPack", "brand pack failed", e)
+        toast.error(t("design.err.create", "创建失败"), { id: tid })
+        if (createdProjectId) {
+          try {
+            await tx.call("delete_design_project_cmd", { id: createdProjectId })
+          } catch {
+            /* best effort */
+          }
+        }
+      } finally {
+        unlisten()
+        setGeneratingHome(false)
+      }
+    },
+    [
+      tx,
+      homePrompt,
+      homeSystemId,
+      homeRefImages,
+      genModel,
+      generatingHome,
+      designConfig,
+      kindLabel,
+      openProject,
+      openArtifact,
+      t,
+    ],
+  )
+
+  // ── Visual fine-tuning (D1) ──────────────────────────────────
+
+  // 自编辑触发的 design:reload **待抵扣计数**（非单布尔）：commit +1、监听器每收到一条 -1。突发编辑
+  // 多条并发时精确配对，避免多出的 reload 被误判外部编辑而清空撤销栈（review HIGH）。
+  const pendingSelfReloadRef = useRef(0)
+
+  const refreshView = useCallback(async () => {
+    const active = activeArtifactRef.current
+    if (!active) return
+    try {
+      const view = await tx.call<DesignArtifactView | null>("get_design_artifact_cmd", {
+        id: active.id,
+      })
+      // 同步 ref（不只 state）：串行化的 commitPatch 靠 activeArtifactRef.current.bodyHash 取**最新**
+      // hash，React 的 setActiveArtifact 是异步 render 才刷 ref，故这里立即写 ref 让下一条排队提交
+      // 拿到新 hash，杜绝背靠背提交撞 stale-write（P0-D）。
+      if (view) {
+        activeArtifactRef.current = view
+        setActiveArtifact(view)
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }, [tx])
+
+  // ── code→design 回灌 handlers（在 enqueueChatQuote / loadArtifacts / refreshView 之后声明）──
+  /** 打开项目/产物时后台收割 + 比对（有回执才有开销，无回执后端 O(1) 空返；fire-and-forget）。 */
+  const checkCodeDrift = useCallback(
+    (projectId: string, artifactId?: string) => {
+      void tx
+        .call<ArtifactDriftStatus[]>("design_check_code_drift_cmd", {
+          projectId,
+          ...(artifactId ? { artifactId } : {}),
+        })
+        .catch(() => {})
+    },
+    [tx],
+  )
+
+  /** 带到设计对话：逐文件变更 quote 塞进 composer + 预填默认指令（不自动发，对齐批注先例）。 */
+  const handleBringDriftToChat = useCallback(
+    async (artifactId: string) => {
+      try {
+        const c = await tx.call<CodeDriftChanges>("design_code_drift_changes_cmd", { artifactId })
+        setChatOpen(true)
+        enqueueChatQuote({
+          path: `code-drift:${artifactId}`,
+          name: t("design.drift.quoteName", "代码变更"),
+          startLine: 1,
+          endLine: 1,
+          content: c.quote,
+        })
+        chatPanelRef.current?.insertToken(
+          t(
+            "design.drift.chatPrompt",
+            "实现代码相对设计稿已变化，请根据引用的代码变更更新当前设计稿，保持设计意图与其余内容不变。",
+          ),
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::bringDriftToChat", "load drift changes failed", e)
+        toast.error(t("design.drift.err", "读取代码变更失败"))
+      }
+    },
+    [enqueueChatQuote, t, tx],
+  )
+
+  /** 标为已同步：重置基线 + 清 drift 标记，刷新产物库与当前预览。 */
+  const handleMarkDriftSynced = useCallback(
+    async (artifactId: string) => {
+      try {
+        await tx.call("design_code_drift_sync_cmd", { artifactId })
+        toast.success(t("design.drift.syncedToast", "已标记为与代码同步"))
+        const pid = activeProjectRef.current?.id
+        if (pid) void loadArtifacts(pid)
+        if (activeArtifactRef.current?.id === artifactId) void refreshView()
+      } catch (e) {
+        logger.error("design", "DesignView::markDriftSynced", "mark synced failed", e)
+        // 「标为已同步」是写操作，失败不该复用「读取代码变更失败」文案（误导用户去点「查看变更」）。
+        toast.error(t("design.err.save", "保存失败"))
+      }
+    },
+    [loadArtifacts, refreshView, t, tx],
+  )
+
+  /** 系统选择器 footer「检查代码更新」手动按钮。 */
+  const handleManualDriftCheck = useCallback(async () => {
+    const pid = activeProjectRef.current?.id
+    if (!pid) return
+    setDriftChecking(true)
+    try {
+      const res = await tx.call<ArtifactDriftStatus[]>("design_check_code_drift_cmd", {
+        projectId: pid,
+      })
+      const stale = res.filter((r) => r.stale).length
+      toast.success(
+        stale > 0
+          ? t("design.drift.checkStale", "{{n}} 个产物的代码有更新", { n: stale })
+          : t("design.drift.checkCleanAll", "所有产物与代码一致"),
+      )
+    } catch (e) {
+      logger.error("design", "DesignView::manualDriftCheck", "check failed", e)
+      toast.error(t("design.drift.err", "读取代码变更失败"))
+    } finally {
+      setDriftChecking(false)
+    }
+  }, [t, tx])
+
+  // 打开项目 → 后台检查全部产物代码漂移；切换产物 → 针对性再查一次（覆盖「项目久开、会话后到」）。
+  useEffect(() => {
+    if (activeProject?.id) checkCodeDrift(activeProject.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id])
+  useEffect(() => {
+    const pid = activeProjectRef.current?.id
+    if (pid && activeArtifactId) checkCodeDrift(pid, activeArtifactId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeArtifactId])
+
+  // 提交串行化队列（P0-D）：背靠背两次微调（改完 top 立刻改 right / 字号→字重）不再撞 stale-write。
+  // 每条提交排在前一条之后跑，读 activeArtifactRef.current.bodyHash 时前一条的 refreshView 已把新
+  // hash 写进 ref，故第二条带的是**新** hash 而非闭包旧 hash。
+  const commitQueueRef = useRef<Promise<unknown>>(Promise.resolve(true))
+  const commitPatch = useCallback(
+    (patch: {
+      oid: number
+      styles?: [string, string][]
+      text?: string
+      attrs?: [string, string][]
+      textNode?: { index: number; text: string }
+      remove?: boolean
+      insert?: RemovedCtx
+    }): Promise<boolean> => {
+      const run = async (): Promise<boolean> => {
+        const active = activeArtifactRef.current
+        if (!active) return false
+        // **计数**而非单布尔（review HIGH）：每条自编辑提交 emit 一条 design:reload，突发编辑下多条并发，
+        // 单布尔被第一条 reload 清零 → 后续 reload 被误判外部编辑而清空撤销栈。计数 +1 / reload -1 精确配对。
+        pendingSelfReloadRef.current += 1
+        let emitted = false
+        try {
+          if (patch.insert) {
+            await withCallTimeout(
+              tx.call("insert_design_element_cmd", {
+                id: active.id,
+                parentOid: patch.insert.parentOid,
+                afterOid: patch.insert.afterOid,
+                insertOffset: patch.insert.insertOffset,
+                html: patch.insert.html,
+                expectedHash: active.bodyHash,
+              }),
+            )
+          } else {
+            // 本分支 patch.insert 必为 undefined（insert 走上面独立命令）；直接 spread，undefined 键在
+            // JSON 序列化时被略去，后端 ElementPatch 也无 insert 字段。
+            await withCallTimeout(
+              tx.call("patch_design_element_cmd", {
+                input: {
+                  artifactId: active.id,
+                  expectedHash: active.bodyHash,
+                  ...patch,
+                },
+              }),
+            )
+          }
+          emitted = true // 成功 → 后端已 emit design:reload，留给监听器 -1
+          await refreshView()
+          return true
+        } catch (e) {
+          // 失败（外部 stale / 后端错 / 调用超时）：无 design:reload → 自己 -1 平衡计数，避免泄漏计数
+          // 让后续真外部 reload 被误当自编辑。保留选中、软重挂反映磁盘真值 + 重取 hash（不清选中）。
+          if (!emitted) pendingSelfReloadRef.current = Math.max(0, pendingSelfReloadRef.current - 1)
+          setPreviewKey((k) => k + 1)
+          void refreshView()
+          logger.error("design", "DesignView::commitPatch", "patch failed", e)
+          toast.error(t("design.staleReselect", "源已更新，请重新选择元素后再试"))
+          return false
+        }
+      }
+      // 串行化（P0-D）+ 无论成败都让链前进（.then(run, run)）——单条调用永久挂起会被 withCallTimeout
+      // 兜底 reject（review MEDIUM：否则整条提交/撤销/重做队列静默死锁）。
+      const p = commitQueueRef.current.then(run, run)
+      commitQueueRef.current = p.catch(() => false)
+      return p
+    },
+    [tx, refreshView, t],
+  )
+
+  // owner 删元素（结构 undo）：**走同一串行队列**（review MEDIUM：否则与在途 commitPatch 抢
+  // bodyHash，紧接编辑后删除撞 stale-write 静默失败）+ 计数自 reload，返回重建上下文供撤销栈。失败 null。
+  const commitRemoveOwner = useCallback(
+    (oid: number): Promise<RemovedCtx | null> => {
+      const run = async (): Promise<RemovedCtx | null> => {
+        const active = activeArtifactRef.current
+        if (!active) return null
+        pendingSelfReloadRef.current += 1
+        let emitted = false
+        try {
+          const res = await withCallTimeout(
+            tx.call<{ removed: RemovedCtx }>("remove_design_element_cmd", {
+              id: active.id,
+              oid,
+              expectedHash: active.bodyHash,
+            }),
+          )
+          emitted = true
+          await refreshView()
+          return res.removed
+        } catch (e) {
+          if (!emitted) pendingSelfReloadRef.current = Math.max(0, pendingSelfReloadRef.current - 1)
+          logger.error("design", "DesignView::commitRemoveOwner", "remove failed", e)
+          toast.error(t("design.staleReselect", "源已更新，请重新选择元素后再试"))
+          return null
+        }
+      }
+      const p = commitQueueRef.current.then(run, run)
+      commitQueueRef.current = p.catch(() => null)
+      return p
+    },
+    [tx, refreshView, t],
+  )
+
+  const handleLiveStyle = useCallback(
+    (prop: string, value: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      postToIframe({ type: "ds_preview_style", oid, props: [[prop, value]] })
+    },
+    [postToIframe],
+  )
+  // 删除元素（Wave 3-⑫ + P0-A 可撤销）：走 owner remove_design_element_cmd 拿回**重建上下文**，压
+  // 结构 undo op（before=重插被删片段、after=再删）→ Cmd+Z 可字节精确还原。setSuppressReload 让
+  // update_artifact 的 design:reload 走自编辑分支、不清 undo 栈（否则清掉刚压的这条 op）。最后一个
+  // 元素后端拒。
+  const handleDeleteElement = useCallback(async () => {
+    const oid = selectedRef.current?.oid
+    if (oid == null) return
+    setSelected(null)
+    const removed = await commitRemoveOwner(Number(oid))
+    if (removed) {
+      // 结构 undo：before=重插被删片段（含 insertOffset），after=再删（redo 走 commitRemoveOwner 重删）。
+      pushHistoryRef.current({
+        oid: Number(oid),
+        before: { insert: removed },
+        after: { remove: true },
+      })
+      setPreviewKey((k) => k + 1)
+    }
+  }, [commitRemoveOwner])
+  const handleCommitStyle = useCallback(
+    (prop: string, value: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      // 先 live-apply 到 iframe：commitPatch 会抑制重挂，否则 commit-only 控件（字号/间距/布局/
+      // 尺寸/描边/阴影…）提交后预览无变化（review #1）。
+      postToIframe({ type: "ds_preview_style", oid, props: [[prop, value]] })
+      const before = selectedRef.current?.styles?.[prop] ?? ""
+      // 乐观刷新 selected.styles：让派生控件（isFlexish / display·align Select 值 / 不透明度）
+      // 立即反映本次提交，不等重选（review #3）。
+      setSelected((prev) => (prev ? { ...prev, styles: { ...prev.styles, [prop]: value } } : prev))
+      pushHistoryRef.current({
+        oid: Number(oid),
+        before: { styles: [[prop, before]] },
+        after: { styles: [[prop, value]] },
+      })
+      void commitPatch({ oid: Number(oid), styles: [[prop, value]] })
+    },
+    [commitPatch, postToIframe],
+  )
+  const handleLiveText = useCallback(
+    (text: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      postToIframe({ type: "ds_set_text", oid, text })
+    },
+    [postToIframe],
+  )
+  const handleCommitText = useCallback(
+    (text: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      const before = selectedRef.current?.text ?? ""
+      pushHistoryRef.current({ oid: Number(oid), before: { text: before }, after: { text } })
+      void commitPatch({ oid: Number(oid), text })
+    },
+    [commitPatch],
+  )
+
+  // ── 可视化编辑 undo/redo（B5：inverse-patch 栈，客户端）─────────
+  // 每次 commit 记 {oid, before, after}（before 值来自 selected 的当前/计算值），undo=回放 before、
+  // redo=回放 after，均经确定性 patch 引擎（视觉等价；样式从「未显式设」回退为计算值、无害）。
+  const [undoStack, setUndoStack] = useState<EditOp[]>([])
+  const [redoStack, setRedoStack] = useState<EditOp[]>([])
+  // 镜像栈到 ref，让串行化的 runHistoryStep 读到当前值而不进 deps（避免 keydown 监听反复重挂）。
+  const undoStackRef = useRef<EditOp[]>([])
+  const redoStackRef = useRef<EditOp[]>([])
+  undoStackRef.current = undoStack
+  redoStackRef.current = redoStack
+  const pushHistory = useCallback((op: EditOp) => {
+    // undo/redo 经 commitPatch 直提交、不走 commit handlers，故不会触发 pushHistory —— 无需
+    // 「正在回放」守卫（旧守卫在 undo 的 async 窗口内会误吞用户此刻的真实编辑，review 修复 #6）。
+    setUndoStack((s) => [...s.slice(-49), op]) // 上限 50，防无界增长
+    setRedoStack([])
+  }, [])
+  // 让 commit handlers 引用最新 pushHistory（ref 提前声明，此处赋值）。
+  pushHistoryRef.current = pushHistory
+
+  const applyPayloadLive = useCallback(
+    (oid: number, p: PatchPayload) => {
+      if (p.styles)
+        for (const [k, v] of p.styles)
+          postToIframe({ type: "ds_preview_style", oid, props: [[k, v]] })
+      if (p.text != null) postToIframe({ type: "ds_set_text", oid, text: p.text })
+      if (p.attrs) postToIframe({ type: "ds_preview_attr", oid, attrs: p.attrs })
+    },
+    [postToIframe],
+  )
+  // undo/redo 单步：**串行化 + 提交成功后才移栈**（review 修复）。
+  // ① `historyBusyRef` 防并发/连按（键盘自动重复）——commit 在途时后续按键忽略，
+  //    保证下一步用的是 refreshView 之后的新 bodyHash（否则同一 stale hash 触发 stale-write 全拒）。
+  // ② 一切副作用（live 预览 / setSelected / commit / 移栈）都在 updater **之外**（updater 须纯，
+  //    StrictMode 双调不再双跑 commit）。③ commit 失败（stale 等）**不移栈**，历史与磁盘不脱节。
+  const historyBusyRef = useRef(false)
+  const runHistoryStep = useCallback(
+    async (which: "undo" | "redo") => {
+      if (historyBusyRef.current) return
+      const stack = which === "undo" ? undoStackRef.current : redoStackRef.current
+      if (stack.length === 0) return
+      const op = stack[stack.length - 1]
+      const payload = which === "undo" ? op.before : op.after
+      historyBusyRef.current = true
+      // 结构（insert/remove）/ 文本节点 op 无干净 live 预览通道 → 跳 live、清选中，靠 commit 后
+      // 重挂 iframe 反映变化；样式 / 文本 / 属性走 live 预览 + 乐观刷 selected。
+      const structural = !!(payload.insert || payload.remove || payload.textNode)
+      if (structural) {
+        setSelected(null)
+      } else {
+        applyPayloadLive(op.oid, payload)
+        setSelected((prev) => {
+          if (!prev || Number(prev.oid) !== op.oid) return prev
+          const next = { ...prev, styles: { ...prev.styles }, attrs: { ...(prev.attrs ?? {}) } }
+          if (payload.styles) for (const [k, v] of payload.styles) next.styles[k] = v
+          if (payload.text != null) next.text = payload.text
+          if (payload.attrs) for (const [k, v] of payload.attrs) next.attrs[k] = v
+          return next
+        })
+      }
+      let ok: boolean
+      if (payload.remove) {
+        // redo 删元素：走 owner remove（anchor-inclusive，与首删对称，守 byte-exact 红线 review HIGH），
+        // 用新的重建上下文覆盖 op.before，保证下次撤销仍字节精确（element-only 的 patch remove 会漂移）。
+        const removed = await commitRemoveOwner(op.oid)
+        ok = !!removed
+        if (removed) op.before = { insert: removed }
+      } else {
+        ok = await commitPatch({ oid: op.oid, ...payload })
+      }
+      historyBusyRef.current = false
+      if (!ok) return // 提交失败：保持栈不动（不脱节）
+      if (structural) setPreviewKey((k) => k + 1)
+      // **按身份移栈**（review 修复）：commit 的 await 窗口内若有并发 live 检视器编辑
+      //（`historyBusyRef` 只串行 undo/redo，不挡 `handleCommitStyle`）会向 undoStack 顶
+      // push 新 op；此时按位置 `slice(0,-1)` 会误删那条新编辑而非本次撤销的 `op`，令内存历史
+      // 与磁盘脱节。改按对象身份 filter 掉 `op`（EditOp 每次新建、引用唯一），并发编辑安然留栈。
+      if (which === "undo") {
+        setUndoStack((s) => s.filter((x) => x !== op))
+        setRedoStack((r) => [...r, op])
+      } else {
+        setRedoStack((r) => r.filter((x) => x !== op))
+        setUndoStack((s) => [...s, op])
+      }
+    },
+    [applyPayloadLive, commitPatch, commitRemoveOwner],
+  )
+  const undo = useCallback(() => void runHistoryStep("undo"), [runHistoryStep])
+  const redo = useCallback(() => void runHistoryStep("redo"), [runHistoryStep])
+  // 清空历史：切产物时（oid 空间变、旧 op 不再适用）。
+  useEffect(() => {
+    setUndoStack([])
+    setRedoStack([])
+  }, [activeArtifactId])
+  // Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做——但焦点在输入框 / contenteditable 时让位原生撤销。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return
+      // 画框批注期 Cmd/Ctrl+Z 归叠层自己的 mark undo（其监听后注册、无法阻断本 window sibling
+      // 监听）；不加此守卫会连带回退上一次可视化编辑并落盘（review HIGH：静默数据篡改）。
+      if (drawModeRef.current) return
+      const ae = document.activeElement as HTMLElement | null
+      const tag = ae?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA" || ae?.isContentEditable) return
+      e.preventDefault()
+      if (e.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [undo, redo])
+
+  // P1-E 键盘体系（宿主聚焦时）：Escape 分级退出 + Cmd/Ctrl+[ ] 切上/下一个产物。镜像 ref 让监听器
+  // 不随 state 反复重挂。
+  const previewCtxMenuRef = useRef(previewCtxMenu)
+  previewCtxMenuRef.current = previewCtxMenu
+  const pendingPlacementRef = useRef(pendingPlacement)
+  pendingPlacementRef.current = pendingPlacement
+  const artifactsRef = useRef(artifacts)
+  artifactsRef.current = artifacts
+  // 产物切换的**同步**目标 id（openArtifact 异步、activeArtifactRef 落后渲染，快速连按用它推进不卡）。
+  const switchTargetRef = useRef<string | null>(null)
+  // 激活 chip 自动滚入视野（W4）：仅在激活产物变化时滚一次，不抢占用户手动横滚。
+  const activeChipRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    activeChipRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [activeArtifactId])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const ae = document.activeElement as HTMLElement | null
+      const inField =
+        ae?.tagName === "INPUT" || ae?.tagName === "TEXTAREA" || !!ae?.isContentEditable
+      // 焦点在弹窗 / 菜单里时不抢键（Radix Dialog/AlertDialog/Menu 自理 Escape，否则关弹窗顺带误退
+      // 编辑态，review MEDIUM——删除确认框是 alertdialog）。
+      const inOverlay = !!ae?.closest?.(
+        "[role='dialog'],[role='alertdialog'],[role='menu'],[role='listbox']",
+      )
+      // Escape 分级：关右键菜单 → 取消待填批注钉 → 取消选中 → 退出编辑/批注/画框模式。演示态 Escape 交
+      // 给专用处理器退出演示（review MEDIUM：否则退出演示同时误清选中/退编辑态）；就地文本编辑中
+      // （焦点在 iframe / 输入框 / 弹窗）交给 bridge / 原生，宿主不抢。
+      if (
+        e.key === "Escape" &&
+        !inField &&
+        !inOverlay &&
+        !presentModeRef.current &&
+        ae !== iframeRef.current
+      ) {
+        if (previewCtxMenuRef.current) {
+          setPreviewCtxMenu(null)
+          e.preventDefault()
+          return
+        }
+        if (pendingPlacementRef.current) {
+          setPendingPlacement(null)
+          e.preventDefault()
+          return
+        }
+        if (selectedRef.current) {
+          setSelected(null)
+          postToIframe({ type: "ds_clear_selection" })
+          e.preventDefault()
+          return
+        }
+        if (editModeRef.current || commentModeRef.current || drawModeRef.current) {
+          setEditMode(false)
+          setCommentMode(false)
+          setDrawMode(false)
+          e.preventDefault()
+        }
+        return
+      }
+      // Cmd/Ctrl+[ 上一个产物 / Cmd/Ctrl+] 下一个产物（产物切换键盘通路，P1-E）。
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        (e.key === "[" || e.key === "]")
+      ) {
+        if (inField) return
+        // 拦住浏览器 back/forward（HTTP 模式 Cmd/Ctrl+[ ]）——设计视图内一律拦，含空产物（review LOW）。
+        e.preventDefault()
+        const list = artifactsRef.current
+        if (!list.length) return
+        // 从**同步推进的** switchTargetRef 起算（openArtifact 异步、activeArtifactRef 落后于渲染，
+        // 背靠背/按住会从同一陈旧 cur 重复解析成同一相邻项、卡住，review LOW）。
+        const baseId = switchTargetRef.current ?? activeArtifactRef.current?.id
+        const idx = list.findIndex((a) => a.id === baseId)
+        const nextIdx =
+          e.key === "]"
+            ? idx < 0
+              ? 0
+              : (idx + 1) % list.length
+            : idx < 0
+              ? list.length - 1
+              : (idx - 1 + list.length) % list.length
+        const target = list[nextIdx]
+        if (target && target.id !== baseId) {
+          switchTargetRef.current = target.id
+          void openArtifact(target).finally(() => {
+            if (switchTargetRef.current === target.id) switchTargetRef.current = null
+          })
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [postToIframe, openArtifact])
+
+  // ── B5：链接 / 图片属性编辑 ──
+  const handleLiveAttr = useCallback(
+    (attr: string, value: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      postToIframe({ type: "ds_preview_attr", oid, attrs: [[attr, value]] })
+    },
+    [postToIframe],
+  )
+  const handleCommitAttr = useCallback(
+    (attr: string, value: string) => {
+      const oid = selectedRef.current?.oid
+      if (oid == null) return
+      const before = selectedRef.current?.attrs?.[attr] ?? ""
+      postToIframe({ type: "ds_preview_attr", oid, attrs: [[attr, value]] })
+      setSelected((prev) =>
+        prev ? { ...prev, attrs: { ...(prev.attrs ?? {}), [attr]: value } } : prev,
+      )
+      pushHistoryRef.current({
+        oid: Number(oid),
+        before: { attrs: [[attr, before]] },
+        after: { attrs: [[attr, value]] },
+      })
+      void commitPatch({ oid: Number(oid), attrs: [[attr, value]] })
+    },
+    [commitPatch, postToIframe],
+  )
+  // 选本地图 → data-uri（fetch src→blob→canvas 降采样，统一桌面/HTTP；Tauri 无 File 也走 src fetch）。
+  const handlePickImage = useCallback(async (): Promise<string | null> => {
+    let picked: Awaited<ReturnType<typeof tx.pickLocalImage>> = null
+    try {
+      picked = await tx.pickLocalImage()
+      if (!picked?.src) return null
+      return await imageToDataUri(picked.src)
+    } catch (e) {
+      logger.error("design", "DesignView::handlePickImage", "pick image failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+      return null
+    } finally {
+      // 无论成功 / 抛错都释放 objectURL（review 修复 #7：失败路径原会泄漏 blob: URL）。
+      picked?.revoke?.()
+    }
+  }, [tx, t])
+
+  // ── 批注钉 handlers ──
+  const loadComments = useCallback(async () => {
+    const aid = activeArtifactRef.current?.id
+    if (!aid) return
+    try {
+      const list = await tx.call<DesignComment[]>("design_comment_list_cmd", { artifactId: aid })
+      const arr = Array.isArray(list) ? list : []
+      setComments(arr)
+      // 同步工具栏 badge：批注增删/解决/精修都过 loadComments，此处单点回填 openCommentCount，
+      // 免额外后端往返、且不触发 iframe 重载（bodyHash 不变）。
+      const open = arr.filter((c) => !c.resolved).length
+      setActiveArtifact((prev) =>
+        prev && prev.id === aid && prev.openCommentCount !== open
+          ? { ...prev, openCommentCount: open }
+          : prev,
+      )
+    } catch (e) {
+      logger.error("design", "DesignView::loadComments", "load comments failed", e)
+    }
+  }, [tx])
+
+  const handleCreateComment = useCallback(
+    async (body: string) => {
+      const aid = activeArtifactRef.current?.id
+      const p = pendingPlacement
+      if (!aid || !p) return
+      // 套选批注（Wave 2-⑪）：把成员清单作范围前缀写进正文，随批注带给 AI（snippet 留作 pin 锚点）。
+      const finalBody =
+        p.members && p.members.length > 1
+          ? `${t("design.comment.lassoScope", "套选 {{n}} 个：{{list}}", {
+              n: p.members.length,
+              list: p.members
+                .map((m) => (m.snippet ? `${m.tag}「${m.snippet.slice(0, 16)}」` : m.tag))
+                .join("、"),
+            })}\n${body}`
+          : body
+      try {
+        await tx.call("design_comment_add_cmd", {
+          artifactId: aid,
+          oid: p.oid,
+          relX: p.relX,
+          relY: p.relY,
+          tag: p.tag,
+          snippet: p.snippet,
+          body: finalBody,
+        })
+        setPendingPlacement(null)
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::createComment", "add comment failed", e)
+        toast.error(t("design.comment.addFailed", "添加批注失败"))
+      }
+    },
+    [tx, pendingPlacement, loadComments, t],
+  )
+
+  const handleResolveComment = useCallback(
+    async (id: number, resolved: boolean) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      try {
+        await tx.call("design_comment_resolve_cmd", { artifactId: aid, commentId: id, resolved })
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::resolveComment", "resolve failed", e)
+      }
+    },
+    [tx, loadComments],
+  )
+
+  const handleEditComment = useCallback(
+    async (id: number, body: string) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      try {
+        await tx.call("design_comment_update_cmd", { artifactId: aid, commentId: id, body })
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::editComment", "edit failed", e)
+      }
+    },
+    [tx, loadComments],
+  )
+
+  const handleDeleteComment = useCallback(
+    async (id: number) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      try {
+        await tx.call("design_comment_delete_cmd", { artifactId: aid, commentId: id })
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::deleteComment", "delete failed", e)
+      }
+    },
+    [tx, loadComments],
+  )
+
+  const handleRelocateComment = useCallback(
+    async (id: number, oid: number | null, relX: number, relY: number) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      try {
+        await tx.call("design_comment_relocate_cmd", {
+          artifactId: aid,
+          commentId: id,
+          oid,
+          relX,
+          relY,
+        })
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::relocateComment", "relocate failed", e)
+      }
+    },
+    [tx, loadComments],
+  )
+
+  // 批注带到对话（批注 → composer quote chip，用户可补充后随 turn 发，AI 在完整对话
+  // 上下文下迭代）。展开被折叠的对话栏并把反馈作为可删 quote 塞进 composer。
+  const handleAddCommentToChat = useCallback(
+    async (id: number) => {
+      const c = comments.find((x) => x.id === id)
+      if (!c) return
+      const label = c.snippet?.trim()
+        ? `${t("design.comment.title", "批注")} · ${c.snippet.trim().slice(0, 40)}`
+        : t("design.comment.title", "批注")
+      const context = c.snippet?.trim() ? `元素「${c.snippet.trim()}」` : "选中的元素"
+      // 锚定元素时把 oid + 硬范围提示一并给 AI：让它用 design 的 edit_element(oid) 就地精改这一个
+      // 元素、保留其它一切，而不是整段重造（内容被抹空的根因）。脱锚（oid 空）则只带反馈文字。
+      const anchored = c.oid != null
+      // 增量（[8]）：带上该元素**当前 computedStyle** 富化 scope，省模型一次 get_artifact；跨源 round-trip。
+      const styleLine = anchored
+        ? formatStyleLine((await requestElementStyles([c.oid as number]))[String(c.oid)])
+        : ""
+      const content = anchored
+        ? `针对${context}（oid=${c.oid}）的反馈：${c.body}${styleLine}\n` +
+          `请只改这一个元素：用 design 工具 edit_element(oid=${c.oid}, style/text/...) 就地精改，` +
+          `保留其它一切；不确定当前样式先 get_artifact 读 source。别为这点改动重造整个产物。`
+        : `针对${context}的反馈：${c.body}`
+      enqueueChatQuote({
+        path: `design-comment:${id}`,
+        name: label,
+        startLine: 0,
+        endLine: 0,
+        content,
+      })
+    },
+    [comments, t, enqueueChatQuote, requestElementStyles],
+  )
+
+  // 编辑模式选中元素 → 一键带到对话（不必先进批注模式）。复用 comment→chat 的同一 quote 注入，
+  // 但源取自 editMode 的 selected（含 oid/tag/text）：把 oid + 硬范围提示带给 AI，用户在 composer
+  // 里补充「怎么改」后随 turn 发。oid 与 get_artifact / edit_element 同一确定性编号，命中同一元素。
+  const handleAddSelectedToChat = useCallback(() => {
+    const el = selectedRef.current
+    if (!el) return
+    const snippet = el.text?.trim().slice(0, 40)
+    const context = snippet ? `元素「${snippet}」` : `<${el.tag}>`
+    const label = snippet ? `<${el.tag}> · ${snippet}` : `<${el.tag}>`
+    const content =
+      `已选中${context}（oid=${el.oid}）。请只改这一个元素：用 design 工具 ` +
+      `edit_element(oid=${el.oid}, style/text/...) 就地精改，保留其它一切；不确定当前样式先 ` +
+      `get_artifact 读 source。别为这点改动重造整个产物。`
+    enqueueChatQuote({
+      path: `design-element:${el.oid}`,
+      name: label,
+      startLine: 0,
+      endLine: 0,
+      content,
+    })
+    toast.success(t("design.insp.addedToChat", "已加入对话，去补充你的要求"))
+  }, [t, enqueueChatQuote])
+
+  // 右键菜单：任意点击 / 滚动即关（同 MessageList contextMenu 范式）。
+  useEffect(() => {
+    if (!previewCtxMenu) return
+    const close = () => setPreviewCtxMenu(null)
+    document.addEventListener("mousedown", close)
+    document.addEventListener("scroll", close, true)
+    return () => {
+      document.removeEventListener("mousedown", close)
+      document.removeEventListener("scroll", close, true)
+    }
+  }, [previewCtxMenu])
+  // 右键菜单「添加批注」：切到批注模式并以右键选中元素为锚直接开待填钉（锚点取元素中心）。
+  const handleCtxAddComment = useCallback(() => {
+    const el = selectedRef.current
+    if (!el) return
+    setEditMode(false)
+    setCommentMode(true)
+    setPendingPlacement({
+      oid: el.oid != null ? Number(el.oid) : null,
+      relX: 0.5,
+      relY: 0.5,
+      tag: el.tag,
+      snippet: el.text?.trim().slice(0, 60) || undefined,
+    })
+  }, [])
+  // 右键菜单「复制文本」：编辑态右键被接管后补偿原生最常用需求。
+  const handleCtxCopyText = useCallback(() => {
+    const txt = selectedRef.current?.text?.trim()
+    if (!txt) return
+    void navigator.clipboard
+      .writeText(txt)
+      .then(() => toast.success(t("design.ctx.copied", "已复制")))
+      .catch(() => toast.error(t("design.err.load", "加载失败")))
+  }, [t])
+
+  // 批量带到对话（B4-2）：多条批注合成一个 scope-guarded 结构块（编号 + 元素 + 反馈），
+  // 作为单条 quote 塞进 composer——对齐参照 <attached-preview-comments> 的「硬范围」约束。
+  const handleBatchCommentsToChat = useCallback(
+    async (ids: number[]) => {
+      const chosen = ids
+        .map((id) => comments.find((x) => x.id === id))
+        .filter((c): c is (typeof comments)[number] => !!c)
+      if (chosen.length === 0) return
+      // 增量（[8]）：批量取所有锚定 oid 的当前 computedStyle，逐条富化 scope（省模型 get_artifact）。
+      const anchoredOids = chosen.map((c) => c.oid).filter((o): o is number => o != null)
+      const styleMap = anchoredOids.length ? await requestElementStyles(anchoredOids) : {}
+      const lines = chosen
+        .map((c, i) => {
+          const el = c.snippet?.trim()
+            ? `元素「${c.snippet.trim()}」`
+            : c.tag
+              ? `<${c.tag}>`
+              : t("design.comment.title", "批注")
+          // 锚定元素带上 oid + 当前样式，供 AI 对每条用 edit_element(oid) 就地精改。
+          const oidTag = c.oid != null ? `（oid=${c.oid}）` : ""
+          const styleLine = c.oid != null ? formatStyleLine(styleMap[String(c.oid)]) : ""
+          return `${i + 1}. ${el}${oidTag}：${c.body}${styleLine}`
+        })
+        .join("\n")
+      const content =
+        `${t(
+          "design.comment.batchScopeHint",
+          "请仅修改下列被标注的元素，其它保持不变：",
+        )}\n${lines}\n` +
+        `逐条用 design 工具 edit_element(oid, style/text/...) 就地精改，不确定当前样式先 get_artifact 读 source；别重造整个产物。`
+      enqueueChatQuote({
+        path: `design-comments:${ids
+          .slice()
+          .sort((a, b) => a - b)
+          .join("-")}`,
+        name: t("design.comment.batchLabel", "{{count}} 条批注", { count: chosen.length }),
+        startLine: 0,
+        endLine: 0,
+        content,
+      })
+    },
+    [comments, t, enqueueChatQuote, requestElementStyles],
+  )
+
+  // 反-slop 自查复查（B0-2）：recheck 对当前正文重跑自查、dismiss 用户判定无碍强制清标记。
+  const handleReviewArtifact = useCallback(
+    async (action: "recheck" | "dismiss") => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      try {
+        const updated = await tx.call<DesignArtifact>("design_review_artifact_cmd", {
+          artifactId: aid,
+          action,
+        })
+        await openArtifact(updated) // 取全视图（含预览路径）+ 刷新 status/metadata
+        if (activeProjectRef.current) void loadArtifacts(activeProjectRef.current.id)
+        toast.success(
+          action === "dismiss"
+            ? t("design.review.dismissed", "已标记为已复查")
+            : t("design.review.rechecked", "已重新检查"),
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::reviewArtifact", "review failed", e)
+        toast.error(t("design.err.load", "加载失败"))
+      }
+    },
+    [tx, openArtifact, loadArtifacts, t],
+  )
+
+  // 「让 AI 修复」：把当前产物自查发现的问题作为一条针对性指令直接发进设计对话——
+  // Agent 走 get_artifact → edit/restyle 就地修，修完 edit 路径重跑确定性自查自动清徽章，
+  // 无需用户再手动 recheck。面板折叠则缓冲、打开后 flush（见 pendingFixRef effect）。
+  const handleFixWithAgent = useCallback(() => {
+    const art = activeArtifactRef.current
+    if (!art) return
+    const detail =
+      parseSelfCheck(art.metadata)?.detail ??
+      t("design.review.flagged", "自查发现可能的质量问题，建议复查")
+    const prompt = t(
+      "design.review.fixPrompt",
+      "请修复设计自查发现的问题：{{detail}}。用设计系统 token（var(--ds-*)）收敛配色、替换硬编码样式，只做必要的最小改动，保持产物其它内容与整体设计不变。",
+      { detail },
+    )
+    setChatOpen(true)
+    if (chatPanelRef.current) {
+      const sent = chatPanelRef.current.submitPrompt(prompt)
+      if (sent) toast.success(t("design.review.fixStarted", "已让 AI 开始修复"))
+      else toast.error(t("design.review.fixBusy", "对话进行中，请稍候再试"))
+    } else {
+      pendingFixRef.current = prompt
+      toast.success(t("design.review.fixStarted", "已让 AI 开始修复"))
+    }
+  }, [t])
+
+  // 多镜头质量审查（确定性 a11y / 内容 / 语义）：owner 按需跑，弹结果列表。
+  const [reviewFindings, setReviewFindings] = useState<
+    { lens: string; severity: string; message: string }[] | null
+  >(null)
+  const [reviewing, setReviewing] = useState(false)
+  const runQualityReview = useCallback(async () => {
+    const aid = activeArtifactRef.current?.id
+    if (!aid || reviewing) return
+    setReviewing(true)
+    try {
+      const f = await tx.call<{ lens: string; severity: string; message: string }[]>(
+        "review_design_artifact_cmd",
+        { id: aid },
+      )
+      setReviewFindings(Array.isArray(f) ? f : [])
+    } catch (e) {
+      logger.error("design", "DesignView::qualityReview", "review failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+    } finally {
+      setReviewing(false)
+    }
+  }, [tx, reviewing, t])
+
+  // 页面级样式（body 背景/文字色/最大宽度）：与 oid 元素微调正交，落 CSS 标记块 + 重渲染。
+  const [pageStyleOpen, setPageStyleOpen] = useState(false)
+  const [psBackground, setPsBackground] = useState("")
+  const [psColor, setPsColor] = useState("")
+  const [psMaxWidth, setPsMaxWidth] = useState("")
+  const [psSaving, setPsSaving] = useState(false)
+  const savePageStyle = useCallback(async () => {
+    const aid = activeArtifactRef.current?.id
+    if (!aid || psSaving) return
+    // 生成中不改（review MEDIUM：bump 版本号会与 finalize 撞 UNIQUE 卡死生成）；后端亦 fail-closed 兜底。
+    if (activeArtifactRef.current?.status === "generating") return
+    setPsSaving(true)
+    try {
+      const props: Record<string, string> = {}
+      if (psBackground.trim()) props["background"] = psBackground.trim()
+      if (psColor.trim()) props["color"] = psColor.trim()
+      if (psMaxWidth.trim()) props["max-width"] = psMaxWidth.trim()
+      // 空值属性会被后端移除；全空 = 清除页面样式块。
+      await tx.call("patch_design_page_style_cmd", { id: aid, props })
+      setPageStyleOpen(false)
+      toast.success(t("design.pageStyle.saved", "已应用页面样式"))
+    } catch (e) {
+      logger.error("design", "DesignView::pageStyle", "save failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+    } finally {
+      setPsSaving(false)
+    }
+  }, [tx, psBackground, psColor, psMaxWidth, psSaving, t])
+
+  // RTL 切换：翻转产物文本方向（存 metadata.dir + 后端重渲染，design:reload 刷新预览）。
+  const toggleRtl = useCallback(async () => {
+    const a = activeArtifactRef.current
+    if (!a || a.status === "generating") return // 生成中不改（review），后端亦 fail-closed
+    const next = !parseIsRtl(a.metadata)
+    try {
+      const updated = await tx.call<DesignArtifact>("set_design_artifact_dir_cmd", {
+        id: a.id,
+        rtl: next,
+      })
+      await openArtifact(updated)
+      toast.success(
+        next
+          ? t("design.rtl.on", "已切换为从右到左（RTL）")
+          : t("design.rtl.off", "已切换为从左到右（LTR）"),
+      )
+    } catch (e) {
+      logger.error("design", "DesignView::toggleRtl", "set dir failed", e)
+      toast.error(t("design.err.load", "加载失败"))
+    }
+  }, [tx, openArtifact, t])
+
+  // 回灌对话：让 AI 按批注精修产物（一键快捷路径）。design-space 原生——产物就地更新新版本、
+  // 无需切走；`design:reload` 事件自动刷新预览。
+  const handleSendCommentToChat = useCallback(
+    async (id: number) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid) return
+      const p = tx.call("design_comment_refine_cmd", { artifactId: aid, commentId: id })
+      toast.promise(p, {
+        loading: t("design.comment.refining", "AI 正在按批注精修…"),
+        success: t("design.comment.refined", "已按批注精修，查看新版本"),
+        error: (e: unknown) =>
+          e instanceof Error ? e.message : t("design.comment.refineFailed", "精修失败"),
+      })
+      try {
+        await p
+        await refreshView()
+        // 精修成功后后端已自动 resolve 该批注（W3-J）→ **重载批注**让面板即时反映已解决态（review：
+        // 否则面板仍显示未解决、用户可能对同一条反复精修）。与其它批注写操作一致。
+        await loadComments()
+      } catch (e) {
+        logger.error("design", "DesignView::refineComment", "refine failed", e)
+      }
+    },
+    [tx, t, refreshView, loadComments],
+  )
+
+  // 载入 / 清空批注：进批注模式或切产物时拉取；退出清空。
+  useEffect(() => {
+    if (commentMode && activeArtifactRef.current) void loadComments()
+    else setComments([])
+    setPendingPlacement(null)
+  }, [commentMode, activeArtifact?.id, loadComments])
+
+  // 同步批注模式 + 数据到 iframe（钉由 bridge 渲染）。
+  useEffect(() => {
+    postToIframe({ type: "ds_comment_mode", on: commentMode })
+  }, [commentMode, postToIframe])
+  useEffect(() => {
+    if (commentMode) postToIframe({ type: "ds_comments_set", comments })
+  }, [comments, commentMode, postToIframe])
+  // 待填钉解析（保存 / 取消 / 复位任一路径 → pendingPlacement 归 null）时，撤掉 bridge 里
+  // 当前待填元素的持久高亮。统一走此处，覆盖全部清空点（切元素时 bridge 自身已换高亮，不受影响）。
+  useEffect(() => {
+    if (!pendingPlacement) postToIframe({ type: "ds_comment_pending_clear" })
+  }, [pendingPlacement, postToIframe])
+  // 打开产物时**自愈渲染版本**：inspector bridge 等编辑工具层升级后，老产物 index.html 仍烧着
+  // 旧 bridge（bridge 烧死在渲染产物里）。静默用当前 renderer 重渲染（内容不变、不新增版本），
+  // 重渲染了就 bump previewKey 重载 iframe。对 ready / needs_review 态都跑——与后端
+  // ensure_artifact_render_fresh 放行集一致（needs_review 产物同样有 bridge、可微调，此前前端只放
+  // ready 致 slop 标记产物永不自愈老 bridge，工具层修复对它们不生效）；id / status 变化各触发一次。
+  useEffect(() => {
+    const art = activeArtifactRef.current
+    if (!art || (art.status !== "ready" && art.status !== "needs_review")) return
+    let cancelled = false
+    void tx
+      .call<boolean>("ensure_design_artifact_fresh_cmd", { id: art.id })
+      .then((rerendered) => {
+        if (!cancelled && rerendered) setPreviewKey((k) => k + 1)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [activeArtifactId, activeArtifact?.status, tx])
+
+  // Receive selection from the iframe bridge + stream-host ready handshake.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      // 只信任来自预览 iframe 自身的消息——沙盒（allow-scripts）里 AI 生成/可能被注入的脚本能向
+      // parent postMessage，而 host 会据此回写产物源（ds_text_commit 等）。校验 e.source 收窄面。
+      // 收窄来源：预览 iframe 或演示态 iframe（deck 演示导航需接收演示 iframe 的 slide 状态）。
+      if (
+        e.source !== iframeRef.current?.contentWindow &&
+        e.source !== presentIframeRef.current?.contentWindow
+      )
+        return
+      const d = e.data as {
+        type?: string
+        payload?: DesignSelectedElement
+        oid?: number | string
+        text?: string
+        id?: number
+        relX?: number
+        relY?: number
+        tag?: string
+        snippet?: string
+        x?: number
+        y?: number
+        deltaY?: number
+        deltaMode?: number
+        active?: number
+        count?: number
+        members?: { oid: number; tag: string; snippet: string; relX: number; relY: number }[]
+        styles?: Record<string, Record<string, string>>
+        // span 直属文本节点就地编辑（决策4A）：childNode 下标 + 编辑前原文（撤销栈用）。
+        nodeIndex?: number
+        before?: string
+        // 预览外链新窗口打开（W4）。
+        href?: string
+      }
+      // 画框批注视口度量回传（B4-1，跨源；resolve 对应 requestViewportMetrics 的 promise）。
+      if (d?.type === "ds_viewport_result" && typeof d.id === "number") {
+        viewportReqRef.current.get(d.id)?.(e.data as ViewportMetrics)
+        return
+      }
+      // 涂画命中的 oid 成员回传（resolve 对应 requestDrawHits 的 promise）。
+      if (d?.type === "ds_draw_hit_result" && typeof d.id === "number") {
+        drawHitReqRef.current.get(d.id)?.(
+          Array.isArray(d.members) ? (d.members as DrawMember[]) : [],
+        )
+        return
+      }
+      // 批注 oid 的当前 computedStyle 回传（resolve 对应 requestElementStyles 的 promise）。
+      if (d?.type === "ds_style_query_result" && typeof d.id === "number") {
+        styleReqRef.current.get(d.id)?.((d.styles as Record<string, Record<string, string>>) ?? {})
+        return
+      }
+      if (d?.type === "ds_selected" && d.payload) {
+        setSelected(d.payload)
+        // iframe 内点击不冒泡到父 document（关菜单的 mousedown 监听收不到）——改点/改选元素时
+        // 在此关右键菜单。右键流不受影响：bridge 先发本消息再发 ds_context_menu，同批后者重开。
+        setPreviewCtxMenu(null)
+      }
+      // 点空白 / iframe 内 Escape 取消选中（P1-E）：清宿主选中态 + 关右键菜单。
+      else if (d?.type === "ds_selection_cleared") {
+        setSelected(null)
+        setPreviewCtxMenu(null)
+      }
+      // iframe 聚焦时 Delete/Backspace 删选中元素（P1-E）：走宿主确定性 remove + 撤销栈。
+      else if (d?.type === "ds_request_delete" && d.oid != null && editModeRef.current) {
+        void handleDeleteElement()
+      }
+      // iframe 聚焦 + 无选中时 Escape 请求退出编辑模式（P1-E review：跨源 iframe 令宿主收不到该 Escape）。
+      else if (d?.type === "ds_request_exit_edit") {
+        setEditMode(false)
+        setCommentMode(false)
+        setDrawMode(false)
+      }
+      // 预览里点外链 → 新窗口打开（W4：iframe 被 sandbox 拦 window.open，故请宿主开，避免导航走丢设计）。
+      else if (d?.type === "ds_open_external" && typeof d.href === "string") {
+        if (/^https?:\/\//i.test(d.href)) window.open(d.href, "_blank", "noopener,noreferrer")
+      }
+      // 编辑态右键菜单：bridge 先发 ds_selected 选中元素、再发本消息带 iframe 内坐标；
+      // 换算 = iframe 屏上位置 + 坐标 × 当前预览缩放，再钳进窗口防溢出。
+      else if (d?.type === "ds_context_menu" && editModeRef.current) {
+        const rect = iframeRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const s = previewScaleRef.current
+        setPreviewCtxMenu({
+          x: Math.max(8, Math.min(rect.left + Number(d.x ?? 0) * s, window.innerWidth - 184)),
+          y: Math.max(8, Math.min(rect.top + Number(d.y ?? 0) * s, window.innerHeight - 200)),
+        })
+      }
+      // 就地文本编辑提交：双击叶子元素改文案 → 走同一确定性回写（apply_text_patch +
+      // expectedHash）。仅编辑态受理；oid 直接来自被编辑元素。
+      else if (d?.type === "ds_text_commit" && d.oid != null && editModeRef.current) {
+        const text = String(d.text ?? "")
+        // 就地改文案进撤销栈（P0-A：此前直提交绕过 pushHistory，Cmd+Z 反而回退更早的样式改动）。
+        // 渲染器先发 ds_text_commit 再发携新文本的 ds_selected，故此刻 selected.text 仍是**原文**。
+        const sel = selectedRef.current
+        if (sel && Number(sel.oid) === Number(d.oid)) {
+          pushHistoryRef.current({
+            oid: Number(d.oid),
+            before: { text: sel.text ?? "" },
+            after: { text },
+          })
+        }
+        void commitPatch({ oid: Number(d.oid), text })
+      }
+      // span 直属文本节点就地改（决策4A）：改非叶子元素某 childNode 的裸文本、保留内部子树。
+      else if (
+        d?.type === "ds_text_node_commit" &&
+        d.oid != null &&
+        d.nodeIndex != null &&
+        editModeRef.current
+      ) {
+        const index = Number(d.nodeIndex)
+        const text = String(d.text ?? "")
+        const before = d.before != null ? String(d.before) : undefined
+        if (before != null) {
+          pushHistoryRef.current({
+            oid: Number(d.oid),
+            before: { textNode: { index, text: before } },
+            after: { textNode: { index, text } },
+          })
+        }
+        void commitPatch({ oid: Number(d.oid), textNode: { index, text } })
+      }
+      // 批注模式点选元素落钉 → 开新钉待填表单（正文在面板里填）。
+      else if (d?.type === "ds_comment_place" && commentModeRef.current) {
+        setPendingPlacement({
+          oid: d.oid != null ? Number(d.oid) : null,
+          relX: Number(d.relX ?? 0.5),
+          relY: Number(d.relY ?? 0.5),
+          tag: d.tag,
+          snippet: d.snippet,
+        })
+      }
+      // 套选（Wave 2-⑪）：命中多个成员 → 一条批注锚到首成员、pin 落质心，snippet 汇总成员
+      //（成员 tag/文本随批注带给 AI = 定向多元素范围约束）。
+      else if (d?.type === "ds_lasso_place" && commentModeRef.current && Array.isArray(d.members)) {
+        const members = d.members as {
+          oid: number
+          tag: string
+          snippet: string
+          relX: number
+          relY: number
+        }[]
+        if (members.length === 0) return
+        const first = members[0]
+        // snippet 取首成员**真实文本**（保 resolveEl 文本软着陆，review LOW）；成员汇总在保存时
+        // 写进批注正文带给 AI（见 handleCreateComment）。
+        setPendingPlacement({
+          oid: first.oid,
+          relX: Number(first.relX ?? 0.5),
+          relY: Number(first.relY ?? 0.5),
+          tag: first.tag,
+          snippet: first.snippet,
+          members: members.map((m) => ({ oid: m.oid, tag: m.tag, snippet: m.snippet })),
+        })
+      }
+      // 拖拽钉 → 重锚到落点元素（确定性回写 rel 位 + oid）。
+      else if (d?.type === "ds_comment_relocate" && d.id != null && commentModeRef.current) {
+        void handleRelocateComment(
+          d.id,
+          d.oid != null ? Number(d.oid) : null,
+          Number(d.relX ?? 0.5),
+          Number(d.relY ?? 0.5),
+        )
+      }
+      // 点击预览里已有的钉（未拖动）→ 展开批注面板并滚动/高亮该条进入编辑（B0-3，此前死接线）。
+      else if (d?.type === "ds_comment_click" && d.id != null) {
+        setCommentMode(true)
+        setFocusCommentId(Number(d.id))
+      }
+      // Deck slide 状态上报（Wave 2-⑧）：宿主据此渲染页码/翻页按钮、演示保温。
+      else if (d?.type === "ds_slide_state" && typeof d.active === "number") {
+        setDeckState({ active: d.active, count: Number(d.count ?? 1) })
+      }
+      // 滚动保温（Wave 2-⑥）：桥持续上报滚动位置，按当前产物存最新值；重载 onLoad 后回写，
+      // 使每轮改稿 / 换系统 / 定稿 swap 不再被打回顶部。返回产物也恢复上次滚动位置。
+      else if (d?.type === "ds_scroll") {
+        // iframe 内滚动不触发父层 scroll 监听且菜单锚点随内容滚走——开着就关（null→null 会被
+        // React bail-out，持续滚动上报无重渲染开销）。
+        setPreviewCtxMenu(null)
+        // 重载在途（previewLoading）时丢弃上报：换产物瞬间旧文档的晚到滚动（iframe 复用同一
+        // contentWindow，源守卫拦不住）可能被记到新产物名下（review LOW）。载完再记正常滚动。
+        const aid = activeArtifactRef.current?.id
+        if (aid && !previewLoadingRef.current)
+          previewScrollRef.current.set(aid, { x: Number(d.x ?? 0), y: Number(d.y ?? 0) })
+      }
+      // 手势缩放（B4 增补）：iframe 内捏合 / Ctrl·⌘+滚轮由桥转发（跨源 wheel 不冒泡到父层），
+      // 父层据此连续驱动 CSS scale。桥侧已 preventDefault 掉 iframe 文档自身的整页缩放。
+      else if (d?.type === "ds_zoom") {
+        applyZoomDeltaRef.current(Number(d.deltaY ?? 0), Number(d.deltaMode ?? 0))
+      }
+      // 流式占位页加载完毕 → 补投最新快照（deltas 可能早于 iframe onload 到达）。
+      else if (d?.type === "ds_stream_ready") {
+        const snap = streamSnapshotRef.current
+        if (snap && snap.artifactId === activeArtifactRef.current?.id) {
+          postToIframe({ type: "ds_stream_css", css: snap.css })
+          postToIframe({ type: "ds_stream_body", html: snap.bodyHtml })
+        }
+      }
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [postToIframe, commitPatch, handleRelocateComment, t])
+
+  // Toggle bridge activation with edit mode. 画框批注（父层叠层）需 iframe bridge 关闭，避免
+  // 底层 iframe 抢事件 / 出选中框——drawMode 期间强制 ds_deactivate（editMode 已被三态互斥关掉）。
+  useEffect(() => {
+    postToIframe({ type: editMode && !drawMode ? "ds_activate" : "ds_deactivate" })
+    if (!editMode) {
+      setSelected(null)
+      setPreviewCtxMenu(null)
+    }
+  }, [editMode, drawMode, postToIframe])
+
+  // Reset edit state when switching artifacts.
+  useEffect(() => {
+    setEditMode(false)
+    setSelected(null)
+    setCommentMode(false)
+    setDrawMode(false)
+    setDeckState(null) // Wave 2-⑧：切产物先清 deck 页码，等新 deck 桥上报（避免残留旧计数）
+  }, [activeArtifact?.id])
+
+  // Re-arm bridge + restore selection after an iframe (re)mount.
+  const handleIframeLoad = useCallback(() => {
+    setPreviewLoading(false) // 新帧就绪 → 撤 spinner 叠层（Wave 2-⑥）
+    setPreviewCtxMenu(null) // 重载后旧菜单挂在已失效元素上，关掉
+    if (editModeRef.current) postToIframe({ type: "ds_activate" })
+    const oid = selectedRef.current?.oid
+    if (oid != null) postToIframe({ type: "ds_reselect", oid })
+    // 重挂后重发批注模式 + 钉数据（bridge 是全新实例）。
+    if (commentModeRef.current) {
+      postToIframe({ type: "ds_comment_mode", on: true })
+      postToIframe({ type: "ds_comments_set", comments: commentsRef.current })
+    }
+    // 滚动保温（Wave 2-⑥）：回写该产物重载前 / 上次的滚动位置（无记录=保持顶部）。
+    // 延一帧确保桥已就绪接收；新产物首开无记录故天然停在顶部。
+    const aid = activeArtifactRef.current?.id
+    const saved = aid ? previewScrollRef.current.get(aid) : undefined
+    if (saved && (saved.x || saved.y)) {
+      requestAnimationFrame(() => postToIframe({ type: "ds_scroll_to", x: saved.x, y: saved.y }))
+    }
+  }, [postToIframe])
+
+  // ── Export (D3): HTML/MD/ZIP（后端）+ PNG/PDF/PPTX/MP4（客户端栅格化） ──
+  type ExportFormat =
+    | "html"
+    | "md"
+    | "zip"
+    | "handoff"
+    | "png"
+    | "pdf"
+    | "pptx"
+    | "pptx-outline"
+    | "video"
+  const [exporting, setExporting] = useState<null | ExportFormat>(null)
+
+  // 导出强路依赖门：MP4 需 ffmpeg 编码器、PDF/PNG 需浏览器引擎。未就绪时弹门让用户主动选
+  // （下载依赖 / 引导安装 / 用较低保真客户端栅格化），不静默降级。ffmpeg 与 browser 共用一个门。
+  type DepStatus = {
+    ready: boolean
+    source: string
+    binaryPath: string | null
+    canAutoInstall: boolean
+  }
+  type ExportDep = "ffmpeg" | "browser"
+  const [exportGate, setExportGate] = useState<{
+    dep: ExportDep
+    status: DepStatus
+    base: string
+    html: string
+    format: ExportFormat
+  } | null>(null)
+  const [gateInstalling, setGateInstalling] = useState(false)
+  const [gateProgress, setGateProgress] = useState<number | null>(null)
+  // 图片导出就地选项（W3-L）：格式 PNG/JPEG + 倍率 1/2/3x。默认 PNG·2x（retina）。
+  const [imgExportOpen, setImgExportOpen] = useState(false)
+  const [imgExportFormat, setImgExportFormat] = useState<"png" | "jpeg">("png")
+  const [imgExportScale, setImgExportScale] = useState(2)
+  const handleExport = useCallback(
+    async (
+      format: ExportFormat,
+      // 显式图片选项（就地弹窗给的 格式/倍率）：仅 `png` 格式消费。传入即走客户端栅格化
+      // （html2canvas 支持 PNG/JPEG + 任意倍率），跳过只出默认 PNG 的原生强路。缺省=沿用旧行为。
+      imageOpts?: { format: "png" | "jpeg"; scale: number },
+    ) => {
+      if (!activeArtifact || exporting) return
+      setExporting(format)
+      // Text/backend formats are quick; rasterized ones can take seconds → live toast.
+      const quick = format === "html" || format === "md"
+      const toastId = quick ? undefined : toast.loading(t("design.exporting", "正在导出…"))
+      const onProgress =
+        toastId !== undefined
+          ? (done: number, total: number) => {
+              if (total > 1) {
+                toast.loading(
+                  t("design.exportProgressSlide", "正在导出 {{done}}/{{total}}", { done, total }),
+                  { id: toastId },
+                )
+              }
+            }
+          : undefined
+      try {
+        const base = safeFilename(activeArtifact.title)
+        // 统一保存出口：桌面弹原生「保存到…」框（记住上次目录）+ 存后可「在文件夹中显示」；
+        // 网页走 File System Access 选目录、否则回退浏览器下载。取消保存框 = 静默关 loading。
+        const save = async (blob: Blob, name: string) =>
+          presentSaveResult(await tx.saveFileAs(blob, name), tx, t, { toastId })
+        // Text formats (HTML / Markdown) — backend returns the content directly.
+        if (format === "html" || format === "md") {
+          const fmt = format === "md" ? "markdown" : "html"
+          const res = await tx.call<{ filename: string; mime: string; content: string }>(
+            "export_design_artifact_cmd",
+            { id: activeArtifact.id, format: fmt },
+          )
+          if (!res) return
+          await save(
+            new Blob([res.content], { type: res.mime }),
+            res.filename || `${base}.${format}`,
+          )
+          return
+        }
+        // ZIP — backend assembles a source bundle (base64).
+        if (format === "zip") {
+          const res = await tx.call<{ zip: string }>("export_design_zip_cmd", {
+            artifactId: activeArtifact.id,
+          })
+          if (!res?.zip) return
+          await save(base64ToBlob(res.zip, "application/zip"), `${base}.zip`)
+          return
+        }
+        // Handoff — 代码交付包（index.html + source/ + 多平台 tokens/ + HANDOFF.md，base64 zip）。
+        if (format === "handoff") {
+          const res = await tx.call<{ filename: string; mime: string; content: string }>(
+            "export_design_handoff_cmd",
+            { id: activeArtifact.id },
+          )
+          if (!res?.content) return
+          await save(
+            base64ToBlob(res.content, res.mime || "application/zip"),
+            res.filename || `${base}-handoff.zip`,
+          )
+          return
+        }
+        // Rasterized formats (PNG/PDF/PPTX/MP4) need the clean self-contained HTML.
+        const res = await tx.call<{ filename: string; mime: string; content: string }>(
+          "export_design_artifact_cmd",
+          { id: activeArtifact.id, format: "html" },
+        )
+        if (!res) return
+        const kind = activeArtifact.kind
+        const vw = activeArtifact.viewportW
+        // Clarity/quality from config (undefined → export defaults 2x / q92).
+        const exportOpts = {
+          scale: designConfig?.exportScale,
+          jpegQuality: designConfig?.exportJpegQuality,
+          onProgress,
+        }
+        // 栅格化分支只负责**产出字节**（native 强路失败才回退客户端）；保存放到分支之后统一
+        // 走一次 save()——否则把 save() 塞进 native try 里，一次真实的写盘失败会被「native
+        // 引擎失败→客户端回退」的 catch 误吞，白白重跑一遍昂贵的客户端重渲染 + 再弹一次保存框
+        // （review MED）。保存失败落到外层 catch = 正确的「导出失败」。
+        let out: { blob: Blob; name: string } | null = null
+        if (format === "png" && imageOpts) {
+          // 用户在就地弹窗显式选了格式/倍率 → 客户端栅格化按选项产字节（native 只出默认 PNG，
+          // 无法表达 JPEG/自定义倍率），不走浏览器强路故无需预检引擎。
+          const blob = await exportPng(res.content, kind, vw, {
+            scale: imageOpts.scale,
+            format: imageOpts.format,
+            jpegQuality: designConfig?.exportJpegQuality,
+            onProgress,
+          })
+          out = { blob, name: `${base}.${imageOpts.format === "jpeg" ? "jpg" : "png"}` }
+        } else if (format === "png" || format === "pdf") {
+          // PDF/PNG 强路 = 真实浏览器原生捕获（PDF 矢量可选文字 / PNG 全保真）。先预检浏览器
+          // 引擎：未就绪则弹门让用户主动选（下载 Chromium runtime / 引导 / 用较低保真客户端）。
+          const doc = await tx.call<DepStatus>("design_browser_doctor_cmd").catch(() => null)
+          if (doc && !doc.ready) {
+            setExportGate({ dep: "browser", status: doc, base, html: res.content, format })
+            if (toastId !== undefined) toast.dismiss(toastId)
+            return
+          }
+          try {
+            const nat = await tx.call<{ data: string; mime: string }>("export_design_native_cmd", {
+              id: activeArtifact.id,
+              format,
+            })
+            out = { blob: base64ToBlob(nat.data, nat.mime), name: `${base}.${format}` }
+          } catch (e) {
+            logger.error(
+              "design",
+              "DesignView::handleExport",
+              `native ${format} failed after ready engine, using client fallback`,
+              e,
+            )
+            const blob =
+              format === "png"
+                ? await exportPng(res.content, kind, vw, exportOpts)
+                : await exportPdf(res.content, kind, vw, exportOpts)
+            out = { blob, name: `${base}.${format}` }
+          }
+        } else if (format === "pptx") {
+          out = {
+            blob: await exportPptx(res.content, kind, activeArtifact.title, vw, exportOpts),
+            name: `${base}.pptx`,
+          }
+        } else if (format === "pptx-outline") {
+          // 结构化可编辑文本：服务端从 deck HTML 抽大纲组装 pptx（非栅格化）。
+          const r = await tx.call<{ pptx: string }>("export_design_pptx_outline_cmd", {
+            artifactId: activeArtifact.id,
+          })
+          const bin = atob(r.pptx)
+          const arr = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+          out = {
+            blob: new Blob([arr], {
+              type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            }),
+            name: `${base}.pptx`,
+          }
+        } else if (format === "video") {
+          // MP4 强路 = 真实浏览器逐帧渲染 + ffmpeg 编码，**两个依赖都要**（ffmpeg 编码器 + 浏览器
+          // 引擎）。两个都预检，任一未就绪即弹门让用户主动选，不静默降级（缺浏览器时若只检
+          // ffmpeg 会在 acquire_backend 处失败后静默回退低保真 WebCodecs）。
+          const [ffdoc, brdoc] = await Promise.all([
+            tx.call<DepStatus>("design_ffmpeg_doctor_cmd").catch(() => null),
+            tx.call<DepStatus>("design_browser_doctor_cmd").catch(() => null),
+          ])
+          if (ffdoc && !ffdoc.ready) {
+            setExportGate({
+              dep: "ffmpeg",
+              status: ffdoc,
+              base,
+              html: res.content,
+              format: "video",
+            })
+            if (toastId !== undefined) toast.dismiss(toastId)
+            return
+          }
+          if (brdoc && !brdoc.ready) {
+            setExportGate({
+              dep: "browser",
+              status: brdoc,
+              base,
+              html: res.content,
+              format: "video",
+            })
+            if (toastId !== undefined) toast.dismiss(toastId)
+            return
+          }
+          // 就绪（或探针不可用 → 乐观尝试强路）；强路失败仍回退客户端保证可导出。
+          try {
+            const nat = await tx.call<{ data: string; mime: string }>("export_design_native_cmd", {
+              id: activeArtifact.id,
+              format: "video",
+            })
+            out = { blob: base64ToBlob(nat.data, nat.mime), name: `${base}.mp4` }
+          } catch (e) {
+            logger.error(
+              "design",
+              "DesignView::handleExport",
+              "native video failed after ready ffmpeg, using client WebCodecs fallback",
+              e,
+            )
+            const blob = await exportVideo(res.content, vw, activeArtifact.viewportH, {
+              scale: designConfig?.exportScale,
+              onProgress,
+            })
+            out = { blob, name: `${base}.mp4` }
+          }
+        }
+        // 统一保存出口：产出字节后弹保存框；成功/取消提示由 save()→presentSaveResult 逐路给出
+        // （含桌面 reveal 动作），写盘失败抛到外层 catch → 正确的「导出失败」。
+        if (out) await save(out.blob, out.name)
+      } catch (e) {
+        logger.error("design", "DesignView::handleExport", `export ${format} failed`, e)
+        toast.error(
+          t("design.err.export", "导出失败"),
+          toastId !== undefined ? { id: toastId } : undefined,
+        )
+      } finally {
+        setExporting(null)
+      }
+    },
+    [tx, activeArtifact, exporting, t, designConfig],
+  )
+
+  // 导出门：下载缺失依赖（ffmpeg 编码器 / Chromium runtime）后重试对应强路。
+  // **全程持 `exporting` 锁**（关模态后仍串行）——否则模态关闭到 await 完成的窗口里工具栏导出
+  // 按钮会重新可点，第二次原生导出与本次并发争用全局浏览器单例 → 截错帧 / 关掉对方导出页。
+  const gateDownloadAndRetry = useCallback(async () => {
+    const g = exportGate
+    if (!g || !activeArtifact) return
+    setExporting(g.format)
+    setGateInstalling(true)
+    setGateProgress(null)
+    // 阶段一：装依赖——失败才是真·「依赖下载失败」。
+    try {
+      await tx.call(g.dep === "ffmpeg" ? "design_install_ffmpeg_cmd" : "design_install_browser_cmd")
+    } catch (e) {
+      logger.error("design", "DesignView::gateInstall", `${g.dep} install failed`, e)
+      toast.error(t("design.err.depInstall", "依赖下载失败，请重试或改用较低保真"))
+      setGateInstalling(false)
+      setGateProgress(null)
+      setExporting(null)
+      return
+    }
+    setExportGate(null)
+    setGateInstalling(false)
+    setGateProgress(null)
+    // 阶段二：原生捕获 + 保存——写盘失败 = 「导出失败」并复用 tid 撤 loading（不再误报依赖失败 /
+    // 卡住 loading 转圈，review MED）。取消保存框由 presentSaveResult 撤 tid。
+    const tid = toast.loading(t("design.exporting", "正在导出…"))
+    try {
+      const nat = await tx.call<{ data: string; mime: string }>("export_design_native_cmd", {
+        id: activeArtifact.id,
+        format: g.format === "video" ? "video" : g.format,
+      })
+      const ext = g.format === "video" ? "mp4" : g.format
+      presentSaveResult(
+        await tx.saveFileAs(base64ToBlob(nat.data, nat.mime), `${g.base}.${ext}`),
+        tx,
+        t,
+        { toastId: tid },
+      )
+    } catch (e) {
+      logger.error("design", "DesignView::gateInstall", "native export/save failed", e)
+      toast.error(t("design.err.export", "导出失败"), { id: tid })
+    } finally {
+      setExporting(null)
+    }
+  }, [exportGate, activeArtifact, tx, t])
+
+  // 导出门：用较低保真的客户端栅格化（末位显式可选，非静默默认）。持 `exporting` 锁串行。
+  const gateUseClient = useCallback(async () => {
+    const g = exportGate
+    if (!g || !activeArtifact) return
+    setExporting(g.format)
+    setExportGate(null)
+    const tid = toast.loading(t("design.exporting", "正在导出…"))
+    const opts = { scale: designConfig?.exportScale, jpegQuality: designConfig?.exportJpegQuality }
+    const save = async (blob: Blob, name: string) =>
+      presentSaveResult(await tx.saveFileAs(blob, name), tx, t, { toastId: tid })
+    try {
+      if (g.format === "video") {
+        await save(
+          await exportVideo(g.html, activeArtifact.viewportW, activeArtifact.viewportH, {
+            scale: designConfig?.exportScale,
+          }),
+          `${g.base}.mp4`,
+        )
+      } else if (g.format === "png") {
+        await save(
+          await exportPng(g.html, activeArtifact.kind, activeArtifact.viewportW, opts),
+          `${g.base}.png`,
+        )
+      } else if (g.format === "pdf") {
+        await save(
+          await exportPdf(g.html, activeArtifact.kind, activeArtifact.viewportW, opts),
+          `${g.base}.pdf`,
+        )
+      }
+    } catch (e) {
+      logger.error("design", "DesignView::gateClient", "client export failed", e)
+      toast.error(t("design.err.export", "导出失败"), { id: tid })
+    } finally {
+      setExporting(null)
+    }
+  }, [exportGate, activeArtifact, designConfig, tx, t])
+
+  // 依赖下载进度（ffmpeg 与 Chromium 各自的 emit 通道）。
+  useEffect(() => {
+    const onProg = (raw: unknown) => {
+      const p = parsePayload<{ stage?: string; percent?: number }>(raw)
+      if (p?.stage === "ready") setGateProgress(100)
+      else if (p?.stage === "downloading")
+        setGateProgress(typeof p.percent === "number" ? p.percent : null)
+    }
+    const offs = [
+      tx.listen("design:ffmpeg_download_progress", onProg),
+      tx.listen("browser:chromium_download_progress", onProg),
+    ]
+    return () => offs.forEach((f) => f())
+  }, [tx])
+
+  // 项目级 ZIP：打包该项目全部产物（每产物一目录 + 根 index.html 画廊）。
+  const [exportingProject, setExportingProject] = useState(false)
+  const exportProject = useCallback(async () => {
+    if (!activeProject || exportingProject) return
+    setExportingProject(true)
+    const toastId = toast.loading(t("design.exporting", "正在导出…"))
+    try {
+      const res = await tx.call<{ zip: string }>("export_design_zip_cmd", {
+        projectId: activeProject.id,
+      })
+      if (!res?.zip) return
+      presentSaveResult(
+        await tx.saveFileAs(
+          base64ToBlob(res.zip, "application/zip"),
+          `${safeFilename(activeProject.title)}.zip`,
+        ),
+        tx,
+        t,
+        { toastId },
+      )
+    } catch (e) {
+      logger.error("design", "DesignView::exportProject", "export project failed", e)
+      toast.error(t("design.err.export", "导出失败"), { id: toastId })
+    } finally {
+      setExportingProject(false)
+    }
+  }, [tx, activeProject, exportingProject, t])
+
+  // 批量导出选中产物为一个 ZIP（Wave 1-③）：一次栅格 / 一个保存框，避免 N 个下载对话框。
+  const batchExportArtifacts = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return
+      const toastId = toast.loading(t("design.exporting", "正在导出…"))
+      try {
+        const res = await tx.call<{ zip: string }>("export_design_selected_zip_cmd", {
+          artifactIds: ids,
+        })
+        if (!res?.zip) return
+        const base = activeProject ? safeFilename(activeProject.title) : "design"
+        presentSaveResult(
+          await tx.saveFileAs(
+            base64ToBlob(res.zip, "application/zip"),
+            `${base}-${ids.length}.zip`,
+          ),
+          tx,
+          t,
+          { toastId },
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::batchExport", "batch export failed", e)
+        toast.error(t("design.err.export", "导出失败"), { id: toastId })
+      }
+    },
+    [tx, activeProject, t],
+  )
+
+  // 产物取出（B3-2，仅桌面）：复制产物目录路径 / 在 Finder 打开。远端无本机路径故不显示。
+  const copyArtifactPath = useCallback(async () => {
+    const path = activeArtifactRef.current?.artifactPath
+    if (!path) return
+    try {
+      await navigator.clipboard.writeText(path)
+      toast.success(t("design.ok.pathCopied", "已复制路径"))
+    } catch (e) {
+      logger.error("design", "DesignView::copyArtifactPath", "copy path failed", e)
+    }
+  }, [t])
+  const revealArtifact = useCallback(async () => {
+    const path = activeArtifactRef.current?.artifactPath
+    if (!path) return
+    try {
+      await tx.openFilePath(path)
+    } catch (e) {
+      logger.error("design", "DesignView::revealArtifact", "reveal failed", e)
+      toast.error(t("design.err.reveal", "打开失败"))
+    }
+  }, [tx, t])
+
+  // 分享（B7-1）：HTTP/server 模式 = 建只读分享链接（公开 token 快照）+ 复制；
+  // 桌面（无公开 server）= 直接导出干净自包含 HTML 供发送（拍板的降级路径）。
+  const [sharing, setSharing] = useState(false)
+  const [deployOpen, setDeployOpen] = useState(false) // B7-2 CF 部署对话框
+  const [inpaintOpen, setInpaintOpen] = useState(false) // 蒙版局部重绘（image 形态）
+  // 品牌包形态自选弹窗（默认 落地页+演示+海报，可自选）。
+  const [brandPackOpen, setBrandPackOpen] = useState(false)
+  const [brandPackKinds, setBrandPackKinds] = useState<Set<ArtifactKind>>(
+    () => new Set<ArtifactKind>(["web", "deck", "poster"]),
+  )
+  // 分享面板（Wave 1-②，仅 server 模式）：点击 toggle，外点关闭。
+  const [shareOpen, setShareOpen] = useState(false)
+  const shareRef = useRef<HTMLDivElement>(null)
+  useClickOutside(
+    shareRef,
+    useCallback(() => setShareOpen(false), []),
+  )
+  // 停止在途流式生成（P0-C）：中断白流 + 后端降级为可读占位（非删产物），刷新反映。
+  const handleStopGeneration = useCallback(async () => {
+    const a = activeArtifactRef.current
+    if (!a) return
+    try {
+      await tx.call("cancel_design_generation_cmd", { id: a.id })
+      streamRef.current = null
+      streamSnapshotRef.current = null
+      await refreshView()
+      setPreviewKey((k) => k + 1)
+      toast.success(t("design.stopGenerationDone", "已停止生成"))
+    } catch (e) {
+      logger.error("design", "DesignView::handleStopGeneration", "cancel failed", e)
+    }
+  }, [tx, refreshView, t])
+  // 复制图片到剪贴板（W3-L）：别家一键就有、我们此前完全没有（导出→选位置→找文件→拖入四步）。
+  // 优先 native 高保真捕获，浏览器依赖未就绪则客户端栅格化兜底；写 ClipboardItem（Tauri/HTTP 通用）。
+  const handleCopyImage = useCallback(async () => {
+    const a = activeArtifactRef.current
+    if (!a || (a.status !== "ready" && a.status !== "needs_review")) return
+    const tid = toast.loading(t("design.copyImage.working", "正在复制图片…"))
+    // WebKit（桌面 WKWebView）要求 clipboard.write 在用户手势内**同步**发起——故把 blob 以 Promise 传给
+    // ClipboardItem（WebKit 保留手势激活直到 Promise resolve），而非 await 出 blob 后再 write（review
+    // MEDIUM：await 后手势失效被拒、主平台不可用）。write 前无 await。
+    const blobPromise: Promise<Blob> = (async () => {
+      try {
+        const nat = await tx.call<{ data: string; mime: string }>("export_design_native_cmd", {
+          id: a.id,
+          format: "png",
+        })
+        return base64ToBlob(nat.data, "image/png")
+      } catch {
+        const res = await tx.call<{ content: string }>("export_design_artifact_cmd", {
+          id: a.id,
+          format: "html",
+        })
+        return exportPng(res.content, a.kind as ArtifactKind, a.viewportW, {
+          scale: designConfig?.exportScale ?? 2,
+        })
+      }
+    })()
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blobPromise })])
+      toast.success(t("design.copyImage.done", "已复制图片到剪贴板"), { id: tid })
+    } catch (e) {
+      logger.error("design", "DesignView::handleCopyImage", "copy image failed", e)
+      toast.error(t("design.copyImage.failed", "复制图片失败，可改用导出 PNG"), { id: tid })
+    }
+  }, [tx, t, designConfig])
+  const handleShare = useCallback(async () => {
+    const a = activeArtifactRef.current
+    if (!a || sharing) return
+    setSharing(true)
+    try {
+      if (tx.supportsLocalFileOps()) {
+        // 桌面：导出干净 HTML（自包含，可直接发送 / 托管）。
+        const res = await tx.call<{ filename: string; mime: string; content: string }>(
+          "export_design_artifact_cmd",
+          { id: a.id, format: "html" },
+        )
+        if (res?.content) {
+          // export_artifact("html") 返回**原始 HTML 字符串**（非 base64）——直接建 blob，
+          // 不走 base64ToBlob（其 atob 会在 HTML 字符上抛，review 修复）。
+          presentSaveResult(
+            await tx.saveFileAs(
+              new Blob([res.content], { type: res.mime || "text/html" }),
+              res.filename || `${safeFilename(a.title)}.html`,
+            ),
+            tx,
+            t,
+            { savedMsg: t("design.share.exported", "已导出可分享的 HTML") },
+          )
+        }
+      } else {
+        // server 模式：建/取分享 token → 公开链接（前端由 server 托管故 origin 即公开基址）。
+        const res = await tx.call<{ token: string }>("create_design_share_cmd", {
+          artifactId: a.id,
+        })
+        const url = `${window.location.origin}/api/design/share/${res.token}`
+        try {
+          await navigator.clipboard.writeText(url)
+          toast.success(t("design.share.copied", "已复制只读分享链接"))
+        } catch {
+          toast.success(url) // 剪贴板不可用 → 直接展示链接
+        }
+      }
+    } catch (e) {
+      logger.error("design", "DesignView::handleShare", "share failed", e)
+      toast.error(t("design.share.failed", "分享失败"))
+    } finally {
+      setSharing(false)
+    }
+  }, [tx, t, sharing])
+
+  // ── DESIGN.md 规范：导入 / 导出设计系统（互通格式）──────────────
+  const [importMdOpen, setImportMdOpen] = useState(false)
+  const [importMdName, setImportMdName] = useState("")
+  const [importMdText, setImportMdText] = useState("")
+  const [importingMd, setImportingMd] = useState(false)
+  const runImportDesignMd = useCallback(async () => {
+    if (!importMdText.trim()) return
+    setImportingMd(true)
+    try {
+      const meta = await tx.call<DesignSystemMeta>("import_design_md_cmd", {
+        name: importMdName.trim(),
+        md: importMdText,
+      })
+      await loadSystems()
+      if (activeProject && meta) await setProjectSystem(meta.id)
+      setImportMdOpen(false)
+      setImportMdText("")
+      setImportMdName("")
+      toast.success(t("design.ok.imported", "已导入设计系统"))
+    } catch (e) {
+      logger.error("design", "DesignView::importDesignMd", "import failed", e)
+      toast.error(t("design.err.importMd", "DESIGN.md 导入失败"))
+    } finally {
+      setImportingMd(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tx, importMdName, importMdText, activeProject, t])
+  const exportDesignMd = useCallback(
+    async (systemId: string, name: string) => {
+      try {
+        const res = await tx.call<{ designMd: string }>("export_design_md_cmd", { systemId })
+        if (!res?.designMd) return
+        presentSaveResult(
+          await tx.saveFileAs(
+            new Blob([res.designMd], { type: "text/markdown" }),
+            `${safeFilename(name)}-DESIGN.md`,
+          ),
+          tx,
+          t,
+        )
+      } catch (e) {
+        logger.error("design", "DesignView::exportDesignMd", "export failed", e)
+        toast.error(t("design.err.export", "导出失败"))
+      }
+    },
+    [tx, t],
+  )
+
+  // ── Version history (D1 / B3-3 双栏 live 预览) ────────────────
+  // 列表 / 快照预览 / 溯源 / 恢复确认全在 DesignVersionHistoryModal 内；此处只管开关 + 恢复后刷新。
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const openHistory = useCallback(() => {
+    if (!activeArtifact) return
+    setHistoryOpen(true)
+  }, [activeArtifact])
+  const onVersionRestored = useCallback(() => {
+    setPreviewKey((k) => k + 1)
+    void refreshView() // sync bodyHash/currentVersion so the next visual edit isn't stale
+    if (activeProject) void loadArtifacts(activeProject.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshView, activeProject]) // loadArtifacts/setPreviewKey stable
+
+  // ── 设备视口 (B4-3) + 演示态 (B4-4) ───────────────────────────
+  // per-artifact 记忆（localStorage）：切产物时载回上次的设备选择。
+  useEffect(() => {
+    if (!activeArtifactId) return
+    let saved: string | null = null
+    try {
+      saved = localStorage.getItem(`design:device:${activeArtifactId}`)
+    } catch {
+      /* localStorage 不可用 */
+    }
+    setPreviewDevice(
+      saved === "desktop" || saved === "tablet" || saved === "mobile" ? saved : "auto",
+    )
+  }, [activeArtifactId])
+  const changeDevice = useCallback(
+    (d: PreviewDevice) => {
+      setPreviewDevice(d)
+      if (!activeArtifactId) return
+      try {
+        if (d === "auto") localStorage.removeItem(`design:device:${activeArtifactId}`)
+        else localStorage.setItem(`design:device:${activeArtifactId}`, d)
+      } catch {
+        /* localStorage 不可用 → 仅本次会话生效 */
+      }
+    },
+    [activeArtifactId],
+  )
+  // 测量预览面尺寸（统一渲染的「适应」缩放 + 设备模式都依赖）。useLayoutEffect：paint 前先同步量
+  // 一次，令首帧「适应」即按面板尺寸精确缩放、无 natural→fit 跳一下。用 clientWidth/Height（含 p-4
+  // padding 的盒），frame 里再 `-32` 取内容区。deps 含 showGrid —— 产物墙开关会卸载/重挂预览面，不带
+  // 它则监听绑在旧的已卸载节点、paneSize 停更（切产物才自愈）。
+  useLayoutEffect(() => {
+    const el = previewPaneRef.current
+    if (!el) return
+    const measure = () => setPaneSize({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => measure())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [activeArtifactId, showGrid])
+  // 父层原生 wheel 监听（预览面 padding 区，光标不在 iframe 上时）：Ctrl·⌘+滚轮 = 缩放。
+  // 必须 passive:false 才能 preventDefault 掉 webview 的整页缩放；iframe 上方的手势另由注入桥
+  // 转发 ds_zoom（跨源事件不冒泡到父层）。按产物 id 重挂（面随产物条件渲染）。
+  useEffect(() => {
+    const el = previewPaneRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      applyZoomDeltaRef.current(e.deltaY, e.deltaMode)
+    }
+    el.addEventListener("wheel", onWheel, { passive: false })
+    return () => el.removeEventListener("wheel", onWheel)
+  }, [activeArtifactId, showGrid])
+  // Present（本标签无 chrome）：Escape 退出。
+  useEffect(() => {
+    if (!presentMode) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPresentMode(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [presentMode])
+  // 演讲者备注：随打开产物解析 metadata 同步。
+  useEffect(() => {
+    setPresenterNotes(parsePresenterNotes(activeArtifact?.metadata))
+  }, [activeArtifact?.id, activeArtifact?.metadata])
+  // 演示计时器：进演示归零后每秒 +1。
+  useEffect(() => {
+    if (!presentMode) {
+      setPresentElapsed(0)
+      return
+    }
+    const id = window.setInterval(() => setPresentElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [presentMode])
+  const savePresenterNote = useCallback(
+    (slideIndex: number, text: string) => {
+      const aid = activeArtifactRef.current?.id
+      if (!aid || slideIndex < 0) return
+      setPresenterNotes((prev) => {
+        const next = [...prev]
+        while (next.length <= slideIndex) next.push("")
+        next[slideIndex] = text
+        void tx
+          .call("set_design_presenter_notes_cmd", { artifactId: aid, notes: next })
+          .catch((e) => logger.error("design", "DesignView::presenterNote", "save failed", e))
+        return next
+      })
+    },
+    [tx],
+  )
+  const presentFullscreen = useCallback(() => {
+    const el = previewPaneRef.current
+    if (el?.requestFullscreen) void el.requestFullscreen().catch(() => {})
+  }, [])
+
+  // ── Reverse-extraction (D2) ──────────────────────────────────
+  const [extractOpen, setExtractOpen] = useState(false)
+  const [extractFrom, setExtractFrom] = useState<"brief" | "url" | "codebase" | "image">("brief")
+  const [extractName, setExtractName] = useState("")
+  const [extractText, setExtractText] = useState("")
+  const [extracting, setExtracting] = useState(false)
+  const runExtract = useCallback(async () => {
+    setExtracting(true)
+    try {
+      const input: Record<string, unknown> = {
+        name: extractName.trim() || t("design.extractedSystem", "提取的设计系统"),
+        from: extractFrom,
+      }
+      if (extractFrom === "brief") input.brief = extractText
+      else if (extractFrom === "url") input.url = extractText
+      else input.path = extractText
+      // 图片提取：带上用户选的视觉模型（单模型不降级；空 = 默认链首个视觉候选）。
+      if (extractFrom === "image" && genModel) input.modelOverride = genModel
+      const meta = await tx.call<DesignSystemMeta>("extract_design_system_cmd", { input })
+      setExtractOpen(false)
+      setExtractText("")
+      setExtractName("")
+      await loadSystems()
+      toast.success(t("design.ok.extracted", "已提取设计系统"))
+      // 提取成功自动应用新系统（对齐 picker 选择行为，W3-K）：有产物→就地 restyle，否则设为项目默认。
+      if (meta?.id) {
+        if (activeArtifactRef.current) void restyleActiveArtifact(meta.id)
+        else void setProjectSystem(meta.id)
+      }
+    } catch (e) {
+      logger.error("design", "DesignView::runExtract", "extract failed", e)
+      // 后端带的可操作提示（反爬协作式引导 B1-5 等）优先展示，否则通用文案。
+      const msg = e instanceof Error ? e.message.trim() : ""
+      toast.error(msg && msg.length <= 300 ? msg : t("design.err.extract", "反向提取失败"))
+    } finally {
+      setExtracting(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tx, extractFrom, extractName, extractText, genModel, t])
+
+  // 代码库通道预填：项目已绑代码仓库且路径框为空 → 预填生效目录（用户可改）。
+  useEffect(() => {
+    if (extractOpen && extractFrom === "codebase" && !extractText.trim() && boundRepoDir) {
+      setExtractText(boundRepoDir)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extractOpen, extractFrom, boundRepoDir])
+
+  // 反向提取文件选择（W3-K）：codebase 选目录 / image 选图片，回填绝对路径到 extractText。
+  // 仅桌面（supportsLocalFileOps）——HTTP 的 pickLocalDirectory 抛错，图片也拿不到服务器路径。
+  const pickExtractPath = useCallback(async () => {
+    try {
+      if (extractFrom === "codebase") {
+        const dir = await tx.pickLocalDirectory()
+        if (dir) setExtractText(dir)
+      } else if (extractFrom === "image") {
+        const picked = await tx.pickLocalImage()
+        if (picked?.path) setExtractText(picked.path)
+        picked?.revoke?.()
+      }
+    } catch (e) {
+      logger.error("design", "DesignView::pickExtractPath", "pick path failed", e)
+      toast.error(t("design.extractPickFailed", "选择失败，请手动填写路径"))
+    }
+  }, [tx, extractFrom, t])
+
+  // ── Direction picker (D2) ────────────────────────────────────
+  const [directionsOpen, setDirectionsOpen] = useState(false)
+  const [dirBrief, setDirBrief] = useState("")
+  const [directions, setDirections] = useState<DesignDirection[]>([])
+  const [proposing, setProposing] = useState(false)
+  const [proposedOnce, setProposedOnce] = useState(false)
+  const runProposeDirections = useCallback(async () => {
+    setProposing(true)
+    setProposedOnce(true)
+    setDirections([])
+    try {
+      const list = await tx.call<DesignDirection[]>("propose_design_directions_cmd", {
+        brief: dirBrief,
+        count: 4,
+      })
+      setDirections(list ?? [])
+    } catch (e) {
+      logger.error("design", "DesignView::proposeDirections", "propose failed", e)
+      toast.error(t("design.err.propose", "生成方向失败"))
+    } finally {
+      setProposing(false)
+    }
+  }, [tx, dirBrief, t])
+  const [adopting, setAdopting] = useState<number | null>(null)
+  const adoptDirection = useCallback(
+    async (d: DesignDirection, index: number) => {
+      setAdopting(index)
+      try {
+        const meta = await tx.call<DesignSystemMeta>("save_design_system_cmd", {
+          input: {
+            name: d.name,
+            summary: d.summary,
+            systemMd: `# ${d.name}\n\n${d.summary}\n`,
+            tokens: d.tokens,
+            source: "user",
+          },
+        })
+        await loadSystems()
+        if (activeProject && meta) await setProjectSystem(meta.id)
+        setDirectionsOpen(false)
+        toast.success(t("design.ok.adopted", "已应用设计方向"))
+      } catch (e) {
+        logger.error("design", "DesignView::adoptDirection", "adopt failed", e)
+        toast.error(t("design.err.adopt", "采用方向失败"))
+      } finally {
+        setAdopting(null)
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tx, activeProject, t],
+  )
+
+  // ── Quality gate (Phase 6) ───────────────────────────────────
+  const [critiquing, setCritiquing] = useState(false)
+  const [critique, setCritique] = useState<CritiqueResult | null>(null)
+  useEffect(() => setCritique(null), [activeArtifact?.id])
+  const handleCritique = useCallback(async () => {
+    if (activeArtifactRef.current?.status === "generating") return // 生成中源不稳，不评审
+    if (!activeArtifact) return
+    setCritiquing(true)
+    setCritique(null)
+    try {
+      const r = await tx.call<CritiqueResult>("critique_design_artifact_cmd", {
+        id: activeArtifact.id,
+      })
+      if (r) setCritique(r)
+    } catch (e) {
+      logger.error("design", "DesignView::handleCritique", "critique failed", e)
+      toast.error(t("design.err.critique", "质量评审失败"))
+    } finally {
+      setCritiquing(false)
+    }
+  }, [tx, activeArtifact, t])
+
+  // ── Delete (shared confirm) ──────────────────────────────────
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    try {
+      if (deleteTarget.type === "project") {
+        await tx.call("delete_design_project_cmd", { id: deleteTarget.id })
+        if (activeProject?.id === deleteTarget.id) backToHome()
+        await loadProjects()
+      } else if (deleteTarget.type === "artifacts-batch") {
+        // 批量删除（Wave 1-③）：逐个删（后端无批量端点），全部结束后统一刷一次。**allSettled + 统计
+        // 成败 toast**（W3-M）——此前 .catch 静默吞错、部分失败零反馈，用户以为没删干净反复重删。
+        const ids = deleteTarget.ids
+        const results = await Promise.allSettled(
+          ids.map((id) => tx.call("delete_design_artifact_cmd", { id })),
+        )
+        const failed = results.filter((r) => r.status === "rejected").length
+        if (activeArtifact && ids.includes(activeArtifact.id)) setActiveArtifact(null)
+        if (activeProject) await loadArtifacts(activeProject.id)
+        if (failed > 0) {
+          toast.error(
+            t("design.err.batchDeleteArtifactPartial", "{{n}} 个产物删除失败", { n: failed }),
+          )
+        } else {
+          toast.success(
+            t("design.ok.batchDeletedArtifacts", "已删除 {{n}} 个产物", { n: ids.length }),
+          )
+        }
+      } else {
+        await tx.call("delete_design_artifact_cmd", { id: deleteTarget.id })
+        if (activeArtifact?.id === deleteTarget.id) setActiveArtifact(null)
+        if (activeProject) await loadArtifacts(activeProject.id)
+      }
+    } catch (e) {
+      logger.error("design", "DesignView::confirmDelete", "delete failed", e)
+      toast.error(t("design.err.delete", "删除失败"))
+    } finally {
+      setDeleteTarget(null)
+    }
+  }, [deleteTarget, tx, activeProject, activeArtifact, backToHome, loadProjects, loadArtifacts, t])
+
+  // ── Live events ──────────────────────────────────────────────
+
+  useEffect(() => {
+    const off = [
+      tx.listen("design:artifact_ready", () => {
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+        else void loadProjects()
+      }),
+      tx.listen("design:artifact_deleted", (raw) => {
+        const p = parsePayload<{ artifactId?: string }>(raw)
+        // Deleted artifact is the one being previewed → clear it so we don't leave a
+        // broken iframe pointing at a now-removed directory.
+        if (p?.artifactId && activeArtifactRef.current?.id === p.artifactId) {
+          setActiveArtifact(null)
+        }
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+      }),
+      tx.listen("design:reload", (raw) => {
+        const p = parsePayload<{ artifactId?: string }>(raw)
+        const active = activeArtifactRef.current
+        // 自编辑触发的 reload：抵扣一条计数（非单布尔，review HIGH——突发编辑多条并发不再误清撤销栈），
+        // 不重挂（预览已 live 反映、bodyHash 单独刷）。
+        if (pendingSelfReloadRef.current > 0) {
+          pendingSelfReloadRef.current -= 1
+        } else if (!active || !p?.artifactId || p.artifactId === active.id) {
+          setPreviewKey((k) => k + 1)
+          // 外部重挂（agent 编辑 / 批注精修）→ 待填钉锚点随 oidmap 重生成而失效，清掉让用户
+          // 在新设计上重新点选（review #5）；选中同理失效。
+          setPendingPlacement(null)
+          setSelected(null)
+          if (active && (!p?.artifactId || p.artifactId === active.id)) {
+            // resync bodyHash → 下次微调不误撞 stale；**仅在 body 真变时清撤销栈**（review 回归修复）：
+            // 页面样式 / RTL / restyle 只改 CSS/tokens、body oidmap 不变、旧 op 仍有效，不该清；只有
+            // agent 改稿 / 批注精修换了 body 才清（bodyHash 变）。
+            const prevHash = active.bodyHash
+            void (async () => {
+              await refreshView()
+              if (activeArtifactRef.current?.bodyHash !== prevHash) {
+                setUndoStack([])
+                setRedoStack([])
+              }
+            })()
+          }
+        }
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+      }),
+      // ── 流式生成：壳建成 / 逐帧回填 / 定稿 / 失败 ────────────────
+      tx.listen("design:artifact_generating", (raw) => {
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+        // Chat-first flow: the model just spun up a new artifact and nothing is
+        // open — auto-focus the generating shell so the stream renders live in
+        // the preview instead of the user having to click the new chip.
+        const p = parsePayload<{ artifactId?: string }>(raw)
+        if (p?.artifactId && !activeArtifactRef.current) {
+          void openArtifact({ id: p.artifactId } as DesignArtifact)
+        }
+      }),
+      tx.listen("design:generate_delta", (raw) => {
+        const p = parsePayload<{
+          artifactId?: string
+          streamId?: string
+          seq?: number
+          css?: string
+          bodyHtml?: string
+        }>(raw)
+        if (!p?.artifactId || !p.streamId) return
+        // 只预览当前打开的产物；后台其它产物的流忽略（其磁盘定稿仍会落地）。
+        if (p.artifactId !== activeArtifactRef.current?.id) return
+        const cur = streamRef.current
+        // 新流（首帧 / streamId 变 = failover 重试）→ 重置 seq 基线。
+        if (!cur || cur.streamId !== p.streamId || cur.artifactId !== p.artifactId) {
+          streamRef.current = { artifactId: p.artifactId, streamId: p.streamId, seq: -1 }
+        }
+        const seq = typeof p.seq === "number" ? p.seq : 0
+        if (seq <= streamRef.current!.seq) return // 丢乱序 / 重复帧
+        streamRef.current!.seq = seq
+        const css = p.css ?? ""
+        const bodyHtml = p.bodyHtml ?? ""
+        streamSnapshotRef.current = { artifactId: p.artifactId, css, bodyHtml }
+        // CSS 先落（head 已定稿）再灌 body → 无 FOUC。
+        postToIframe({ type: "ds_stream_css", css })
+        postToIframe({ type: "ds_stream_body", html: bodyHtml })
+      }),
+      tx.listen("design:generate_done", (raw) => {
+        const p = parsePayload<{ artifactId?: string }>(raw)
+        const active = activeArtifactRef.current
+        if (p?.artifactId && active?.id === p.artifactId) {
+          streamRef.current = null
+          streamSnapshotRef.current = null
+          // 唯一一次受控 swap：刷新视图（status=ready + 新 bodyHash）+ 重挂到定稿 index.html
+          // （editable，挂 oid + inspector bridge）。
+          void refreshView()
+          setPreviewKey((k) => k + 1)
+          // AI 改稿整源替换 → 撤销栈旧 op 失效，清栈防 oid 错位（P0-A）。
+          setUndoStack([])
+          setRedoStack([])
+        }
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+      }),
+      tx.listen("design:generate_error", (raw) => {
+        const p = parsePayload<{ artifactId?: string }>(raw)
+        const active = activeArtifactRef.current
+        if (p?.artifactId && active?.id === p.artifactId) {
+          streamRef.current = null
+          streamSnapshotRef.current = null
+          void refreshView() // status=failed + 刷新 bodyHash
+          // 后端已把 index.html 降级为干净占位（非 spinner 壳）→ 重挂加载它，避免预览永久转圈。
+          setPreviewKey((k) => k + 1)
+          // 仅对正在预览的产物提示失败（与 generate_done 对齐）——否则切到别的项目/产物后，
+          // 后台产物的失败会给正看着无关视图的用户弹红色误报。
+          toast.error(t("design.err.generate", "生成失败，请重试"))
+        }
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+      }),
+      tx.listen("design:project_changed", () => {
+        if (!activeProjectRef.current) void loadProjects()
+      }),
+      // Agent created / extracted a design system → refresh the picker.
+      tx.listen("design:system_changed", () => {
+        void loadSystems()
+      }),
+      // Agent ran a critique → refresh scores in the artifact list.
+      tx.listen("design:critiqued", () => {
+        const proj = activeProjectRef.current
+        if (proj) void loadArtifacts(proj.id)
+      }),
+      // code→design 回灌：某产物的 codeDrift 标记翻转 → 刷新库（徽标）+ 命中当前产物刷预览（横幅）。
+      tx.listen("design:code_drift", (raw) => {
+        const p = parsePayload<{ projectId?: string; artifactId?: string }>(raw)
+        const pid = activeProjectRef.current?.id
+        if (!p?.projectId || p.projectId !== pid) return
+        void loadArtifacts(pid)
+        if (p.artifactId && p.artifactId === activeArtifactRef.current?.id) void refreshView()
+      }),
+      // Agent called design(action=show): focus that artifact (auto-enter project).
+      tx.listen("design:show", (raw) => {
+        const p = parsePayload<{ projectId?: string; artifactId?: string }>(raw)
+        if (!p?.artifactId) return
+        void (async () => {
+          try {
+            if (p.projectId && activeProjectRef.current?.id !== p.projectId) {
+              const proj = await tx.call<DesignProject | null>("get_design_project_cmd", {
+                id: p.projectId,
+              })
+              if (proj) openProject(proj)
+            }
+            const artifact = await tx.call<DesignArtifact | null>("get_design_artifact_cmd", {
+              id: p.artifactId,
+            })
+            if (artifact) void openArtifact(artifact)
+          } catch (e) {
+            logger.error("design", "DesignView::onShow", "focus artifact failed", e)
+          }
+        })()
+      }),
+    ]
+    return () => off.forEach((f) => f())
+  }, [
+    tx,
+    loadArtifacts,
+    loadProjects,
+    loadSystems,
+    openProject,
+    openArtifact,
+    refreshView,
+    postToIframe,
+    t,
+  ])
+
+  // ── Preview iframe src ───────────────────────────────────────
+
+  // cache-bust 键 previewKey：生成/编辑/恢复/刷新 index.html 后端 max-age=60，且流式壳与定稿写
+  // 同一 index.html——不带 cache-bust 时 remount 会取回缓存的旧页（server 模式尤甚，卡旧内容 ≤60s）。
+  const iframeSrc = (() => {
+    if (!activeArtifact) return ""
+    const base = tx.resolveAssetUrl(`${activeArtifact.artifactPath}/index.html`) ?? ""
+    if (!base) return ""
+    return `${base}${base.includes("?") ? "&" : "?"}v=${previewKey}`
+  })()
+  // src 变（换产物 / 内容刷新 / 定稿 swap）→ 进重载态，onLoad 撤（Wave 2-⑥）。字符串相等比较，
+  // 流式期不变 src 故不触发（流式走 postMessage，无 spinner 打扰）。
+  useEffect(() => {
+    if (iframeSrc) setPreviewLoading(true)
+  }, [iframeSrc])
+
+  // 预览渲染坐标系（**统一**）：设备预设 / 自动(适应·缩放) 都走「自然尺寸 iframe + CSS transform
+  // scale + 保留纵向滚动的逻辑高度」同一套。**「适应」= 把设计整体缩放进面板**（auto-height 按宽
+  // 适配、纵向内滚；fixed-height 整体 contain），与数值「缩放」**同一渲染路径** —— 故适应↔缩放切换
+  // 零重排、零闪（此前 fit 走 width:100% 响应式填充、缩放走 transform 是两套模型，切换必重排=闪一下）。
+  // 100% 仍是自然像素。frame.{w,h} 是 iframe 逻辑尺寸、frame.scale 是屏上缩放，footprint = w·scale × h·scale。
+  const naturalW =
+    activeArtifact?.viewportW && activeArtifact.viewportW > 0 ? activeArtifact.viewportW : 1024
+  const naturalH =
+    activeArtifact?.viewportH && activeArtifact.viewportH > 0 ? activeArtifact.viewportH : 768
+
+  const devicePreset = previewDevice === "auto" ? null : DEVICE_PRESETS[previewDevice]
+  const frame = (() => {
+    const availW = Math.max(0, paneSize.w - 32) // p-4 两侧
+    const availH = Math.max(0, paneSize.h - 32)
+    if (devicePreset) {
+      const sw = devicePreset.w > 0 ? availW / devicePreset.w : 1
+      const scale = devicePreset.h ? Math.min(1, sw, availH / devicePreset.h) : Math.min(1, sw)
+      const h = devicePreset.h ?? Math.max(400, Math.round(availH / (scale || 1)))
+      return { w: devicePreset.w, h, scale }
+    }
+    const fixedH = !!(activeArtifact?.viewportH && activeArtifact.viewportH > 0)
+    // 面板未测量（首帧兜底）→ scale=1 natural；测得即适配。fit：auto-height 按宽、fixed-height contain。
+    const fitScale =
+      availW <= 0 || naturalW <= 0
+        ? 1
+        : fixedH
+          ? Math.min(1, availW / naturalW, availH / naturalH)
+          : Math.min(1, availW / naturalW)
+    const scale = zoom === "fit" ? fitScale : zoom
+    // auto-height：iframe 逻辑高 = 面板高/scale，缩放后正好填满面板、内容纵向内滚（同 desktop 设备行为）。
+    const h = fixedH ? naturalH : Math.max(400, Math.round(availH / (scale || 1)))
+    return { w: naturalW, h, scale }
+  })()
+
+  // 右键菜单 / 编辑选中 / 画框叠层坐标换算用的当前预览缩放（iframe 内 CSS 像素 → 屏上像素）。
+  // 渲染期赋值（同 editModeRef 模式），消息 handler 经 ref 取最新值。适应态现为真实 scale（非恒 1）。
+  previewScaleRef.current = frame.scale
+
+  // 手势缩放：捏合 / Ctrl·⌘+滚轮连续驱动 CSS scale。仅自动视口 + 非画框/演示态生效（设备/画框/演示
+  // 各有自己的坐标系，且演示态主预览不可见、改了只会退出后突现异常缩放）。离开 fit 以「当前适应比例」
+  // 接续 —— 同一渲染路径,尺寸连续无跳变。**NaN 兜底**：ds_zoom 来自沙箱不可信 iframe，非有限增量
+  //（如注入 deltaY:'x' → Number→NaN）直接丢弃，绝不污染 zoom 状态（否则 scale(NaN) 整块预览坏死）。
+  applyZoomDeltaRef.current = (deltaY, deltaMode) => {
+    if (previewDevice !== "auto" || drawMode || presentMode) return
+    const norm = normalizeWheelDelta(deltaY, deltaMode)
+    if (!Number.isFinite(norm) || norm === 0) return
+    setZoom((prev) => {
+      const cur = prev === "fit" ? clampZoom(frame.scale) : prev
+      return clampZoom(cur * Math.exp(-norm * ZOOM_WHEEL_SENSITIVITY))
+    })
+  }
+
+  // 统一样式：iframe 逻辑尺寸 + transform scale（top-left 锚点）；wrap/overlay 预留 scaled footprint，
+  // 逐像素与 iframe 屏上占位一致 —— 画框叠层坐标不漂移（footprint 一致故 getBoundingClientRect 对齐）。
+  const scaleStyle: CSSProperties = {
+    width: `${frame.w}px`,
+    height: `${frame.h}px`,
+    border: 0,
+    transform: `scale(${frame.scale})`,
+    transformOrigin: "top left",
+  }
+  const frameWrapStyle: CSSProperties = {
+    width: `${frame.w * frame.scale}px`,
+    height: `${frame.h * frame.scale}px`,
+  }
+  const overlayFrameStyle: CSSProperties = frameWrapStyle
+
+  // ── Render ───────────────────────────────────────────────────
+
+  return (
+    <div className="flex flex-1 min-h-0 min-w-0 flex-col bg-background">
+      {/* Header */}
+      <header
+        className="flex h-12 shrink-0 items-center gap-2 border-b px-3"
+        data-tauri-drag-region
+      >
+        {activeProject ? (
+          <IconTip label={t("design.backToProjects", "返回项目")} side="bottom">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={backToHome}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </IconTip>
+        ) : (
+          <IconTip label={t("common.back", "返回")} side="bottom">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </IconTip>
+        )}
+        <Palette className="h-4 w-4 text-primary" />
+        {activeProject && renamingProject ? (
+          <input
+            autoFocus
+            defaultValue={activeProject.title}
+            onBlur={(e) => {
+              const v = e.target.value.trim()
+              if (v && v !== activeProject.title) void renameProject(activeProject.id, v)
+              setRenamingProject(false)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+              else if (e.key === "Escape") setRenamingProject(false)
+            }}
+            className="w-48 rounded border border-primary/50 bg-background px-2 py-0.5 text-sm font-semibold outline-none"
+          />
+        ) : (
+          <span
+            className={cn(
+              "text-sm font-semibold",
+              activeProject && "cursor-text rounded px-1 hover:bg-muted",
+            )}
+            data-ha-title-tip={
+              activeProject ? t("design.clickRenameProject", "点击改项目名") : undefined
+            }
+            onClick={() => {
+              if (activeProject) setRenamingProject(true)
+            }}
+          >
+            {activeProject ? activeProject.title : t("design.title", "设计空间")}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {activeProject && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={restyling}
+                onClick={() => setSystemPickerOpen(true)}
+              >
+                {restyling ? (
+                  <Loader2Icon className="h-3.5 w-3.5 animate-spin opacity-70" />
+                ) : (
+                  <Palette className="h-3.5 w-3.5 opacity-70" />
+                )}
+                <span className="max-w-[120px] truncate">
+                  {(() => {
+                    // 有活跃产物 → 显示/切换该产物的设计系统（restyle）；否则项目默认系统。
+                    const curId = activeArtifact
+                      ? activeArtifact.systemId
+                      : activeProject.defaultSystemId
+                    return (
+                      systems.find((s) => s.id === curId)?.name ??
+                      t("design.pickSystem", "选择设计系统")
+                    )
+                  })()}
+                </span>
+              </Button>
+              <DesignSystemPicker
+                systems={systems}
+                value={
+                  (activeArtifact ? activeArtifact.systemId : activeProject.defaultSystemId) ?? null
+                }
+                onChange={(id) =>
+                  activeArtifact ? void restyleActiveArtifact(id) : void setProjectSystem(id)
+                }
+                open={systemPickerOpen}
+                onOpenChange={setSystemPickerOpen}
+                onPreviewKit={(id, name) => setKitSystem({ id, name })}
+                defaultSystemId={designConfig?.defaultSystemId ?? null}
+                onSetDefault={(id) => void setDefaultSystem(id)}
+                onSystemsChanged={() => void loadSystems()}
+                footer={
+                  <div className="flex flex-wrap gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setSystemPickerOpen(false)
+                        // tab 状态跨开合持久：上次停在 image tab 时重开也要补一次
+                        // 视觉模型确保（否则显式非视觉模型直接提交会报错）。
+                        if (extractFrom === "image") ensureVisionGenModel()
+                        setExtractOpen(true)
+                      }}
+                    >
+                      <Wand2 className="h-3.5 w-3.5" />
+                      {t("design.extractSystem", "反向提取品牌…")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setSystemPickerOpen(false)
+                        setDirectionsOpen(true)
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {t("design.proposeDirections", "生成设计方向…")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setSystemPickerOpen(false)
+                        setImportMdOpen(true)
+                      }}
+                    >
+                      <FileCode className="h-3.5 w-3.5" />
+                      {t("design.importDesignMd", "导入 DESIGN.md…")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setSystemPickerOpen(false)
+                        setFigmaImportOpen(true)
+                      }}
+                    >
+                      <Frame className="h-3.5 w-3.5" />
+                      {t("design.figma.entry", "从 Figma 导入…")}
+                    </Button>
+                    {activeProject.defaultSystemId && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() => {
+                          const sys = systems.find((s) => s.id === activeProject.defaultSystemId)
+                          if (!sys) return
+                          setSystemPickerOpen(false)
+                          setTokenEditorSystem(sys)
+                          setTokenEditorOpen(true)
+                        }}
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        {t("design.editTokens", "编辑设计变量…")}
+                      </Button>
+                    )}
+                    {activeProject.defaultSystemId && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() => {
+                          const sid = activeProject.defaultSystemId
+                          if (!sid) return
+                          const name = systems.find((s) => s.id === sid)?.name ?? sid
+                          setSystemPickerOpen(false)
+                          void exportDesignMd(sid, name)
+                        }}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        {t("design.exportDesignMd", "导出当前系统 (DESIGN.md)")}
+                      </Button>
+                    )}
+                    {activeProject.defaultSystemId && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() => {
+                          const sys = systems.find((s) => s.id === activeProject.defaultSystemId)
+                          if (!sys) return
+                          setSystemPickerOpen(false)
+                          setTokenExportSystem(sys)
+                          setTokenExportOpen(true)
+                        }}
+                      >
+                        <Braces className="h-3.5 w-3.5" />
+                        {t("design.exportTokens", "导出 Token（多平台代码）…")}
+                      </Button>
+                    )}
+                    {activeProject.defaultSystemId && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        onClick={() => {
+                          const sys = systems.find((s) => s.id === activeProject.defaultSystemId)
+                          if (!sys) return
+                          setSystemPickerOpen(false)
+                          setCodeBindSystem(sys)
+                          setCodeBindOpen(true)
+                        }}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                        {t("design.bind.entry", "绑定代码工程…")}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5"
+                      onClick={() => {
+                        setSystemPickerOpen(false)
+                        setRepoBindOpen(true)
+                      }}
+                    >
+                      <FolderGit2 className="h-3.5 w-3.5" />
+                      {t("design.repoBind.entry", "关联代码仓库…")}
+                      {boundRepoDir && (
+                        <span className="ml-auto max-w-[10rem] truncate font-mono text-[10px] text-muted-foreground">
+                          {boundRepoDir.split("/").pop()}
+                        </span>
+                      )}
+                    </Button>
+                    {boundRepoDir && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5"
+                        disabled={driftChecking}
+                        onClick={() => void handleManualDriftCheck()}
+                      >
+                        {driftChecking ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <GitCompareArrows className="h-3.5 w-3.5" />
+                        )}
+                        {t("design.drift.checkNow", "检查代码更新")}
+                      </Button>
+                    )}
+                  </div>
+                }
+              />
+            </>
+          )}
+          {activeProject && (
+            <IconTip label={t("design.pagesOverview", "所有页面 · 文件夹分组")}>
+              <Button
+                variant={showGrid ? "default" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setShowGrid((v) => !v)}
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+            </IconTip>
+          )}
+          {activeProject && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" className="h-8 gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  {t("design.newArtifact", "新建产物")}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent variant="floating" align="end">
+                {ARTIFACT_KINDS.map((kind) => {
+                  const Icon = KIND_ICON[kind]
+                  return (
+                    <DropdownMenuItem key={kind} onSelect={() => onPickKind(kind)}>
+                      <Icon className="mr-2 h-4 w-4" />
+                      {kindLabel(kind)}
+                    </DropdownMenuItem>
+                  )
+                })}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setRefImage(null)
+                    setRefExtra("")
+                    // 必涉图的入口：当前模型不认图则先自动切到视觉模型。
+                    ensureVisionGenModel()
+                    setRefDialogOpen(true)
+                  }}
+                >
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  {t("design.fromImage", "从参考图生成…")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {activeProject && (
+            <IconTip label={t("design.exportProject", "导出项目 (ZIP)")} side="bottom">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                disabled={exportingProject}
+                onClick={() => void exportProject()}
+              >
+                {exportingProject ? (
+                  <Loader2Icon className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileArchive className="h-4 w-4" />
+                )}
+              </Button>
+            </IconTip>
+          )}
+          <IconTip label={t("common.settings", "设置")} side="bottom">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpenSettings}>
+              <Settings2 className="h-4 w-4" />
+            </Button>
+          </IconTip>
+        </div>
+      </header>
+
+      {/* Body */}
+      {!activeProject ? (
+        <LaunchHome
+          projects={projects}
+          loading={loadingProjects}
+          systems={systems}
+          recipes={recipes}
+          onPickRecipe={(r) => {
+            setHomeKind(r.kind)
+            setHomePrompt(r.scenario || r.summary || r.name)
+            setHomeRecipeId(r.id)
+          }}
+          prompt={homePrompt}
+          setPrompt={setHomePrompt}
+          kind={homeKind}
+          setKind={setHomeKind}
+          systemId={homeSystemId}
+          setSystemId={setHomeSystemId}
+          generating={generatingHome}
+          onGenerate={() => void generateFromHome()}
+          onBrandPack={() => setBrandPackOpen(true)}
+          kindLabel={kindLabel}
+          refImages={homeRefImages}
+          onPickImages={onPickHomeImages}
+          onRemoveImage={(i) => setHomeRefImages((prev) => prev.filter((_, idx) => idx !== i))}
+          genModel={genModel}
+          models={homeModels}
+          onModelChange={(providerId, modelId) => rememberGenModel({ providerId, modelId })}
+          onModelClear={clearGenModel}
+          onOpen={openProject}
+          onDelete={(p) => setDeleteTarget({ type: "project", id: p.id, title: p.title })}
+          onRename={renameProject}
+          onDuplicate={duplicateProject}
+          onBatchDelete={batchDeleteProjects}
+          onNewBlank={() => setNewProjectOpen(true)}
+        />
+      ) : (
+        <div className="flex flex-1 min-h-0">
+          {/* Left: AI 对话栏（可拖宽 / 可折叠）。折叠走 width→0 动画**不卸载**（W2-I：保留草稿 / 附件 /
+              圈选、不冻结在途流），开合同首页侧栏 ChatSidebar；拖宽期关 width 过渡免抖。 */}
+          <div
+            className={cn(
+              "relative h-full min-h-0 shrink-0 overflow-hidden",
+              !isChatResizing &&
+                "transition-[width] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none",
+            )}
+            style={{ width: chatOpen ? chatWidth : 0 }}
+          >
+            <div
+              aria-hidden={!chatOpen}
+              inert={!chatOpen ? true : undefined}
+              className={cn(
+                "flex h-full min-h-0 flex-col transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[opacity,transform] motion-reduce:transition-none",
+                chatOpen
+                  ? "translate-x-0 opacity-100"
+                  : "pointer-events-none -translate-x-4 opacity-0",
+              )}
+              style={{ width: chatWidth }}
+            >
+              {activeProject && (
+                <DesignChatPanel
+                  ref={chatPanelRef}
+                  projectId={activeProject.id}
+                  projectDefaultModel={activeProject.defaultModel ?? null}
+                  activeArtifact={
+                    activeArtifact
+                      ? {
+                          id: activeArtifact.id,
+                          title: activeArtifact.title,
+                          kind: activeArtifact.kind,
+                        }
+                      : null
+                  }
+                  systemName={
+                    systems.find(
+                      (s) =>
+                        s.id ===
+                        (activeArtifact ? activeArtifact.systemId : activeProject.defaultSystemId),
+                    )?.name ?? null
+                  }
+                  systemId={
+                    (activeArtifact ? activeArtifact.systemId : activeProject.defaultSystemId) ??
+                    null
+                  }
+                  onJumpToQuote={(q) => {
+                    // 点选带到对话的批注 quote chip → 在预览里聚焦对应元素钉。
+                    const m = /^design-comment:(\d+)$/.exec(q.path)
+                    if (m) postToIframe({ type: "ds_comment_focus", id: Number(m[1]) })
+                  }}
+                  onFocusArtifact={(id) => {
+                    // 本轮产物 chip → 打开/聚焦该产物预览（列表里有则直接取，否则按 id 拉全视图）。
+                    const found = artifacts.find((a) => a.id === id)
+                    void openArtifact(found ?? ({ id } as DesignArtifact))
+                  }}
+                  resolveArtifactTitle={(id) => artifacts.find((a) => a.id === id)?.title ?? null}
+                  recipes={recipes}
+                  kindLabel={(k) => kindLabel(k as ArtifactKind)}
+                  active
+                />
+              )}
+            </div>
+          </div>
+          {chatOpen && (
+            <div
+              className={cn(
+                "relative w-px shrink-0 cursor-col-resize transition-colors",
+                isChatResizing ? "bg-primary/50" : "bg-border hover:bg-primary/35",
+              )}
+              onMouseDown={startChatResize}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t("design.chat.resize", "Resize chat panel")}
+            >
+              {/* Wider invisible hit area around the 1px divider. */}
+              <div className="absolute inset-y-0 -left-1 -right-1" />
+            </div>
+          )}
+
+          {/* Right: 顶部产物切换条 + 单产物预览 */}
+          <div
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            onDragOver={(e) => {
+              if (!activeProject) return
+              if (Array.from(e.dataTransfer.types).includes("Files")) {
+                e.preventDefault()
+                if (!dropActive) setDropActive(true)
+              }
+            }}
+            onDragLeave={(e) => {
+              // 只在真正离开容器时收起（忽略子元素间冒泡）。
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropActive(false)
+            }}
+            onDrop={(e) => {
+              if (!Array.from(e.dataTransfer.types).includes("Files")) return
+              e.preventDefault()
+              setDropActive(false)
+              void importImageFiles(Array.from(e.dataTransfer.files))
+            }}
+          >
+            {dropActive && (
+              <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-primary/5 backdrop-blur-[1px]">
+                <div className="flex flex-col items-center gap-1.5 text-primary">
+                  <ImageIcon className="h-7 w-7" />
+                  <span className="text-sm font-medium">
+                    {t("design.dropImport.drop", "松开以导入图片")}
+                  </span>
+                </div>
+              </div>
+            )}
+            {/* 顶部：对话折叠钮 + 横向产物切换条（原左侧列表收窄成条） */}
+            <div className="flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto border-b bg-background/60 px-2">
+              <IconTip
+                label={
+                  chatOpen ? t("design.chat.hide", "隐藏对话") : t("design.chat.show", "显示对话")
+                }
+                side="bottom"
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => setChatOpen((v) => !v)}
+                >
+                  {chatOpen ? (
+                    <PanelLeft className="h-4 w-4" />
+                  ) : (
+                    <PanelLeftDashed className="h-4 w-4" />
+                  )}
+                </Button>
+              </IconTip>
+              <div className="h-4 w-px shrink-0 bg-border" />
+              {loadingArtifacts ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              ) : artifacts.length === 0 ? (
+                <span className="px-1 text-xs text-muted-foreground">
+                  {t(
+                    "design.emptyArtifactsInline",
+                    "还没有产物——右上角「新建产物」，或直接让左侧 AI 生成。",
+                  )}
+                </span>
+              ) : (
+                <>
+                  {openTabs.length === 0 ? (
+                    <span className="px-1 text-xs text-muted-foreground">
+                      {t("design.tab.noneOpenInline", "没有打开的产物——点右侧 + 从产物库打开")}
+                    </span>
+                  ) : (
+                    openTabs.map((a) => {
+                      const Icon = KIND_ICON[a.kind] ?? Monitor
+                      const active = activeArtifact?.id === a.id
+                      // 网格开启时改名在网格里进行（避免 chip 与网格卡同时渲染两个 input）。
+                      const renaming = renamingArtifactId === a.id && !showGrid
+                      return (
+                        <ContextMenu key={a.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              // 激活 chip 挂稳定 ref，仅在**激活产物变化**时经 effect 滚一次（review LOW：内联
+                              // callback ref 每次 render 都跑、会抢占用户对 chip 条的手动横向滚动）。
+                              ref={active ? activeChipRef : undefined}
+                              className="group/chip relative shrink-0"
+                            >
+                              {renaming ? (
+                                <input
+                                  autoFocus
+                                  value={renameDraft}
+                                  onChange={(e) => setRenameDraft(e.target.value)}
+                                  onBlur={() => {
+                                    void renameArtifact(a.id, renameDraft)
+                                    setRenamingArtifactId(null)
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      void renameArtifact(a.id, renameDraft)
+                                      setRenamingArtifactId(null)
+                                    } else if (e.key === "Escape") setRenamingArtifactId(null)
+                                  }}
+                                  className="w-[150px] rounded-lg border border-primary/50 bg-background px-2.5 py-1 text-xs outline-none"
+                                />
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowGrid(false) // 从库墙点标签 → 收起库墙、露出该产物预览
+                                      void openArtifact(a)
+                                    }}
+                                    onDoubleClick={() => {
+                                      setRenamingArtifactId(a.id)
+                                      setRenameDraft(a.title)
+                                    }}
+                                    data-ha-title-tip={`${kindLabel(a.kind)} · ${t("design.dblClickRename", "双击改名")}`}
+                                    className={cn(
+                                      "flex max-w-[180px] items-center gap-1.5 rounded-lg py-1 pl-2.5 pr-7 text-xs transition-colors",
+                                      active
+                                        ? "bg-primary/10 text-primary"
+                                        : "text-foreground hover:bg-muted",
+                                    )}
+                                  >
+                                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                                    <span className="truncate">{a.title}</span>
+                                    {a.status === "generating" && (
+                                      <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+                                    )}
+                                    {a.status === "failed" && (
+                                      <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                                    )}
+                                    {a.status === "needs_review" && (
+                                      <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                                    )}
+                                    {parseCodeDrift(a.metadata) && (
+                                      <GitCompareArrows className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                                    )}
+                                  </button>
+                                  {/* hover 只留「关闭」（非破坏，产物仍在库墙可重开）；删除移到右键菜单。 */}
+                                  <div className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/chip:opacity-100">
+                                    <IconTip label={t("design.tab.close", "关闭")}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          closeTab(a.id)
+                                        }}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </IconTip>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent variant="floating" className="min-w-[10rem]">
+                            <ContextMenuItem
+                              variant="floating"
+                              onSelect={() => {
+                                setRenamingArtifactId(a.id)
+                                setRenameDraft(a.title)
+                              }}
+                            >
+                              <Pencil className="mr-2 h-3.5 w-3.5" />
+                              {t("common.rename", "改名")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              variant="floating"
+                              onSelect={() => void duplicateArtifact(a.id)}
+                            >
+                              <Copy className="mr-2 h-3.5 w-3.5" />
+                              {t("design.duplicatePage", "复制页面")}
+                            </ContextMenuItem>
+                            <ContextMenuItem variant="floating" onSelect={() => closeTab(a.id)}>
+                              <X className="mr-2 h-3.5 w-3.5" />
+                              {t("design.tab.close", "关闭")}
+                            </ContextMenuItem>
+                            <ContextMenuItem
+                              variant="floating"
+                              disabled={openTabs.length <= 1}
+                              onSelect={() => closeOtherTabs(a.id)}
+                            >
+                              <FolderOpen className="mr-2 h-3.5 w-3.5" />
+                              {t("design.tab.closeOthers", "关闭其他")}
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              variant="floating"
+                              className="text-destructive focus:text-destructive"
+                              onSelect={() =>
+                                setDeleteTarget({ type: "artifact", id: a.id, title: a.title })
+                              }
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              {t("design.tab.deletePermanent", "删除（永久）")}
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      )
+                    })
+                  )}
+                  {/* 末尾：重新打开入口——「关闭」的对侧出口。快速重开已关闭的产物 / 进产物库墙。 */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        data-ha-title-tip={t("design.tab.reopen", "从产物库打开")}
+                        aria-label={t("design.tab.reopen", "从产物库打开")}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      variant="floating"
+                      align="start"
+                      className="max-h-[60vh] w-56 overflow-y-auto"
+                    >
+                      {closedArtifacts.length === 0 ? (
+                        <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
+                          {t("design.tab.allOpen", "全部已打开")}
+                        </div>
+                      ) : (
+                        closedArtifacts.slice(0, 12).map((a) => {
+                          const Icon = KIND_ICON[a.kind] ?? Monitor
+                          return (
+                            <DropdownMenuItem
+                              key={a.id}
+                              onSelect={() => {
+                                setShowGrid(false)
+                                void openArtifact(a)
+                              }}
+                            >
+                              <Icon className="mr-2 h-3.5 w-3.5 shrink-0 opacity-70" />
+                              <span className="truncate">{a.title}</span>
+                            </DropdownMenuItem>
+                          )
+                        })
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => setShowGrid(true)}>
+                        <LayoutGrid className="mr-2 h-3.5 w-3.5" />
+                        {t("design.tab.openLibrary", "打开产物库…")}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </>
+              )}
+            </div>
+
+            {/* Single-artifact preview */}
+            <main className="relative flex min-h-0 flex-1 min-w-0 flex-col bg-muted/30">
+              {showGrid && artifactsError && artifacts.length === 0 ? (
+                // Wave 2-⑨：库加载失败显式态（区别于空库），带重试。
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                  <TriangleAlert className="h-6 w-6 text-amber-500" />
+                  <p className="text-sm text-muted-foreground">
+                    {t("design.err.loadLibrary", "产物库加载失败")}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1"
+                    onClick={() => activeProject && void loadArtifacts(activeProject.id)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {t("common.retry", "重试")}
+                  </Button>
+                </div>
+              ) : showGrid && loadingArtifacts && artifacts.length === 0 ? (
+                /* 骨架屏：加载中不闪「空库」文案，占位卡对齐真实网格列宽。 */
+                <div
+                  className="grid grid-cols-2 gap-2.5 p-3 sm:grid-cols-3 lg:grid-cols-4"
+                  aria-busy="true"
+                  aria-label={t("design.loadingLibrary", "正在加载产物库…")}
+                >
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="aspect-[4/3] animate-pulse rounded-lg bg-muted/60" />
+                      <div className="h-3 w-2/3 animate-pulse rounded bg-muted/50" />
+                    </div>
+                  ))}
+                </div>
+              ) : showGrid ? (
+                /* 页面文件管理面（本轮·源码级复刻 OD DesignFilesPanel）：面包屑 + 文件夹 + 类型分组。 */
+                <DesignFilesPanel
+                  artifacts={artifacts}
+                  folders={folders}
+                  activeArtifactId={activeArtifact?.id}
+                  onOpen={(a) => {
+                    void openArtifact(a)
+                    setShowGrid(false)
+                  }}
+                  onRename={(id, title) => void renameArtifact(id, title)}
+                  onDuplicate={(id) => void duplicateArtifact(id)}
+                  onDelete={(a) => setDeleteTarget({ type: "artifact", id: a.id, title: a.title })}
+                  onMove={(id, folder) => void moveArtifactToFolder(id, folder)}
+                  onCreateFolder={(path) => void createFolder(path)}
+                  onRenameFolder={(from, to) => void renameFolder(from, to)}
+                  onDeleteFolder={(path) => void deleteFolder(path)}
+                  onReorder={(ids) => void reorderArtifacts(ids)}
+                  onBatchDelete={(ids) =>
+                    setDeleteTarget({
+                      type: "artifacts-batch",
+                      ids,
+                      title: t("design.files.selectedCount", "已选 {{n}} 项", { n: ids.length }),
+                    })
+                  }
+                  onBatchExport={(ids) => void batchExportArtifacts(ids)}
+                />
+              ) : activeArtifact ? (
+                <>
+                  {/* 工具栏控件多（编辑模式 + 设备 + 缩放 + 演示 / 刷新 / 评审 / 历史 / 分享 / 导出），
+                    窄窗口下必须能**换行**而非溢出裁切：外层 min-h + 允许纵向增高，标题 min-w-0 先截断
+                    腾地方，控件组 flex-1 + flex-wrap + justify-end → 右对齐逐行回落、任何宽度都不丢按钮。 */}
+                  <div className="flex min-h-9 shrink-0 items-center gap-2 border-b bg-background/60 px-3 py-1">
+                    <KindBadge kind={activeArtifact.kind} label={kindLabel(activeArtifact.kind)} />
+                    <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                      {activeArtifact.title}
+                    </span>
+                    <div className="flex flex-1 flex-wrap items-center justify-end gap-1">
+                      {/* 生成中：停止按钮（P0-C）——中断白流、降级占位，不必删产物重来。 */}
+                      {activeArtifact.status === "generating" && (
+                        <IconTip label={t("design.stopGeneration", "停止生成")} side="bottom">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-destructive hover:text-destructive"
+                            onClick={() => void handleStopGeneration()}
+                          >
+                            <Square className="h-3.5 w-3.5 fill-current" />
+                          </Button>
+                        </IconTip>
+                      )}
+                      {/* 生成中不挂编辑/批注/画框入口（点了画布无响应，P0-C 生成态锁定）。 */}
+                      {isEditableKind(activeArtifact.kind) &&
+                        activeArtifact.status !== "generating" && (
+                          <>
+                            <IconTip
+                              label={`${t("design.editMode", "可视化微调：点选元素改属性")} · Delete / Esc · ${MOD_KEY}[ ]`}
+                              side="bottom"
+                            >
+                              <Button
+                                variant={editMode ? "default" : "ghost"}
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  setEditMode((v) => !v)
+                                  setCommentMode(false)
+                                  setDrawMode(false)
+                                }}
+                              >
+                                <MousePointerClick className="h-3.5 w-3.5" />
+                              </Button>
+                            </IconTip>
+                            <IconTip
+                              label={t("design.comment.mode", "批注：点选元素留反馈")}
+                              side="bottom"
+                            >
+                              <Button
+                                variant={commentMode ? "default" : "ghost"}
+                                size="icon"
+                                className="relative h-6 w-6"
+                                onClick={() => {
+                                  setCommentMode((v) => !v)
+                                  setEditMode(false)
+                                  setDrawMode(false)
+                                }}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                {(activeArtifact?.openCommentCount ?? 0) > 0 && (
+                                  <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-amber-500 px-0.5 text-[9px] font-semibold leading-none text-white">
+                                    {(activeArtifact?.openCommentCount ?? 0) > 99
+                                      ? "99+"
+                                      : activeArtifact?.openCommentCount}
+                                  </span>
+                                )}
+                              </Button>
+                            </IconTip>
+                            <IconTip
+                              label={t(
+                                "design.draw.mode",
+                                "画框批注：框选/画笔标注要改的区域，带截图到对话",
+                              )}
+                              side="bottom"
+                            >
+                              <Button
+                                variant={drawMode ? "default" : "ghost"}
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => {
+                                  setDrawMode((v) => !v)
+                                  setEditMode(false)
+                                  setCommentMode(false)
+                                }}
+                              >
+                                <Highlighter className="h-3.5 w-3.5" />
+                              </Button>
+                            </IconTip>
+                          </>
+                        )}
+                      {/* 撤销 / 重做可视化编辑（B5，Cmd/Ctrl+Z） */}
+                      {(undoStack.length > 0 || redoStack.length > 0) && (
+                        <div className="flex items-center rounded-md border border-border/60 p-0.5">
+                          <IconTip
+                            label={`${t("design.undo", "撤销")} (${MOD_KEY}Z)`}
+                            side="bottom"
+                          >
+                            <button
+                              type="button"
+                              onClick={undo}
+                              disabled={undoStack.length === 0}
+                              className="flex h-5 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                            >
+                              <Undo2 className="h-3.5 w-3.5" />
+                            </button>
+                          </IconTip>
+                          <IconTip
+                            label={`${t("design.redo", "重做")} (${MOD_KEY}⇧Z)`}
+                            side="bottom"
+                          >
+                            <button
+                              type="button"
+                              onClick={redo}
+                              disabled={redoStack.length === 0}
+                              className="flex h-5 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                            >
+                              <Redo2 className="h-3.5 w-3.5" />
+                            </button>
+                          </IconTip>
+                        </div>
+                      )}
+                      {/* 设备视口切换（B4-3） */}
+                      <div className="flex items-center rounded-md border border-border/60 p-0.5">
+                        {(
+                          [
+                            {
+                              id: "auto" as const,
+                              label: t("design.deviceAuto", "自动"),
+                              icon: null,
+                            },
+                            {
+                              id: "desktop" as const,
+                              label: t("design.deviceDesktop", "桌面"),
+                              icon: Monitor,
+                            },
+                            {
+                              id: "tablet" as const,
+                              label: t("design.deviceTablet", "平板"),
+                              icon: Tablet,
+                            },
+                            {
+                              id: "mobile" as const,
+                              label: t("design.deviceMobile", "手机"),
+                              icon: Smartphone,
+                            },
+                          ] as const
+                        ).map((d) => (
+                          <IconTip key={d.id} label={d.label} side="bottom">
+                            <button
+                              type="button"
+                              onClick={() => changeDevice(d.id)}
+                              className={cn(
+                                "flex h-5 items-center justify-center rounded px-1.5 text-[11px] transition-colors",
+                                previewDevice === d.id
+                                  ? "bg-secondary text-foreground"
+                                  : "text-muted-foreground hover:text-foreground",
+                              )}
+                            >
+                              {d.icon ? <d.icon className="h-3.5 w-3.5" /> : d.label}
+                            </button>
+                          </IconTip>
+                        ))}
+                      </div>
+                      {/* zoom 仅在自动视口下有意义（设备模式整体缩放适配） */}
+                      {previewDevice === "auto" && (
+                        <Select
+                          value={String(zoom)}
+                          onValueChange={(v) =>
+                            setZoom(v === "fit" ? "fit" : (Number(v) as ZoomMode))
+                          }
+                        >
+                          <SelectTrigger className="h-6 w-auto gap-1 px-1.5 text-xs">
+                            {/* 直接渲染当前值而非 SelectValue：手势缩放会产出非预设档位（如 137%），
+                              SelectValue 匹配不到选项会显示空。 */}
+                            <span className="tabular-nums">
+                              {zoom === "fit"
+                                ? t("design.zoomFit", "适应")
+                                : `${Math.round(zoom * 100)}%`}
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fit">{t("design.zoomFit", "适应")}</SelectItem>
+                            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((z) => (
+                              <SelectItem key={z} value={String(z)}>
+                                {Math.round(z * 100)}%
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      {/* Deck 页码 + 翻页（Wave 2-⑧）：宿主级，缩放/设备模式下也不被一起缩小。 */}
+                      {activeArtifact.kind === "deck" && deckState && deckState.count > 1 && (
+                        <div className="flex items-center rounded-md border border-border/60 p-0.5">
+                          <IconTip label={t("design.deckPrev", "上一页")} side="bottom">
+                            <button
+                              type="button"
+                              onClick={() => deckNav("ds_slide_prev")}
+                              disabled={deckState.active <= 0}
+                              className="flex h-5 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5" />
+                            </button>
+                          </IconTip>
+                          <span className="px-1 text-[11px] tabular-nums text-muted-foreground">
+                            {deckState.active + 1} / {deckState.count}
+                          </span>
+                          <IconTip label={t("design.deckNext", "下一页")} side="bottom">
+                            <button
+                              type="button"
+                              onClick={() => deckNav("ds_slide_next")}
+                              disabled={deckState.active >= deckState.count - 1}
+                              className="flex h-5 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </IconTip>
+                        </div>
+                      )}
+                      {/* Present 演示（B4-4） */}
+                      <DropdownMenu>
+                        <IconTip label={t("design.present", "演示")} side="bottom">
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-6 w-6">
+                              <Presentation className="h-3.5 w-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                        </IconTip>
+                        <DropdownMenuContent variant="floating" align="end">
+                          <DropdownMenuItem onSelect={() => setPresentMode(true)}>
+                            <Presentation className="mr-2 h-4 w-4" />
+                            {t("design.presentInTab", "本窗口演示")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={presentFullscreen}>
+                            <Maximize2 className="mr-2 h-4 w-4" />
+                            {t("design.presentFullscreen", "全屏演示")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <IconTip label={t("design.reload", "刷新")} side="bottom">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => setPreviewKey((k) => k + 1)}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                      {activeArtifact.kind === "image" && (
+                        <IconTip label={t("design.inpaint.button", "蒙版重绘")} side="bottom">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => setInpaintOpen(true)}
+                          >
+                            <Brush className="h-3.5 w-3.5" />
+                          </Button>
+                        </IconTip>
+                      )}
+                      {activeArtifact.kind !== "image" && activeArtifact.kind !== "audio" && (
+                        <IconTip label={t("design.critique", "质量评审")} side="bottom">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            disabled={critiquing}
+                            onClick={() => void handleCritique()}
+                          >
+                            {critiquing ? (
+                              <Loader2Icon className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Gauge className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </IconTip>
+                      )}
+                      {activeArtifact.kind !== "image" &&
+                        activeArtifact.kind !== "audio" &&
+                        activeArtifact.kind !== "component" && (
+                          <IconTip label={t("design.pageStyle.button", "页面样式")} side="bottom">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => {
+                                setPsBackground("")
+                                setPsColor("")
+                                setPsMaxWidth("")
+                                setPageStyleOpen(true)
+                              }}
+                            >
+                              <Paintbrush className="h-3.5 w-3.5" />
+                            </Button>
+                          </IconTip>
+                        )}
+                      {activeArtifact.kind !== "image" && activeArtifact.kind !== "audio" && (
+                        <IconTip
+                          label={
+                            parseIsRtl(activeArtifact.metadata)
+                              ? t("design.rtl.toLtr", "切换为从左到右")
+                              : t("design.rtl.toRtl", "切换为从右到左（RTL）")
+                          }
+                          side="bottom"
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-6 w-6",
+                              parseIsRtl(activeArtifact.metadata) && "text-primary",
+                            )}
+                            onClick={() => void toggleRtl()}
+                          >
+                            <span className="text-[13px] font-semibold leading-none">
+                              {parseIsRtl(activeArtifact.metadata) ? "‏RTL" : "LTR"}
+                            </span>
+                          </Button>
+                        </IconTip>
+                      )}
+                      {activeArtifact.kind !== "image" && activeArtifact.kind !== "audio" && (
+                        <IconTip
+                          label={t("design.review.qualityCheck", "质量审查（可访问性/内容）")}
+                          side="bottom"
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            disabled={reviewing}
+                            onClick={() => void runQualityReview()}
+                          >
+                            {reviewing ? (
+                              <Loader2Icon className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <ListChecks className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </IconTip>
+                      )}
+                      <IconTip label={t("design.history", "版本历史")} side="bottom">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={openHistory}
+                        >
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                      </IconTip>
+                      {tx.supportsLocalFileOps() ? (
+                        // 桌面无公网服务器：分享 = 一键导出可分享 HTML（保持一键，不加弹层）。
+                        <IconTip label={t("design.share.button", "分享")} side="bottom">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            disabled={
+                              sharing ||
+                              (activeArtifact.status !== "ready" &&
+                                activeArtifact.status !== "needs_review")
+                            }
+                            onClick={() => void handleShare()}
+                          >
+                            {sharing ? (
+                              <Loader2Icon className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Share2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </IconTip>
+                      ) : (
+                        // server 模式：分享面板（显示/复制/打开/停止公开链接，Wave 1-②）。
+                        <div className="relative" ref={shareRef}>
+                          <IconTip label={t("design.share.button", "分享")} side="bottom">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={cn("h-6 w-6", shareOpen && "bg-secondary")}
+                              disabled={
+                                activeArtifact.status !== "ready" &&
+                                activeArtifact.status !== "needs_review"
+                              }
+                              onClick={() => setShareOpen((v) => !v)}
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </IconTip>
+                          {activeArtifact && (
+                            <DesignSharePanel
+                              open={shareOpen}
+                              artifactId={activeArtifact.id}
+                              origin={window.location.origin}
+                            />
+                          )}
+                        </div>
+                      )}
+                      <DropdownMenu>
+                        <IconTip label={t("design.exportArtifact", "导出本页")} side="bottom">
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              disabled={
+                                !!exporting ||
+                                (activeArtifact.status !== "ready" &&
+                                  activeArtifact.status !== "needs_review")
+                              }
+                            >
+                              {exporting ? (
+                                <Loader2Icon className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </DropdownMenuTrigger>
+                        </IconTip>
+                        <DropdownMenuContent variant="floating" align="end">
+                          <DropdownMenuItem onSelect={() => void handleCopyImage()}>
+                            <ClipboardCopy className="mr-2 h-4 w-4" />
+                            {t("design.copyImage.menu", "复制图片到剪贴板")}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => void handleExport("html")}>
+                            <Code2 className="mr-2 h-4 w-4" />
+                            {t("design.exportHtml", "HTML")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void handleExport("md")}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            {t("design.exportMd", "Markdown")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void handleExport("png")}>
+                            <FileImage className="mr-2 h-4 w-4" />
+                            {t("design.exportPng", "PNG 图片")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setImgExportOpen(true)}>
+                            <SlidersHorizontal className="mr-2 h-4 w-4" />
+                            {t("design.exportImageOptions", "图片（格式 / 清晰度）…")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void handleExport("pdf")}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            {t("design.exportPdf", "PDF")}
+                          </DropdownMenuItem>
+                          {(activeArtifact.kind === "deck" ||
+                            activeArtifact.kind === "poster" ||
+                            activeArtifact.kind === "motion") && (
+                            <DropdownMenuItem onSelect={() => void handleExport("pptx")}>
+                              <FileType2 className="mr-2 h-4 w-4" />
+                              {t("design.exportPptx", "PPTX（整页图片）")}
+                            </DropdownMenuItem>
+                          )}
+                          {activeArtifact.kind === "deck" && (
+                            <DropdownMenuItem onSelect={() => void handleExport("pptx-outline")}>
+                              <FileType2 className="mr-2 h-4 w-4" />
+                              {t("design.exportPptxOutline", "PPTX（可编辑文本）")}
+                            </DropdownMenuItem>
+                          )}
+                          {activeArtifact.kind === "motion" && (
+                            // 原生强路（浏览器逐帧 + ffmpeg）不依赖 WebCodecs，故 motion 始终提供；
+                            // 原生不可用时回退客户端 WebCodecs（若也不支持则导出报错）。
+                            <DropdownMenuItem onSelect={() => void handleExport("video")}>
+                              <Film className="mr-2 h-4 w-4" />
+                              {t("design.exportVideo", "视频 (MP4)")}
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => void handleExport("zip")}>
+                            <FileArchive className="mr-2 h-4 w-4" />
+                            {t("design.exportZip", "本页源码 (ZIP)")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void handleExport("handoff")}>
+                            <Braces className="mr-2 h-4 w-4" />
+                            {t("design.exportHandoff", "代码交付包 (ZIP)")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => void implementToCode(activeArtifact.id)}
+                          >
+                            <Hammer className="mr-2 h-4 w-4" />
+                            {t("design.implement.menu", "实现到代码…")}
+                          </DropdownMenuItem>
+                          {tx.supportsLocalFileOps() && activeArtifact.artifactPath && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onSelect={() => void copyArtifactPath()}>
+                                <Link2 className="mr-2 h-4 w-4" />
+                                {t("design.copyPath", "复制路径")}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => void revealArtifact()}>
+                                <FolderOpen className="mr-2 h-4 w-4" />
+                                {t("design.revealInFinder", "在文件夹中显示")}
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => setDeployOpen(true)}>
+                            <Cloud className="mr-2 h-4 w-4" />
+                            {t("design.deploy.menu", "部署到 Cloudflare Pages")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                  {activeArtifact.status === "needs_review" && (
+                    <div className="flex shrink-0 items-center gap-2 border-b border-amber-400/40 bg-amber-50/70 px-3 py-1.5 text-xs dark:bg-amber-950/25">
+                      <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <span className="min-w-0 flex-1 truncate text-amber-800 dark:text-amber-200">
+                        {parseSelfCheck(activeArtifact.metadata)?.detail ??
+                          t("design.review.flagged", "自查发现可能的质量问题，建议复查")}
+                      </span>
+                      <Button
+                        size="sm"
+                        className="h-6 shrink-0 gap-1 bg-amber-600 px-2 text-xs text-white hover:bg-amber-700 dark:bg-amber-600 dark:text-white dark:hover:bg-amber-500"
+                        onClick={handleFixWithAgent}
+                      >
+                        <Wand2 className="h-3 w-3" />
+                        {t("design.review.fixWithAgent", "让 AI 修复")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-2 text-xs text-amber-800 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                        onClick={() => void handleReviewArtifact("recheck")}
+                      >
+                        {t("design.review.recheck", "重新检查")}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-2 text-xs text-amber-800 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                        onClick={() => void handleReviewArtifact("dismiss")}
+                      >
+                        {t("design.review.dismiss", "标记已复查")}
+                      </Button>
+                    </div>
+                  )}
+                  {(() => {
+                    // code→design 回灌横幅：绑定仓库落地代码相对设计稿实现基线已变（sky 区分 amber 自查）。
+                    const drift = parseCodeDrift(activeArtifact.metadata)
+                    if (!drift) return null
+                    const aid = activeArtifact.id
+                    return (
+                      <div className="flex shrink-0 items-center gap-2 border-b border-sky-400/40 bg-sky-50/70 px-3 py-1.5 text-xs dark:bg-sky-950/25">
+                        <GitCompareArrows className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
+                        <span className="min-w-0 flex-1 truncate text-sky-800 dark:text-sky-200">
+                          {t("design.drift.banner", "代码实现有更新（{{count}} 个文件）", {
+                            count: drift.files.length,
+                          })}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 shrink-0 px-2 text-xs text-sky-800 hover:bg-sky-100 dark:text-sky-200 dark:hover:bg-sky-900/40"
+                          onClick={() => setDriftModalOpen(true)}
+                        >
+                          {t("design.drift.viewChanges", "查看代码变更")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-6 shrink-0 gap-1 bg-sky-600 px-2 text-xs text-white hover:bg-sky-700 dark:bg-sky-600 dark:text-white dark:hover:bg-sky-500"
+                          onClick={() => void handleBringDriftToChat(aid)}
+                        >
+                          <Wand2 className="h-3 w-3" />
+                          {t("design.drift.bringToChat", "带到对话更新")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 shrink-0 px-2 text-xs text-sky-800 hover:bg-sky-100 dark:text-sky-200 dark:hover:bg-sky-900/40"
+                          onClick={() => void handleMarkDriftSynced(aid)}
+                        >
+                          {t("design.drift.markSynced", "标为已同步")}
+                        </Button>
+                      </div>
+                    )
+                  })()}
+                  {(() => {
+                    const from = parseDerivedFrom(activeArtifact.metadata)
+                    if (!from) return null
+                    const target = artifacts.find((a) => a.id === from.id)
+                    return (
+                      <div className="flex shrink-0 items-center gap-1.5 border-b bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
+                        <GitFork className="h-3 w-3 shrink-0" />
+                        <span className="shrink-0">{t("design.derivedFrom", "派生自")}</span>
+                        {target ? (
+                          <button
+                            type="button"
+                            onClick={() => void openArtifact(target)}
+                            className="min-w-0 truncate font-medium text-foreground hover:underline"
+                          >
+                            {from.title}
+                          </button>
+                        ) : (
+                          <span className="min-w-0 truncate font-medium">{from.title}</span>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  {activeArtifact.status === "failed" && (
+                    <div className="flex shrink-0 items-center gap-2 border-b border-destructive/40 bg-destructive/5 px-3 py-1.5 text-xs">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                      <span className="min-w-0 flex-1 truncate text-destructive">
+                        {t(
+                          "design.gen.failedBar",
+                          "这个页面生成失败了。可在左侧对话里重新描述，或删除重来。",
+                        )}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-2 text-xs text-destructive hover:bg-destructive/10"
+                        onClick={() =>
+                          setDeleteTarget({
+                            type: "artifact",
+                            id: activeArtifact.id,
+                            title: activeArtifact.title,
+                          })
+                        }
+                      >
+                        {t("design.gen.deletePage", "删除此页")}
+                      </Button>
+                    </div>
+                  )}
+                  <div
+                    ref={previewPaneRef}
+                    className={cn(
+                      "relative flex-1 overflow-auto p-4",
+                      devicePreset && "flex items-center justify-center",
+                    )}
+                  >
+                    {editMode && !selected && (
+                      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+                        <span className="rounded-full bg-primary/90 px-3 py-1 text-xs text-primary-foreground shadow-md">
+                          {t("design.editHint", "点选元素改属性，双击文字改文案")}
+                        </span>
+                      </div>
+                    )}
+                    <div
+                      className={cn(
+                        "relative overflow-hidden bg-white",
+                        devicePreset
+                          ? "shrink-0 rounded-[1.5rem] border-[6px] border-neutral-800 shadow-xl dark:border-neutral-700"
+                          : // 统一渲染后「适应」也是固定 scaled footprint（非 width:100% 填充），恒 mx-auto
+                            "rounded-lg border shadow-sm mx-auto",
+                        editMode && "ring-2 ring-primary/40",
+                        drawMode && "ring-2 ring-primary/40",
+                      )}
+                      style={frameWrapStyle}
+                    >
+                      {/* 常驻 iframe（Wave 2-⑥）：**不再按 key 重挂**——内容刷新只改 src 就地导航，
+                        旧帧垫底直到新帧首绘，消除 React 卸载重建的白闪。key 仅保留在下方 DrawOverlay
+                        （其坐标须随内容重排复位）。滚动保温 + spinner 见 handleIframeLoad / previewLoading。 */}
+                      <iframe
+                        ref={iframeRef}
+                        src={iframeSrc}
+                        sandbox="allow-scripts"
+                        title={activeArtifact.title}
+                        onLoad={handleIframeLoad}
+                        className="border-0"
+                        style={scaleStyle}
+                      />
+                      {/* 重载中 spinner 叠层（Wave 2-⑥）：src 变→显示，onLoad→撤。让改稿读作「更新中」。 */}
+                      {previewLoading && (
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+                        >
+                          <div className="rounded-full bg-background/70 p-2 shadow-sm backdrop-blur-sm">
+                            <Loader2Icon className="h-5 w-5 animate-spin text-muted-foreground" />
+                          </div>
+                          <span className="sr-only">{t("common.loading", "加载中...")}</span>
+                        </div>
+                      )}
+                      {/* B4-1 画框批注：父层 canvas 叠层（inset-0 = iframe 可视框），工具坞 portal 到未裁剪的
+                        pane。仅 drawMode 期条件挂载 —— 卸载即天然复位全部 marks/note，无需 setState 复位。 */}
+                      {drawMode && (
+                        // key 含 previewKey：内容刷新（agent 编辑 / 精修 / 手动刷新 → iframe 重挂、
+                        // 布局可能重排）时叠层随之重挂，天然弃掉旧的归一化 marks，不落到新内容错位处
+                        //（review MED：同产物 previewKey 变而叠层不重置会把 v1 marks 合成到 v2 布局）。
+                        <DesignDrawOverlay
+                          key={`${activeArtifact.id}-${previewKey}`}
+                          busy={drawBusy}
+                          onExit={() => setDrawMode(false)}
+                          onSubmit={handleDrawSubmit}
+                          onWheelScroll={forwardScrollToIframe}
+                          toolbarHost={previewPaneRef.current}
+                          frameStyle={overlayFrameStyle}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  {/* Deck 缩略图轨（P0）：整套幻灯片缩略图并排、点选跳页、active 高亮，长 deck 一眼总览 +
+                    秒跳任意页。无 JS 的 `#ds-slide-N` + `:target` 纯 CSS 点亮（DeckSlideThumb），复用
+                    keep-alive 池。仅纯预览态显示（演示/编辑/批注/画框态让位）。 */}
+                  {activeArtifact.kind === "deck" &&
+                    deckState &&
+                    deckState.count > 1 &&
+                    iframeSrc &&
+                    !presentMode &&
+                    !editMode &&
+                    !commentMode &&
+                    !drawMode && (
+                      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-t bg-muted/30 px-3 py-2">
+                        {Array.from({ length: deckState.count }, (_, n) => (
+                          <DeckSlideThumb
+                            key={n}
+                            poolKey={`deck-thumb:${activeArtifact.id}:${n}`}
+                            src={`${iframeSrc}#ds-slide-${n}`}
+                            index={n}
+                            active={n === deckState.active}
+                            onSelect={(i) => deckNav("ds_slide_go", i)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                </>
+              ) : artifacts.length > 0 ? (
+                /* 有产物但没打开任何标签（关到空）：引导去产物库墙重新打开——「关闭」的对侧出口。 */
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                  <p>{t("design.tab.noneOpen", "没有打开的产物")}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => setShowGrid(true)}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    {t("design.tab.reopen", "从产物库打开")}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                  {t("design.selectArtifact", "从左侧选择一个产物预览")}
+                </div>
+              )}
+
+              {/* Quality critique result card */}
+              {critique && (
+                <div className="absolute bottom-3 right-3 z-10 w-72 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Gauge className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-semibold">
+                      {t("design.critiqueScore", "质量评分")} {critique.overall.toFixed(1)}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto h-5 w-5"
+                      onClick={() => setCritique(null)}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
+                    {(
+                      [
+                        ["brand", critique.brand],
+                        ["accessibility", critique.accessibility],
+                        ["hierarchy", critique.hierarchy],
+                        ["usability", critique.usability],
+                        ["performance", critique.performance],
+                      ] as const
+                    ).map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span className="text-muted-foreground">{t(`design.dim.${k}`, k)}</span>
+                        <span className="font-mono">{v.toFixed(1)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {critique.summary && (
+                    <p className="mt-2 text-xs text-muted-foreground">{critique.summary}</p>
+                  )}
+                  {critique.fixes.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs">
+                      {critique.fixes.slice(0, 5).map((f, i) => (
+                        <li key={i}>{f}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </main>
+          </div>
+
+          {/* Inspector (right)。开合同首页右面板 RightPanelShell：外层 width 动画消除瞬时占位的硬回流
+              （否则盖住进场），内层 AnimatedPresenceBox 管滑动 + 退场 children 快照（selected 已置空仍渲染）。 */}
+          <div
+            className={cn(
+              "relative h-full min-h-0 shrink-0 overflow-hidden",
+              "transition-[width] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none",
+            )}
+            style={{ width: editMode && selected && activeArtifact ? RIGHT_PANEL_WIDTH_PX : 0 }}
+            aria-hidden={!(editMode && selected && activeArtifact)}
+          >
+            <AnimatedPresenceBox
+              open={editMode && !!selected && !!activeArtifact}
+              className="flex h-full min-h-0 w-72"
+              enterFromClassName="translate-x-4 opacity-0"
+              enterClassName="translate-x-0 opacity-100"
+              exitClassName="translate-x-4 opacity-0 pointer-events-none"
+              enterDurationMs={UI_MOTION.panelSurface}
+              exitDurationMs={UI_MOTION.panelContentExit}
+              enterEasing={UI_EASING.emphasized}
+              exitEasing={UI_EASING.accelerate}
+            >
+              {selected && activeArtifact ? (
+                <DesignInspector
+                  selected={selected}
+                  onLiveStyle={handleLiveStyle}
+                  onCommitStyle={handleCommitStyle}
+                  onLiveText={handleLiveText}
+                  onCommitText={handleCommitText}
+                  onLiveAttr={handleLiveAttr}
+                  onCommitAttr={handleCommitAttr}
+                  onPickImage={handlePickImage}
+                  onDelete={() => void handleDeleteElement()}
+                  onAddToChat={handleAddSelectedToChat}
+                  onClose={() => setSelected(null)}
+                />
+              ) : null}
+            </AnimatedPresenceBox>
+          </div>
+
+          {/* 编辑态预览右键菜单（bridge ds_context_menu；非编辑态原生右键不受影响）。统一浮层：
+              FloatingMenu（strategy=fixed + portal + 常挂载，退场动画走冻结坐标/内容，故 style 的
+              `?? 0` 只是 selected/menu 为空时的 TS 兜底）。children 恒被求值 → selected 用可选链。 */}
+          <FloatingMenu
+            open={!!previewCtxMenu && editMode && !!selected}
+            strategy="fixed"
+            portal
+            positionClassName=""
+            originClassName="origin-top-left"
+            className="z-[100] min-w-[168px] p-1"
+            style={{ top: previewCtxMenu?.y ?? 0, left: previewCtxMenu?.x ?? 0 }}
+            onEscapeKeyDown={() => setPreviewCtxMenu(null)}
+          >
+            <div onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-primary transition-colors hover:bg-primary/10"
+                onClick={() => {
+                  handleAddSelectedToChat()
+                  setPreviewCtxMenu(null)
+                }}
+              >
+                <MessagesSquare className="h-3.5 w-3.5" />
+                {t("design.insp.addToChat", "添加到对话")}
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-foreground transition-colors hover:bg-primary/10"
+                onClick={() => {
+                  handleCtxAddComment()
+                  setPreviewCtxMenu(null)
+                }}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                {t("design.ctx.comment", "添加批注")}
+              </button>
+              {!!selected?.text?.trim() && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-foreground transition-colors hover:bg-primary/10"
+                  onClick={() => {
+                    handleCtxCopyText()
+                    setPreviewCtxMenu(null)
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t("design.ctx.copyText", "复制文本")}
+                </button>
+              )}
+              <div className="my-1 h-px bg-border-soft" />
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-destructive transition-colors hover:bg-destructive/10"
+                onClick={() => {
+                  void handleDeleteElement()
+                  setPreviewCtxMenu(null)
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("design.insp.deleteEl", "删除元素")}
+              </button>
+            </div>
+          </FloatingMenu>
+
+          {/* Comment panel (right) — 批注钉（与 Inspector 互斥），开合同 Inspector。 */}
+          <div
+            className={cn(
+              "relative h-full min-h-0 shrink-0 overflow-hidden",
+              "transition-[width] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none",
+            )}
+            style={{ width: commentMode && activeArtifact ? RIGHT_PANEL_WIDTH_PX : 0 }}
+            aria-hidden={!(commentMode && activeArtifact)}
+          >
+            <AnimatedPresenceBox
+              open={commentMode && !!activeArtifact}
+              className="flex h-full min-h-0 w-72"
+              enterFromClassName="translate-x-4 opacity-0"
+              enterClassName="translate-x-0 opacity-100"
+              exitClassName="translate-x-4 opacity-0 pointer-events-none"
+              enterDurationMs={UI_MOTION.panelSurface}
+              exitDurationMs={UI_MOTION.panelContentExit}
+              enterEasing={UI_EASING.emphasized}
+              exitEasing={UI_EASING.accelerate}
+            >
+              {activeArtifact ? (
+                <DesignCommentPanel
+                  comments={comments}
+                  pending={pendingPlacement}
+                  onCreate={handleCreateComment}
+                  onCancelPending={() => setPendingPlacement(null)}
+                  onResolve={handleResolveComment}
+                  onEdit={handleEditComment}
+                  onDelete={handleDeleteComment}
+                  onFocus={(id) => postToIframe({ type: "ds_comment_focus", id })}
+                  onSendToChat={handleSendCommentToChat}
+                  onAddToChat={handleAddCommentToChat}
+                  onBatchToChat={handleBatchCommentsToChat}
+                  focusCommentId={focusCommentId}
+                  onFocusHandled={() => setFocusCommentId(null)}
+                  onClose={() => setCommentMode(false)}
+                />
+              ) : null}
+            </AnimatedPresenceBox>
+          </div>
+        </div>
+      )}
+
+      {/* Image prompt dialog */}
+      <Dialog open={imagePromptOpen} onOpenChange={setImagePromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              {promptKind === "audio"
+                ? t("design.newAudio", "生成音频")
+                : t("design.newImage", "生成图像")}
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea
+            autoFocus
+            value={imagePrompt}
+            onChange={(e) => setImagePrompt(e.target.value)}
+            rows={3}
+            placeholder={
+              promptKind === "audio"
+                ? t(
+                    "design.audioPromptPlaceholder",
+                    "旁白文本，或音乐/音效描述（可加 [music] / [sfx] 前缀）…",
+                  )
+                : t("design.imagePromptPlaceholder", "描述你想要的图像…")
+            }
+            className="resize-none"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setImagePromptOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              onClick={() => void confirmImagePrompt()}
+              disabled={creatingImage || !imagePrompt.trim()}
+            >
+              {creatingImage && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.generate", "生成")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 图片导出就地选项（W3-L）：格式 PNG/JPEG + 倍率 1/2/3x */}
+      <Dialog open={imgExportOpen} onOpenChange={setImgExportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileImage className="h-4 w-4" />
+              {t("design.exportImageTitle", "导出图片")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <span className="text-sm text-muted-foreground">
+                {t("design.exportImageFormat", "格式")}
+              </span>
+              <div className="flex gap-2">
+                {(["png", "jpeg"] as const).map((f) => (
+                  <Button
+                    key={f}
+                    variant={imgExportFormat === f ? "default" : "outline"}
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setImgExportFormat(f)}
+                  >
+                    {f === "png"
+                      ? t("design.exportImagePng", "PNG（无损 / 透明）")
+                      : t("design.exportImageJpeg", "JPEG（体积小）")}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-sm text-muted-foreground">
+                {t("design.exportImageScale", "清晰度")}
+              </span>
+              <div className="flex gap-2">
+                {[1, 2, 3].map((s) => (
+                  <Button
+                    key={s}
+                    variant={imgExportScale === s ? "default" : "outline"}
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setImgExportScale(s)}
+                  >
+                    {s}x
+                    {s === 1
+                      ? ` · ${t("design.exportImageScale1", "标准")}`
+                      : s === 2
+                        ? ` · ${t("design.exportImageScale2", "Retina")}`
+                        : ` · ${t("design.exportImageScale3", "超清")}`}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setImgExportOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              disabled={!!exporting}
+              onClick={() => {
+                setImgExportOpen(false)
+                void handleExport("png", { format: imgExportFormat, scale: imgExportScale })
+              }}
+            >
+              {exporting === "png" && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.exportImageConfirm", "导出")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 从参考图生成匹配产物（vision 描述 → 生成管线） */}
+      <Dialog
+        open={refDialogOpen}
+        onOpenChange={(o) => {
+          if (!o && !refGenerating) setRefDialogOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ImageIcon className="h-4 w-4" />
+              {t("design.fromImageTitle", "从参考图生成匹配产物")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {t("design.fromImageKind", "生成形态")}
+              </span>
+              <Select value={refKind} onValueChange={(v) => setRefKind(v as ArtifactKind)}>
+                <SelectTrigger className="h-8 w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ARTIFACT_KINDS.filter((k) => !["image", "audio", "component"].includes(k)).map(
+                    (k) => (
+                      <SelectItem key={k} value={k}>
+                        {kindLabel(k)}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            {/* 视觉模型（必涉图 → 只亮支持图片的模型；记住上次，与首页共享）。 */}
+            {homeModels.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {t("design.model.label", "生成模型")}
+                </span>
+                <ModelSelector
+                  value={genModel ? `${genModel.providerId}::${genModel.modelId}` : ""}
+                  onChange={(providerId, modelId) => rememberGenModel({ providerId, modelId })}
+                  availableModels={homeModels}
+                  requireVision
+                  placeholder={t("design.model.followDefault", "默认模型")}
+                  clearLabel={t("design.model.followDefaultItem", "跟随默认模型")}
+                  onClear={clearGenModel}
+                  className="h-8 flex-1"
+                />
+              </div>
+            )}
+            <label
+              className="flex min-h-32 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-4 text-sm text-muted-foreground hover:border-primary/50 hover:bg-muted/30"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                onPickRefImage(e.dataTransfer.files?.[0] ?? null)
+              }}
+            >
+              {refImage ? (
+                <img
+                  src={refImage.url}
+                  alt=""
+                  className="max-h-48 max-w-full rounded object-contain"
+                />
+              ) : (
+                <>
+                  <ImageIcon className="h-6 w-6 opacity-60" />
+                  <span>{t("design.fromImageDrop", "点击或拖入参考设计图")}</span>
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => onPickRefImage(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <Textarea
+              value={refExtra}
+              onChange={(e) => setRefExtra(e.target.value)}
+              rows={2}
+              placeholder={t(
+                "design.fromImageExtra",
+                "额外要求（可选）：如「文案改成中文」「用我的品牌色」…",
+              )}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setRefDialogOpen(false)}
+              disabled={refGenerating}
+            >
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              onClick={() => void createFromReferenceImage()}
+              disabled={refGenerating || !refImage}
+            >
+              {refGenerating && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.generate", "生成")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 设计变量可视化编辑器（P2） */}
+      <DesignTokenEditor
+        system={tokenEditorSystem}
+        open={tokenEditorOpen}
+        onOpenChange={setTokenEditorOpen}
+        onSaved={(systemId) => {
+          void loadSystems()
+          // fork 出新系统（内置只读）→ 设为项目默认；就地更新 id 不变，无需改。
+          if (activeProjectRef.current && systemId !== activeProjectRef.current.defaultSystemId) {
+            void setProjectSystem(systemId)
+          }
+        }}
+      />
+
+      {/* 设计系统套件视图（B1-1，从选择器行内「预览套件」触发） */}
+      <DesignKitModal
+        systemId={kitSystem?.id ?? null}
+        systemName={kitSystem?.name}
+        onClose={() => setKitSystem(null)}
+      />
+
+      {/* 多平台 Token 导出（P3 工程轴 A） */}
+      <DesignTokenExport
+        system={tokenExportSystem}
+        open={tokenExportOpen}
+        onOpenChange={setTokenExportOpen}
+      />
+
+      {/* 从 Figma 导入设计系统（P3 工程轴 B） */}
+      <DesignFigmaImport
+        open={figmaImportOpen}
+        onOpenChange={setFigmaImportOpen}
+        onImported={(systemId) => {
+          void loadSystems()
+          if (activeProjectRef.current) void setProjectSystem(systemId)
+        }}
+      />
+
+      {/* 绑定代码工程 + 同步 token（P3 工程轴 D） */}
+      <DesignCodeBinding
+        system={codeBindSystem}
+        open={codeBindOpen}
+        onOpenChange={setCodeBindOpen}
+        initialTargetDir={boundRepoDir ?? undefined}
+      />
+
+      {/* 关联代码仓库（项目级双源绑定）：读根授权 + 设计对话 working_dir + 实现到代码 */}
+      <DesignRepoBinding
+        project={activeProject}
+        open={repoBindOpen}
+        onOpenChange={setRepoBindOpen}
+        onBound={(p) => {
+          // p 是完整服务器行——直接替换，绝不 spread 合并（code_dir/ha_project_id 走
+          // skip_serializing_if，解绑/换源响应会省略这些键，合并会复活已清的旧值，review F4）。
+          setActiveProject(p)
+          setProjects((prev) => prev.map((x) => (x.id === p.id ? p : x)))
+        }}
+      />
+
+      {/* 导出强路依赖门（MP4→ffmpeg / PDF·PNG→浏览器引擎）：未就绪让用户主动选，不静默降级。 */}
+      <Dialog
+        open={!!exportGate}
+        onOpenChange={(o) => {
+          if (!o && !gateInstalling) setExportGate(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {exportGate?.dep === "ffmpeg"
+                ? t("design.dep.ffmpegTitle", "MP4 编码器未就绪")
+                : t("design.dep.browserTitle", "浏览器渲染引擎未就绪")}
+            </DialogTitle>
+          </DialogHeader>
+          {exportGate?.status.canAutoInstall ? (
+            <div className="space-y-3 text-sm text-muted-foreground">
+              <p>
+                {exportGate?.dep === "ffmpeg"
+                  ? t(
+                      "design.dep.ffmpegAutoDesc",
+                      "MP4 强路导出需要 ffmpeg 编码器（矢量保真、任意时长）。可一键下载安装（约 40MB，仅首次），或改用较低保真的浏览器编码。",
+                    )
+                  : t(
+                      "design.dep.browserAutoDesc",
+                      "PDF/PNG 强路导出（矢量可搜 PDF / 全保真 PNG）需要浏览器渲染引擎。可一键下载内置 Chromium（约 150MB，仅首次），或改用较低保真的客户端栅格化。",
+                    )}
+              </p>
+              {gateInstalling && (
+                <div className="space-y-1">
+                  <Progress value={gateProgress ?? undefined} />
+                  <p className="text-xs">
+                    {gateProgress != null
+                      ? `${gateProgress}%`
+                      : t("design.dep.downloading", "下载中…")}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm text-muted-foreground">
+              <p>
+                {exportGate?.dep === "ffmpeg"
+                  ? t(
+                      "design.dep.ffmpegManualDesc",
+                      "MP4 强路导出需要 ffmpeg。请安装后重试，或改用较低保真的浏览器编码。",
+                    )
+                  : t(
+                      "design.dep.browserManualDesc",
+                      "PDF/PNG 强路导出需要浏览器引擎。请安装 Chrome / Edge / Brave 后重试，或改用较低保真的客户端栅格化。",
+                    )}
+              </p>
+              {exportGate?.dep === "ffmpeg" && (
+                <>
+                  <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">
+                    brew install ffmpeg{"\n"}winget install ffmpeg{"\n"}apt install ffmpeg
+                  </pre>
+                  <p className="text-xs">
+                    {t("design.dep.envHint", "或设置环境变量 HA_FFMPEG_PATH 指向 ffmpeg 二进制。")}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setExportGate(null)} disabled={gateInstalling}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void gateUseClient()}
+              disabled={gateInstalling}
+            >
+              {t("design.dep.useClient", "用较低保真导出")}
+            </Button>
+            {exportGate?.status.canAutoInstall && (
+              <Button onClick={() => void gateDownloadAndRetry()} disabled={gateInstalling}>
+                {gateInstalling
+                  ? t("design.dep.installing", "安装中…")
+                  : t("design.dep.download", "下载并导出")}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Version history — 双栏 live 预览 + 溯源 + 恢复确认（B3-3） */}
+      <DesignVersionHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        artifactId={activeArtifact?.id ?? null}
+        currentVersion={activeArtifact?.currentVersion ?? 0}
+        onRestored={onVersionRestored}
+      />
+
+      <DesignDeployModal
+        open={deployOpen}
+        onClose={() => setDeployOpen(false)}
+        artifactId={activeArtifact?.id ?? null}
+      />
+
+      <DesignCodeDriftModal
+        open={driftModalOpen}
+        onClose={() => setDriftModalOpen(false)}
+        artifactId={activeArtifact?.id ?? null}
+      />
+
+      <DesignInpaintModal
+        open={inpaintOpen}
+        onClose={() => setInpaintOpen(false)}
+        artifactId={activeArtifact?.id ?? null}
+        indexUrl={iframeSrc}
+        onDone={() => setPreviewKey((k) => k + 1)}
+      />
+
+      {/* 品牌包形态自选 */}
+      <Dialog open={brandPackOpen} onOpenChange={setBrandPackOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Layers className="h-4 w-4" />
+              {t("design.brandPack.pickTitle", "生成品牌包")}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              "design.brandPack.pickHint",
+              "选择要一次生成的形态，它们共用同一设计系统、视觉语言一致（最多 6 个）。",
+            )}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {BRAND_PACK_KINDS.map((k) => {
+              const Icon = KIND_ICON[k] ?? Monitor
+              const active = brandPackKinds.has(k)
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() =>
+                    setBrandPackKinds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(k)) next.delete(k)
+                      else if (next.size < 6) next.add(k)
+                      return next
+                    })
+                  }
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-all duration-150",
+                    active
+                      ? "border-primary/60 bg-primary/10 font-medium text-primary shadow-sm"
+                      : "border-border/60 text-muted-foreground hover:border-primary/40 hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  {active ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
+                  {kindLabel(k)}
+                </button>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBrandPackOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              disabled={brandPackKinds.size === 0}
+              onClick={() => {
+                setBrandPackOpen(false)
+                void generateBrandPackFromHome([...brandPackKinds])
+              }}
+            >
+              {t("design.brandPack.pickGenerate", "生成 {{count}} 个", {
+                count: brandPackKinds.size,
+              })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 本窗口无 chrome 演示态（B4-4）：Escape 退出 */}
+      {presentMode && activeArtifact && (
+        <div className="fixed inset-0 z-[100] flex flex-col bg-neutral-950">
+          <div className="absolute right-4 top-4 z-10 flex gap-2">
+            {activeArtifact.kind === "deck" && (
+              <IconTip
+                label={
+                  presenterOpen
+                    ? t("design.presenter.hide", "隐藏演讲者备注")
+                    : t("design.presenter.show", "显示演讲者备注")
+                }
+                side="bottom"
+              >
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="h-9 w-9 rounded-full opacity-70 shadow-lg transition-opacity hover:opacity-100"
+                  onClick={() => setPresenterOpen((v) => !v)}
+                >
+                  <StickyNote className="h-4 w-4" />
+                </Button>
+              </IconTip>
+            )}
+            <IconTip label={t("design.exitPresent", "退出演示 (Esc)")} side="left">
+              <Button
+                variant="secondary"
+                size="icon"
+                className="h-9 w-9 rounded-full opacity-70 shadow-lg transition-opacity hover:opacity-100"
+                onClick={() => setPresentMode(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </IconTip>
+          </div>
+          <iframe
+            ref={presentIframeRef}
+            key={`present-${activeArtifact.id}-${previewKey}`}
+            src={iframeSrc}
+            sandbox="allow-scripts"
+            title={activeArtifact.title}
+            className="min-h-0 w-full flex-1 border-0 bg-white"
+            onLoad={() => {
+              // 进演示保温（Wave 2-⑧）：deck 从预览的当前页启动，而非被打回第 1 页。
+              const s = deckStateRef.current
+              if (activeArtifactRef.current?.kind === "deck" && s && s.active > 0) {
+                requestAnimationFrame(() =>
+                  presentIframeRef.current?.contentWindow?.postMessage(
+                    { type: "ds_slide_go", index: s.active },
+                    "*",
+                  ),
+                )
+              }
+            }}
+          />
+          {/* 演讲者备注条（deck）：计时器 + 页码 + 当前页备注（可编辑） */}
+          {activeArtifact.kind === "deck" && presenterOpen && deckState && (
+            <div className="flex shrink-0 items-stretch gap-3 border-t border-white/10 bg-neutral-900 p-3 text-neutral-200">
+              <div className="flex w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md bg-white/5 px-2 py-1">
+                <span className="font-mono text-lg tabular-nums">
+                  {`${String(Math.floor(presentElapsed / 60)).padStart(2, "0")}:${String(
+                    presentElapsed % 60,
+                  ).padStart(2, "0")}`}
+                </span>
+                <span className="text-[11px] text-neutral-400">
+                  {t("design.presenter.slide", "第 {{n}}/{{total}} 页", {
+                    n: deckState.active + 1,
+                    total: deckState.count,
+                  })}
+                </span>
+              </div>
+              <textarea
+                value={presenterNotes[deckState.active] ?? ""}
+                onChange={(e) => savePresenterNote(deckState.active, e.target.value)}
+                placeholder={t("design.presenter.notePlaceholder", "本页演讲者备注（自动保存）")}
+                className="min-h-[64px] flex-1 resize-none rounded-md border border-white/10 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none placeholder:text-neutral-500"
+              />
+              <div className="flex shrink-0 flex-col justify-center gap-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8"
+                  disabled={deckState.active <= 0}
+                  onClick={() => deckNav("ds_slide_prev")}
+                >
+                  {t("design.deckPrev", "上一页")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8"
+                  disabled={deckState.active >= deckState.count - 1}
+                  onClick={() => deckNav("ds_slide_next")}
+                >
+                  {t("design.deckNext", "下一页")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 页面级样式编辑 */}
+      <Dialog open={pageStyleOpen} onOpenChange={setPageStyleOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Paintbrush className="h-4 w-4" />
+              {t("design.pageStyle.title", "页面样式")}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              "design.pageStyle.hint",
+              "作用于整页（body）；留空表示不改该项。与逐元素微调互不影响。",
+            )}
+          </p>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className="w-20 shrink-0 text-xs font-medium">
+                {t("design.pageStyle.background", "背景色")}
+              </label>
+              <input
+                type="color"
+                value={psBackground || "#ffffff"}
+                onChange={(e) => setPsBackground(e.target.value)}
+                className="h-8 w-10 shrink-0 cursor-pointer rounded border"
+                aria-label={t("design.pageStyle.background", "背景色")}
+              />
+              <Input
+                value={psBackground}
+                onChange={(e) => setPsBackground(e.target.value)}
+                placeholder="#ffffff / transparent"
+                className="h-8 flex-1 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="w-20 shrink-0 text-xs font-medium">
+                {t("design.pageStyle.color", "文字色")}
+              </label>
+              <input
+                type="color"
+                value={psColor || "#111111"}
+                onChange={(e) => setPsColor(e.target.value)}
+                className="h-8 w-10 shrink-0 cursor-pointer rounded border"
+                aria-label={t("design.pageStyle.color", "文字色")}
+              />
+              <Input
+                value={psColor}
+                onChange={(e) => setPsColor(e.target.value)}
+                placeholder="#111111"
+                className="h-8 flex-1 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="w-20 shrink-0 text-xs font-medium">
+                {t("design.pageStyle.maxWidth", "最大宽度")}
+              </label>
+              <Input
+                value={psMaxWidth}
+                onChange={(e) => setPsMaxWidth(e.target.value)}
+                placeholder="1200px / 80rem / none"
+                className="h-8 flex-1 text-xs"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPageStyleOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button onClick={() => void savePageStyle()} disabled={psSaving}>
+              {psSaving && <Loader2Icon className="mr-1.5 h-4 w-4 animate-spin" />}
+              {t("common.apply", "应用")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 多镜头质量审查结果 */}
+      <Dialog open={reviewFindings !== null} onOpenChange={(o) => !o && setReviewFindings(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListChecks className="h-4 w-4" />
+              {t("design.review.qualityTitle", "质量审查")}
+            </DialogTitle>
+          </DialogHeader>
+          {reviewFindings && reviewFindings.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-6 text-center text-sm text-muted-foreground">
+              <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+              {t("design.review.allClear", "未发现可访问性 / 内容 / 语义问题")}
+            </div>
+          ) : (
+            <ul className="max-h-[55vh] space-y-1.5 overflow-y-auto">
+              {reviewFindings?.map((f, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 rounded-lg border bg-muted/30 px-2.5 py-2 text-xs"
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                      f.severity === "warn"
+                        ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        : "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+                    )}
+                  >
+                    {t(`design.review.lens.${f.lens}`, f.lens)}
+                  </span>
+                  <span className="min-w-0 flex-1">{f.message}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReviewFindings(null)}>
+              {t("common.close", "关闭")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reverse-extraction dialog (D2) */}
+      <Dialog open={extractOpen} onOpenChange={setExtractOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="h-4 w-4" />
+              {t("design.extractSystem", "反向提取品牌")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex gap-1.5">
+            {(["brief", "url", "image", "codebase"] as const).map((f) => (
+              <Button
+                key={f}
+                variant={extractFrom === f ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => {
+                  setExtractFrom(f)
+                  // 图片提取必涉图：当前模型不认图则先自动切到视觉模型。
+                  if (f === "image") ensureVisionGenModel()
+                }}
+              >
+                {t(`design.from.${f}`, f)}
+              </Button>
+            ))}
+          </div>
+          <Input
+            value={extractName}
+            onChange={(e) => setExtractName(e.target.value)}
+            placeholder={t("design.systemNamePlaceholder", "设计系统名称")}
+          />
+          {/* 路径模式（代码库 / 图片）文件选择器（W3-K）：桌面直接选，免手打绝对路径 */}
+          {(extractFrom === "codebase" || extractFrom === "image") && tx.supportsLocalFileOps() && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start gap-2"
+              onClick={() => void pickExtractPath()}
+            >
+              {extractFrom === "codebase" ? (
+                <FolderOpen className="h-4 w-4" />
+              ) : (
+                <ImageIcon className="h-4 w-4" />
+              )}
+              {extractFrom === "codebase"
+                ? t("design.extractPickDir", "选择代码库目录…")
+                : t("design.extractPickImage", "选择截图 / 图片…")}
+            </Button>
+          )}
+          {/* 图片提取的视觉模型（仅图片 tab；只亮支持图片的模型，记住上次、与首页共享）。 */}
+          {extractFrom === "image" && homeModels.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-sm text-muted-foreground">
+                {t("design.model.label", "生成模型")}
+              </span>
+              <ModelSelector
+                value={genModel ? `${genModel.providerId}::${genModel.modelId}` : ""}
+                onChange={(providerId, modelId) => rememberGenModel({ providerId, modelId })}
+                availableModels={homeModels}
+                requireVision
+                placeholder={t("design.model.followDefault", "默认模型")}
+                clearLabel={t("design.model.followDefaultItem", "跟随默认模型")}
+                onClear={clearGenModel}
+                className="h-8 flex-1"
+              />
+            </div>
+          )}
+          <Textarea
+            value={extractText}
+            onChange={(e) => setExtractText(e.target.value)}
+            rows={4}
+            placeholder={t(`design.extractHint.${extractFrom}`, "")}
+            className="resize-none"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setExtractOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button onClick={() => void runExtract()} disabled={extracting || !extractText.trim()}>
+              {extracting && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.extract", "提取")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import DESIGN.md dialog (互通格式) */}
+      <Dialog open={importMdOpen} onOpenChange={setImportMdOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileCode className="h-4 w-4" />
+              {t("design.importDesignMd", "导入 DESIGN.md")}
+            </DialogTitle>
+          </DialogHeader>
+          <Input
+            value={importMdName}
+            onChange={(e) => setImportMdName(e.target.value)}
+            placeholder={t("design.systemNamePlaceholder", "设计系统名称")}
+          />
+          <Textarea
+            value={importMdText}
+            onChange={(e) => setImportMdText(e.target.value)}
+            rows={10}
+            placeholder={t(
+              "design.importDesignMdPlaceholder",
+              "粘贴 DESIGN.md 文本（9 段规范 + --ds-* Token 表；缺 token 时自动合成）…",
+            )}
+            className="resize-none font-mono text-xs"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setImportMdOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button
+              onClick={() => void runImportDesignMd()}
+              disabled={importingMd || !importMdText.trim()}
+            >
+              {importingMd && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.import", "导入")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Direction picker dialog (D2) */}
+      <Dialog open={directionsOpen} onOpenChange={setDirectionsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              {t("design.proposeDirections", "生成设计方向")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Input
+              value={dirBrief}
+              onChange={(e) => setDirBrief(e.target.value)}
+              placeholder={t("design.directionBriefPlaceholder", "描述你的产品 / 品牌…")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !proposing && dirBrief.trim()) void runProposeDirections()
+              }}
+            />
+            <Button
+              onClick={() => void runProposeDirections()}
+              disabled={proposing || !dirBrief.trim()}
+            >
+              {proposing && <Loader2Icon className="mr-2 h-4 w-4 animate-spin" />}
+              {t("design.generate", "生成")}
+            </Button>
+          </div>
+          {directions.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3">
+              {directions.map((d, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={adopting !== null}
+                  onClick={() => void adoptDirection(d, i)}
+                  className="group relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:border-primary/50 disabled:opacity-60"
+                >
+                  {adopting === i && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/60">
+                      <Loader2Icon className="h-4 w-4 animate-spin text-primary" />
+                    </div>
+                  )}
+                  <div className="flex gap-1.5">
+                    {[
+                      "--ds-color-primary",
+                      "--ds-color-accent",
+                      "--ds-color-bg",
+                      "--ds-color-fg",
+                    ].map((k) => (
+                      <span
+                        key={k}
+                        className="h-6 w-6 rounded-full border"
+                        style={{ background: d.tokens[k] ?? "transparent" }}
+                      />
+                    ))}
+                  </div>
+                  <div className="text-sm font-medium">{d.name}</div>
+                  <div className="text-xs text-muted-foreground">{d.summary}</div>
+                  <div className="text-xs font-medium text-primary opacity-0 group-hover:opacity-100">
+                    {t("design.useThisDirection", "采用此方向 →")}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            proposedOnce &&
+            !proposing && (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                {t("design.noDirections", "未生成方向，换个描述再试")}
+              </div>
+            )
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* New project dialog */}
+      <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("design.newProject", "新建设计项目")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={newProjectTitle}
+            onChange={(e) => setNewProjectTitle(e.target.value)}
+            placeholder={t("design.projectTitlePlaceholder", "项目名称")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !creatingProject) void createProject()
+            }}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNewProjectOpen(false)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button onClick={() => void createProject()} disabled={creatingProject}>
+              {creatingProject && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t("common.create", "创建")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("design.deleteTitle", "确认删除？")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.type === "project"
+                ? t("design.deleteProjectDesc", "将永久删除该项目及其全部产物，无法恢复。")
+                : deleteTarget?.type === "artifacts-batch"
+                  ? t("design.deleteBatchDesc", "将永久删除选中的这些页面及其全部版本，无法恢复。")
+                  : t("design.deleteArtifactDesc", "将永久删除该产物及其全部版本，无法恢复。")}
+              {deleteTarget ? ` — ${deleteTarget.title}` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel", "取消")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void confirmDelete()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {t("common.delete", "删除")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+/** 项目卡缩略图：懒取该项目最近一个产物 → 渲染其静态缩略图。 */
+function ProjectThumb({ projectId }: { projectId: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [artifactId, setArtifactId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    let done = false
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (done || !entries.some((e) => e.isIntersecting)) return
+        done = true
+        io.disconnect()
+        getTransport()
+          .call<DesignArtifact[]>("list_design_artifacts_cmd", { projectId })
+          .then((list) => {
+            const a = list?.[0]
+            if (a) setArtifactId(a.id)
+          })
+          .catch(() => {})
+      },
+      { rootMargin: "300px" },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [projectId])
+
+  return (
+    <div ref={wrapRef} className="h-full w-full">
+      {artifactId ? (
+        <ArtifactThumb artifactId={artifactId} />
+      ) : (
+        <div className="flex h-full items-center justify-center bg-gradient-to-br from-muted to-muted/40">
+          <Palette className="h-7 w-7 text-muted-foreground/30" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Prompt-first launch home ────────────────────────────────────
+
+/** 首屏 composer 输入框（memo 隔离打字机轮播的高频重渲染，Wave 2-⑩）。 */
+const LaunchComposerTextarea = memo(function LaunchComposerTextarea({
+  prompt,
+  setPrompt,
+  onGenerate,
+  onPasteImage,
+}: {
+  prompt: string
+  setPrompt: (v: string) => void
+  onGenerate: () => void
+  /** 粘贴图片（首页参考图）：收 clipboard 首个 image item。 */
+  onPasteImage?: (file: File) => void
+}) {
+  const { t } = useTranslation()
+  const scenes = useMemo(
+    () => [
+      t("design.scene1", "一个 SaaS 产品的定价页，三档套餐，突出中间档"),
+      t("design.scene2", "一份融资路演演示，8 页，深色科技风"),
+      t("design.scene3", "一个移动 App 的登录 / 注册页，圆角友好风"),
+      t("design.scene4", "一张产品发布海报，大标题 + 关键卖点"),
+      t("design.scene5", "一个数据看板，KPI 卡片 + 折线趋势"),
+    ],
+    [t],
+  )
+  const typed = useTypewriterPlaceholder(scenes, !prompt.trim())
+  return (
+    <Textarea
+      value={prompt}
+      onChange={(e) => setPrompt(e.target.value)}
+      onKeyDown={(e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          e.preventDefault()
+          onGenerate()
+        }
+      }}
+      onPaste={(e) => {
+        if (!onPasteImage) return
+        const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+          i.type.startsWith("image/"),
+        )
+        const file = item?.getAsFile()
+        if (file) {
+          e.preventDefault()
+          onPasteImage(file)
+        }
+      }}
+      placeholder={
+        typed ||
+        t("design.launchPlaceholder", "描述你想要的设计，例如「一个 SaaS 产品的定价页，三档套餐」…")
+      }
+      // 复合编辑器：焦点由外层 prompt 卡的 focus-within 单层表达，内部 textarea 标记
+      // data-focus-ring="none" 抑制全局焦点 outline，避免双层轮廓（对齐 ui-interaction-system）。
+      data-focus-ring="none"
+      className="min-h-[72px] resize-none border-0 bg-transparent px-2.5 py-1.5 text-base leading-relaxed shadow-none placeholder:text-muted-foreground/60"
+    />
+  )
+})
+
+/** 模板卡的形态示意线框——按 kind 画一张单色 mini 布局草图，让「从模板开始」像模板画廊而非
+ *  又一排形态标签（对齐反馈：模板需带实例预览 + 与形态标签区分）。纯 CSS、零网络、主题感知
+ *  （bg-foreground/xx 描边 + bg-muted 画布，明暗自适应）。 */
+const RecipeKindPreview = memo(function RecipeKindPreview({ kind }: { kind: ArtifactKind }) {
+  const bar = "rounded-[2px] bg-foreground/15"
+  const block = "rounded-[3px] bg-foreground/[0.08]"
+  let inner: ReactNode
+  switch (kind) {
+    case "web":
+      inner = (
+        <div className="flex h-full flex-col gap-1 p-2.5">
+          <div className={cn("h-1 w-full", bar)} />
+          <div className="h-[42%] w-full rounded bg-foreground/10" />
+          <div className="mt-auto flex gap-1">
+            <div className={cn("h-3.5 flex-1", block)} />
+            <div className={cn("h-3.5 flex-1", block)} />
+            <div className={cn("h-3.5 flex-1", block)} />
+          </div>
+        </div>
+      )
+      break
+    case "mobile":
+      inner = (
+        <div className="flex h-full items-center justify-center py-2">
+          <div className="flex h-full w-[38%] flex-col gap-1 rounded-md border border-foreground/15 p-1.5">
+            <div className={cn("h-1 w-3/4", bar)} />
+            <div className={cn("flex-1", block)} />
+            <div className="flex justify-center gap-1.5 pt-0.5">
+              <div className="h-1 w-1 rounded-full bg-foreground/20" />
+              <div className="h-1 w-1 rounded-full bg-foreground/20" />
+              <div className="h-1 w-1 rounded-full bg-foreground/20" />
+            </div>
+          </div>
+        </div>
+      )
+      break
+    case "deck":
+      inner = (
+        <div className="flex h-full flex-col gap-1.5 p-2.5">
+          <div className={cn("h-1.5 w-1/2", bar)} />
+          <div className="flex flex-1 gap-1.5">
+            <div className={cn("flex-1", block)} />
+            <div className={cn("flex-1", block)} />
+          </div>
+        </div>
+      )
+      break
+    case "dashboard":
+      inner = (
+        <div className="flex h-full gap-1.5 p-2.5">
+          <div className="w-1/5 rounded-[3px] bg-foreground/10" />
+          <div className="flex flex-1 flex-col gap-1.5">
+            <div className="grid grid-cols-3 gap-1">
+              <div className={cn("h-3", block)} />
+              <div className={cn("h-3", block)} />
+              <div className={cn("h-3", block)} />
+            </div>
+            <div className={cn("flex-1", block)} />
+          </div>
+        </div>
+      )
+      break
+    case "poster":
+      inner = (
+        <div className="flex h-full items-center justify-center p-2">
+          <div className="flex h-full w-1/2 flex-col items-center justify-center gap-1.5 rounded-[3px] bg-foreground/[0.08]">
+            <div className={cn("h-2 w-3/4", bar)} />
+            <div className="h-1 w-1/2 rounded-[2px] bg-foreground/10" />
+          </div>
+        </div>
+      )
+      break
+    case "document":
+    case "email":
+      inner = (
+        <div className="flex h-full items-center justify-center p-2">
+          <div className="flex h-full w-3/5 flex-col gap-1 rounded-[3px] bg-background/60 p-2">
+            <div className={cn("h-1 w-1/2", bar)} />
+            <div className="h-0.5 w-full rounded-full bg-foreground/12" />
+            <div className="h-0.5 w-full rounded-full bg-foreground/12" />
+            <div className="h-0.5 w-4/5 rounded-full bg-foreground/12" />
+            <div className="h-0.5 w-2/3 rounded-full bg-foreground/12" />
+          </div>
+        </div>
+      )
+      break
+    default: {
+      const Icon = KIND_ICON[kind] ?? Monitor
+      inner = (
+        <div className="flex h-full items-center justify-center">
+          <Icon className="h-6 w-6 text-foreground/20" />
+        </div>
+      )
+    }
+  }
+  return <div className="aspect-[16/10] w-full overflow-hidden rounded-lg bg-muted/50">{inner}</div>
+})
+
+/** 品牌包可选形态（对齐后端 `is_brand_pack_kind`：媒体/组件形态不进批量文案生成）。 */
+const BRAND_PACK_KINDS: ArtifactKind[] = [
+  "web",
+  "mobile",
+  "deck",
+  "dashboard",
+  "poster",
+  "document",
+  "email",
+]
+
+/** 首次运行场景起步卡（零项目时展示，点选预填形态 + 场景 brief，缓解「不知从何开始」）。 */
+const SCENARIO_STARTERS: {
+  kind: ArtifactKind
+  titleKey: string
+  titleFallback: string
+  promptKey: string
+  promptFallback: string
+}[] = [
+  {
+    kind: "web",
+    titleKey: "design.starter.webTitle",
+    titleFallback: "产品落地页",
+    promptKey: "design.starter.webPrompt",
+    promptFallback:
+      "为一款 AI 笔记应用做一个现代落地页：英雄区标题、三个核心卖点、定价卡、行动号召。",
+  },
+  {
+    kind: "mobile",
+    titleKey: "design.starter.mobileTitle",
+    titleFallback: "移动 App 界面",
+    promptKey: "design.starter.mobilePrompt",
+    promptFallback: "设计一个健身打卡 App 的首页：今日进度环、本周日历、开始训练按钮。",
+  },
+  {
+    kind: "deck",
+    titleKey: "design.starter.deckTitle",
+    titleFallback: "演示文稿",
+    promptKey: "design.starter.deckPrompt",
+    promptFallback: "做一份 6 页的创业融资演示：封面、问题、方案、市场、商业模式、团队。",
+  },
+  {
+    kind: "poster",
+    titleKey: "design.starter.posterTitle",
+    titleFallback: "活动海报",
+    promptKey: "design.starter.posterPrompt",
+    promptFallback: "设计一张科技沙龙活动海报：主题、时间地点、嘉宾、报名二维码占位。",
+  },
+]
+
+function LaunchHome({
+  projects,
+  loading,
+  systems,
+  recipes,
+  onPickRecipe,
+  prompt,
+  setPrompt,
+  kind,
+  setKind,
+  systemId,
+  setSystemId,
+  generating,
+  onGenerate,
+  onBrandPack,
+  kindLabel,
+  refImages,
+  onPickImages,
+  onRemoveImage,
+  genModel,
+  models,
+  onModelChange,
+  onModelClear,
+  onOpen,
+  onDelete,
+  onRename,
+  onDuplicate,
+  onBatchDelete,
+  onNewBlank,
+}: {
+  projects: DesignProject[]
+  loading: boolean
+  systems: DesignSystemMeta[]
+  recipes: DesignRecipe[]
+  onPickRecipe: (r: DesignRecipe) => void
+  prompt: string
+  setPrompt: (v: string) => void
+  kind: ArtifactKind
+  setKind: (k: ArtifactKind) => void
+  systemId: string | null
+  setSystemId: (id: string | null) => void
+  generating: boolean
+  onGenerate: () => void
+  onBrandPack: () => void
+  kindLabel: (k: ArtifactKind) => string
+  /** 首页参考图（+ / 粘贴 / 拖拽收 ≤5 张；选中的视觉模型同时看全部原图生成）。 */
+  refImages: { url: string }[]
+  onPickImages: (files: File[]) => void
+  onRemoveImage: (index: number) => void
+  /** 生成模型（null = 跟随默认链）；传图态选择器只亮视觉模型。 */
+  genModel: ActiveModel | null
+  models: AvailableModel[]
+  onModelChange: (providerId: string, modelId: string) => void
+  onModelClear: () => void
+  onOpen: (p: DesignProject) => void
+  onDelete: (p: DesignProject) => void
+  onRename: (id: string, title: string) => void
+  onDuplicate: (id: string) => void
+  onBatchDelete: (ids: string[]) => void
+  onNewBlank: () => void
+}) {
+  const { t } = useTranslation()
+  const { openLightbox } = useLightbox()
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const systemName = systems.find((s) => s.id === systemId)?.name
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const [dragOver, setDragOver] = useState(false)
+
+  // ── 项目库管理（B3-1）：搜索 / 网格·列表切换 / 多选批量删 / 改名 ──
+  const [query, setQuery] = useState("")
+  const [view, setView] = useState<"grid" | "list">(() => {
+    if (typeof window === "undefined") return "grid"
+    return window.localStorage.getItem("design:projects:view") === "list" ? "list" : "grid"
+  })
+  const setViewPersist = useCallback((v: "grid" | "list") => {
+    setView(v)
+    try {
+      window.localStorage.setItem("design:projects:view", v)
+    } catch {
+      /* localStorage 不可用 → 仅本次会话生效 */
+    }
+  }, [])
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const [renameTarget, setRenameTarget] = useState<DesignProject | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+  const [batchConfirm, setBatchConfirm] = useState(false)
+
+  const filteredProjects = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return projects
+    return projects.filter((p) => p.title.toLowerCase().includes(q))
+  }, [projects, query])
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelected(new Set())
+  }, [])
+  const doBatchDelete = useCallback(() => {
+    onBatchDelete([...selected])
+    setBatchConfirm(false)
+    exitSelectMode()
+  }, [selected, onBatchDelete, exitSelectMode])
+  const openRename = useCallback((p: DesignProject) => {
+    setRenameTarget(p)
+    setRenameValue(p.title)
+  }, [])
+  const commitRename = useCallback(() => {
+    if (renameTarget) onRename(renameTarget.id, renameValue)
+    setRenameTarget(null)
+  }, [renameTarget, renameValue, onRename])
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-4xl px-6 pb-14 pt-16">
+        {/* Hero（顶部已有标题栏，去掉冗余的「设计空间」徽标） */}
+        <div className="mb-8 text-center">
+          <h1 className="font-serif text-4xl font-semibold tracking-tight text-foreground sm:text-[3.25rem] sm:leading-[1.1]">
+            {t("design.launchHeading", "你想设计什么？")}
+          </h1>
+          <p className="mx-auto mt-4 max-w-lg text-[15px] text-muted-foreground">
+            {t(
+              "design.launchSub",
+              "一句话描述，直接生成可交付的设计——网页 / 演示 / 海报 / 文档 / 动效。",
+            )}
+          </p>
+        </div>
+
+        {/* Prompt card（对齐主对话输入 dock 的扁平浮层：border-soft + surface-floating +
+            subtle shadow-input-dock，无 ring/无重焦点抬升）。焦点走 data-focus-scope：内部
+            textarea 标 data-focus-ring="none"，键盘聚焦时全局只在 dock 外描一层轮廓（复合编辑器单层）。
+            支持拖拽参考图；粘贴走 Textarea onPaste。 */}
+        <div
+          data-focus-scope
+          className={cn(
+            "rounded-input-dock border border-border-soft bg-surface-floating p-3 shadow-input-dock transition-colors duration-200",
+            dragOver && "border-primary/50",
+          )}
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer.types).includes("Files")) {
+              e.preventDefault()
+              setDragOver(true)
+            }
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            // 可一次拖入多张（过滤 / 上限 / 单次 toast 都在 onPickImages 内）。
+            onPickImages(Array.from(e.dataTransfer.files))
+          }}
+        >
+          {/* 参考图缩略预览（≤5 张；点图放大预览，X 移除单张，删图不切回模型）。
+              高度平滑增减同聊天 AttachmentPreview；pb 而非 mb 让 scrollHeight 计入。 */}
+          <AnimatedCollapse open={refImages.length > 0} overflow="visible-when-open">
+            <div className="flex flex-wrap items-center gap-2 px-1.5 pb-1.5">
+              {refImages.map((img, i) => (
+                // index key：缩略图无自身状态，且 data-URL 对同一张图会重复（review #3）。
+                <div key={i} className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => openLightbox(img.url, t("design.refImage.alt", "参考图"))}
+                    className="block h-14 w-14 cursor-zoom-in overflow-hidden rounded-lg border border-border/60 transition-colors hover:border-primary/40"
+                  >
+                    <img
+                      src={img.url}
+                      alt={t("design.refImage.alt", "参考图")}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("design.refImage.remove", "移除参考图")}
+                    onClick={() => onRemoveImage(i)}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-foreground/80 text-background opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              <span className="text-xs text-muted-foreground">
+                {refImages.length > 1
+                  ? t("design.refImage.hintMulti", "将照着这些参考图生成")
+                  : t("design.refImage.hint", "将照着这张参考图生成")}
+              </span>
+            </div>
+          </AnimatedCollapse>
+          {/* 打字机轮播占位隔离在 memo 子组件里（Wave 2-⑩ review LOW）：其 ~20fps 状态更新只
+              重渲染这一小块，不再拖动整个 LaunchHome 项目网格。 */}
+          <LaunchComposerTextarea
+            prompt={prompt}
+            setPrompt={setPrompt}
+            onGenerate={onGenerate}
+            onPasteImage={(f) => onPickImages([f])}
+          />
+          <div className="mt-1 flex items-center justify-between gap-2 border-t border-border/50 px-1 pt-2">
+            <div className="flex min-w-0 items-center gap-1">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  // 一次可多选（过滤 / 上限 / 单次 toast 都在 onPickImages 内）。
+                  onPickImages(Array.from(e.target.files ?? []))
+                  e.target.value = "" // 允许再次选同一文件
+                }}
+              />
+              <IconTip label={t("design.refImage.add", "添加参考图（也可粘贴 / 拖入）")} side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 rounded-lg p-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <ImagePlus className="h-4 w-4" />
+                </Button>
+              </IconTip>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 rounded-lg text-muted-foreground hover:text-foreground"
+                onClick={() => setPickerOpen(true)}
+              >
+                <Palette className="h-3.5 w-3.5 opacity-80" />
+                <span className="max-w-[140px] truncate">
+                  {systemName ?? t("design.pickSystem", "选择设计系统")}
+                </span>
+              </Button>
+              {/* 生成模型 chip：传图态只亮视觉模型（requireVision 置灰其余）。 */}
+              {models.length > 0 && (
+                <ModelSelector
+                  value={genModel ? `${genModel.providerId}::${genModel.modelId}` : ""}
+                  onChange={onModelChange}
+                  availableModels={models}
+                  requireVision={refImages.length > 0}
+                  placeholder={t("design.model.followDefault", "默认模型")}
+                  clearLabel={t("design.model.followDefaultItem", "跟随默认模型")}
+                  onClear={onModelClear}
+                  className="h-8 w-auto max-w-[200px] gap-1.5 rounded-lg border-0 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none hover:bg-secondary hover:text-foreground"
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <IconTip
+                label={t("design.brandPack.hint", "一次生成落地页 + 演示 + 海报，共用同一设计系统")}
+                side="top"
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 rounded-lg px-4 font-medium gap-1.5"
+                  disabled={(!prompt.trim() && refImages.length === 0) || generating}
+                  onClick={onBrandPack}
+                >
+                  <Layers className="h-4 w-4" />
+                  {t("design.brandPack.button", "品牌包")}
+                </Button>
+              </IconTip>
+              <Button
+                size="sm"
+                className="h-9 rounded-lg px-5 font-medium gap-1.5"
+                disabled={(!prompt.trim() && refImages.length === 0) || generating}
+                onClick={onGenerate}
+              >
+                {generating && <Loader2 className="h-4 w-4 animate-spin" />}
+                {generating ? t("design.generating", "生成中…") : t("design.generate", "生成")}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Kind chips */}
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          {ARTIFACT_KINDS.map((k) => {
+            const Icon = KIND_ICON[k]
+            const active = k === kind
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(k)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors duration-150",
+                  active
+                    ? "bg-primary font-medium text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {kindLabel(k)}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Templates（从模板开始：点选 → 填入形态 + 场景 brief，可编辑后生成；换行网格，不横向滚动） */}
+        {recipes.length > 0 && (
+          <div className="mt-9">
+            <p className="mb-3 text-center text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
+              {t("design.startFromTemplate", "从模板开始")}
+            </p>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+              {recipes.slice(0, 8).map((r) => {
+                const Icon = KIND_ICON[r.kind] ?? Monitor
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => onPickRecipe(r)}
+                    data-ha-title-tip={r.summary}
+                    className="group flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card text-left transition-colors duration-150 hover:border-primary/40 hover:bg-accent/40"
+                  >
+                    <div className="border-b border-border/50 p-2 transition-colors group-hover:border-primary/20">
+                      <RecipeKindPreview kind={r.kind} />
+                    </div>
+                    <div className="flex flex-col gap-1 p-3">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
+                        <span className="truncate text-sm font-medium">{r.name}</span>
+                      </div>
+                      <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+                        {r.summary}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Projects library（B3-1：搜索 / 网格·列表 / 多选批量删 / 改名·复制） */}
+        <div className="mt-12">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-muted-foreground">
+              {t("design.recentProjects", "最近的项目")}
+            </h2>
+            <div className="ml-auto flex items-center gap-1.5">
+              {projects.length > 0 && (
+                <>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <SearchInput
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder={t("design.searchProjects", "搜索项目…")}
+                      className="h-8 w-40 pl-7 text-xs"
+                    />
+                  </div>
+                  <div className="flex rounded-lg border border-border/60 p-0.5">
+                    <IconTip label={t("design.viewGrid", "网格")}>
+                      <button
+                        type="button"
+                        onClick={() => setViewPersist("grid")}
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                          view === "grid"
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <LayoutGrid className="h-3.5 w-3.5" />
+                      </button>
+                    </IconTip>
+                    <IconTip label={t("design.viewList", "列表")}>
+                      <button
+                        type="button"
+                        onClick={() => setViewPersist("list")}
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded-md transition-colors",
+                          view === "list"
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        <ListIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </IconTip>
+                  </div>
+                  <IconTip label={t("design.selectMultiple", "多选")}>
+                    <Button
+                      variant={selectMode ? "default" : "ghost"}
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+                    >
+                      <CheckSquare className="h-3.5 w-3.5" />
+                    </Button>
+                  </IconTip>
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1 text-xs text-muted-foreground"
+                onClick={onNewBlank}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("design.newBlankProject", "空白项目")}
+              </Button>
+            </div>
+          </div>
+
+          {selectMode && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">
+                {t("design.selectedCount", "已选 {{count}} 项", { count: selected.size })}
+              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button variant="ghost" size="sm" className="h-7" onClick={exitSelectMode}>
+                  {t("common.cancel", "取消")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 gap-1.5"
+                  disabled={selected.size === 0}
+                  onClick={() => setBatchConfirm(true)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("design.deleteSelected", "删除所选")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="space-y-4 py-6">
+              <p className="text-center text-sm text-muted-foreground">
+                {t("design.emptyProjectsHint", "还没有项目——在上面描述一个设计，直接开始。")}
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {SCENARIO_STARTERS.map((s) => (
+                  <button
+                    key={s.kind + s.titleKey}
+                    type="button"
+                    disabled={generating}
+                    onClick={() => {
+                      setKind(s.kind)
+                      setPrompt(t(s.promptKey, s.promptFallback))
+                    }}
+                    className="group flex flex-col gap-1 rounded-xl border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent/40 disabled:opacity-50"
+                  >
+                    <span className="text-sm font-medium">{t(s.titleKey, s.titleFallback)}</span>
+                    <span className="line-clamp-2 text-xs text-muted-foreground">
+                      {t(s.promptKey, s.promptFallback)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : filteredProjects.length === 0 ? (
+            <div className="rounded-xl border border-dashed py-10 text-center text-sm text-muted-foreground">
+              {t("design.noMatchProjects", "没有匹配的项目")}
+            </div>
+          ) : view === "grid" ? (
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+              {filteredProjects.map((p) => {
+                const checked = selected.has(p.id)
+                return (
+                  <div
+                    key={p.id}
+                    className={cn(
+                      "group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-md",
+                      checked && "ring-2 ring-primary",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => (selectMode ? toggleSelected(p.id) : onOpen(p))}
+                      disabled={generating}
+                      aria-label={p.title}
+                      className={cn(
+                        "flex flex-1 flex-col text-left",
+                        generating && "pointer-events-none opacity-60",
+                      )}
+                    >
+                      <div
+                        className="aspect-[16/10] overflow-hidden"
+                        style={p.color ? { background: p.color } : undefined}
+                      >
+                        <ProjectThumb projectId={p.id} />
+                      </div>
+                      <div className="p-3 pr-9">
+                        <div className="truncate text-sm font-medium">{p.title}</div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          {t("design.artifactCount", "{{count}} 个产物", {
+                            count: p.artifactCount ?? 0,
+                          })}
+                          {(p.needsReviewCount ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-px text-[10px] font-medium text-amber-600 ring-1 ring-inset ring-amber-500/20 dark:text-amber-400">
+                              <ShieldAlert className="h-2.5 w-2.5" />
+                              {p.needsReviewCount}
+                            </span>
+                          )}
+                          {(p.codeDriftCount ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-px text-[10px] font-medium text-sky-600 ring-1 ring-inset ring-sky-500/20 dark:text-sky-400">
+                              <GitCompareArrows className="h-2.5 w-2.5" />
+                              {p.codeDriftCount}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                    {selectMode ? (
+                      <div
+                        className={cn(
+                          "absolute left-2 top-2 flex h-5 w-5 items-center justify-center rounded-md border-2 transition-colors",
+                          checked
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background/80",
+                        )}
+                      >
+                        {checked && <Check className="h-3 w-3" />}
+                      </div>
+                    ) : (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t("common.more", "更多")}
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute bottom-2 right-2 h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent variant="floating" align="end">
+                          <DropdownMenuItem onClick={() => openRename(p)}>
+                            <Pencil className="mr-2 h-3.5 w-3.5" />
+                            {t("common.rename", "重命名")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onDuplicate(p.id)}>
+                            <Copy className="mr-2 h-3.5 w-3.5" />
+                            {t("common.duplicate", "创建副本")}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => onDelete(p)}
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            {t("common.delete", "删除")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {filteredProjects.map((p) => {
+                const checked = selected.has(p.id)
+                return (
+                  <div
+                    key={p.id}
+                    className={cn(
+                      "group flex items-center gap-3 rounded-lg border bg-card px-2.5 py-2 transition-colors hover:bg-secondary/40",
+                      checked && "ring-2 ring-primary",
+                    )}
+                  >
+                    {selectMode && (
+                      <button
+                        type="button"
+                        onClick={() => toggleSelected(p.id)}
+                        className={cn(
+                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-colors",
+                          checked
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border",
+                        )}
+                      >
+                        {checked && <Check className="h-3 w-3" />}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => (selectMode ? toggleSelected(p.id) : onOpen(p))}
+                      disabled={generating}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <div
+                        className="h-9 w-14 shrink-0 overflow-hidden rounded-md border"
+                        style={p.color ? { background: p.color } : undefined}
+                      >
+                        <ProjectThumb projectId={p.id} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{p.title}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {t("design.artifactCount", "{{count}} 个产物", {
+                            count: p.artifactCount ?? 0,
+                          })}
+                        </div>
+                      </div>
+                      {(p.needsReviewCount ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 ring-1 ring-inset ring-amber-500/20 dark:text-amber-400">
+                          <ShieldAlert className="h-2.5 w-2.5" />
+                          {p.needsReviewCount}
+                        </span>
+                      )}
+                      {(p.codeDriftCount ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium text-sky-600 ring-1 ring-inset ring-sky-500/20 dark:text-sky-400">
+                          <GitCompareArrows className="h-2.5 w-2.5" />
+                          {p.codeDriftCount}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {new Date(p.updatedAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                    {!selectMode && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t("common.more", "更多")}
+                            className="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent variant="floating" align="end">
+                          <DropdownMenuItem onClick={() => openRename(p)}>
+                            <Pencil className="mr-2 h-3.5 w-3.5" />
+                            {t("common.rename", "重命名")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => onDuplicate(p.id)}>
+                            <Copy className="mr-2 h-3.5 w-3.5" />
+                            {t("common.duplicate", "创建副本")}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => onDelete(p)}
+                          >
+                            <Trash2 className="mr-2 h-3.5 w-3.5" />
+                            {t("common.delete", "删除")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <DesignSystemPicker
+        systems={systems}
+        value={systemId}
+        onChange={setSystemId}
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+      />
+
+      {/* 改名对话框 */}
+      <Dialog open={renameTarget != null} onOpenChange={(o) => !o && setRenameTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("design.renameProject", "重命名项目")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                commitRename()
+              }
+            }}
+            autoFocus
+            placeholder={t("design.projectTitle", "项目名称")}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRenameTarget(null)}>
+              {t("common.cancel", "取消")}
+            </Button>
+            <Button onClick={commitRename} disabled={!renameValue.trim()}>
+              {t("common.save", "保存")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 批量删确认 */}
+      <AlertDialog open={batchConfirm} onOpenChange={(o) => !o && setBatchConfirm(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("design.deleteTitle", "确认删除？")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                "design.batchDeleteHint",
+                "将删除选中的 {{count}} 个项目及其全部产物，不可撤销。",
+                {
+                  count: selected.size,
+                },
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel", "取消")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault()
+                doBatchDelete()
+              }}
+            >
+              {t("common.delete", "删除")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}

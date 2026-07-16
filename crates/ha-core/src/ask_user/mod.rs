@@ -9,9 +9,9 @@ mod types;
 // ── Re-exports ──────────────────────────────────────────────────
 
 pub use types::{
-    AskUserI18nText, AskUserOwnerResponse, AskUserQuestion, AskUserQuestionAnswer,
-    AskUserQuestionGroup, AskUserQuestionOption, AskUserText, AskUserTimedOutPayload,
-    CreateOwnerAskUserQuestionInput,
+    AskUserDirectionCard, AskUserI18nText, AskUserOwnerResponse, AskUserQuestion,
+    AskUserQuestionAnswer, AskUserQuestionGroup, AskUserQuestionOption, AskUserText,
+    AskUserTimedOutPayload, CreateOwnerAskUserQuestionInput,
 };
 
 pub use questions::{

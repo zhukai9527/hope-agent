@@ -255,6 +255,20 @@ impl SessionDB {
                 forked_from_message_id INTEGER
             );
 
+            -- Design-space per-project chat threads. Binds a `kind='design'`
+            -- session to the design project it iterates on. Truth source in
+            -- sessions.db (JOINs sessions/messages for the history picker);
+            -- cascades on session delete. `project_id` is a plain column (the
+            -- design project row lives in the separate design.db, so no FK) —
+            -- design-project deletion tears these sessions down explicitly.
+            CREATE TABLE IF NOT EXISTS design_chat_threads (
+                session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_design_chat_threads_project
+                ON design_chat_threads(project_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -1805,8 +1819,12 @@ impl SessionDB {
             if incognito != 0 {
                 anyhow::bail!("incognito sessions cannot be forked");
             }
-            if is_cron != 0 || parent_session_id.is_some() || kind != SessionKind::Regular.as_str()
-            {
+            // Regular top-level chats and design-space threads are forkable; the
+            // latter产物仍是设计线程（补建 design_chat_threads 锚点见下）。cron / 子会话 /
+            // 其它隐藏 kind（knowledge / eval_fixture）与 incognito 仍拒。
+            let is_forkable_kind =
+                kind == SessionKind::Regular.as_str() || kind == SessionKind::Design.as_str();
+            if is_cron != 0 || parent_session_id.is_some() || !is_forkable_kind {
                 anyhow::bail!("only regular top-level sessions can be forked");
             }
 
@@ -1872,6 +1890,22 @@ impl SessionDB {
                 crate::session_title::TITLE_SOURCE_FIRST_MESSAGE.to_string()
             } else {
                 crate::session_title::TITLE_SOURCE_MANUAL.to_string()
+            };
+            // Fork 出的会话标题默认与源一模一样——追加 `(1)`/`(2)`/… 序号去重。设计线程按
+            // 同项目分组去重，普通会话在 regular 族内去重。无标题分支不动。
+            let dedup_project_filter: Option<&str> = if kind == SessionKind::Design.as_str() {
+                project_id.as_deref()
+            } else {
+                None
+            };
+            let inferred_title = match inferred_title {
+                Some(title) => Some(Self::dedup_fork_title(
+                    &tx,
+                    &kind,
+                    dedup_project_filter,
+                    &title,
+                )?),
+                None => None,
             };
 
             let now = chrono::Utc::now().to_rfc3339();
@@ -1961,6 +1995,39 @@ impl SessionDB {
                 }
             }
 
+            // 设计线程 fork：补建 `design_chat_threads` 锚点，让设计工具经
+            // `project_for_session` 解析回源设计项目（否则会落到新草稿项目）。以锚表为
+            // 权威来源读源 project_id，不依赖被复制的 `sessions.project_id`。
+            if kind == SessionKind::Design.as_str() {
+                let src_project: Option<String> = tx
+                    .query_row(
+                        "SELECT project_id FROM design_chat_threads WHERE session_id = ?1",
+                        params![source_session_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                match src_project {
+                    Some(pid) => {
+                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        tx.execute(
+                            "INSERT INTO design_chat_threads (session_id, project_id, created_at)
+                             VALUES (?1, ?2, ?3)
+                             ON CONFLICT(session_id) DO NOTHING",
+                            params![new_session_id, pid, now_ms],
+                        )?;
+                    }
+                    None => {
+                        crate::app_warn!(
+                            "design",
+                            "fork",
+                            "design source {} has no thread anchor; forked session {} left unanchored",
+                            source_session_id,
+                            new_session_id
+                        );
+                    }
+                }
+            }
+
             let last_message_id: Option<i64> = tx.query_row(
                 "SELECT MAX(id) FROM messages WHERE session_id = ?1",
                 params![new_session_id],
@@ -1986,6 +2053,67 @@ impl SessionDB {
 
         self.get_session(&new_session_id)?
             .ok_or_else(|| anyhow::anyhow!("forked session disappeared: {}", new_session_id))
+    }
+
+    /// Split a session title into its base and optional trailing ` (N)` sequence.
+    /// `"配色方案 (2)"` → `("配色方案", Some(2))`; `"配色方案"` → `("配色方案", None)`;
+    /// non-numeric / malformed suffixes (`"Foo (x)"`) return the whole title as base.
+    fn split_title_seq(title: &str) -> (&str, Option<u64>) {
+        let trimmed = title.trim_end();
+        if !trimmed.ends_with(')') {
+            return (title, None);
+        }
+        let Some(open) = trimmed.rfind(" (") else {
+            return (title, None);
+        };
+        let digits = &trimmed[open + 2..trimmed.len() - 1];
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return (title, None);
+        }
+        match digits.parse::<u64>() {
+            Ok(n) => (&trimmed[..open], Some(n)),
+            Err(_) => (title, None),
+        }
+    }
+
+    /// Append a `(N)` sequence to a fork's candidate title so it doesn't collide
+    /// with existing sessions. `base` is the candidate with any trailing ` (N)`
+    /// stripped (so forking `"Foo (2)"` continues the series rather than nesting).
+    /// The family is scoped to `kind` (and `project_filter` when Some — design
+    /// threads dedup within their project). Returns the candidate unchanged when
+    /// no same-base title exists (e.g. an inferred title with no collision).
+    fn dedup_fork_title(
+        tx: &rusqlite::Transaction,
+        kind: &str,
+        project_filter: Option<&str>,
+        candidate: &str,
+    ) -> Result<String> {
+        let (base, _) = Self::split_title_seq(candidate.trim());
+        let base = base.trim();
+        if base.is_empty() {
+            return Ok(candidate.to_string());
+        }
+        let mut stmt = tx.prepare(
+            "SELECT title FROM sessions
+             WHERE kind = ?1
+               AND (?2 IS NULL OR project_id = ?2)
+               AND title IS NOT NULL",
+        )?;
+        let titles = stmt
+            .query_map(params![kind, project_filter], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut max_seq: Option<u64> = None;
+        for existing in &titles {
+            let (ebase, eseq) = Self::split_title_seq(existing.trim());
+            if ebase.trim() == base {
+                let seq = eseq.unwrap_or(0);
+                max_seq = Some(max_seq.map_or(seq, |m| m.max(seq)));
+            }
+        }
+        match max_seq {
+            Some(m) => Ok(format!("{base} ({})", m + 1)),
+            None => Ok(candidate.to_string()),
+        }
     }
 
     /// Set a session's classification (see [`SessionKind`]). Used by the
@@ -2225,7 +2353,7 @@ impl SessionDB {
         // Knowledge-space sidebar conversations live in the KB panel, never the
         // main session list / picker — hide them unconditionally (no active
         // exception, unlike incognito below).
-        where_clauses.push("s.kind NOT IN ('knowledge','eval_fixture')".to_string());
+        where_clauses.push("s.kind NOT IN ('knowledge','design','eval_fixture')".to_string());
 
         // Cron run sessions live in the cron panel's "conversations" timeline,
         // never the main sidebar list — hide them when the sidebar asks.
@@ -4927,7 +5055,7 @@ impl SessionDB {
             // The in-session search path (Some(sid)) already scopes to one
             // session and is allowed to search its content while it is open.
             where_clauses.push("s.incognito = 0".to_string());
-            where_clauses.push("s.kind NOT IN ('knowledge','eval_fixture')".to_string());
+            where_clauses.push("s.kind NOT IN ('knowledge','design','eval_fixture')".to_string());
         }
 
         // Session type filter — channel presence is detected via LEFT JOIN.
@@ -4937,7 +5065,7 @@ impl SessionDB {
                 for t in type_list {
                     match t {
                         SessionTypeFilter::Regular => type_clauses.push(
-                            "(s.is_cron = 0 AND s.parent_session_id IS NULL AND cc.channel_id IS NULL AND s.kind NOT IN ('knowledge','eval_fixture'))".to_string(),
+                            "(s.is_cron = 0 AND s.parent_session_id IS NULL AND cc.channel_id IS NULL AND s.kind NOT IN ('knowledge','design','eval_fixture'))".to_string(),
                         ),
                         SessionTypeFilter::Cron => {
                             type_clauses.push("s.is_cron = 1".to_string())
@@ -5255,7 +5383,7 @@ impl SessionDB {
                 "SELECT s.id, COALESCE(s.title, '') AS title
                  FROM sessions s
                  WHERE s.incognito = 0
-                   AND s.kind NOT IN ('knowledge','eval_fixture')
+                   AND s.kind NOT IN ('knowledge','design','eval_fixture')
                    AND COALESCE(s.title, '') LIKE ?1 ESCAPE '\\'
                  ORDER BY s.updated_at DESC
                  LIMIT {}",
@@ -5293,7 +5421,7 @@ impl SessionDB {
                      WHERE messages_fts MATCH ?1
                        AND m.role IN ('user', 'assistant')
                        AND s.incognito = 0
-                       AND s.kind NOT IN ('knowledge','eval_fixture')
+                       AND s.kind NOT IN ('knowledge','design','eval_fixture')
                  ) WHERE rn = 1
                  ORDER BY rank
                  LIMIT {}",
@@ -5329,7 +5457,7 @@ impl SessionDB {
                      WHERE messages_trigram_fts MATCH ?1
                        AND m.role IN ('user', 'assistant')
                        AND s.incognito = 0
-                       AND s.kind NOT IN ('knowledge','eval_fixture')
+                       AND s.kind NOT IN ('knowledge','design','eval_fixture')
                  ) WHERE rn = 1
                  ORDER BY rank
                  LIMIT {}",
@@ -5585,7 +5713,7 @@ impl SessionDB {
 mod tests {
     use super::{SessionDB, SessionTypeFilter, SEARCH_MATCH_KIND_MESSAGE, SEARCH_MATCH_KIND_TITLE};
     use crate::session::{NewMessage, SessionKind};
-    use rusqlite::Connection;
+    use rusqlite::{Connection, OptionalExtension};
 
     fn ensure_channel_conversations_table(db: &SessionDB) {
         // Mirror the production schema in `ChannelDB::migrate` (1:1 attach).
@@ -6614,7 +6742,8 @@ mod tests {
             .expect("fork session");
 
         assert_ne!(forked.id, source.id);
-        assert_eq!(forked.title.as_deref(), Some("Original task"));
+        // Title dedup: source already holds "Original task" → fork gets a sequence.
+        assert_eq!(forked.title.as_deref(), Some("Original task (1)"));
         assert_eq!(
             forked.forked_from_session_id.as_deref(),
             Some(source.id.as_str())
@@ -6841,6 +6970,111 @@ mod tests {
 
         db.delete_session(&forked.id)
             .expect("delete forked session");
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// Forking a design-space thread keeps `kind='design'` and rebuilds the
+    /// `design_chat_threads` anchor so the design tool still resolves the source
+    /// project (regression: without the anchor the fork falls to a draft project).
+    #[test]
+    fn fork_session_on_design_thread_keeps_kind_and_rebuilds_anchor() {
+        let db_path = temp_db_path("session-fork-design");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let project_id = "design-proj-1";
+        let source = db
+            .create_session_with_project("ha-main", Some(project_id), Some(false))
+            .expect("design source session");
+        db.set_session_kind(&source.id, SessionKind::Design)
+            .expect("mark design");
+        {
+            let conn = db.conn.lock().expect("lock");
+            conn.execute(
+                "INSERT INTO design_chat_threads (session_id, project_id, created_at)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![source.id, project_id, 1_i64],
+            )
+            .expect("insert source anchor");
+        }
+        db.update_session_title_with_source(
+            &source.id,
+            "配色方案",
+            crate::session_title::TITLE_SOURCE_LLM,
+        )
+        .expect("title");
+        db.append_message(&source.id, &NewMessage::user("探索暖色方向"))
+            .expect("append user");
+        db.append_message(&source.id, &NewMessage::assistant("方案 A"))
+            .expect("append assistant");
+
+        let forked = db
+            .fork_session(&source.id, None)
+            .expect("fork design session");
+
+        let forked_meta = db.get_session(&forked.id).unwrap().expect("forked exists");
+        assert_eq!(
+            forked_meta.kind,
+            SessionKind::Design,
+            "forked design thread stays kind='design'"
+        );
+        assert_eq!(
+            forked.forked_from_session_id.as_deref(),
+            Some(source.id.as_str()),
+            "lineage recorded"
+        );
+        let anchor_pid: Option<String> = {
+            let conn = db.conn.lock().expect("lock");
+            conn.query_row(
+                "SELECT project_id FROM design_chat_threads WHERE session_id = ?1",
+                rusqlite::params![forked.id],
+                |r| r.get(0),
+            )
+            .optional()
+            .expect("query forked anchor")
+        };
+        assert_eq!(
+            anchor_pid.as_deref(),
+            Some(project_id),
+            "forked design thread must rebuild its project anchor"
+        );
+        assert_eq!(
+            forked.title.as_deref(),
+            Some("配色方案 (1)"),
+            "duplicate title gets a sequence suffix"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// Forking a session no longer duplicates the title verbatim — it appends
+    /// `(1)`/`(2)`/… and continues the series when forking an already-numbered one.
+    #[test]
+    fn fork_session_appends_sequence_to_duplicate_titles() {
+        let db_path = temp_db_path("session-fork-title-seq");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let source = db.create_session("ha-main").expect("source session");
+        db.update_session_title_with_source(
+            &source.id,
+            "配色方案",
+            crate::session_title::TITLE_SOURCE_LLM,
+        )
+        .expect("title");
+        db.append_message(&source.id, &NewMessage::user("hi"))
+            .expect("append user");
+
+        let f1 = db.fork_session(&source.id, None).expect("fork 1");
+        assert_eq!(f1.title.as_deref(), Some("配色方案 (1)"));
+
+        let f2 = db.fork_session(&source.id, None).expect("fork 2");
+        assert_eq!(f2.title.as_deref(), Some("配色方案 (2)"));
+
+        // Forking the already-numbered f1 continues the base series (no nesting).
+        let f3 = db.fork_session(&f1.id, None).expect("fork 3");
+        assert_eq!(f3.title.as_deref(), Some("配色方案 (3)"));
+
         let _ = std::fs::remove_file(&db_path);
     }
 

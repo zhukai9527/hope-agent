@@ -113,6 +113,12 @@ fn build_router_with_cors(
         .route(
             "/api/server/status",
             get(routes::server_status::server_status),
+        )
+        // B7-1 只读分享：**公开无鉴权**——token 是唯一不可猜凭证，服务干净快照（sandbox
+        // opaque-origin）。放公开路由（与 /api/health 同层），不进 require_api_key 保护面。
+        .route(
+            "/api/design/share/{token}",
+            get(routes::design::serve_share),
         );
 
     // Protected API routes
@@ -1586,8 +1592,23 @@ fn build_router_with_cors(
             "/config/image-generate",
             put(routes::config::save_image_generate_config),
         )
+        .route(
+            "/config/audio-generate",
+            get(routes::config::get_audio_generate_config)
+                .put(routes::config::save_audio_generate_config),
+        )
+        .route(
+            "/config/audio-model-catalog",
+            get(routes::config::get_audio_model_catalog),
+        )
+        .route(
+            "/config/elevenlabs-voices",
+            get(routes::config::list_elevenlabs_voices),
+        )
         .route("/config/canvas", get(routes::config::get_canvas_config))
         .route("/config/canvas", put(routes::config::save_canvas_config))
+        .route("/config/design", get(routes::config::get_design_config))
+        .route("/config/design", put(routes::config::save_design_config))
         .route("/config/sandbox", get(routes::config::get_sandbox_config))
         .route("/config/sandbox", put(routes::config::set_sandbox_config))
         .route(
@@ -2729,6 +2750,312 @@ fn build_router_with_cors(
         .route(
             "/canvas/projects/{project_id}/{*rest}",
             get(routes::canvas::serve_canvas_project_file),
+        )
+        // ── Design Space ──
+        .route(
+            "/design/projects",
+            get(routes::design::list_projects)
+                .post(routes::design::create_project)
+                .put(routes::design::update_project),
+        )
+        .route(
+            "/design/projects/{id}",
+            get(routes::design::get_project).delete(routes::design::delete_project),
+        )
+        .route(
+            "/design/projects/{id}/duplicate",
+            post(routes::design::duplicate_project),
+        )
+        .route(
+            "/design/projects/{project_id}/artifacts",
+            get(routes::design::list_artifacts),
+        )
+        .route(
+            "/design/projects/{project_id}/chat/thread",
+            get(routes::design::chat_thread_latest),
+        )
+        .route(
+            "/design/projects/{project_id}/chat/threads",
+            get(routes::design::chat_threads_list),
+        )
+        .route(
+            "/design/artifacts",
+            get(routes::design::list_all_artifacts).post(routes::design::create_artifact),
+        )
+        .route(
+            "/design/artifacts/generate",
+            // 参考图 base64（「照着这张图做」）可超 axum 默认 2 MiB body 限——放开到 16 MiB。
+            post(routes::design::generate_artifact).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
+        .route(
+            "/design/artifacts/import-image",
+            // 拖入图片 base64 可超默认 body 限——放开到 32 MiB（image 上限 20 MiB + base64 膨胀）。
+            post(routes::design::import_image).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
+        .route(
+            "/design/artifacts/brand-pack",
+            post(routes::design::generate_brand_pack),
+        )
+        .route(
+            "/design/artifacts/{id}/presenter-notes",
+            axum::routing::put(routes::design::set_presenter_notes),
+        )
+        .route(
+            "/design/artifacts/{id}/dir",
+            axum::routing::put(routes::design::set_artifact_dir),
+        )
+        .route(
+            "/design/artifacts/{id}/page-style",
+            axum::routing::put(routes::design::patch_page_style),
+        )
+        .route(
+            "/design/artifacts/{id}/inpaint",
+            // image + mask base64 → 放开 body 限到 32 MiB。
+            post(routes::design::inpaint_image).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
+        .route("/design/patch", post(routes::design::patch_element))
+        .route(
+            "/design/artifacts/{id}/remove-element",
+            post(routes::design::remove_element),
+        )
+        .route(
+            "/design/artifacts/{id}/insert-element",
+            post(routes::design::insert_element),
+        )
+        .route(
+            "/design/artifacts/{id}/cancel",
+            post(routes::design::cancel_generation),
+        )
+        .route(
+            "/design/artifacts/{id}/critique",
+            post(routes::design::critique_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}/restyle",
+            post(routes::design::restyle_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}",
+            get(routes::design::get_artifact).delete(routes::design::delete_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}/title",
+            axum::routing::put(routes::design::rename_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}/duplicate",
+            post(routes::design::duplicate_artifact),
+        )
+        .route(
+            "/design/projects/{id}/artifacts/reorder",
+            post(routes::design::reorder_artifacts),
+        )
+        .route(
+            "/design/projects/{id}/folders",
+            get(routes::design::list_folders)
+                .post(routes::design::create_folder)
+                .put(routes::design::rename_folder)
+                .delete(routes::design::delete_folder),
+        )
+        .route(
+            "/design/artifacts/{id}/folder",
+            axum::routing::put(routes::design::move_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}/versions",
+            get(routes::design::list_versions),
+        )
+        .route(
+            "/design/artifacts/{id}/versions/{version}/html",
+            get(routes::design::get_version_html),
+        )
+        .route(
+            "/design/artifacts/{id}/share",
+            get(routes::design::get_share)
+                .post(routes::design::create_share)
+                .delete(routes::design::revoke_share),
+        )
+        .route(
+            "/design/deploy/config",
+            get(routes::design::get_deploy_config).put(routes::design::save_deploy_config),
+        )
+        .route(
+            "/design/artifacts/{id}/deploy",
+            post(routes::design::deploy_artifact),
+        )
+        .route("/design/deploy/probe", post(routes::design::probe_deploy))
+        .route(
+            "/design/artifacts/{id}/domains",
+            post(routes::design::bind_domain).get(routes::design::list_domains),
+        )
+        .route(
+            "/design/artifacts/{id}/deploy/preflight",
+            get(routes::design::preflight_deploy),
+        )
+        .route(
+            "/design/artifacts/{id}/deployments",
+            get(routes::design::list_deployments),
+        )
+        .route(
+            "/design/artifacts/{id}/quality-review",
+            get(routes::design::quality_review_artifact),
+        )
+        .route(
+            "/design/deploy/vercel/config",
+            get(routes::design::get_vercel_config).put(routes::design::save_vercel_config),
+        )
+        .route(
+            "/design/artifacts/{id}/deploy/vercel",
+            post(routes::design::deploy_artifact_vercel),
+        )
+        .route(
+            "/design/artifacts/{id}/export",
+            get(routes::design::export_artifact),
+        )
+        .route(
+            "/design/artifacts/{id}/review",
+            post(routes::design::review_artifact),
+        )
+        .route("/design/systems/{id}/kit", get(routes::design::system_kit))
+        .route(
+            "/design/artifacts/{id}/handoff",
+            get(routes::design::export_handoff),
+        )
+        .route(
+            "/design/bindings",
+            get(routes::design::list_code_bindings).post(routes::design::bind_code),
+        )
+        .route(
+            "/design/bindings/{id}/sync",
+            post(routes::design::sync_code),
+        )
+        .route(
+            "/design/bindings/{id}",
+            axum::routing::delete(routes::design::unbind_code),
+        )
+        .route(
+            "/design/projects/{id}/code-binding",
+            get(routes::design::get_code_binding).put(routes::design::set_code_binding),
+        )
+        .route(
+            "/design/artifacts/{id}/implement",
+            post(routes::design::implement_to_code),
+        )
+        .route(
+            "/design/projects/{id}/code-drift/check",
+            post(routes::design::check_code_drift),
+        )
+        .route(
+            "/design/artifacts/{id}/code-drift",
+            get(routes::design::code_drift_changes),
+        )
+        .route(
+            "/design/artifacts/{id}/code-drift/sync",
+            post(routes::design::code_drift_sync),
+        )
+        .route(
+            "/design/artifacts/{id}/opened",
+            post(routes::design::mark_artifact_opened),
+        )
+        .route(
+            "/design/artifacts/{id}/restore",
+            post(routes::design::restore_version),
+        )
+        .route(
+            "/design/artifacts/{id}/ensure-fresh",
+            post(routes::design::ensure_artifact_fresh),
+        )
+        .route(
+            "/design/artifacts/{id}/comments",
+            get(routes::design::list_comments).post(routes::design::add_comment),
+        )
+        .route(
+            "/design/artifacts/{id}/comments/{comment_id}",
+            put(routes::design::update_comment).delete(routes::design::delete_comment),
+        )
+        .route(
+            "/design/artifacts/{id}/comments/{comment_id}/relocate",
+            post(routes::design::relocate_comment),
+        )
+        .route(
+            "/design/artifacts/{id}/comments/{comment_id}/resolve",
+            post(routes::design::resolve_comment),
+        )
+        .route(
+            "/design/artifacts/{id}/comments/{comment_id}/refine",
+            post(routes::design::refine_comment),
+        )
+        .route("/design/pptx", post(routes::design::export_pptx))
+        .route(
+            "/design/artifacts/{id}/pptx-outline",
+            get(routes::design::export_pptx_outline),
+        )
+        .route("/design/zip", post(routes::design::export_zip))
+        .route(
+            "/design/zip/selected",
+            post(routes::design::export_selected_zip),
+        )
+        .route(
+            "/design/systems",
+            get(routes::design::list_systems).post(routes::design::save_system),
+        )
+        .route(
+            "/design/systems/extract",
+            post(routes::design::extract_system),
+        )
+        .route(
+            "/design/systems/import",
+            post(routes::design::import_design_md),
+        )
+        .route(
+            "/design/systems/figma",
+            post(routes::design::import_figma_system),
+        )
+        .route(
+            "/design/directions",
+            post(routes::design::propose_directions),
+        )
+        .route("/design/recipes", get(routes::design::list_recipes))
+        .route(
+            "/design/recipes/{id}/demo",
+            get(routes::design::recipe_demo),
+        )
+        .route(
+            "/design/artifacts/{id}/native",
+            get(routes::design::export_native),
+        )
+        .route("/design/ffmpeg/doctor", get(routes::design::ffmpeg_doctor))
+        .route(
+            "/design/ffmpeg/install",
+            post(routes::design::install_ffmpeg),
+        )
+        .route(
+            "/design/browser/doctor",
+            get(routes::design::browser_doctor),
+        )
+        .route(
+            "/design/browser/install",
+            post(routes::design::install_browser),
+        )
+        .route(
+            "/design/systems/{id}/design-md",
+            get(routes::design::export_design_md),
+        )
+        .route(
+            "/design/systems/{id}/tokens/export",
+            get(routes::design::export_design_tokens),
+        )
+        .route(
+            "/design/systems/{id}",
+            get(routes::design::get_system)
+                .patch(routes::design::rename_system)
+                .delete(routes::design::delete_system),
+        )
+        // Design artifact static asset tree — serves the preview iframe's
+        // index.html plus its relative CSS / JS / images.
+        .route(
+            "/design/projects/{project_id}/artifacts/{artifact_id}/{*rest}",
+            get(routes::design::serve_artifact_file),
         )
         // Local-first Artifacts control plane. Canvas routes remain as the
         // compatibility rendering surface for at least one minor release.

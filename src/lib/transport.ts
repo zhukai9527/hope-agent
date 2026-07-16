@@ -130,9 +130,14 @@ export interface ChatStartArgs {
    *  message already sees the access. Ignored for existing-session sends. */
   kbAttachments?: { kbId: string; access: string }[];
   /** Tool-visibility scope. `"knowledge"` trims the injected tool set to the
-   *  knowledge-space white-list (note read/write + recall + framework basics);
-   *  set by the knowledge-space sidebar chat. Omit for normal chats. */
-  toolScope?: "knowledge";
+   *  knowledge-space white-list; `"design"` to the design-space white-list
+   *  (the `design` tool + reference-gathering + framework basics). Set by the
+   *  respective embedded chat. Omit for normal chats. */
+  toolScope?: "knowledge" | "design";
+  /** Design-space per-project chat: the open project id, sent on the auto-create
+   *  branch (with `toolScope: "design"`) so the backend promotes the new session
+   *  into a design chat thread anchored to it. Ignored for existing sessions. */
+  designProjectId?: string | null;
   // Tauri's invoke serializes extra unknown fields without complaint, and
   // HTTP's POST body is plain JSON — keep this open so HTTP impl can
   // pass-through without an unsafe `as Record<string, unknown>` cast.
@@ -172,6 +177,19 @@ export interface ProjectBootstrapRun {
   updatedAt: number;
   completedAt?: number | null;
 }
+
+/**
+ * Outcome of {@link Transport.saveFileAs}.
+ * - `saved` — bytes written; `path` is the on-disk path on desktop (for reveal),
+ *   or `null` when saved via the web File System Access API (can't reveal).
+ * - `downloaded` — fell back to a browser download (file is in the browser's
+ *   Downloads folder; no path).
+ * - `canceled` — the user dismissed the save picker.
+ */
+export type SaveResult =
+  | { status: "saved"; path: string | null }
+  | { status: "downloaded" }
+  | { status: "canceled" };
 
 /**
  * Transport defines the three communication primitives the app needs:
@@ -322,6 +340,27 @@ export interface Transport {
 
   /** Reveal a workspace file in the runtime file manager when supported. */
   revealWorkspaceFile(args: WorkspaceFileArgs): Promise<void>;
+
+  /**
+   * Save arbitrary bytes to a user-chosen location (used by Design Space exports).
+   * - Tauri: native "Save As" dialog (pre-filled with the last-used directory);
+   *   writes to the picked path; the returned `path` is set so callers can offer
+   *   "reveal in folder".
+   * - HTTP/Web: File System Access picker where available (Chromium + secure
+   *   context), otherwise a plain browser download; `path` is always `null`
+   *   (a sandboxed web client cannot reveal a local file).
+   *
+   * Returns `{status:"canceled"}` if the user dismisses the picker. Throws on a
+   * genuine write failure (callers surface an error toast).
+   */
+  saveFileAs(blob: Blob, filename: string): Promise<SaveResult>;
+
+  /**
+   * Reveal a saved file in the OS file manager (Finder / Explorer highlight).
+   * No-op on HTTP/Web — only meaningful for a {@link SaveResult} whose `path`
+   * is set (i.e. desktop).
+   */
+  revealFile(path: string): Promise<void>;
 
   /**
    * Prompt the user to pick a local image and return a {@link PickedImage}
@@ -4216,6 +4255,13 @@ export interface PickedImage {
   src: string;
   file?: File;
   revoke?: () => void;
+  /**
+   * Absolute filesystem path of the picked file on the runtime machine, when
+   * available. Tauri fills this (native picker returns a real path); HTTP mode
+   * leaves it `undefined` (browser `File` has no server-side path). Callers that
+   * need a path (e.g. design reverse-extract from image) must gate on it.
+   */
+  path?: string;
 }
 
 /**

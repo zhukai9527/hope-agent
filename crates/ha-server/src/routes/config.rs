@@ -1200,6 +1200,47 @@ pub async fn save_image_generate_config(
     Ok(Json(json!({ "saved": true })))
 }
 
+/// `GET /api/config/audio-generate` -- get audio generation config.
+pub async fn get_audio_generate_config(
+) -> Result<Json<ha_core::tools::audio_generate::AudioGenConfig>, AppError> {
+    let store = load_config()?;
+    let mut config = store.audio_generate;
+    ha_core::tools::audio_generate::backfill_providers(&mut config);
+    Ok(Json(config))
+}
+
+/// `PUT /api/config/audio-generate` -- save audio generation config.
+pub async fn save_audio_generate_config(
+    Json(body): Json<ConfigBody<ha_core::tools::audio_generate::AudioGenConfig>>,
+) -> Result<Json<Value>, AppError> {
+    ha_core::config::mutate_config(("audio_generate", "http"), |store| {
+        store.audio_generate = body.config;
+        Ok(())
+    })?;
+    Ok(Json(json!({ "saved": true })))
+}
+
+/// `GET /api/config/audio-model-catalog` -- 策展音频模型目录（B8-1，只读）。
+pub async fn get_audio_model_catalog(
+) -> Result<Json<Vec<ha_core::tools::audio_generate::AudioModelInfo>>, AppError> {
+    Ok(Json(ha_core::tools::audio_generate::audio_model_catalog()))
+}
+
+/// `GET /api/config/elevenlabs-voices?limit=100` -- 实时拉 ElevenLabs 语音（B8-1）。
+pub async fn list_elevenlabs_voices(
+    axum::extract::Query(q): axum::extract::Query<VoicesQuery>,
+) -> Result<Json<Vec<ha_core::tools::audio_generate::VoiceOption>>, AppError> {
+    let voices = ha_core::tools::audio_generate::list_elevenlabs_voices(q.limit.unwrap_or(100))
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(Json(voices))
+}
+
+#[derive(serde::Deserialize)]
+pub struct VoicesQuery {
+    pub limit: Option<u32>,
+}
+
 /// `GET /api/config/canvas` -- get canvas tool config.
 pub async fn get_canvas_config() -> Result<Json<ha_core::tools::canvas::CanvasConfig>, AppError> {
     let store = load_config()?;
@@ -1215,6 +1256,23 @@ pub async fn save_canvas_config(
         Ok(())
     })
     .await?;
+    Ok(Json(json!({ "saved": true })))
+}
+
+/// `GET /api/config/design` -- get Design Space config.
+pub async fn get_design_config() -> Result<Json<ha_core::design::DesignConfig>, AppError> {
+    let store = load_config()?;
+    Ok(Json(store.design))
+}
+
+/// `PUT /api/config/design` -- save Design Space config.
+pub async fn save_design_config(
+    Json(body): Json<ConfigBody<ha_core::design::DesignConfig>>,
+) -> Result<Json<Value>, AppError> {
+    ha_core::config::mutate_config(("design", "http"), |store| {
+        store.design = body.config;
+        Ok(())
+    })?;
     Ok(Json(json!({ "saved": true })))
 }
 

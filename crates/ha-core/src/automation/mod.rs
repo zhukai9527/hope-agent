@@ -257,6 +257,134 @@ pub async fn run(spec: ModelTaskSpec<'_>) -> Result<ModelTaskOutput> {
     }))
 }
 
+/// Streaming sibling of [`run`]: same chain-failover loop, but each candidate
+/// streams cumulative text through `on_text` instead of returning it in one
+/// shot. Powers the design space's live generation, which previously borrowed
+/// `recap::report`'s analysis agent and called `side_query_streaming` on a
+/// single model with no cross-model fallback. Mirrors the `run` / `run_vision`
+/// skeleton so a bad/unavailable primary genuinely falls through to the next
+/// model — design's snapshot throttle already resets its high-water mark when
+/// the cumulative text shrinks on such a restart, so a mid-stream failover is
+/// rendered correctly rather than swallowed.
+pub async fn run_streaming(
+    spec: ModelTaskSpec<'_>,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    on_text: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+) -> Result<ModelTaskOutput> {
+    if spec.chain.is_empty() {
+        return Err(anyhow!(
+            "no model configured for '{}' — set a default model in Settings \
+             before using this feature",
+            spec.purpose
+        ));
+    }
+
+    let config = crate::config::cached_config();
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for candidate in &spec.chain {
+        // Cancellation between candidates: without this, a cancel landing just
+        // as one candidate fails would still fire a full request at the next.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(
+                last_err.unwrap_or_else(|| anyhow!("streaming '{}' cancelled", spec.purpose))
+            );
+        }
+        let agent = match build_candidate_agent(&config, candidate, spec.session_key).await {
+            Ok(agent) => agent,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        let started = std::time::Instant::now();
+        let result = agent
+            .side_query_streaming(spec.instruction, spec.max_tokens, cancel, on_text)
+            .await;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        // `side_query_streaming` does not self-record (unlike the one-shot
+        // `side_query_with_purpose`), so stamp the usage ledger here — otherwise
+        // the design space's PRIMARY (streaming) generation path is invisible to
+        // Dashboard cost accounting. `session_key` is the synthetic
+        // `automation:*` id, never an incognito session, so this never leaks
+        // an incognito turn into the ledger.
+        record_streaming_usage(
+            &config,
+            spec.purpose,
+            spec.session_key,
+            spec.max_tokens,
+            "automation.run_streaming",
+            candidate,
+            duration_ms,
+            result.as_ref().ok().map(|r| &r.usage),
+            result.as_ref().err().map(|e| e.to_string()),
+        );
+        match result {
+            Ok(result) => {
+                return Ok(ModelTaskOutput {
+                    text: result.text,
+                    model: candidate.clone(),
+                    usage: result.usage,
+                })
+            }
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        anyhow!(
+            "all candidates in the model chain failed for streaming '{}'",
+            spec.purpose
+        )
+    }))
+}
+
+/// Record one streaming attempt to the model-usage ledger. Mirrors the fields
+/// `AssistantAgent::record_side_query_usage` stamps for one-shot side queries,
+/// so streaming rows are `KIND_SIDE_QUERY` with the same shape (per-candidate,
+/// so a fallover shows both the failed primary and the winning fallback).
+/// Shared by [`run_streaming`] and [`run_vision_streaming`] — `path` tags
+/// which streaming entry produced the row.
+#[allow(clippy::too_many_arguments)]
+fn record_streaming_usage(
+    config: &AppConfig,
+    purpose: &str,
+    session_key: &str,
+    max_tokens: u32,
+    path: &'static str,
+    candidate: &ActiveModel,
+    duration_ms: u64,
+    usage: Option<&crate::agent::ChatUsage>,
+    error: Option<String>,
+) {
+    let mut event = crate::model_usage::ModelUsageEvent::new(crate::model_usage::KIND_SIDE_QUERY);
+    event.operation = Some(purpose.to_string());
+    event.source = Some("automation.stream".to_string());
+    event.provider_id = Some(candidate.provider_id.clone());
+    event.provider_name =
+        find_provider(&config.providers, &candidate.provider_id).map(|p| p.name.clone());
+    event.model_id = Some(candidate.model_id.clone());
+    event.session_id = Some(session_key.to_string());
+    event.duration_ms = Some(duration_ms);
+    event.success = error.is_none();
+    event.error = error;
+    event.metadata = Some(serde_json::json!({
+        "path": path,
+        "max_tokens": max_tokens,
+    }));
+    if let Some(usage) = usage {
+        event.input_tokens = Some(usage.input_tokens);
+        event.output_tokens = Some(usage.output_tokens);
+        event.cache_creation_input_tokens = Some(usage.cache_creation_input_tokens);
+        event.cache_read_input_tokens = Some(usage.cache_read_input_tokens);
+    }
+    crate::model_usage::record_model_usage_best_effort(event);
+}
+
 /// Spec for a one-shot background VISION-capable model call. See [`run_vision`].
 pub struct VisionTaskSpec<'a> {
     pub purpose: &'static str,
@@ -371,6 +499,120 @@ pub async fn run_vision(spec: VisionTaskSpec<'_>) -> Result<ModelTaskOutput> {
     Err(last_err.unwrap_or_else(|| {
         anyhow!(
             "all vision-capable candidates in the model chain failed for '{}'",
+            spec.purpose
+        )
+    }))
+}
+
+/// Streaming counterpart to [`run_vision`]: same chain walk + vision-capability
+/// skip + diagnostics, but forwards the assistant text to `on_text`
+/// (cumulative-per-attempt) so the caller can live-render while the model is
+/// still producing. Powers the design space's image-referenced generation —
+/// the selected vision model sees the original image directly AND the preview
+/// streams in without a blank wait. Ledger rows mirror [`run_streaming`]'s
+/// per-candidate shape (`path = automation.run_vision_streaming`).
+pub async fn run_vision_streaming(
+    spec: VisionTaskSpec<'_>,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    on_text: &(dyn for<'s> Fn(&'s str) + Send + Sync),
+) -> Result<ModelTaskOutput> {
+    if spec.chain.is_empty() {
+        return Err(anyhow!(
+            "no model configured for '{}' — set a default model in Settings before using this feature",
+            spec.purpose
+        ));
+    }
+
+    let config = crate::config::cached_config();
+    let mut last_err: Option<anyhow::Error> = None;
+    let mut attempted_vision_capable = false;
+    let mut saw_any_live_provider = false;
+
+    for candidate in &spec.chain {
+        // Cancellation between candidates (mirrors `run_streaming`).
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(
+                last_err.unwrap_or_else(|| anyhow!("streaming '{}' cancelled", spec.purpose))
+            );
+        }
+        let Some(provider) = find_provider(&config.providers, &candidate.provider_id) else {
+            last_err = Some(anyhow!(
+                "provider '{}' not found or disabled for model '{}'",
+                candidate.provider_id,
+                candidate.model_id
+            ));
+            continue;
+        };
+        saw_any_live_provider = true;
+        if !provider.model_supports_vision(&candidate.model_id) {
+            continue; // not a failure — this candidate just isn't eligible for this task
+        }
+        attempted_vision_capable = true;
+
+        let agent = match build_candidate_agent(&config, candidate, spec.session_key).await {
+            Ok(agent) => agent,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        let started = std::time::Instant::now();
+        let result = agent
+            .side_query_streaming_with_attachments(
+                spec.system,
+                spec.instruction,
+                spec.attachments,
+                spec.max_tokens,
+                cancel,
+                on_text,
+            )
+            .await;
+        record_streaming_usage(
+            &config,
+            spec.purpose,
+            spec.session_key,
+            spec.max_tokens,
+            "automation.run_vision_streaming",
+            candidate,
+            started.elapsed().as_millis() as u64,
+            result.as_ref().ok().map(|r| &r.usage),
+            result.as_ref().err().map(|e| e.to_string()),
+        );
+        match result {
+            Ok(result) => {
+                return Ok(ModelTaskOutput {
+                    text: result.text,
+                    model: candidate.clone(),
+                    usage: result.usage,
+                })
+            }
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        }
+    }
+
+    if !attempted_vision_capable {
+        // Same diagnostic split as `run_vision` — misreporting a dead-provider
+        // chain as "no vision model" sends the user to fix the wrong thing.
+        if saw_any_live_provider {
+            return Err(anyhow!(
+                "no vision-capable model configured for '{}' — pick a model with image input support",
+                spec.purpose
+            ));
+        }
+        return Err(last_err.unwrap_or_else(|| {
+            anyhow!(
+                "no model configured for '{}' — set a default model in Settings before using this feature",
+                spec.purpose
+            )
+        }));
+    }
+    Err(last_err.unwrap_or_else(|| {
+        anyhow!(
+            "all vision-capable candidates in the model chain failed for streaming '{}'",
             spec.purpose
         )
     }))

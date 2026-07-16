@@ -143,21 +143,12 @@ import {
 import { chatKnowledgeReferenceAttachErrorToast } from "./chatKnowledgeReferenceFeedback"
 import ProjectDialog from "./project/ProjectDialog"
 import ProjectOverviewDialog from "./project/ProjectOverviewDialog"
+import { useChatDisplayPreferences } from "./hooks/useChatDisplayPreferences"
 import { ProjectSessionDraftBar } from "./project/ProjectSessionDraftBar"
 import {
   createLocalProjectRuntimeDraft,
   type ProjectRuntimeDraft,
 } from "./project/projectRuntimeDraft"
-import {
-  CHAT_DISPLAY_MODE_EVENT,
-  normalizeChatDisplayMode,
-  readChatDisplayModePreference,
-  writeChatDisplayModePreference,
-} from "./chatDisplayModePreference"
-import {
-  COMPLETED_TURN_COLLAPSE_EVENT,
-  normalizeCompletedTurnCollapsePreference,
-} from "./completedTurnCollapsePreference"
 import {
   CHAT_SIDEBAR_DEFAULT_WIDTH,
   CHAT_SIDEBAR_LEGACY_DEFAULT_WIDTH,
@@ -228,6 +219,10 @@ interface ChatScreenProps {
   pendingChatInsert?: ChatInsert
   /** Called once the insert has been consumed so App can clear the pending slot. */
   onChatInsertConsumed?: () => void
+  /** 设计空间「实现到代码」：目标会话就绪后把 message 经正常发送路径发出（一次性）。 */
+  pendingAutoSend?: { sessionId: string; message: string; nonce: number }
+  /** Called once the auto-send has fired so App can clear the pending slot. */
+  onAutoSendConsumed?: (nonce: number) => void
   /** Open the settings view, optionally to a specific section. */
   onOpenSettings?: (section?: SettingsSection) => void
   /** Open the Knowledge Space view. */
@@ -593,6 +588,8 @@ export default function ChatScreen({
   onExternalProjectFocusHandled,
   pendingChatInsert,
   onChatInsertConsumed,
+  pendingAutoSend,
+  onAutoSendConsumed,
   onOpenSettings,
   onOpenKnowledge,
 }: ChatScreenProps) {
@@ -661,51 +658,8 @@ export default function ChatScreen({
     setSidebarCollapsed(collapsed)
   }, [])
 
-  const [defaultDisplayMode, setDefaultDisplayMode] = useState(() =>
-    readChatDisplayModePreference(),
-  )
-  const [autoCollapseCompletedTurns, setAutoCollapseCompletedTurns] = useState(true)
-  useEffect(() => {
-    let cancelled = false
-    getTransport()
-      .call<{ chatDisplayMode?: unknown; autoCollapseCompletedTurns?: unknown }>("get_user_config")
-      .then((cfg) => {
-        const mode = normalizeChatDisplayMode(cfg.chatDisplayMode)
-        if (cancelled) return
-        setAutoCollapseCompletedTurns(
-          normalizeCompletedTurnCollapsePreference(cfg.autoCollapseCompletedTurns),
-        )
-        if (mode) {
-          setDefaultDisplayMode(mode)
-          writeChatDisplayModePreference(mode, { emit: false })
-        }
-      })
-      .catch((e: unknown) =>
-        logger.warn(
-          "settings",
-          "ChatScreen::loadDisplayMode",
-          "Failed to load chat display mode",
-          e,
-        ),
-      )
-
-    const handlePreferenceChange = (event: Event) => {
-      const mode = normalizeChatDisplayMode((event as CustomEvent).detail?.mode)
-      if (mode) setDefaultDisplayMode(mode)
-    }
-    const handleCompletedTurnCollapseChange = (event: Event) => {
-      setAutoCollapseCompletedTurns(
-        normalizeCompletedTurnCollapsePreference((event as CustomEvent).detail?.enabled),
-      )
-    }
-    window.addEventListener(CHAT_DISPLAY_MODE_EVENT, handlePreferenceChange)
-    window.addEventListener(COMPLETED_TURN_COLLAPSE_EVENT, handleCompletedTurnCollapseChange)
-    return () => {
-      cancelled = true
-      window.removeEventListener(CHAT_DISPLAY_MODE_EVENT, handlePreferenceChange)
-      window.removeEventListener(COMPLETED_TURN_COLLAPSE_EVENT, handleCompletedTurnCollapseChange)
-    }
-  }, [])
+  const { displayMode: defaultDisplayMode, autoCollapseCompletedTurns } =
+    useChatDisplayPreferences()
 
   // Right panel width (shared by all switchable right panels)
   const [rightPanelWidth, setRightPanelWidth] = useState(DEFAULT_RIGHT_PANEL_WIDTH)
@@ -2181,6 +2135,22 @@ export default function ChatScreen({
     void run()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChatInsert])
+
+  // 设计空间「实现到代码」：把 handoff pack 作首条消息发进实现会话（流式 / 审批 /
+  // DiffPanel 全复用）。用 handleSend 的 sessionIdOverride **原子**切到目标会话并发送
+  // （directText 形态，不带任何 staged 附件 / quote），**不依赖** currentSessionId 会合、
+  // 立即消费——无悬挂窗口、无被抢占后几小时误发（review F2）。nonce ref 防 StrictMode 重投。
+  const autoSendFiredNonceRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!pendingAutoSend) return
+    if (autoSendFiredNonceRef.current === pendingAutoSend.nonce) return
+    autoSendFiredNonceRef.current = pendingAutoSend.nonce
+    void stream.handleSend(pendingAutoSend.message, {
+      sessionIdOverride: pendingAutoSend.sessionId,
+    })
+    onAutoSendConsumed?.(pendingAutoSend.nonce)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoSend])
 
   // ── Stream Reattach Hook ────────────────────────────────────
   // Rehydrates chat streaming after frontend reload / window reopen / browser

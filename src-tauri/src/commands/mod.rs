@@ -15,6 +15,7 @@ pub mod context_retrieval;
 pub mod crash;
 pub mod cron;
 pub mod dashboard;
+pub mod design;
 pub mod docker;
 pub mod domain_eval;
 pub mod domain_quality;

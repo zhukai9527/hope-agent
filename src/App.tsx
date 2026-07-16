@@ -60,8 +60,29 @@ const DashboardView = lazy(() => import("@/components/dashboard/DashboardView"))
 const CronCalendarView = lazy(() => import("@/components/cron/CronCalendarView"))
 const PlansView = lazy(() => import("@/components/plans/PlansView"))
 const KnowledgeView = lazy(() => import("@/components/knowledge/KnowledgeView"))
+const DesignView = lazy(() => import("@/components/design/DesignView"))
 const ArtifactsView = lazy(() => import("@/components/artifacts/ArtifactsView"))
 const SettingsView = lazy(() => import("@/components/settings/SettingsView"))
+
+type AppView =
+  | "loading"
+  | "configRecovery"
+  | "onboarding"
+  | "setup"
+  | "chat"
+  | "settings"
+  | "skills"
+  | "profile"
+  | "agents"
+  | "modelConfig"
+  | "memory"
+  | "channels"
+  | "calendar"
+  | "dashboard"
+  | "plans"
+  | "knowledge"
+  | "design"
+  | "artifacts"
 
 interface PendingChatFocus extends ChatFocusTarget {
   nonce: number
@@ -74,31 +95,17 @@ interface PendingProjectFocus {
 
 export default function App() {
   const { t, i18n } = useTranslation()
-  const [view, setView] = useState<
-    | "loading"
-    | "configRecovery"
-    | "onboarding"
-    | "setup"
-    | "chat"
-    | "settings"
-    | "skills"
-    | "profile"
-    | "agents"
-    | "modelConfig"
-    | "memory"
-    | "channels"
-    | "calendar"
-    | "dashboard"
-    | "plans"
-    | "knowledge"
-    | "artifacts"
-  >("loading")
+  const [view, setView] = useState<AppView>("loading")
   const [agentIdForSettings, setAgentIdForSettings] = useState<string | undefined>(undefined)
   const [agentTabForSettings, setAgentTabForSettings] = useState<AgentTab | undefined>(undefined)
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(
     undefined,
   )
   const [settingsInitialSectionRequestKey, setSettingsInitialSectionRequestKey] = useState(0)
+  // 记住进设置前所在的视图，返回时回到那里（而非硬编码回 chat）。
+  const [settingsReturnView, setSettingsReturnView] = useState<AppView>("chat")
+  const viewRef = useRef<AppView>(view)
+  viewRef.current = view
   const [dashboardInitialTab, setDashboardInitialTab] = useState<string | undefined>(undefined)
   const [dashboardInitialReportId, setDashboardInitialReportId] = useState<string | null>(null)
   const [userAvatar, setUserAvatar] = useState<string | null>(null)
@@ -108,6 +115,10 @@ export default function App() {
   // PlansView pushes `@plan:<short_id>:v<n>` tokens here; KnowledgeView pushes
   // `[[note]]` refs (with a KB to auto-attach). ChatScreen appends + clears.
   const [pendingChatInsert, setPendingChatInsert] = useState<ChatInsert | undefined>(undefined)
+  // 设计空间「实现到代码」：跳到实现会话后把 handoff pack 作首条消息自动发送（一次性，nonce 防重放）。
+  const [pendingAutoSend, setPendingAutoSend] = useState<
+    { sessionId: string; message: string; nonce: number } | undefined
+  >(undefined)
   const [pendingChatFocus, setPendingChatFocus] = useState<PendingChatFocus | null>(null)
   const [pendingProjectFocus, setPendingProjectFocus] = useState<PendingProjectFocus | null>(null)
   const [totalUnreadCount, setTotalUnreadCount] = useState(0)
@@ -222,6 +233,8 @@ export default function App() {
   const handleOpenSettings = useCallback(
     (section?: SettingsSection) => {
     if (keepConfigRecoveryView()) return
+    // 记住来源视图（非 settings 本身），返回时回去。
+    if (viewRef.current !== "settings") setSettingsReturnView(viewRef.current)
     setSettingsInitialSection(section)
     setSettingsInitialSectionRequestKey((n) => n + 1)
     setView("settings")
@@ -696,6 +709,7 @@ export default function App() {
                 onOpenDashboard={() => handleOpenDashboard()}
                 onOpenPlans={() => setView("plans")}
                 onOpenKnowledge={handleOpenKnowledge}
+                onOpenDesign={() => setView("design")}
                 onOpenArtifacts={() => setView("artifacts")}
                 userAvatar={userAvatar}
                 totalUnreadCount={totalUnreadCount}
@@ -712,7 +726,7 @@ export default function App() {
               {view === "settings" && (
                 <SettingsView
                   key={settingsInitialSectionRequestKey}
-                  onBack={() => setView("chat")}
+                  onBack={() => setView(settingsReturnView)}
                   onCodexAuth={handleCodexAuth}
                   onCodexReauth={handleCodexAuth}
                   initialSection={settingsInitialSection}
@@ -850,6 +864,26 @@ export default function App() {
                   />
                 </Suspense>
               )}
+              {view === "design" && (
+                <Suspense
+                  fallback={
+                    <div className="flex-1 flex items-center justify-center">
+                      <div className="animate-spin h-6 w-6 border-2 border-foreground border-t-transparent rounded-full" />
+                    </div>
+                  }
+                >
+                  <DesignView
+                    onBack={() => setView("chat")}
+                    onOpenSettings={() => handleOpenSettings("design")}
+                    onImplementToCode={(sessionId, message) => {
+                      // 不设 pendingSessionId：auto-send 的 sessionIdOverride 已原子切会话，
+                      // 避免与导航半边竞争加载空历史（review F2）。
+                      setPendingAutoSend({ sessionId, message, nonce: Date.now() })
+                      setView("chat")
+                    }}
+                  />
+                </Suspense>
+              )}
               {view === "artifacts" && (
                 <Suspense
                   fallback={
@@ -887,6 +921,10 @@ export default function App() {
                   }}
                   pendingChatInsert={pendingChatInsert}
                   onChatInsertConsumed={() => setPendingChatInsert(undefined)}
+                  pendingAutoSend={pendingAutoSend}
+                  onAutoSendConsumed={(nonce) =>
+                    setPendingAutoSend((prev) => (prev?.nonce === nonce ? undefined : prev))
+                  }
                   onOpenSettings={handleOpenSettings}
                   onOpenKnowledge={handleOpenKnowledge}
                 />

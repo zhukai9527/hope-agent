@@ -199,6 +199,18 @@ pub fn permission_dir() -> Result<PathBuf> {
     Ok(root_dir()?.join("permission"))
 }
 
+// ── ffmpeg runtime (on-demand static build for MP4 export) ───────
+
+/// ffmpeg runtime root: ~/.hope-agent/ffmpeg/
+pub fn ffmpeg_runtime_dir() -> Result<PathBuf> {
+    Ok(root_dir()?.join("ffmpeg"))
+}
+
+/// Versioned ffmpeg install dir: ~/.hope-agent/ffmpeg/{version}/
+pub fn ffmpeg_version_dir(version: &str) -> Result<PathBuf> {
+    Ok(ffmpeg_runtime_dir()?.join(version))
+}
+
 // ── Agent Home ───────────────────────────────────────────────────
 
 /// Main agent home directory: ~/.hope-agent/home/
@@ -574,6 +586,46 @@ pub fn canvas_project_dir(project_id: &str) -> Result<PathBuf> {
 /// Canvas database path: ~/.hope-agent/canvas/canvas.db
 pub fn canvas_db_path() -> Result<PathBuf> {
     Ok(canvas_dir()?.join("canvas.db"))
+}
+
+// ── Design Space ────────────────────────────────────────────────
+
+/// Design Space root directory: ~/.hope-agent/design/
+pub fn design_dir() -> Result<PathBuf> {
+    Ok(root_dir()?.join("design"))
+}
+
+/// Design database path: ~/.hope-agent/design/design.db
+pub fn design_db_path() -> Result<PathBuf> {
+    Ok(design_dir()?.join("design.db"))
+}
+
+/// Design systems directory: ~/.hope-agent/design/systems/
+pub fn design_systems_dir() -> Result<PathBuf> {
+    Ok(design_dir()?.join("systems"))
+}
+
+/// Specific design system directory: ~/.hope-agent/design/systems/{id}/
+pub fn design_system_dir(system_id: &str) -> Result<PathBuf> {
+    Ok(design_systems_dir()?.join(system_id))
+}
+
+/// Design projects directory: ~/.hope-agent/design/projects/
+pub fn design_projects_dir() -> Result<PathBuf> {
+    Ok(design_dir()?.join("projects"))
+}
+
+/// Specific design project directory: ~/.hope-agent/design/projects/{id}/
+pub fn design_project_dir(project_id: &str) -> Result<PathBuf> {
+    Ok(design_projects_dir()?.join(project_id))
+}
+
+/// Specific design artifact directory:
+/// ~/.hope-agent/design/projects/{pid}/artifacts/{aid}/
+pub fn design_artifact_dir(project_id: &str, artifact_id: &str) -> Result<PathBuf> {
+    Ok(design_project_dir(project_id)?
+        .join("artifacts")
+        .join(artifact_id))
 }
 
 // ── Projects ────────────────────────────────────────────────────
