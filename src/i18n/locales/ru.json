@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Развернуть панель свойств",
+    "collapseDetails": "Свернуть панель свойств",
+    "resizeDetails": "Изменить ширину панели свойств",
     "enumLabels": {
       "report": "Отчёт",
       "dashboard": "Панель",

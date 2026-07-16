@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Kembangkan panel sifat",
+    "collapseDetails": "Runtuhkan panel sifat",
+    "resizeDetails": "Ubah saiz panel sifat",
     "enumLabels": {
       "report": "Laporan",
       "dashboard": "Papan pemuka",

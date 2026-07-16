@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "توسيع لوحة الخصائص",
+    "collapseDetails": "طي لوحة الخصائص",
+    "resizeDetails": "تغيير عرض لوحة الخصائص",
     "enumLabels": {
       "report": "تقرير",
       "dashboard": "لوحة معلومات",

@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Mở rộng bảng thuộc tính",
+    "collapseDetails": "Thu gọn bảng thuộc tính",
+    "resizeDetails": "Thay đổi kích thước bảng thuộc tính",
     "enumLabels": {
       "report": "Báo cáo",
       "dashboard": "Bảng điều khiển",

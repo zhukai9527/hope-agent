@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "속성 패널 펼치기",
+    "collapseDetails": "속성 패널 접기",
+    "resizeDetails": "속성 패널 너비 조절",
     "enumLabels": {
       "report": "보고서",
       "dashboard": "대시보드",

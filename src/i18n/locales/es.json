@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Expandir panel de propiedades",
+    "collapseDetails": "Contraer panel de propiedades",
+    "resizeDetails": "Cambiar el ancho del panel de propiedades",
     "enumLabels": {
       "report": "Informe",
       "dashboard": "Panel",

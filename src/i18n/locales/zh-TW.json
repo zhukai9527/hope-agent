@@ -10169,6 +10169,9 @@
     "expandList": "展開產物列表",
     "collapseList": "收合產物列表",
     "resizeList": "調整產物列表寬度",
+    "expandDetails": "展開屬性面板",
+    "collapseDetails": "收合屬性面板",
+    "resizeDetails": "調整屬性面板寬度",
     "enumLabels": {
       "report": "報告",
       "dashboard": "儀表板",

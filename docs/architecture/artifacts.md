@@ -227,9 +227,11 @@ Artifact 注册会从显式结构写入 scoped Domain Evidence：
 
 - 带统一搜索图标与清空动作的标题客户端搜索，以及 kind/state 服务端分页；
 - 可折叠、可拖拽调宽的左侧产物列表，折叠状态和宽度保存在本机 `localStorage`；
+- 可折叠、可拖拽调宽的右侧属性面板，折叠状态和宽度同样保存在本机 `localStorage`；
 - kind、privacy、analysis/verification status、source type/access scope 和 payload kind 只通过 i18n label 显示；未知后端值统一显示本地化“未知”，禁止直接暴露内部 snake_case；
 - 当前版本、隐私、来源数量、analysis/verification 状态和 executable 标记；
 - 统一 Viewer、来源/质量摘要、版本历史与 restore；
+- Viewer 支持带 FLIP 过渡的应用内最大化阅读；最大化时隐藏左右辅助面板，保留产物操作栏，并可通过恢复按钮或 `Escape` 平滑返回原布局；系统启用“减少动态效果”时直接切换，不强制播放动画；
 - verify、HTML/ZIP/Markdown/PDF 本地导出、archive 和 delete；Publisher review 入口当前不在 Gallery 展示。
 
 首版没有源码编辑器、富文本编辑器或正文直接修改入口；内容由 Agent 生成新文件并通过 optimistic-concurrency update 维护。

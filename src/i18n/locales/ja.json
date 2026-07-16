@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "プロパティパネルを展開",
+    "collapseDetails": "プロパティパネルを折りたたむ",
+    "resizeDetails": "プロパティパネルの幅を調整",
     "enumLabels": {
       "report": "レポート",
       "dashboard": "ダッシュボード",

@@ -10169,6 +10169,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Özellikler panelini genişlet",
+    "collapseDetails": "Özellikler panelini daralt",
+    "resizeDetails": "Özellikler panelini yeniden boyutlandır",
     "enumLabels": {
       "report": "Rapor",
       "dashboard": "Gösterge paneli",

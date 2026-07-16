@@ -10152,6 +10152,9 @@
     "expandList": "Expand artifact list",
     "collapseList": "Collapse artifact list",
     "resizeList": "Resize artifact list",
+    "expandDetails": "Expand properties panel",
+    "collapseDetails": "Collapse properties panel",
+    "resizeDetails": "Resize properties panel",
     "enumLabels": {
       "report": "Report",
       "dashboard": "Dashboard",

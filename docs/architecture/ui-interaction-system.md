@@ -130,6 +130,19 @@ value + `SelectValue` placeholder，并禁用 Trigger。
 - 生产 JSX 禁止原生悬停 `title`，仅 iframe 的无障碍标题例外。
 - Tooltip 只承载补充说明，完成任务所必需的信息不能只在 Hover 后出现。
 
+## 布局面板最大化动效
+
+Canvas、文件浏览器、单文件预览、Plan、产物阅读器等从局部布局切换到应用内最大化时，
+统一使用 `useFullscreenTransition`：
+
+- 动画基于切换前后的真实 `getBoundingClientRect()` 做 FLIP，不硬编码起止坐标；
+- 展开和恢复必须双向平滑，恢复前重新测量 flex 布局，窗口缩放后仍回到正确位置；
+- 动画期间保持正文、iframe 和滚动节点挂载，禁止为了动效复制或替换内容树；
+- 统一使用 `UI_MOTION.panelSurface` 与 `UI_EASING.emphasized`；
+- 遵守 `prefers-reduced-motion: reduce`，此时直接切换布局；
+- 共用 `RightPanelShell` 的面板通过 `fullscreenTransitionRef` 接入，业务组件不得再复制一套
+  `Element.animate` / `flushSync` 编排。
+
 ## 焦点可见性
 
 ### 状态模型
@@ -186,6 +199,7 @@ Web GUI 通过 `/api/config/enhanced-focus-indicators` 读写；两者都通过
 - 是否误把工具栏 ghost action 当成表单字段，或反过来？
 - 普通列表行是否使用 `hover:bg-secondary/40` 和 `bg-secondary/70`，并把语义强调色限制在
   错误、警告、未读或拖拽等真实状态？
+- 应用内最大化是否复用 `useFullscreenTransition`，并同时覆盖展开与恢复？
 
 建议审查时执行：
 
@@ -214,6 +228,8 @@ rg -n 'title=' src/components -g '*.tsx'
 - `src/components/ui/dropdown-menu.tsx`
 - `src/components/ui/context-menu.tsx`
 - `src/components/ui/tooltip.tsx`
+- `src/hooks/useFullscreenTransition.ts`
+- `src/components/chat/right-panel/RightPanelShell.tsx`
 - `src/lib/input-modality.ts`
 - `src/lib/focus-indicator-preference.ts`
 - `src/index.css`

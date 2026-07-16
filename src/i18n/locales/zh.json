@@ -10121,6 +10121,9 @@
     "expandList": "展开产物列表",
     "collapseList": "收起产物列表",
     "resizeList": "调整产物列表宽度",
+    "expandDetails": "展开属性面板",
+    "collapseDetails": "收起属性面板",
+    "resizeDetails": "调整属性面板宽度",
     "enumLabels": {
       "report": "报告",
       "dashboard": "仪表盘",
