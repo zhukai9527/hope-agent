@@ -2731,12 +2731,13 @@ export class HttpTransport implements Transport {
   async exportArtifact(
     id: string,
     format: ArtifactExportFormat,
+    expectedVersion: number,
   ): Promise<ArtifactExportResult | null> {
     const headers: Record<string, string> = { "Content-Type": "application/json" }
     if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`
     const create = await fetch(
       `${this.baseUrl}/api/artifacts/${encodeURIComponent(id)}/exports`,
-      { method: "POST", headers, body: JSON.stringify({ format }) },
+      { method: "POST", headers, body: JSON.stringify({ format, expectedVersion }) },
     )
     if (!create.ok) {
       const text = await create.text().catch(() => "")

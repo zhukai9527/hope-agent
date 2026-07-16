@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Artifacts 跟随统一文件资源与上传契约**：Gallery、右侧预览面板和 Canvas 入口现在共用标准文件动作层，受管 HTML 在无公网依赖的沙箱中直接预览，并保留打开与下载操作；浏览器/远程客户端导入 Artifact 改走 `artifact_source` 分块租约，服务端在导入期间持久化独占 claim，成功后消费、失败后释放，避免同一上传被并发重放。Artifact 导入上限纳入文件设置，Tauri 与 HTTP 使用一致的能力、错误码和安全检查。
+- **列表条目交互反馈统一**：首页聊天会话列表成为普通列表行的视觉基准，知识空间与定时任务的 hover/选中态统一使用中性 `secondary` 色阶，不再以浅蓝背景或蓝色文字表达普通选中；状态、错误、未读和拖拽落点仍保留独立语义颜色。
+- **产物库导航、列表与状态标签统一**：侧边栏入口移动到数据大盘下方并统一命名为“产物库”；库内搜索补齐标准搜索与清空图标，左侧产物列表支持折叠、展开和拖拽调整宽度，并在本机记住布局偏好。类型、隐私、分析/验证状态、来源范围和版本类型不再暴露英文 snake_case，统一通过 12 种语言的本地化标签展示。本地 HTML/ZIP/Markdown/PDF 导出不再要求填写“预期接收者”或通过多人交付式复核；只有敏感、私有/连接器来源，或 HTML/ZIP 可执行内容在导出当下提示一次风险确认，并通过 `expectedVersion` 将确认绑定到实际导出快照；旧 Canvas 的脚本 manifest 同样纳入提示。Domain Export Guard 保留给未来真正跨边界的 Publisher。
 - **Canvas 升级为 Artifacts 的离线预览兼容层**：Canvas renderer 移除 marked、highlight、Mermaid、Chart.js 和动态 html2canvas CDN；Markdown 在 Rust 中渲染，Mermaid/Chart 提供语义 fallback，所有模板使用离线 CSP 和原子写。Gallery 与右侧 Canvas 共用 `ArtifactViewer`，受管 Artifact 只能通过带 `expected_version` 的新控制面更新，避免旧 Canvas mutation 绕过 hash、证据和并发保护。
 - **数据分析阅读器升级为决策导向的丰富报告**：结构化 Analysis Artifact 不再退化为普通 Markdown，而是确定性生成结论摘要、关键发现卡片、静态 bar/SVG line 图、建议与限制、精选数据表、指标口径、质量/claim 校验和来源审计；支持窄屏、深色、打印与无脚本阅读，数值单位只按显式语义格式化，宽表只在局部横向滚动。
 - **全局焦点反馈与表单控件视觉统一**：鼠标或触摸操作不再出现突兀的深色焦点框，键盘导航保留轻量系统蓝提示，并新增可手动开启的增强焦点模式（也可通过对话式设置读取和修改）；系统高对比度与强制色模式会自动优先。搜索框、普通 / 模型选择器和数字输入同步改为更扁平克制的统一表面，菜单、悬浮弹层与 Tooltip 共用同一套视觉、动效和无障碍规范。

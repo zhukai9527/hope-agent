@@ -11,11 +11,14 @@ import {
   History,
   Loader2,
   PackageOpen,
+  PanelLeft,
+  PanelLeftDashed,
   RefreshCw,
   RotateCcw,
+  Search,
   ShieldCheck,
   Trash2,
-  UserCheck,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -23,12 +26,12 @@ import type {
   ArtifactExportFormat,
   ArtifactRecord,
   ArtifactVersionSummary,
-  DomainArtifactExportGuardReport,
 } from "@/lib/transport"
 import { getTransport } from "@/lib/transport-provider"
+import { cn } from "@/lib/utils"
+import { useDragWidth } from "@/hooks/useDragWidth"
 import { Button } from "@/components/ui/button"
 import { SearchInput } from "@/components/ui/search-input"
-import { Input } from "@/components/ui/input"
 import { IconTip } from "@/components/ui/tooltip"
 import {
   Select,
@@ -47,6 +50,70 @@ interface ArtifactsViewProps {
 }
 
 const PAGE_SIZE = 30
+const LIST_WIDTH_STORAGE_KEY = "hope.artifacts.listWidth"
+const LIST_COLLAPSED_STORAGE_KEY = "hope.artifacts.listCollapsed"
+const LIST_DEFAULT_WIDTH = 340
+const LIST_MIN_WIDTH = 260
+const LIST_MAX_WIDTH = 520
+const LIST_WIDTH_TRANSITION =
+  "transition-[width] duration-[250ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none"
+const LIST_SURFACE_TRANSITION =
+  "transition-[opacity,transform,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[opacity,transform] [contain:layout_paint] motion-reduce:transition-none"
+const ARTIFACT_ENUM_LABEL_KEYS: Record<string, string> = {
+  report: "artifacts.enumLabels.report",
+  dashboard: "artifacts.enumLabels.dashboard",
+  data_table: "artifacts.enumLabels.dataTable",
+  explainer: "artifacts.enumLabels.explainer",
+  pr_walkthrough: "artifacts.enumLabels.prWalkthrough",
+  diagram: "artifacts.enumLabels.diagram",
+  slides: "artifacts.enumLabels.slides",
+  custom: "artifacts.enumLabels.custom",
+  local_private: "artifacts.enumLabels.localPrivate",
+  shareable_snapshot: "artifacts.enumLabels.shareableSnapshot",
+  sensitive: "artifacts.enumLabels.sensitive",
+  incognito: "artifacts.enumLabels.incognito",
+  ready: "artifacts.enumLabels.ready",
+  partial: "artifacts.enumLabels.partial",
+  blocked: "artifacts.enumLabels.blocked",
+  passed: "artifacts.enumLabels.passed",
+  failed: "artifacts.enumLabels.failed",
+  insufficient_data: "artifacts.enumLabels.insufficientData",
+  freeform: "artifacts.enumLabels.freeform",
+  analysis: "artifacts.enumLabels.analysis",
+  file: "artifacts.enumLabels.file",
+  local_file: "artifacts.enumLabels.localFile",
+  project_file: "artifacts.enumLabels.projectFile",
+  attachment: "artifacts.enumLabels.attachment",
+  knowledge: "artifacts.enumLabels.knowledgeSpace",
+  knowledge_space: "artifacts.enumLabels.knowledgeSpace",
+  connector: "artifacts.enumLabels.connector",
+  database: "artifacts.enumLabels.database",
+  web: "artifacts.enumLabels.webPage",
+  web_page: "artifacts.enumLabels.webPage",
+  fixture: "artifacts.enumLabels.testFixture",
+  private: "artifacts.enumLabels.private",
+  public: "artifacts.enumLabels.public",
+  session: "artifacts.enumLabels.session",
+  unspecified: "artifacts.enumLabels.unspecified",
+  unknown: "artifacts.enumLabels.unknown",
+  not_run: "artifacts.enumLabels.notVerified",
+  active: "artifacts.active",
+  archived: "artifacts.archived",
+}
+const TECHNICAL_SOURCE_TYPE_LABELS: Record<string, string> = {
+  api: "API",
+  csv: "CSV",
+  excel: "Excel",
+  html: "HTML",
+  json: "JSON",
+  markdown: "Markdown",
+  md: "Markdown",
+  pdf: "PDF",
+  tsv: "TSV",
+  url: "URL",
+  xls: "XLS",
+  xlsx: "XLSX",
+}
 const KINDS = [
   "report",
   "dashboard",
@@ -57,6 +124,50 @@ const KINDS = [
   "slides",
   "custom",
 ]
+
+function readStoredBoolean(key: string): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem(key) === "true"
+  } catch {
+    return false
+  }
+}
+
+function readStoredWidth(key: string, fallback: number): number {
+  if (typeof window === "undefined") return fallback
+  try {
+    const value = Number(window.localStorage.getItem(key))
+    return Number.isFinite(value) && value > 0
+      ? Math.min(LIST_MAX_WIDTH, Math.max(LIST_MIN_WIDTH, value))
+      : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function requiresLocalExportConfirmation(
+  artifact: ArtifactRecord,
+  format: ArtifactExportFormat,
+): boolean {
+  if (artifact.privacy === "sensitive") return true
+  if (
+    isExecutableArtifact(artifact) &&
+    (format === "html" || format === "zip")
+  ) {
+    return true
+  }
+  return artifact.sourceSummaries.some((source) =>
+    ["private", "connector", "sensitive"].includes(source.accessScope.trim().toLowerCase()),
+  )
+}
+
+function isExecutableArtifact(artifact: ArtifactRecord): boolean {
+  return (
+    artifact.capabilities?.executableContent === true ||
+    artifact.capabilities?.scripts === true
+  )
+}
 
 function Badge({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
@@ -70,10 +181,12 @@ function ArtifactListRow({
   artifact,
   selected,
   onSelect,
+  enumLabel,
 }: {
   artifact: ArtifactRecord
   selected: boolean
   onSelect: () => void
+  enumLabel: (value: string | null | undefined) => string
 }) {
   const { t } = useTranslation()
   const target: Extract<FileTarget, { kind: "artifact" }> = {
@@ -86,7 +199,10 @@ function ArtifactListRow({
   return (
     <FileContextMenu target={target} overrides={{ onPreviewFile: onSelect }}>
       <button
-        className={`mb-1.5 w-full rounded-xl p-3 text-left transition-colors ${selected ? "bg-primary/10" : "hover:bg-muted/60"}`}
+        className={cn(
+          "mb-1.5 w-full rounded-xl p-3 text-left text-foreground transition-colors",
+          selected ? "bg-secondary/70" : "hover:bg-secondary/40",
+        )}
         onClick={() => void resource.run(resource.primary)}
       >
         <div className="flex items-start justify-between gap-2">
@@ -94,10 +210,10 @@ function ArtifactListRow({
           <Badge className="shrink-0">v{artifact.currentVersion}</Badge>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-          <span>{artifact.kind.replaceAll("_", " ")}</span>
+          <span>{enumLabel(artifact.kind)}</span>
           <span>·</span>
-          <span>{artifact.privacy.replaceAll("_", " ")}</span>
-          {artifact.capabilities?.executableContent === true && (
+          <span>{enumLabel(artifact.privacy)}</span>
+          {isExecutableArtifact(artifact) && (
             <>
               <span>·</span>
               <span>{t("artifacts.executable", "executable")}</span>
@@ -113,6 +229,13 @@ function ArtifactListRow({
 
 export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
   const { t } = useTranslation()
+  const enumLabel = (value: string | null | undefined): string => {
+    const normalized = value?.trim().toLowerCase() || "unknown"
+    const technicalLabel = TECHNICAL_SOURCE_TYPE_LABELS[normalized]
+    if (technicalLabel) return technicalLabel
+    const key = ARTIFACT_ENUM_LABEL_KEYS[normalized] ?? ARTIFACT_ENUM_LABEL_KEYS.unknown
+    return t(key)
+  }
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selected, setSelected] = useState<ArtifactRecord | null>(null)
@@ -125,21 +248,39 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [exportFormat, setExportFormat] = useState<ArtifactExportFormat>("html")
-  const [exportAudience, setExportAudience] = useState("")
-  const [exportGuard, setExportGuard] = useState<DomainArtifactExportGuardReport | null>(null)
-  const selectedTarget = useMemo<Extract<FileTarget, { kind: "artifact" }> | null>(
-    () =>
-      selected
-        ? {
-            kind: "artifact",
-            artifactId: selected.id,
-            name: `${selected.title}.html`,
-            projectPath: selected.projectPath,
-          }
-        : null,
-    [selected],
+  const [listCollapsed, setListCollapsed] = useState(() =>
+    readStoredBoolean(LIST_COLLAPSED_STORAGE_KEY),
   )
-  const artifactResource = useFileResource(selectedTarget)
+  const [listWidth, setListWidth] = useState(() =>
+    readStoredWidth(LIST_WIDTH_STORAGE_KEY, LIST_DEFAULT_WIDTH),
+  )
+  const [isResizingList, setIsResizingList] = useState(false)
+  const [isListResizeHandleHovered, setIsListResizeHandleHovered] = useState(false)
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LIST_COLLAPSED_STORAGE_KEY, String(listCollapsed))
+    } catch {
+      // localStorage may be unavailable in restricted browser modes.
+    }
+  }, [listCollapsed])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LIST_WIDTH_STORAGE_KEY, String(Math.round(listWidth)))
+    } catch {
+      // localStorage may be unavailable in restricted browser modes.
+    }
+  }, [listWidth])
+
+  const onDragList = useDragWidth({
+    width: listWidth,
+    min: LIST_MIN_WIDTH,
+    max: LIST_MAX_WIDTH,
+    onChange: setListWidth,
+    direction: "ltr",
+    onResizingChange: setIsResizingList,
+  })
 
   const loadList = useCallback(async () => {
     setLoading(true)
@@ -151,21 +292,23 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
         lifecycleState: state === "all" ? undefined : state,
       })
       setArtifacts(rows)
-      if (selectedId && !rows.some((artifact) => artifact.id === selectedId)) {
-        setSelectedId(null)
-        setSelected(null)
-        setVersions([])
-      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("artifacts.loadFailed", "Failed to load Artifacts"))
     } finally {
       setLoading(false)
     }
-  }, [kind, offset, selectedId, state, t])
+  }, [kind, offset, state, t])
 
   useEffect(() => {
     void loadList()
   }, [loadList])
+
+  useEffect(() => {
+    if (!selectedId || artifacts.some((artifact) => artifact.id === selectedId)) return
+    setSelectedId(null)
+    setSelected(null)
+    setVersions([])
+  }, [artifacts, selectedId])
 
   useEffect(() => {
     if (!selectedId) return
@@ -178,7 +321,6 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
         if (cancelled) return
         setSelected(artifact)
         setVersions(history)
-        setExportGuard(null)
       })
       .catch((error) => {
         if (!cancelled) toast.error(error instanceof Error ? error.message : String(error))
@@ -220,36 +362,37 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
   }
 
   const runExport = async () => {
-    if (!selectedTarget) return
+    if (!selected) return
+    const artifactId = selected.id
     setBusy("export")
     try {
-      const outcome = await artifactResource.run("download", { artifactFormat: exportFormat })
-      if (outcome === "executed") {
-        toast.success(t("artifacts.exportReady", "Artifact exported"))
+      const transport = getTransport()
+      const current = await transport.getArtifact(artifactId)
+      setSelected((artifact) => (artifact?.id === current.id ? current : artifact))
+      setArtifacts((rows) =>
+        rows.map((artifact) => (artifact.id === current.id ? current : artifact)),
+      )
+      if (
+        requiresLocalExportConfirmation(current, exportFormat) &&
+        !window.confirm(
+          t(
+            "artifacts.localExportRiskConfirm",
+            "This Artifact contains sensitive, private, connector-backed, or executable content. Exported files are managed by you, and executable HTML opened outside Hope is no longer protected by Hope's sandbox. Continue after reviewing the content?",
+          ),
+        )
+      ) {
+        return
       }
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const runExportReview = async () => {
-    if (!selected) return
-    if (!exportAudience.trim()) {
-      toast.error(t("artifacts.audienceRequired", "Enter the intended delivery audience"))
-      return
-    }
-    if (!window.confirm(t("artifacts.redactionConfirm", "Confirm that sensitive fields and included sources have been reviewed for this audience?"))) return
-    setBusy("export-review")
-    try {
-      const guard = await getTransport().reviewArtifactExport(selected.id, exportAudience.trim())
-      setExportGuard(guard)
-      if (guard.status === "passed") {
-        toast.success(t("artifacts.exportReviewPassed", "Export review passed"))
-      } else {
-        toast.error(guard.blockers.join("; ") || t("artifacts.exportReviewBlocked", "Export review still has blockers"))
+      const result = await transport.exportArtifact(
+        current.id,
+        exportFormat,
+        current.currentVersion,
+      )
+      if (!result) return
+      if (result.receipt.status !== "ready") {
+        toast.error(result.receipt.error ?? t("artifacts.exportUnavailable", "Export unavailable"))
+        return
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(null)
     }
@@ -299,14 +442,45 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-background">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border-soft px-4">
+      <header
+        className="flex h-14 shrink-0 items-center gap-3 border-b border-border-soft px-4"
+        data-tauri-drag-region
+      >
+        <IconTip
+          label={
+            listCollapsed
+              ? t("artifacts.expandList", "Expand artifact list")
+              : t("artifacts.collapseList", "Collapse artifact list")
+          }
+          side="bottom"
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={
+              listCollapsed
+                ? t("artifacts.expandList", "Expand artifact list")
+                : t("artifacts.collapseList", "Collapse artifact list")
+            }
+            aria-expanded={!listCollapsed}
+            onClick={() => setListCollapsed((collapsed) => !collapsed)}
+          >
+            {listCollapsed ? (
+              <PanelLeftDashed className="h-4 w-4" />
+            ) : (
+              <PanelLeft className="h-4 w-4" />
+            )}
+          </Button>
+        </IconTip>
         <Button variant="ghost" size="icon" onClick={onBack} aria-label={t("common.back", "Back")}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <PackageOpen className="h-5 w-5 text-primary" />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">{t("artifacts.title", "Artifacts")}</h1>
-          <p className="truncate text-xs text-muted-foreground">
+        <PackageOpen className="h-5 w-5 text-primary" data-tauri-drag-region />
+        <div className="min-w-0 flex-1" data-tauri-drag-region>
+          <h1 className="truncate text-sm font-semibold" data-tauri-drag-region>
+            {t("artifacts.title", "Artifacts")}
+          </h1>
+          <p className="truncate text-xs text-muted-foreground" data-tauri-drag-region>
             {t("artifacts.subtitle", "Versioned local reports, dashboards, and explainers")}
           </p>
         </div>
@@ -316,26 +490,61 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-[340px] shrink-0 flex-col border-r border-border-soft">
+        <div
+          style={{ width: listCollapsed ? 0 : listWidth }}
+          className={cn("relative h-full shrink-0", !isResizingList && LIST_WIDTH_TRANSITION)}
+        >
+          <div className="h-full overflow-hidden">
+            <aside
+              style={{ width: listWidth }}
+              aria-hidden={listCollapsed}
+              inert={listCollapsed ? true : undefined}
+              className={cn(
+                "flex h-full flex-col border-r",
+                isResizingList
+                  ? "border-r-primary/50"
+                  : isListResizeHandleHovered
+                    ? "border-r-primary/35"
+                    : "border-r-border-soft",
+                LIST_SURFACE_TRANSITION,
+                listCollapsed
+                  ? "pointer-events-none -translate-x-4 opacity-0"
+                  : "translate-x-0 opacity-100",
+              )}
+            >
           <div className="grid grid-cols-2 gap-2 border-b border-border-soft p-3">
-            <SearchInput
-              className="col-span-2 h-9"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("artifacts.search", "Search title, project, or Agent")}
-            />
+            <div className="relative col-span-2">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60" />
+              <SearchInput
+                className="h-9 pl-8 pr-8"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("artifacts.search", "Search title, project, or Agent")}
+                aria-label={t("artifacts.search", "Search title, project, or Agent")}
+              />
+              {query && (
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={() => setQuery("")}
+                  aria-label={t("common.clear", "Clear")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <Select value={kind} onValueChange={(value) => { setKind(value); setOffset(0) }}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t("artifacts.allKinds", "All kinds")}</SelectItem>
-                {KINDS.map((value) => <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>)}
+                {KINDS.map((value) => <SelectItem key={value} value={value}>{enumLabel(value)}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={state} onValueChange={(value) => { setState(value); setOffset(0) }}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="active">{t("artifacts.active", "Active")}</SelectItem>
-                <SelectItem value="archived">{t("artifacts.archived", "Archived")}</SelectItem>
+                <SelectItem value="active">{enumLabel("active")}</SelectItem>
+                <SelectItem value="archived">{enumLabel("archived")}</SelectItem>
                 <SelectItem value="all">{t("artifacts.allStates", "All states")}</SelectItem>
               </SelectContent>
             </Select>
@@ -355,6 +564,7 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
                 artifact={artifact}
                 selected={selectedId === artifact.id}
                 onSelect={() => setSelectedId(artifact.id)}
+                enumLabel={enumLabel}
               />
             ))}
           </div>
@@ -367,7 +577,21 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
               {t("common.next", "Next")}<ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           </div>
-        </aside>
+            </aside>
+          </div>
+          <div
+            className={cn(
+              "absolute inset-y-0 right-0 z-20 translate-x-full cursor-col-resize",
+              listCollapsed ? "w-0 pointer-events-none opacity-0" : "w-3 opacity-100",
+            )}
+            onMouseDown={onDragList}
+            onMouseEnter={() => setIsListResizeHandleHovered(true)}
+            onMouseLeave={() => setIsListResizeHandleHovered(false)}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("artifacts.resizeList", "Resize artifact list")}
+          />
+        </div>
 
         {!selected ? (
           <main className="flex min-w-0 flex-1 items-center justify-center text-muted-foreground">
@@ -379,7 +603,7 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
               <div className="mr-auto min-w-0">
                 <h2 className="truncate text-sm font-semibold">{selected.title}</h2>
                 <p className="text-xs text-muted-foreground">
-                  {selected.kind.replaceAll("_", " ")} · v{selected.currentVersion} · {selected.sourceCount} {t("artifacts.sources", "sources")}
+                  {enumLabel(selected.kind)} · v{selected.currentVersion} · {selected.sourceCount} {t("artifacts.sources", "sources")}
                 </p>
               </div>
               <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void runVerify()}>
@@ -443,13 +667,13 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
               </div>
               <aside className="min-h-0 overflow-y-auto border-l border-border-soft p-3">
                 <div className="mb-4 rounded-xl bg-muted/40 p-3 text-xs">
-                  <div className="mb-2 flex items-center gap-2 font-medium"><FileCheck2 className="h-4 w-4" />{t("artifacts.deliveryStatus", "Delivery status")}</div>
+                  <div className="mb-2 flex items-center gap-2 font-medium"><FileCheck2 className="h-4 w-4" />{t("artifacts.artifactStatus", "Artifact status")}</div>
                   <dl className="space-y-1.5 text-muted-foreground">
-                    <div className="flex justify-between gap-3"><dt>{t("artifacts.privacy", "Privacy")}</dt><dd className="text-right text-foreground">{selected.privacy.replaceAll("_", " ")}</dd></div>
-                    <div className="flex justify-between gap-3"><dt>{t("artifacts.analysisStatus", "Analysis")}</dt><dd className="text-right text-foreground">{selected.analysisStatus ?? "—"}</dd></div>
-                    <div className="flex justify-between gap-3"><dt>{t("artifacts.verification", "Verification")}</dt><dd className="text-right text-foreground">{selected.verification?.status ?? "not run"}</dd></div>
-                    <div className="flex justify-between gap-3"><dt>{t("artifacts.contentMode", "Content")}</dt><dd className="text-right text-foreground">{selected.capabilities?.executableContent === true ? t("artifacts.executable", "executable") : t("artifacts.static", "static")}</dd></div>
-                    <div className="flex justify-between gap-3"><dt>SHA-256</dt><dd className="max-w-[130px] truncate text-right font-mono text-foreground" data-ha-title-tip={selected.currentHash}>{selected.currentHash || "legacy / pending"}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>{t("artifacts.privacy", "Privacy")}</dt><dd className="text-right text-foreground">{enumLabel(selected.privacy)}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>{t("artifacts.analysisStatus", "Analysis")}</dt><dd className="text-right text-foreground">{selected.analysisStatus ? enumLabel(selected.analysisStatus) : "—"}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>{t("artifacts.verification", "Verification")}</dt><dd className="text-right text-foreground">{enumLabel(selected.verification?.status ?? "not_run")}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>{t("artifacts.contentMode", "Content")}</dt><dd className="text-right text-foreground">{isExecutableArtifact(selected) ? t("artifacts.executable", "executable") : t("artifacts.static", "static")}</dd></div>
+                    <div className="flex justify-between gap-3"><dt>SHA-256</dt><dd className="max-w-[130px] truncate text-right font-mono text-foreground" data-ha-title-tip={selected.currentHash}>{selected.currentHash || t("artifacts.enumLabels.legacyPendingHash")}</dd></div>
                   </dl>
                 </div>
 
@@ -465,39 +689,11 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
                       {selected.sourceSummaries.map((source, index) => (
                         <div key={source.id || `${source.label}-${index}`} className="rounded-lg bg-muted/40 p-2">
                           <p className="truncate font-medium" data-ha-title-tip={source.label}>{source.label}</p>
-                          <p className="mt-0.5 text-[10px] text-muted-foreground">{source.sourceType} · {source.accessScope}</p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">{enumLabel(source.sourceType)} · {enumLabel(source.accessScope)}</p>
                           {source.sha256 && <p className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground" data-ha-title-tip={source.sha256}>{source.sha256}</p>}
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-
-                <div className="mb-4 rounded-xl border border-border-soft p-3 text-xs">
-                  <div className="mb-2 flex items-center gap-2 font-medium"><UserCheck className="h-4 w-4" />{t("artifacts.exportReview", "Export review")}</div>
-                  <p className="mb-2 text-muted-foreground">
-                    {t("artifacts.exportReviewHint", "Required for shareable, sensitive, private-source, or connector-backed packages.")}
-                  </p>
-                  <Input
-                    className="h-8"
-                    value={exportAudience}
-                    onChange={(event) => setExportAudience(event.target.value)}
-                    placeholder={t("artifacts.audiencePlaceholder", "Intended audience")}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-2 w-full"
-                    disabled={busy !== null}
-                    onClick={() => void runExportReview()}
-                  >
-                    {busy === "export-review" ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1.5 h-4 w-4" />}
-                    {t("artifacts.confirmRedaction", "Confirm redaction & review")}
-                  </Button>
-                  {exportGuard && (
-                    <p className={`mt-2 ${exportGuard.status === "passed" ? "text-emerald-600" : "text-destructive"}`}>
-                      {t("artifacts.guardStatus", "Guard")}: {exportGuard.status}
-                    </p>
                   )}
                 </div>
 
@@ -514,7 +710,7 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
                           </Button>
                         )}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-muted-foreground">{version.message ?? version.payloadKind}</p>
+                      <p className="mt-1 line-clamp-2 text-muted-foreground">{version.message ?? enumLabel(version.payloadKind)}</p>
                       <p className="mt-1 text-[10px] text-muted-foreground">{new Date(version.createdAt).toLocaleString()}</p>
                     </div>
                   ))}

@@ -455,8 +455,14 @@ export class TauriTransport implements Transport {
   async exportArtifact(
     id: string,
     format: ArtifactExportFormat,
+    expectedVersion: number,
   ): Promise<ArtifactExportResult | null> {
     const artifact = await this.getArtifact(id);
+    if (artifact.currentVersion !== expectedVersion) {
+      throw new Error(
+        `artifact version conflict: expected version ${expectedVersion}, current version ${artifact.currentVersion} (${artifact.currentHash})`,
+      );
+    }
     const extension = format === "markdown" ? "md" : format;
     const { save } = await import("@tauri-apps/plugin-dialog");
     const savedPath = await save({
@@ -467,6 +473,7 @@ export class TauriTransport implements Transport {
     const receipt = await invoke<ArtifactExportReceipt>("export_artifact", {
       id,
       format,
+      expectedVersion,
       outputPath: savedPath,
     });
     return {
