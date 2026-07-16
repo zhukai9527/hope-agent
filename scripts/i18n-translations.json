@@ -10908,7 +10908,7 @@
       "title": "Hồ sơ luân phiên API Key"
     },
     "canvas": {
-      "panelTitle": "Vải bạt",
+      "panelTitle": "Canvas",
       "resizePanel": "Thay đổi kích thước bảng canvas"
     },
     "channels": {
@@ -13858,7 +13858,7 @@
     },
     "chat": {
       "goalCompletion": {
-        "tokens": "{{tokens}} fichas"
+        "tokens": "{{tokens}} tokens"
       },
       "browserPanel": {
         "backendBadgeTooltip": "Backend do navegador: {{backend}}",
@@ -20486,7 +20486,7 @@
         "narrativeMaxTokens": "الرموز القصوى",
         "narrativeMaxTokensDesc": "ميزانية الإخراج للاستعلام الجانبي السردي.",
         "narrativeModel": "نموذج السرد",
-        "narrativeModelClear": "واضح",
+        "narrativeModelClear": "مسح",
         "narrativeModelDefault": "اتباع افتراضي الأتمتة",
         "narrativeModelDesc": "تجاوز النموذج المستخدم لتسجيل النقاط السردية. يعود فارغًا إلى سلسلة نماذج الدردشة/التلخيص النشطة.",
         "narrativeTimeoutSecs": "المهلة (ثواني)",
@@ -22165,7 +22165,7 @@
     },
     "chat": {
       "goalCompletion": {
-        "tokens": "{{tokens}} fichas"
+        "tokens": "{{tokens}} tokens"
       },
       "browserPanel": {
         "backendBadgeTooltip": "Backend del navegador: {{backend}}",
@@ -22550,8 +22550,8 @@
         "localModels": "Modelos locales"
       },
       "token": {
-        "inputTokens": "Fichas de entrada",
-        "outputTokens": "Fichas de salida"
+        "inputTokens": "Tokens de entrada",
+        "outputTokens": "Tokens de salida"
       },
       "localModels": {
         "ollamaStatus": "Estado de Ollama",
@@ -22600,7 +22600,7 @@
           "totalTokens": "Tokens totales",
           "avgTtft": "TTFT medio",
           "trend": "Tendencia diaria de tokens",
-          "byModel": "Fichas por modelo",
+          "byModel": "Tokens por modelo",
           "empty": "No hay llamadas a modelos locales en el rango seleccionado",
           "errorBadge": "{{model}}: tasa de error {{rate}}% ({{errors}}/{{calls}})"
         },
@@ -22759,7 +22759,7 @@
       "anthropicThinkingBudget": "Anthropic (presupuesto de razonamiento)",
       "zaiThinkingBudget": "Z.AI (presupuesto de razonamiento)",
       "contextWindow": "Ventana de contexto",
-      "maxTokens": "Fichas máximas"
+      "maxTokens": "Tokens máximos"
     },
     "notification": {
       "approvalRequired": "Se requiere aprobación de herramienta",
@@ -23285,7 +23285,7 @@
         "maxPromoteDesc": "Límite estricto sobre la cantidad de recuerdos que puede promover un ciclo.",
         "minScore": "Puntuación mínima",
         "minScoreDesc": "Solo se fijan los recuerdos con una puntuación igual o superior a este umbral (0-1).",
-        "narrativeMaxTokens": "Fichas máximas",
+        "narrativeMaxTokens": "Tokens máximos",
         "narrativeMaxTokensDesc": "Presupuesto de salida para la consulta secundaria narrativa.",
         "narrativeModel": "Modelo narrativo",
         "narrativeModelClear": "Claro",
@@ -24319,7 +24319,7 @@
         }
       },
       "workflow": {
-        "summaryCapTokens": "{{value}} fichas"
+        "summaryCapTokens": "{{value}} tokens"
       },
       "context": {
         "confirmationAccept": "Usar",

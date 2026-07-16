@@ -339,7 +339,7 @@
     "goalCompletion": {
       "completed": "Meta alcançada",
       "completedWithDuration": "Meta alcançada em {{time}}",
-      "tokens": "{{tokens}} fichas"
+      "tokens": "{{tokens}} tokens"
     },
     "fork": {
       "continueInNewSession": "Continuar em uma nova sessão",
@@ -1780,7 +1780,7 @@
         "warning": "Aviso"
       },
       "subagentSuccessRate": "Sucesso sub-Agent",
-      "tokens": "Fichas",
+      "tokens": "Tokens",
       "tokensPerMsg": "Tokens/msg",
       "toolErrorRate": "Taxa de erro de ferramentas",
       "topSessions": "Top sessões",
@@ -2012,7 +2012,7 @@
       "toolCalls": "Chamadas de ferramentas",
       "totalMessages": "Mensagens totais",
       "totalSessions": "Sessões totais",
-      "totalTokens": "Total de fichas"
+      "totalTokens": "Total de tokens"
     },
     "range": {
       "30d": "30 dias",
@@ -2029,7 +2029,7 @@
       "byAgent": "Distribuição por Agent",
       "messages": "Mensagens",
       "sessions": "Sessões",
-      "tokens": "Fichas",
+      "tokens": "Tokens",
       "trend": "Tendência de sessões"
     },
     "system": {
@@ -2125,7 +2125,7 @@
       "cacheWrite": "Escrita de cache",
       "cacheRead": "Leitura de cache",
       "avgDuration": "Duração média",
-      "tokensUnit": "fichas",
+      "tokensUnit": "tokens",
       "byDomain": "Distribuição por domínio",
       "byOperation": "Por operação",
       "operation": "Operação",
@@ -8719,7 +8719,7 @@
       "prompt": "Instrução",
       "maxRuntimePlaceholder": "tempo máximo de execução",
       "maxRuntimeLabel": "Tempo máximo de execução",
-      "tokensPlaceholder": "fichas",
+      "tokensPlaceholder": "tokens",
       "tokensLabel": "Orçamento de token",
       "create": "Criar ciclo",
       "runUsage": "Tokens da execução",

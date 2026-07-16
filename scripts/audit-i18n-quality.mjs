@@ -215,6 +215,16 @@ const FORBIDDEN_TRANSLATIONS_BY_KEY = new Map([
   ["common.statusValues.disabled", new Set(["عاجز", "Неполноценный", "Engelli"])],
 ])
 
+// Catch semantic false friends wherever these source labels are reused. The
+// values below describe a person, physical canvas, or adjective instead of the
+// software state/action/product label used by the UI.
+const FORBIDDEN_TRANSLATIONS_BY_EN_VALUE = new Map([
+  ["Clear", new Set(["واضح"])],
+  ["Canvas", new Set(["Vải bạt"])],
+  ["Disabled", new Set(["عاجز", "Неполноценный", "Engelli"])],
+  ["disabled", new Set(["عاجز", "неполноценный", "engelli"])],
+])
+
 const ASCII_ELLIPSIS_ALLOWED_KEYS = new Set([
   "channels.slackBotToken",
   "channels.slackAppToken",
@@ -325,9 +335,15 @@ const ALLOW_SAME_BY_LOCALE = {
 const ALLOW_SAME_KEYS_BY_LOCALE = {
   ar: new Set(["settings.dreaming.title", "settings.memoryTabs.dreaming"]),
   es: new Set([
+    "chat.goalCompletion.tokens",
+    "dashboard.insights.tokens",
     "dashboard.localModels.installed.badges.embedding",
+    "dashboard.session.tokens",
+    "dashboard.token.tokensUnit",
     "settings.dreaming.title",
     "settings.memoryTabs.dreaming",
+    "workspace.loop.tokensPlaceholder",
+    "workspace.workflow.summaryCapTokens",
   ]),
   ko: new Set(["settings.dreaming.title", "settings.memoryTabs.dreaming"]),
   ms: new Set([
@@ -337,10 +353,15 @@ const ALLOW_SAME_KEYS_BY_LOCALE = {
     "settings.memoryTabs.dreaming",
   ]),
   pt: new Set([
+    "chat.goalCompletion.tokens",
+    "dashboard.insights.tokens",
     "dashboard.localModels.installed.badges.embedding",
     "dashboard.insights.tokensPerMsg",
+    "dashboard.session.tokens",
+    "dashboard.token.tokensUnit",
     "settings.dreaming.title",
     "settings.memoryTabs.dreaming",
+    "workspace.loop.tokensPlaceholder",
   ]),
   ru: new Set([
     "dashboard.localModels.installed.badges.embedding",
@@ -353,9 +374,13 @@ const ALLOW_SAME_KEYS_BY_LOCALE = {
     "settings.memoryTabs.dreaming",
   ]),
   vi: new Set([
+    "canvas.panelTitle",
     "dashboard.localModels.installed.badges.embedding",
+    "settings.canvas",
     "settings.dreaming.title",
     "settings.memoryTabs.dreaming",
+    "settings.toolCanvasName",
+    "tools.canvas",
   ]),
 }
 
@@ -741,8 +766,19 @@ for (const locale of locales) {
       structural.push({ key, issue: "protected exact value changed", value: localeValue })
     }
 
-    if (FORBIDDEN_TRANSLATIONS_BY_KEY.get(key)?.has(localeValue)) {
+    if (
+      FORBIDDEN_TRANSLATIONS_BY_KEY.get(key)?.has(localeValue) ||
+      FORBIDDEN_TRANSLATIONS_BY_EN_VALUE.get(enValue)?.has(localeValue)
+    ) {
       structural.push({ key, issue: "known semantic mistranslation", value: localeValue })
+    }
+
+    if (
+      (locale === "es" || locale === "pt") &&
+      /\btokens?\b/i.test(enValue) &&
+      /\bfichas?\b/i.test(localeValue)
+    ) {
+      structural.push({ key, issue: "technical token mistranslated as ficha", value: localeValue })
     }
 
     for (const segment of PROTECTED_REQUIRED_SEGMENTS_BY_KEY.get(key) ?? []) {
