@@ -1536,9 +1536,11 @@ export default function MemoryOverviewView({
   }, [repairingDreamingState, t])
 
   const currentDbSnapshotPath = lastDbSnapshotPath ?? memoryHealth?.latestDbSnapshot?.path ?? null
-  const currentDbSnapshotFiles = lastDbSnapshotPath
-    ? lastDbSnapshotFiles
-    : (memoryHealth?.latestDbSnapshot?.files ?? [])
+  const currentDbSnapshotFiles = useMemo(
+    () =>
+      lastDbSnapshotPath ? lastDbSnapshotFiles : (memoryHealth?.latestDbSnapshot?.files ?? []),
+    [lastDbSnapshotFiles, lastDbSnapshotPath, memoryHealth?.latestDbSnapshot?.files],
+  )
   const currentDbSnapshotStatus = lastDbSnapshotPath
     ? "ok"
     : (memoryHealth?.latestDbSnapshot?.status ?? "ok")
@@ -3310,12 +3312,8 @@ export default function MemoryOverviewView({
     }).slice(0, 4)
   }, [
     decisionActivityItem,
-    decisionTypeLabel,
     experienceEventActivityItem,
-    experienceHistoryActionLabel,
-    memoryAuditActionLabel,
     memoryEventActivityItem,
-    memoryScopeLabel,
     memorySourceLabel,
     recentCorrectionDecisions,
     recentCorrections,
@@ -3525,7 +3523,7 @@ export default function MemoryOverviewView({
     return () => {
       cancelled = true
     }
-  }, [isAgentMode, memoryEnabled])
+  }, [isAgentMode, memoryEnabled, t])
 
   useEffect(() => {
     void loadPendingClaims()

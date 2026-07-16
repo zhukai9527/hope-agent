@@ -86,7 +86,7 @@ export function useSessionPagination({
         setSessionsLoading(false)
       }
     }
-  }, [setSessions, currentSessionIdRef, sessionsRef])
+  }, [setSessions, currentSessionIdRef])
 
   const handleLoadMore = useCallback(async () => {
     const curSid = currentSessionIdRef.current

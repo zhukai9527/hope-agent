@@ -192,7 +192,7 @@ export function usePlanMode(
     queueMicrotask(() => {
       setPendingQuestionGroup(null)
     })
-  }, [currentSessionId, setPlanState])
+  }, [currentSessionId, setPendingQuestionGroup, setPlanState])
 
   // Approve and start execution
   const approvePlan = useCallback(async () => {

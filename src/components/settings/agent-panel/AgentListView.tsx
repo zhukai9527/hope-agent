@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import { useTranslation } from "react-i18next"
 import { logger } from "@/lib/logger"
@@ -150,7 +150,7 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
   const [creating, setCreating] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
 
-  async function reload() {
+  const reload = useCallback(async () => {
     setLoading(true)
     try {
       const list = await getTransport().call<AgentSummary[]>("list_all_agents")
@@ -162,11 +162,11 @@ export default function AgentListView({ onEditAgent }: { onEditAgent: (id: strin
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   useEffect(() => {
-    reload()
-  }, [])
+    void reload()
+  }, [reload])
 
   if (creating) {
     return (

@@ -1448,7 +1448,6 @@ export default function DesignView({ onBack, onOpenSettings, onImplementToCode }
       setOpenTabIds(pruned)
       writeOpenTabs(pid, pruned)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifacts])
 
   const reorderArtifacts = useCallback(
@@ -3204,7 +3203,7 @@ export default function DesignView({ onBack, onOpenSettings, onImplementToCode }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [postToIframe, commitPatch, handleRelocateComment, t])
+  }, [postToIframe, commitPatch, handleDeleteElement, handleRelocateComment, t])
 
   // Toggle bridge activation with edit mode. 画框批注（父层叠层）或演示期间需 iframe bridge 关闭，
   // 避免底层 iframe 抢事件 / 出选中框；模式状态本身保留，退出演示后可原样恢复。

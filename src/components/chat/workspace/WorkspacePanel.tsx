@@ -14360,7 +14360,10 @@ function LoopSchedulesSection({
   const lastCreateRequestRef = useRef(createRequest ?? 0)
   const lastInspectRequestRef = useRef(inspectRequest?.nonce ?? 0)
   const activeGoal = goalState.snapshot?.goal ?? null
-  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
+  const activeGoalCriteria = useMemo(
+    () => goalState.snapshot?.criteriaItems ?? [],
+    [goalState.snapshot?.criteriaItems],
+  )
   const canUseWorkflowLoop = draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
   const loopTemplates = useMemo<LoopTemplateOption[]>(
     () => [
@@ -14874,7 +14877,6 @@ function LoopSchedulesSection({
     draftMaxRuntime,
     draftPrompt,
     draftTokens,
-    activeGoal?.id,
     refresh,
     sessionId,
     t,
@@ -15697,7 +15699,15 @@ function WorkflowRunsSection({
   }, [runs, watchdogFindings])
   const canMaterializeSession = Boolean(sessionId || onEnsureSession)
   const activeGoal = goalState.snapshot?.goal ?? null
-  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
+  const activeGoalId = activeGoal?.id ?? null
+  const activeGoalTemplateValue = activeGoal
+    ? goalDomainTemplateValue(activeGoal)
+    : GOAL_DOMAIN_FREE_VALUE
+  const activeGoalWorkflowTaskType = activeGoal?.workflowTaskType ?? ""
+  const activeGoalCriteria = useMemo(
+    () => goalState.snapshot?.criteriaItems ?? [],
+    [goalState.snapshot?.criteriaItems],
+  )
   const selectedDomainTemplate = findDomainTemplateByValue(
     domainTemplates,
     selectedDomainTemplateId,
@@ -15851,19 +15861,24 @@ function WorkflowRunsSection({
   }, [domainTemplates, selectedDomainTaskType, selectedDomainTemplateId])
 
   useEffect(() => {
-    if (!activeGoal?.workflowTemplateId || domainTemplates.length === 0 || domainDraft) return
-    const template = findDomainTemplateByValue(domainTemplates, goalDomainTemplateValue(activeGoal))
+    if (
+      activeGoalTemplateValue === GOAL_DOMAIN_FREE_VALUE ||
+      domainTemplates.length === 0 ||
+      domainDraft
+    ) {
+      return
+    }
+    const template = findDomainTemplateByValue(domainTemplates, activeGoalTemplateValue)
     if (!template) return
     const templateValue = domainTemplateOptionValue(template)
     if (selectedDomainTemplateId === templateValue) return
     setSelectedDomainTemplateId(templateValue)
-    setSelectedDomainTaskType(activeGoal.workflowTaskType || template.taskTypes[0] || "")
+    setSelectedDomainTaskType(activeGoalWorkflowTaskType || template.taskTypes[0] || "")
     setDraftKind(`domain:${template.domain}`)
     setDraftMode(normalizeExecutionMode(template.defaultMode))
   }, [
-    activeGoal?.workflowTaskType,
-    activeGoal?.workflowTemplateId,
-    activeGoal?.workflowTemplateVersion,
+    activeGoalTemplateValue,
+    activeGoalWorkflowTaskType,
     domainDraft,
     domainTemplates,
     selectedDomainTemplateId,
@@ -16540,9 +16555,9 @@ ${repairPrompt}`
         budget: workflowBudgetForMode(draftMode),
         parentRunId: draftOrigin?.type === "repair" ? draftOrigin.runId : undefined,
         origin: draftOrigin?.type === "repair" ? "repair" : undefined,
-        goalId: activeGoal?.id ?? undefined,
+        goalId: activeGoalId ?? undefined,
         goalCriterionId:
-          activeGoal && draftGoalCriterionId !== GOAL_CRITERION_NONE_VALUE
+          activeGoalId && draftGoalCriterionId !== GOAL_CRITERION_NONE_VALUE
             ? draftGoalCriterionId
             : undefined,
         runImmediately: runImmediatelyForCreate,
@@ -16584,7 +16599,7 @@ ${repairPrompt}`
     draftRunImmediately,
     draftScript,
     ensureWorkflowSession,
-    activeGoal?.id,
+    activeGoalId,
     incognito,
     loadSnapshot,
     managedWorktreesState,
@@ -19100,21 +19115,23 @@ function GoalControlStrip({
     editTemplate?.taskTypes.find((taskType) => taskType === editTaskType) ??
     editTemplate?.taskTypes[0] ??
     ""
+  const goalEditTemplateValue = goal
+    ? goalDomainTemplateValue(goal)
+    : GOAL_DOMAIN_FREE_VALUE
 
   /* eslint-disable react-hooks/set-state-in-effect -- durable Goal changes intentionally reset the local editor draft */
   useEffect(() => {
     setEditObjective(goal?.objective ?? "")
     setEditCriteria(goal?.completionCriteria ?? "")
-    setEditTemplateId(goal ? goalDomainTemplateValue(goal) : GOAL_DOMAIN_FREE_VALUE)
+    setEditTemplateId(goalEditTemplateValue)
     setEditTaskType(goal?.workflowTaskType ?? "")
     setEditOpen(false)
   }, [
+    goal?.completionCriteria,
     goal?.id,
     goal?.objective,
-    goal?.completionCriteria,
-    goal?.workflowTemplateId,
-    goal?.workflowTemplateVersion,
     goal?.workflowTaskType,
+    goalEditTemplateValue,
   ])
 
   useEffect(() => {

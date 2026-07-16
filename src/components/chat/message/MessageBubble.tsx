@@ -727,25 +727,23 @@ function ActiveMemoryTrace({
   const [corePromotions, setCorePromotions] = useState<MemorySourceCorrectionState>({})
   const [quickEdit, setQuickEdit] = useState<MemoryQuickEditState | null>(null)
   const [editedMemoryPreviews, setEditedMemoryPreviews] = useState<Record<string, string>>({})
-  const refs =
-    usedMemoryRefs && usedMemoryRefs.length > 0
-      ? usedMemoryRefs
-      : (memory?.candidates.map((candidate) => ({
-          ...candidate,
-          origin: "active_memory",
-          role:
-            memory.selected?.kind === candidate.kind && memory.selected.id === candidate.id
-              ? "selected"
-              : "candidate",
-        })) ?? [])
-  const displayRefs = useMemo(
-    () =>
-      refs.map((ref) => {
-        const preview = editedMemoryPreviews[memoryRefKey(ref)]
-        return preview ? { ...ref, preview } : ref
-      }),
-    [editedMemoryPreviews, refs],
-  )
+  const displayRefs = useMemo(() => {
+    const refs =
+      usedMemoryRefs && usedMemoryRefs.length > 0
+        ? usedMemoryRefs
+        : (memory?.candidates.map((candidate) => ({
+            ...candidate,
+            origin: "active_memory",
+            role:
+              memory.selected?.kind === candidate.kind && memory.selected.id === candidate.id
+                ? "selected"
+                : "candidate",
+          })) ?? [])
+    return refs.map((ref) => {
+      const preview = editedMemoryPreviews[memoryRefKey(ref)]
+      return preview ? { ...ref, preview } : ref
+    })
+  }, [editedMemoryPreviews, memory, usedMemoryRefs])
   const selected =
     displayRefs.find((ref) => ref.role === "selected") ??
     displayRefs.find((ref) => ref.role === "injected") ??

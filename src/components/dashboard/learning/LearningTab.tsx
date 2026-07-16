@@ -527,6 +527,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
     benchmarkProviders,
     reload,
     selectedBenchmarkModels,
+    t,
   ])
 
   const cancelBenchmarkCampaign = useCallback(async (campaignId: string) => {
@@ -637,6 +638,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
     domainCampaignMaxTasks,
     reload,
     selectedDomainModels,
+    t,
   ])
 
   const cancelDomainEvalCampaign = useCallback(async (campaignId: string) => {
@@ -706,7 +708,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
     } finally {
       setDomainCampaignActionId(null)
     }
-  }, [filter, reload, windowDays])
+  }, [filter, reload, t, windowDays])
 
   const importSampleTaskPack = useCallback(async () => {
     setCorpusActionId("import")
@@ -778,7 +780,7 @@ export default function LearningTab({ filter }: LearningTabProps) {
     } finally {
       setCorpusActionId(null)
     }
-  }, [reload])
+  }, [reload, t])
 
   const generateBenchmarkReport = useCallback(async (reportType: string, campaignId?: string | null) => {
     const actionKey = campaignId ? `${reportType}:${campaignId}` : reportType
