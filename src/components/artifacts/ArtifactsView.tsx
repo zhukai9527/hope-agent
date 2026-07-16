@@ -27,6 +27,7 @@ import {
 import { toast } from "sonner"
 
 import type { ArtifactExportFormat, ArtifactRecord, ArtifactVersionSummary } from "@/lib/transport"
+import { downloadBlob } from "@/lib/fileDownload"
 import { getTransport } from "@/lib/transport-provider"
 import { cn } from "@/lib/utils"
 import { useDragWidth } from "@/hooks/useDragWidth"
@@ -498,6 +499,10 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
         toast.error(result.receipt.error ?? t("artifacts.exportUnavailable", "Export unavailable"))
         return
       }
+      if (result.blob) downloadBlob(result.blob, result.filename)
+      toast.success(t("artifacts.exportReady", "Artifact exported"))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(null)
     }
