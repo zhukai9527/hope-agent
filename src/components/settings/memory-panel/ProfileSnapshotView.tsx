@@ -387,7 +387,7 @@ function ProfileSnapshotCard({
 }) {
   const { t } = useTranslation()
   const lines = useMemo(() => profileLines(snapshot.bodyMd), [snapshot.bodyMd])
-  const sources = snapshot.sources ?? []
+  const sources = useMemo(() => snapshot.sources ?? [], [snapshot.sources])
   const lineSources = useMemo(() => {
     const byLine = new Map<number, ProfileSnapshotSourceRecord[]>()
     for (const source of sources) {
