@@ -487,7 +487,8 @@ export class TauriTransport implements Transport {
     id: string,
     format: ArtifactExportFormat,
   ): Promise<ArtifactExportResult | null> {
-    const result = await this.exportArtifact(id, format);
+    const artifact = await this.getArtifact(id);
+    const result = await this.exportArtifact(id, format, artifact.currentVersion);
     if (result && result.receipt.status !== "ready") {
       throw new Error(result.receipt.error ?? "Artifact export is not ready");
     }
