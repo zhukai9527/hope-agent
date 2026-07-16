@@ -17,6 +17,7 @@ import { Square, Pen, Undo2, Redo2, Trash2, Send, X, Loader2 } from "lucide-reac
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { IconTip } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 export interface Point {
   x: number
