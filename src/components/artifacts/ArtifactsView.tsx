@@ -550,6 +550,8 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
     }
   }
 
+  const detailsHidden = detailsCollapsed || viewerMaximized
+
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-background">
       <header
@@ -912,175 +914,170 @@ export default function ArtifactsView({ onBack }: ArtifactsViewProps) {
                   refreshKey={refreshKey}
                 />
               </div>
-              {!viewerMaximized && (
-                <div
-                  style={{ width: detailsCollapsed ? 0 : detailsWidth }}
-                  className={cn(
-                    "relative h-full min-w-0 shrink-0",
-                    !isResizingDetails && LIST_WIDTH_TRANSITION,
-                  )}
-                >
-                  <div className="h-full overflow-hidden">
-                    <aside
-                      style={{ width: detailsWidth }}
-                      aria-hidden={detailsCollapsed}
-                      inert={detailsCollapsed ? true : undefined}
-                      className={cn(
-                        "h-full min-h-0 overflow-y-auto border-l p-3",
-                        isResizingDetails
-                          ? "border-l-primary/50"
-                          : isDetailsResizeHandleHovered
-                            ? "border-l-primary/35"
-                            : "border-l-border-soft",
-                        LIST_SURFACE_TRANSITION,
-                        detailsCollapsed
-                          ? "pointer-events-none translate-x-4 opacity-0"
-                          : "translate-x-0 opacity-100",
-                      )}
-                    >
-                      <div className="mb-4 rounded-xl bg-muted/40 p-3 text-xs">
-                        <div className="mb-2 flex items-center gap-2 font-medium">
-                          <FileCheck2 className="h-4 w-4" />
-                          {t("artifacts.artifactStatus", "Artifact status")}
+              <div
+                style={{ width: detailsHidden ? 0 : detailsWidth }}
+                className={cn(
+                  "relative h-full min-w-0 shrink-0",
+                  !isResizingDetails && LIST_WIDTH_TRANSITION,
+                )}
+              >
+                <div className="h-full overflow-hidden">
+                  <aside
+                    style={{ width: detailsWidth }}
+                    aria-hidden={detailsHidden}
+                    inert={detailsHidden ? true : undefined}
+                    className={cn(
+                      "h-full min-h-0 overflow-y-auto border-l p-3",
+                      isResizingDetails
+                        ? "border-l-primary/50"
+                        : isDetailsResizeHandleHovered
+                          ? "border-l-primary/35"
+                          : "border-l-border-soft",
+                      LIST_SURFACE_TRANSITION,
+                      detailsHidden
+                        ? "pointer-events-none translate-x-4 opacity-0"
+                        : "translate-x-0 opacity-100",
+                    )}
+                  >
+                    <div className="mb-4 rounded-xl bg-muted/40 p-3 text-xs">
+                      <div className="mb-2 flex items-center gap-2 font-medium">
+                        <FileCheck2 className="h-4 w-4" />
+                        {t("artifacts.artifactStatus", "Artifact status")}
+                      </div>
+                      <dl className="space-y-1.5 text-muted-foreground">
+                        <div className="flex justify-between gap-3">
+                          <dt>{t("artifacts.privacy", "Privacy")}</dt>
+                          <dd className="text-right text-foreground">
+                            {enumLabel(selected.privacy)}
+                          </dd>
                         </div>
-                        <dl className="space-y-1.5 text-muted-foreground">
-                          <div className="flex justify-between gap-3">
-                            <dt>{t("artifacts.privacy", "Privacy")}</dt>
-                            <dd className="text-right text-foreground">
-                              {enumLabel(selected.privacy)}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-3">
-                            <dt>{t("artifacts.analysisStatus", "Analysis")}</dt>
-                            <dd className="text-right text-foreground">
-                              {selected.analysisStatus ? enumLabel(selected.analysisStatus) : "—"}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-3">
-                            <dt>{t("artifacts.verification", "Verification")}</dt>
-                            <dd className="text-right text-foreground">
-                              {enumLabel(selected.verification?.status ?? "not_run")}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-3">
-                            <dt>{t("artifacts.contentMode", "Content")}</dt>
-                            <dd className="text-right text-foreground">
-                              {isExecutableArtifact(selected)
-                                ? t("artifacts.executable", "executable")
-                                : t("artifacts.static", "static")}
-                            </dd>
-                          </div>
-                          <div className="flex justify-between gap-3">
-                            <dt>SHA-256</dt>
-                            <dd
-                              className="max-w-[130px] truncate text-right font-mono text-foreground"
-                              data-ha-title-tip={selected.currentHash}
-                            >
-                              {selected.currentHash || t("artifacts.enumLabels.legacyPendingHash")}
-                            </dd>
-                          </div>
-                        </dl>
-                      </div>
-
-                      <div className="mb-4 rounded-xl border border-border-soft p-3 text-xs">
-                        <div className="mb-2 flex items-center gap-2 font-medium">
-                          <FileCheck2 className="h-4 w-4" />
-                          {t("artifacts.sourceContext", "Sources & quality")}
+                        <div className="flex justify-between gap-3">
+                          <dt>{t("artifacts.analysisStatus", "Analysis")}</dt>
+                          <dd className="text-right text-foreground">
+                            {selected.analysisStatus ? enumLabel(selected.analysisStatus) : "—"}
+                          </dd>
                         </div>
-                        <p className="mb-2 text-muted-foreground">
-                          {t("artifacts.qualityChecks", "Quality checks")}:{" "}
-                          {selected.evidenceSummary?.data_quality_checked ?? 0}
-                        </p>
-                        {selected.sourceSummaries.length === 0 ? (
-                          <p className="text-muted-foreground">
-                            {t("artifacts.noSources", "No canonical sources recorded")}
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {selected.sourceSummaries.map((source, index) => (
-                              <div
-                                key={source.id || `${source.label}-${index}`}
-                                className="rounded-lg bg-muted/40 p-2"
-                              >
-                                <p
-                                  className="truncate font-medium"
-                                  data-ha-title-tip={source.label}
-                                >
-                                  {source.label}
-                                </p>
-                                <p className="mt-0.5 text-[10px] text-muted-foreground">
-                                  {enumLabel(source.sourceType)} · {enumLabel(source.accessScope)}
-                                </p>
-                                {source.sha256 && (
-                                  <p
-                                    className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground"
-                                    data-ha-title-tip={source.sha256}
-                                  >
-                                    {source.sha256}
-                                  </p>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
-                        <History className="h-4 w-4" />
-                        {t("artifacts.versionHistory", "Version history")}
-                      </div>
-                      <div className="space-y-2">
-                        {versions.map((version) => (
-                          <div
-                            key={version.versionNumber}
-                            className="rounded-lg border border-border-soft p-2.5 text-xs"
+                        <div className="flex justify-between gap-3">
+                          <dt>{t("artifacts.verification", "Verification")}</dt>
+                          <dd className="text-right text-foreground">
+                            {enumLabel(selected.verification?.status ?? "not_run")}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <dt>{t("artifacts.contentMode", "Content")}</dt>
+                          <dd className="text-right text-foreground">
+                            {isExecutableArtifact(selected)
+                              ? t("artifacts.executable", "executable")
+                              : t("artifacts.static", "static")}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <dt>SHA-256</dt>
+                          <dd
+                            className="max-w-[130px] truncate text-right font-mono text-foreground"
+                            data-ha-title-tip={selected.currentHash}
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium">v{version.versionNumber}</span>
-                              {version.versionNumber === selected.currentVersion ? (
-                                <Badge>{t("artifacts.current", "Current")}</Badge>
-                              ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 px-2"
-                                  disabled={busy !== null}
-                                  onClick={() => void runRestore(version.versionNumber)}
+                            {selected.currentHash || t("artifacts.enumLabels.legacyPendingHash")}
+                          </dd>
+                        </div>
+                      </dl>
+                    </div>
+
+                    <div className="mb-4 rounded-xl border border-border-soft p-3 text-xs">
+                      <div className="mb-2 flex items-center gap-2 font-medium">
+                        <FileCheck2 className="h-4 w-4" />
+                        {t("artifacts.sourceContext", "Sources & quality")}
+                      </div>
+                      <p className="mb-2 text-muted-foreground">
+                        {t("artifacts.qualityChecks", "Quality checks")}:{" "}
+                        {selected.evidenceSummary?.data_quality_checked ?? 0}
+                      </p>
+                      {selected.sourceSummaries.length === 0 ? (
+                        <p className="text-muted-foreground">
+                          {t("artifacts.noSources", "No canonical sources recorded")}
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {selected.sourceSummaries.map((source, index) => (
+                            <div
+                              key={source.id || `${source.label}-${index}`}
+                              className="rounded-lg bg-muted/40 p-2"
+                            >
+                              <p className="truncate font-medium" data-ha-title-tip={source.label}>
+                                {source.label}
+                              </p>
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                {enumLabel(source.sourceType)} · {enumLabel(source.accessScope)}
+                              </p>
+                              {source.sha256 && (
+                                <p
+                                  className="mt-0.5 truncate font-mono text-[9px] text-muted-foreground"
+                                  data-ha-title-tip={source.sha256}
                                 >
-                                  {busy === `restore-${version.versionNumber}` ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  ) : (
-                                    <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                                  )}
-                                  {t("artifacts.restore", "Restore")}
-                                </Button>
+                                  {source.sha256}
+                                </p>
                               )}
                             </div>
-                            <p className="mt-1 line-clamp-2 text-muted-foreground">
-                              {version.message ?? enumLabel(version.payloadKind)}
-                            </p>
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                              {new Date(version.createdAt).toLocaleString()}
-                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
+                      <History className="h-4 w-4" />
+                      {t("artifacts.versionHistory", "Version history")}
+                    </div>
+                    <div className="space-y-2">
+                      {versions.map((version) => (
+                        <div
+                          key={version.versionNumber}
+                          className="rounded-lg border border-border-soft p-2.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium">v{version.versionNumber}</span>
+                            {version.versionNumber === selected.currentVersion ? (
+                              <Badge>{t("artifacts.current", "Current")}</Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                disabled={busy !== null}
+                                onClick={() => void runRestore(version.versionNumber)}
+                              >
+                                {busy === `restore-${version.versionNumber}` ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                                )}
+                                {t("artifacts.restore", "Restore")}
+                              </Button>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    </aside>
-                  </div>
-                  <div
-                    className={cn(
-                      "absolute inset-y-0 left-0 z-20 cursor-col-resize transition-[width,opacity] duration-200 ease-out",
-                      detailsCollapsed ? "w-0 pointer-events-none opacity-0" : "w-3 opacity-100",
-                    )}
-                    onMouseDown={onDragDetails}
-                    onMouseEnter={() => setIsDetailsResizeHandleHovered(true)}
-                    onMouseLeave={() => setIsDetailsResizeHandleHovered(false)}
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label={t("artifacts.resizeDetails", "Resize properties panel")}
-                  />
+                          <p className="mt-1 line-clamp-2 text-muted-foreground">
+                            {version.message ?? enumLabel(version.payloadKind)}
+                          </p>
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            {new Date(version.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </aside>
                 </div>
-              )}
+                <div
+                  className={cn(
+                    "absolute inset-y-0 left-0 z-20 cursor-col-resize transition-[width,opacity] duration-200 ease-out",
+                    detailsHidden ? "w-0 pointer-events-none opacity-0" : "w-3 opacity-100",
+                  )}
+                  onMouseDown={onDragDetails}
+                  onMouseEnter={() => setIsDetailsResizeHandleHovered(true)}
+                  onMouseLeave={() => setIsDetailsResizeHandleHovered(false)}
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("artifacts.resizeDetails", "Resize properties panel")}
+                />
+              </div>
             </div>
           </main>
         )}
