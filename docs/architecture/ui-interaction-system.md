@@ -29,6 +29,7 @@
 | 延迟提交数字输入 | `DeferredNumberInput` | 编辑草稿，失焦或 Enter 后提交，并做 min/max 钳制 |
 | 普通文本/密码 | `Input` | 普通编辑字段；不要因为视觉相似误用 `SearchInput` |
 | 多行文本 | `Textarea` | 普通多行编辑字段 |
+| 强互斥分类标签 | `RadioPills variant="strong"` | 单选；支持图标、固定网格或自动换行；选中反白 |
 
 业务组件不得直接使用裸 `<select>`、裸 `<input type="number">`、`Input type="number"`
 或重新引入 `NativeSelect`。公共入口表达不了新语义时，应先扩展公共组件。
@@ -94,14 +95,15 @@
 
 ### 通用 Hover 与选中反馈
 
-- 普通容器、卡片、列表行、Tab、分段选择和工具按钮的 hover 只加深背景；禁止新增或加深
+- 普通容器、卡片、列表行、分段选择和工具按钮的 hover 只加深背景；禁止新增或加深
   `border` / `ring` / `shadow`，也禁止通过 `group-hover` / `peer-hover` 间接改变子元素边框；
 - 控件原有的静态结构边框可以保留，但 hover、active、selected、checked 和 open 不得用边框
   变化表达状态；普通持久选中使用 `bg-secondary/70`，未选中 hover 使用 `bg-secondary/40`；
 - 小型 checkbox / radio 的内部勾选标记可以使用 `bg-primary`，但选中时不叠加 primary 边框；
 - 键盘焦点、`prefers-contrast` 与 `forced-colors` 的系统轮廓/边框属于可访问性反馈，不受上述
   视觉限制；错误、警告、拖拽落点等语义状态也按各自协议处理；
-- 需要黑底反白的强选中控件必须在“登记的例外”中逐项说明，不能把该样式扩散到普通列表。
+- 需要黑底反白的强互斥分类标签必须使用 `RadioPills variant="strong"`，不能复制 class，也不能
+  把该样式扩散到普通列表、Tab、视图切换或多选筛选。
 
 ### 列表条目
 
@@ -215,10 +217,21 @@ Web GUI 通过 `/api/config/enhanced-focus-indicators` 读写；两者都通过
 展开后的菜单仍遵守本文的浮层协议。不得把工具栏按钮强行包成全宽表单选择器，也不得用
 该例外让设置页字段绕过公共表面。
 
-设计空间 `LaunchHome` 的产物类型胶囊是“本次生成目标”的强互斥选择，不是普通列表当前项：
-选中项登记为 `bg-primary text-primary-foreground`（深色主题下仍使用对应反白 token），图标
-继承前景色；未选中 hover 仍为 `bg-secondary/40`，选中前后均不得增加或改变边框。首页 recipe
-模板卡仍按普通卡片选中规则使用 `bg-secondary/70`，并通过 `aria-pressed` 暴露状态。
+Tab 有独立的层级协议，不套普通列表选中背景：公共 `TabsList` 是 `bg-muted` 容器，
+`TabsTrigger` 选中恢复 `bg-background` + 轻量 `shadow`，形成清晰的前后表面；不得改成与容器
+接近的 `bg-secondary/70`。无外壳的线型 Tab（当前仅 Agent 编辑页）可使用底部 primary 强调线。
+两类 Tab 都不得在 hover 时改变边框；线型 Tab 的底线只在持久选中时出现。
+
+`RadioPills variant="strong"` 是强互斥分类标签的唯一入口：选中项使用
+`bg-primary text-primary-foreground`（深色主题下仍使用对应反白 token），图标继承前景色；
+未选中 hover 使用 `bg-secondary/40`，选中前后均不得增加或改变边框。它适用于设计空间产物
+类型、定时频率、导出格式/倍率、审批策略、Memory 学习模式和模型能力分类等“从并列标签中
+确定一个值”的场景。Tab 使用上面的独立表面协议；页面导航、视图切换、权限等级继续使用
+普通 `bg-secondary/70`；多选筛选继续使用普通选中背景或勾选标记，不能借强标签制造多个
+并列黑块。
+
+设计空间首页 recipe 模板卡仍按普通卡片选中规则使用 `bg-secondary/70`，并通过
+`aria-pressed` 暴露状态；它不是强互斥分类标签。
 
 行内改名、标签输入、复合搜索和整页源码 / 指令编辑器的视觉边界由外壳承担，内部
 `Input` / `Textarea` 必须使用 `surface="embedded"`；典型入口包括
@@ -239,6 +252,8 @@ Web GUI 通过 `/api/config/enhanced-focus-indicators` 读写；两者都通过
 - 是否保留 disabled、placeholder、空选项、键盘导航和 `forced-colors` 行为？
 - 复合控件是否只显示一层焦点反馈？
 - 是否误把工具栏 ghost action 当成表单字段，或反过来？
+- 强互斥分类标签是否复用 `RadioPills variant="strong"`，并避免用于 Tab、视图切换或多选？
+- 容器型 Tab 是否使用 `bg-background` + 轻阴影区分选中面，而不是融入 `TabsList` 背景？
 - 一级工作区标题栏是否保持 `h-10` 单行，并把返回、侧栏开关按顺序放在最左侧？
 - hover / selected / open 是否只改变背景，没有引入 `hover:border-*`、`hover:ring-*`、
   `group-hover:border-*` 或状态阴影？
@@ -264,6 +279,7 @@ pnpm exec vitest run src/components/ui/interaction-border-audit.test.ts
 - `src/components/ui/control-surface.ts`
 - `src/components/ui/search-input.tsx`
 - `src/components/ui/input.tsx`
+- `src/components/ui/radio-pills.tsx`
 - `src/components/ui/number-input.tsx`
 - `src/components/ui/deferred-number-input.tsx`
 - `src/components/ui/select.tsx`

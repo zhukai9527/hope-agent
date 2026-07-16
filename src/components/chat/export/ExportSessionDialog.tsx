@@ -124,6 +124,8 @@ export function ExportSessionDialog({
             <RadioPills<ExportFormat>
               value={format}
               onChange={setFormat}
+              variant="strong"
+              ariaLabel={t("chat.exportSession.formatLabel")}
               options={[
                 { value: "md", label: t("chat.exportSession.formatMarkdown") },
                 { value: "json", label: t("chat.exportSession.formatJson") },

@@ -108,6 +108,7 @@ import { DesignRepoBinding } from "@/components/design/DesignRepoBinding"
 import { logger } from "@/lib/logger"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { RadioPills } from "@/components/ui/radio-pills"
 import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import { SearchInput } from "@/components/ui/search-input"
@@ -6223,44 +6224,43 @@ export default function DesignView({ onBack, onOpenSettings, onImplementToCode }
               <span className="text-sm text-muted-foreground">
                 {t("design.exportImageFormat", "格式")}
               </span>
-              <div className="flex gap-2">
-                {(["png", "jpeg"] as const).map((f) => (
-                  <Button
-                    key={f}
-                    variant={imgExportFormat === f ? "default" : "outline"}
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => setImgExportFormat(f)}
-                  >
-                    {f === "png"
+              <RadioPills
+                value={imgExportFormat}
+                onChange={setImgExportFormat}
+                variant="strong"
+                cols="grid-cols-2"
+                itemClassName="h-8 px-3 text-sm"
+                ariaLabel={t("design.exportImageFormat", "格式")}
+                options={(["png", "jpeg"] as const).map((f) => ({
+                  value: f,
+                  label:
+                    f === "png"
                       ? t("design.exportImagePng", "PNG（无损 / 透明）")
-                      : t("design.exportImageJpeg", "JPEG（体积小）")}
-                  </Button>
-                ))}
-              </div>
+                      : t("design.exportImageJpeg", "JPEG（体积小）"),
+                }))}
+              />
             </div>
             <div className="space-y-1.5">
               <span className="text-sm text-muted-foreground">
                 {t("design.exportImageScale", "清晰度")}
               </span>
-              <div className="flex gap-2">
-                {[1, 2, 3].map((s) => (
-                  <Button
-                    key={s}
-                    variant={imgExportScale === s ? "default" : "outline"}
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => setImgExportScale(s)}
-                  >
-                    {s}x
-                    {s === 1
+              <RadioPills<number>
+                value={imgExportScale}
+                onChange={setImgExportScale}
+                variant="strong"
+                itemClassName="h-8 px-3 text-sm"
+                ariaLabel={t("design.exportImageScale", "清晰度")}
+                options={[1, 2, 3].map((s) => ({
+                  value: s,
+                  label: `${s}x${
+                    s === 1
                       ? ` · ${t("design.exportImageScale1", "标准")}`
                       : s === 2
                         ? ` · ${t("design.exportImageScale2", "Retina")}`
-                        : ` · ${t("design.exportImageScale3", "超清")}`}
-                  </Button>
-                ))}
-              </div>
+                        : ` · ${t("design.exportImageScale3", "超清")}`
+                  }`,
+                }))}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -6756,23 +6756,22 @@ export default function DesignView({ onBack, onOpenSettings, onImplementToCode }
               {t("design.extractSystem", "反向提取品牌")}
             </DialogTitle>
           </DialogHeader>
-          <div className="flex gap-1.5">
-            {(["brief", "url", "image", "codebase"] as const).map((f) => (
-              <Button
-                key={f}
-                variant={extractFrom === f ? "default" : "outline"}
-                size="sm"
-                className="flex-1"
-                onClick={() => {
-                  setExtractFrom(f)
-                  // 图片提取必涉图：当前模型不认图则先自动切到视觉模型。
-                  if (f === "image") ensureVisionGenModel()
-                }}
-              >
-                {t(`design.from.${f}`, f)}
-              </Button>
-            ))}
-          </div>
+          <RadioPills
+            value={extractFrom}
+            onChange={(f) => {
+              setExtractFrom(f)
+              // 图片提取必涉图：当前模型不认图则先自动切到视觉模型。
+              if (f === "image") ensureVisionGenModel()
+            }}
+            variant="strong"
+            cols="grid-cols-4"
+            itemClassName="h-8 px-2 text-xs"
+            ariaLabel={t("design.extractSource", "提取来源")}
+            options={(["brief", "url", "image", "codebase"] as const).map((f) => ({
+              value: f,
+              label: t(`design.from.${f}`, f),
+            }))}
+          />
           <Input
             value={extractName}
             onChange={(e) => setExtractName(e.target.value)}
@@ -7536,28 +7535,23 @@ function LaunchHome({
         </div>
 
         {/* Kind chips */}
-        <div className="mt-5 flex flex-wrap justify-center gap-2">
-          {ARTIFACT_KINDS.map((k) => {
+        <RadioPills<ArtifactKind>
+          value={kind}
+          onChange={setKind}
+          variant="strong"
+          layout="wrap"
+          className="mt-5 justify-center gap-2"
+          itemClassName="px-3 py-1.5 text-sm duration-150"
+          ariaLabel={t("design.artifactType", "产物类型")}
+          options={ARTIFACT_KINDS.map((k) => {
             const Icon = KIND_ICON[k]
-            const active = k === kind
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setKind(k)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors duration-150",
-                  active
-                    ? "bg-primary font-medium text-primary-foreground"
-                    : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {kindLabel(k)}
-              </button>
-            )
+            return {
+              value: k,
+              label: kindLabel(k),
+              icon: <Icon className="h-3.5 w-3.5" />,
+            }
           })}
-        </div>
+        />
 
         {/* Templates（从模板开始：点选 → 填入形态 + 场景 brief，可编辑后生成；换行网格，不横向滚动） */}
         {recipes.length > 0 && (

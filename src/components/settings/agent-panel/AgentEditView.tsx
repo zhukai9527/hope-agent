@@ -581,10 +581,10 @@ export default function AgentEditView({ agentId, initialTab, onBack }: AgentEdit
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  "-mb-px h-auto rounded-md px-3 py-1.5 text-sm font-normal",
+                  "h-auto rounded-t-md rounded-b-none px-3 py-1.5 text-sm font-normal -mb-px",
                   activeTab === tab.id
-                    ? "bg-secondary/70 font-medium text-foreground hover:bg-secondary/70 hover:text-foreground"
-                    : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground",
+                    ? "text-primary border-b-2 border-primary font-medium hover:bg-transparent hover:text-primary"
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
                 )}
                 onClick={() => setActiveTab(tab.id)}
               >
