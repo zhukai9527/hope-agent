@@ -901,6 +901,8 @@ export default function ChatScreen({
   const currentAgentId = session.currentAgentId
   const handleNewChat = session.handleNewChat
   const currentSessionId = session.currentSessionId
+  const currentSessionMessages = session.messages
+  const updateSessionMessages = session.updateSessionMessages
   const chatGoal = useGoal(currentSessionId, { incognito: incognitoEnabled })
   const displayMode = defaultDisplayMode
   const setAgentName = session.setAgentName
@@ -1420,9 +1422,6 @@ export default function ChatScreen({
       logger.error("ui", "ChatScreen::refreshRuntimeModelState", "Failed to refresh model state", e)
     }
   }, [
-    currentSessionMeta?.modelId,
-    currentSessionMeta?.providerId,
-    currentSessionMeta?.reasoningEffort,
     currentSessionId,
     currentAgentId,
     globalActiveModelRef,
@@ -2014,14 +2013,15 @@ export default function ChatScreen({
   })
 
   // Ambient file-action wiring for persisted resources and renderer-only drafts.
+  const setAttachedFiles = stream.setAttachedFiles
   const replaceDraftAttachment = useCallback(
     (draftId: string, file: File) =>
-      stream.setAttachedFiles((drafts) =>
+      setAttachedFiles((drafts) =>
         drafts.map((draft) =>
           draft.id === draftId ? { ...draft, file, status: "ready", error: undefined } : draft,
         ),
       ),
-    [stream.setAttachedFiles],
+    [setAttachedFiles],
   )
 
   const fileActionsValue = useMemo<FileActionsContextValue>(
@@ -2233,8 +2233,8 @@ export default function ChatScreen({
   >(new Map())
 
   useEffect(() => {
-    messagesRef.current = session.messages
-  }, [session.messages])
+    messagesRef.current = currentSessionMessages
+  }, [currentSessionMessages])
 
   useEffect(() => {
     const unlisten = getTransport().listen("memory_extracted", (raw) => {
@@ -2255,10 +2255,10 @@ export default function ChatScreen({
   useEffect(() => {
     const unlisten = getTransport().listen("memory:active_recall", (raw) => {
       const event = raw as ActiveMemoryRecallEvent
-      if (event.sessionId !== session.currentSessionId || !event.recall?.summary) return
+      if (event.sessionId !== currentSessionId || !event.recall?.summary) return
       const turnKey = getLatestUserTurnKey(messagesRef.current)
       pendingActiveMemoryBySession.current.set(event.sessionId, { turnKey, recall: event.recall })
-      session.updateSessionMessages(event.sessionId, (prev) =>
+      updateSessionMessages(event.sessionId, (prev) =>
         attachActiveMemoryToLatestAssistant(prev, turnKey, event.recall),
       )
       setActiveMemoryToast(event.recall)
@@ -2269,22 +2269,22 @@ export default function ChatScreen({
       unlisten()
       if (activeMemoryToastTimer.current) clearTimeout(activeMemoryToastTimer.current)
     }
-  }, [session.currentSessionId, session.updateSessionMessages])
+  }, [currentSessionId, updateSessionMessages])
 
   useEffect(() => {
-    const sid = session.currentSessionId
+    const sid = currentSessionId
     if (!sid) return
     const pending = pendingActiveMemoryBySession.current.get(sid)
     if (!pending) return
     const next = attachActiveMemoryToLatestAssistant(
-      session.messages,
+      currentSessionMessages,
       pending.turnKey,
       pending.recall,
     )
-    if (next !== session.messages) {
-      session.updateSessionMessages(sid, () => next)
+    if (next !== currentSessionMessages) {
+      updateSessionMessages(sid, () => next)
     }
-  }, [session.currentSessionId, session.messages, session.updateSessionMessages])
+  }, [currentSessionId, currentSessionMessages, updateSessionMessages])
 
   // ── Load system prompt ──────────────────────────────────────────
   const loadSystemPrompt = useCallback(async () => {
@@ -2304,24 +2304,24 @@ export default function ChatScreen({
 
   const runCompactContextForCurrentSession =
     useCallback(async (): Promise<CompactResult | null> => {
-      const sid = session.currentSessionId
+      const sid = currentSessionId
       if (!sid || compactingRef.current) return null
 
       const noticeId = `manual-compact:${sid}:${Date.now()}`
       compactingRef.current = true
       setCompacting(true)
-      session.updateSessionMessages(sid, (prev) =>
+      updateSessionMessages(sid, (prev) =>
         upsertManualCompactNotice(prev, makeCompactProgressEvent(), noticeId),
       )
 
       try {
         const result = await compactContextNow(sid)
-        session.updateSessionMessages(sid, (prev) =>
+        updateSessionMessages(sid, (prev) =>
           upsertManualCompactNotice(prev, makeCompactResultEvent(result), noticeId),
         )
         return result
       } catch (e) {
-        session.updateSessionMessages(sid, (prev) =>
+        updateSessionMessages(sid, (prev) =>
           upsertManualCompactNotice(prev, makeCompactFailedEvent(), noticeId),
         )
         throw e
@@ -2329,7 +2329,7 @@ export default function ChatScreen({
         compactingRef.current = false
         setCompacting(false)
       }
-    }, [session])
+    }, [currentSessionId, updateSessionMessages])
 
   // ── Slash Command Action Handler ──────────────────────────────
   const handleCommandAction = useCallback(
@@ -2788,7 +2788,7 @@ export default function ChatScreen({
       try {
         const result = await getTransport().call<CommandResult>("execute_slash_command", {
           sessionId: sid,
-          agentId: session.currentAgentId,
+          agentId: currentAgentId,
           commandText,
         })
         result._slashCommandText = commandText
@@ -2809,7 +2809,7 @@ export default function ChatScreen({
       ensureWorkflowSession,
       handleCommandAction,
       incognitoEnabled,
-      session.currentAgentId,
+      currentAgentId,
       stream,
       t,
     ],
@@ -2838,13 +2838,13 @@ export default function ChatScreen({
           mode: commandDisplay.mode,
         },
       })
-      session.updateSessionMessages(sid, (prev) =>
+      updateSessionMessages(sid, (prev) =>
         appendUniqueSlashHistoryMessages(prev, [optimisticLoopMessage]),
       )
       try {
         const result = await getTransport().call<CommandResult>("execute_slash_command", {
           sessionId: sid,
-          agentId: session.currentAgentId,
+          agentId: currentAgentId,
           commandText,
         })
         result._slashCommandText = commandText
@@ -2852,7 +2852,7 @@ export default function ChatScreen({
         await handleCommandAction(result)
         return true
       } catch (e) {
-        session.updateSessionMessages(sid, (prev) =>
+        updateSessionMessages(sid, (prev) =>
           prev.filter((message) => message._clientId !== optimisticLoopMessage._clientId),
         )
         logger.error("ui", "ChatScreen::loopModeSubmit", "Failed to create loop from composer", e)
@@ -2865,8 +2865,9 @@ export default function ChatScreen({
       ensureWorkflowSession,
       handleCommandAction,
       incognitoEnabled,
-      session.currentAgentId,
+      currentAgentId,
       t,
+      updateSessionMessages,
     ],
   )
 

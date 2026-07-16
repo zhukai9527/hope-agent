@@ -14360,7 +14360,10 @@ function LoopSchedulesSection({
   const lastCreateRequestRef = useRef(createRequest ?? 0)
   const lastInspectRequestRef = useRef(inspectRequest?.nonce ?? 0)
   const activeGoal = goalState.snapshot?.goal ?? null
-  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
+  const activeGoalCriteria = useMemo(
+    () => goalState.snapshot?.criteriaItems ?? [],
+    [goalState.snapshot?.criteriaItems],
+  )
   const canUseWorkflowLoop = draftKind === "interval" && Boolean(activeGoal?.workflowTemplateId)
   const loopTemplates = useMemo<LoopTemplateOption[]>(
     () => [
@@ -14874,7 +14877,6 @@ function LoopSchedulesSection({
     draftMaxRuntime,
     draftPrompt,
     draftTokens,
-    activeGoal?.id,
     refresh,
     sessionId,
     t,
@@ -15697,7 +15699,10 @@ function WorkflowRunsSection({
   }, [runs, watchdogFindings])
   const canMaterializeSession = Boolean(sessionId || onEnsureSession)
   const activeGoal = goalState.snapshot?.goal ?? null
-  const activeGoalCriteria = goalState.snapshot?.criteriaItems ?? []
+  const activeGoalCriteria = useMemo(
+    () => goalState.snapshot?.criteriaItems ?? [],
+    [goalState.snapshot?.criteriaItems],
+  )
   const selectedDomainTemplate = findDomainTemplateByValue(
     domainTemplates,
     selectedDomainTemplateId,
@@ -15860,14 +15865,7 @@ function WorkflowRunsSection({
     setSelectedDomainTaskType(activeGoal.workflowTaskType || template.taskTypes[0] || "")
     setDraftKind(`domain:${template.domain}`)
     setDraftMode(normalizeExecutionMode(template.defaultMode))
-  }, [
-    activeGoal?.workflowTaskType,
-    activeGoal?.workflowTemplateId,
-    activeGoal?.workflowTemplateVersion,
-    domainDraft,
-    domainTemplates,
-    selectedDomainTemplateId,
-  ])
+  }, [activeGoal, domainDraft, domainTemplates, selectedDomainTemplateId])
 
   useEffect(() => {
     if (runs.length === 0) {
@@ -16584,7 +16582,7 @@ ${repairPrompt}`
     draftRunImmediately,
     draftScript,
     ensureWorkflowSession,
-    activeGoal?.id,
+    activeGoal,
     incognito,
     loadSnapshot,
     managedWorktreesState,
@@ -19108,14 +19106,7 @@ function GoalControlStrip({
     setEditTemplateId(goal ? goalDomainTemplateValue(goal) : GOAL_DOMAIN_FREE_VALUE)
     setEditTaskType(goal?.workflowTaskType ?? "")
     setEditOpen(false)
-  }, [
-    goal?.id,
-    goal?.objective,
-    goal?.completionCriteria,
-    goal?.workflowTemplateId,
-    goal?.workflowTemplateVersion,
-    goal?.workflowTaskType,
-  ])
+  }, [goal])
 
   useEffect(() => {
     const nextRequest = editRequest ?? 0

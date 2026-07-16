@@ -203,7 +203,7 @@ export function useSidebarSessionPagination({
       session: loadedRowsRef.current.session < totalsByFilter.session,
       subagent: loadedRowsRef.current.subagent < totalsByFilter.subagent,
     }),
-    [sessionsByFilter, totalsByFilter],
+    [totalsByFilter],
   )
 
   return {
