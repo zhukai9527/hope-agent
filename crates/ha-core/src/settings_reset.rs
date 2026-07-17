@@ -265,8 +265,10 @@ fn json_changed<T: Serialize>(before: &T, after: &T) -> Result<bool> {
 }
 
 fn reset_web_search(current: &web_search::WebSearchConfig) -> web_search::WebSearchConfig {
-    let mut defaults = web_search::WebSearchConfig::default();
-    defaults.searxng_docker_managed = current.searxng_docker_managed;
+    let mut defaults = web_search::WebSearchConfig {
+        searxng_docker_managed: current.searxng_docker_managed,
+        ..Default::default()
+    };
 
     for entry in &mut defaults.providers {
         if let Some(saved) = current.providers.iter().find(|item| item.id == entry.id) {
@@ -551,16 +553,19 @@ fn apply_app_target(config: &mut AppConfig, target: SettingsResetTarget) {
         }
         SettingsResetScope::Browser => {
             if let Some(current) = config.browser.as_ref() {
-                let mut next = crate::browser::BrowserConfig::default();
-                next.profiles = current.profiles.clone();
-                if let Some(saved_extension) = current.extension.as_ref() {
-                    let mut extension =
-                        crate::browser::extension::BrowserExtensionConfig::default();
-                    extension.native_host_name = saved_extension.native_host_name.clone();
-                    extension.extension_ids = saved_extension.extension_ids.clone();
-                    extension.store_url = saved_extension.store_url.clone();
-                    next.extension = Some(extension);
-                }
+                let extension = current.extension.as_ref().map(|saved_extension| {
+                    crate::browser::extension::BrowserExtensionConfig {
+                        native_host_name: saved_extension.native_host_name.clone(),
+                        extension_ids: saved_extension.extension_ids.clone(),
+                        store_url: saved_extension.store_url.clone(),
+                        ..Default::default()
+                    }
+                });
+                let next = crate::browser::BrowserConfig {
+                    profiles: current.profiles.clone(),
+                    extension,
+                    ..Default::default()
+                };
                 config.browser = Some(next);
             }
         }
@@ -1181,11 +1186,13 @@ mod tests {
 
     #[test]
     fn tools_preserve_credentials_and_global_models() {
-        let mut config = AppConfig::default();
-        config.active_model = Some(crate::provider::ActiveModel {
-            provider_id: "provider".into(),
-            model_id: "model".into(),
-        });
+        let mut config = AppConfig {
+            active_model: Some(crate::provider::ActiveModel {
+                provider_id: "provider".into(),
+                model_id: "model".into(),
+            }),
+            ..Default::default()
+        };
         config.fallback_models.push(crate::provider::ActiveModel {
             provider_id: "fallback".into(),
             model_id: "model".into(),
