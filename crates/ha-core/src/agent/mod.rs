@@ -18,6 +18,8 @@ mod providers;
 mod related_notes;
 pub mod resolver;
 pub(crate) mod retrieval_planner;
+#[cfg(feature = "eval-runner")]
+pub use retrieval_planner::{run_source_fusion_scale_eval, SourceFusionScaleEvalReport};
 pub(crate) mod runtime_ledger;
 mod side_query;
 mod side_query_stream;

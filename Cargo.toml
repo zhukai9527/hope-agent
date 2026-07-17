@@ -4,6 +4,8 @@ members = [
     "crates/ha-core",
     "crates/ha-server",
     "crates/ha-browser-host",
+    "crates/ha-eval-spec",
+    "crates/ha-eval",
 ]
 resolver = "2"
 
@@ -120,6 +122,7 @@ futures-util = "0.3"
 # standalone SSE client, so ha-core owns the handshake.
 sse-stream = "0.2"
 sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
 base64 = "0.22"
 dirs = "6"
 rand = "0.9"

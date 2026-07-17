@@ -1,0 +1,26 @@
+[package]
+name = "ha-eval"
+version = "0.17.0"
+description = "Standalone deterministic capability evaluation runner for Hope Agent"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "hope-agent-eval"
+path = "src/main.rs"
+
+[dependencies]
+ha-core = { path = "../ha-core", features = ["eval-runner"] }
+ha-eval-spec = { path = "../ha-eval-spec" }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true }
+
+[lints]
+workspace = true

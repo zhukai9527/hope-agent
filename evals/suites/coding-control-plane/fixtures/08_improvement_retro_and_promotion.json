@@ -62,7 +62,7 @@
       "minAppliedArtifacts": 1,
       "expectedPromotedStatus": "promoted",
       "minPromotedArtifacts": 1,
-      "expectedPromotionTargetContains": "crates/ha-core/tests/fixtures/coding_eval"
+      "expectedPromotionTargetContains": "evals/suites/coding-control-plane/fixtures"
     }
   }
 }

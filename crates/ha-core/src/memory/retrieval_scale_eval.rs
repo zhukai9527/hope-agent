@@ -1,23 +1,24 @@
-//! Opt-in realistic-scale retrieval benchmark.
+//! Deterministic realistic-scale retrieval capability eval.
 //!
-//! Run through `pnpm memory:benchmark` (release mode). The benchmark always
-//! enforces deterministic retrieval quality; latency SLOs are reported by
-//! default and become hard gates with `HA_MEMORY_BENCH_ENFORCE=1`.
+//! Compiled only for the standalone `hope-agent-eval` runner. Retrieval quality
+//! is blocking; latency is reported as advisory evidence.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ha_core::config::{save_config, AppConfig};
-use ha_core::memory::claims;
-use ha_core::memory::{
+use crate::config::{save_config, AppConfig};
+use crate::memory::claims;
+use crate::memory::{
     EmbeddingProvider, EmbeddingSelection, MemoryBackend, MemorySearchQuery, SqliteMemoryBackend,
 };
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 const DEFAULT_ROWS: usize = 50_000;
 const DEFAULT_QUERIES_PER_CLASS: usize = 24;
-const DEFAULT_P95_SLO_MS: f64 = 250.0;
+pub const DEFAULT_P95_SLO_MS: f64 = 250.0;
 const BENCHMARK_EMBEDDING_DIMS: u32 = 8;
 const BENCHMARK_EMBEDDING_SIGNATURE: &str = "memory-scale-benchmark-v1";
 
@@ -403,9 +404,20 @@ fn database_size_bytes(path: &Path) -> u64 {
             .unwrap_or(0)
 }
 
-#[test]
-#[ignore = "opt-in realistic-scale benchmark; run pnpm memory:benchmark"]
-fn realistic_scale_memory_search_reports_quality_and_latency() {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievalScaleEvalReport {
+    pub passed: bool,
+    pub rows_per_store: usize,
+    pub queries_per_class: usize,
+    pub seed_ms: f64,
+    pub database_bytes: u64,
+    pub quality: BTreeMap<String, f64>,
+    pub latency_ms: BTreeMap<String, f64>,
+    pub failures: Vec<String>,
+}
+
+pub fn run_retrieval_scale_eval() -> RetrievalScaleEvalReport {
     let rows = env_usize("HA_MEMORY_BENCH_ROWS", DEFAULT_ROWS, 1_000, 250_000);
     let queries_per_class = env_usize("HA_MEMORY_BENCH_QUERIES", DEFAULT_QUERIES_PER_CLASS, 4, 200);
     let temp = tempfile::tempdir().expect("benchmark tempdir");
@@ -544,51 +556,68 @@ fn realistic_scale_memory_search_reports_quality_and_latency() {
         claim_vector_probe_latency.as_secs_f64() * 1_000.0,
     );
 
-    assert!(
-        claim_vector_probe_rows >= 8,
-        "claim vector fast path returned only {claim_vector_probe_rows} rows"
-    );
-
-    assert!(
-        exact_recall >= 0.99,
-        "exact recall@10 regressed: {exact_recall:.3}"
-    );
-    assert!(
-        cjk_recall >= 0.99,
-        "CJK substring recall@10 regressed: {cjk_recall:.3}"
-    );
-    assert!(
-        claim_exact_recall >= 0.99,
-        "claim exact recall@10 regressed: {claim_exact_recall:.3}"
-    );
-    assert!(
-        claim_cjk_recall >= 0.99,
-        "claim CJK substring recall@10 regressed: {claim_cjk_recall:.3}"
-    );
-    assert!(
-        semantic_precision >= 0.99,
-        "legacy semantic precision@10 regressed: {semantic_precision:.3}"
-    );
-    assert!(
-        claim_semantic_precision >= 0.99,
-        "claim semantic precision@10 regressed: {claim_semantic_precision:.3}"
-    );
-
-    if std::env::var("HA_MEMORY_BENCH_ENFORCE").as_deref() == Ok("1") {
-        for (class, p95) in [
-            ("exact", exact_p95_ms),
-            ("cjk", cjk_p95_ms),
-            ("common", common_p95_ms),
-            ("claim_exact", claim_exact_p95_ms),
-            ("claim_cjk", claim_cjk_p95_ms),
-            ("claim_common", claim_common_p95_ms),
-            ("semantic", semantic_p95_ms),
-            ("claim_semantic", claim_semantic_p95_ms),
-        ] {
-            assert!(
-                p95 <= DEFAULT_P95_SLO_MS,
-                "{class} p95 {p95:.2}ms exceeded {DEFAULT_P95_SLO_MS:.0}ms at {rows} rows"
-            );
+    let quality = BTreeMap::from([
+        (
+            "claimVectorProbeRows".to_string(),
+            claim_vector_probe_rows as f64,
+        ),
+        ("legacyExactRecallAt10".to_string(), exact_recall),
+        ("legacyCjkRecallAt10".to_string(), cjk_recall),
+        (
+            "legacySemanticPrecisionAt10".to_string(),
+            semantic_precision,
+        ),
+        ("claimExactRecallAt10".to_string(), claim_exact_recall),
+        ("claimCjkRecallAt10".to_string(), claim_cjk_recall),
+        (
+            "claimSemanticPrecisionAt10".to_string(),
+            claim_semantic_precision,
+        ),
+    ]);
+    let latency_ms = BTreeMap::from([
+        (
+            "claimVectorProbe".to_string(),
+            claim_vector_probe_latency.as_secs_f64() * 1_000.0,
+        ),
+        ("legacyExactP50".to_string(), exact_p50_ms),
+        ("legacyExactP95".to_string(), exact_p95_ms),
+        ("legacyCjkP50".to_string(), cjk_p50_ms),
+        ("legacyCjkP95".to_string(), cjk_p95_ms),
+        ("legacyCommonP50".to_string(), common_p50_ms),
+        ("legacyCommonP95".to_string(), common_p95_ms),
+        ("legacySemanticP50".to_string(), semantic_p50_ms),
+        ("legacySemanticP95".to_string(), semantic_p95_ms),
+        ("claimExactP50".to_string(), claim_exact_p50_ms),
+        ("claimExactP95".to_string(), claim_exact_p95_ms),
+        ("claimCjkP50".to_string(), claim_cjk_p50_ms),
+        ("claimCjkP95".to_string(), claim_cjk_p95_ms),
+        ("claimCommonP50".to_string(), claim_common_p50_ms),
+        ("claimCommonP95".to_string(), claim_common_p95_ms),
+        ("claimSemanticP50".to_string(), claim_semantic_p50_ms),
+        ("claimSemanticP95".to_string(), claim_semantic_p95_ms),
+    ]);
+    let mut failures = Vec::new();
+    for (name, value, minimum) in [
+        ("claimVectorProbeRows", claim_vector_probe_rows as f64, 8.0),
+        ("legacyExactRecallAt10", exact_recall, 0.99),
+        ("legacyCjkRecallAt10", cjk_recall, 0.99),
+        ("legacySemanticPrecisionAt10", semantic_precision, 0.99),
+        ("claimExactRecallAt10", claim_exact_recall, 0.99),
+        ("claimCjkRecallAt10", claim_cjk_recall, 0.99),
+        ("claimSemanticPrecisionAt10", claim_semantic_precision, 0.99),
+    ] {
+        if value < minimum {
+            failures.push(format!("{name} {value:.4} is below {minimum:.4}"));
         }
+    }
+    RetrievalScaleEvalReport {
+        passed: failures.is_empty(),
+        rows_per_store: rows,
+        queries_per_class,
+        seed_ms,
+        database_bytes: database_size_bytes(&path),
+        quality,
+        latency_ms,
+        failures,
     }
 }

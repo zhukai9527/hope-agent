@@ -21,6 +21,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify eval version lock is append-only
+        env:
+          EVAL_LOCK_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/verify-eval-version-lock.mjs --base "$EVAL_LOCK_BASE"
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:

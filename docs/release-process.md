@@ -21,9 +21,10 @@
 ```
 PR (含 release notes + CHANGELOG + version bump)
   → 合并到 release/X.Y
+  → 对 release/X.Y HEAD 手动运行 release-tier Capability Evals
   → 在 release/X.Y HEAD 打 tag vX.Y.Z
   → push tag 到 origin
-  → release.yml 触发：构建 macOS/Windows/Linux 产物 + latest.json
+  → release.yml 校验同一 SHA 的 eval evidence，再构建 macOS/Windows/Linux 产物 + latest.json
   → 自动创建 draft GitHub Release，资产齐全
   → 人工审阅 → publish
   → updater endpoint（latest published release/download/latest.json）开始对外服务
@@ -36,7 +37,7 @@ PR (含 release notes + CHANGELOG + version bump)
 
 ### 0.4 版本号单一来源
 
-`package.json` 是版本号唯一真相源，[scripts/sync-version.mjs](../scripts/sync-version.mjs) 把它同步到 [src-tauri/Cargo.toml](../src-tauri/Cargo.toml) 与 [src-tauri/tauri.conf.json](../src-tauri/tauri.conf.json)。CI 入口 [scripts/verify-release-version.mjs](../scripts/verify-release-version.mjs) 在 tag 触发后校验三处一致且与 tag 名匹配。
+`package.json` 是版本号唯一真相源，[scripts/sync-version.mjs](../scripts/sync-version.mjs) 把它同步到 [src-tauri/Cargo.toml](../src-tauri/Cargo.toml)、[src-tauri/tauri.conf.json](../src-tauri/tauri.conf.json)、`ha-core`、`ha-server`、`ha-eval` 及 `Cargo.lock`。CI 入口 [scripts/verify-release-version.mjs](../scripts/verify-release-version.mjs) 在 tag 触发后校验所有产品版本来源一致且与 tag 名匹配。
 
 ### 0.5 macOS 代码签名
 
@@ -103,6 +104,12 @@ gh pr create --base release/v0.1 --title "release: v0.1.2" \
 
 PR 合并后，本地：
 
+先在 GitHub Actions 手动运行 `Capability Evals`，`target_ref` 选择目标 `release/vX.Y`（或其精确 SHA）、`tier=release`。等待 evidence 生成后确认分支 HEAD 未变化；若有新提交，必须针对新 SHA 重跑。
+
+初始 policy 为 advisory，缺失/失败会写入 release workflow summary 与 draft Release 但不阻断；切到 enforce 后，无合格 evidence 或未覆盖失败 suite 的 release 会直接停止。紧急 waiver 必须经 `release-eval-waiver` protected environment 审批，并绑定本次 SHA + tag。
+
+随后只给刚完成评测的同一 SHA 打 tag：
+
 ```bash
 git checkout release/v0.1 && git pull
 git tag v0.1.2
@@ -111,10 +118,11 @@ git push origin v0.1.2
 
 `git push origin v0.1.2` 推送的是 tag ref，**不在 branch protection 管辖内**（仓库未配置 tag protection rule），可直推。tag 一旦上 origin，[release.yml](../.github/workflows/release.yml) 立即触发：
 
-1. `release:verify` 校验 `package.json` 版本与 tag 名一致
-2. `Extract release notes` 步骤读取 `docs/release-notes/v0.1.2.md`，缺失则 fallback 为 `See CHANGELOG.md for details.`
-3. `tauri-action` 在 macOS / Windows / Linux 三个 runner 上构建产物
-4. 自动创建 draft Release `Hope Agent v0.1.2`，上传所有产物 + `latest.json`
+1. `eval-preflight` 查找并校验 tag SHA 对应的 release-tier evidence/digest
+2. `release:verify` 校验 `package.json` 版本与 tag 名一致
+3. `Extract release notes` 步骤读取 `docs/release-notes/v0.1.2.md`，缺失则 fallback 为 `See CHANGELOG.md for details.`
+4. `tauri-action` 在 macOS / Windows / Linux runner 上构建产物
+5. 自动创建 draft Release，并附上 `eval-evidence.v1.json` / `eval-summary.md`、安装产物与 `latest.json`
 
 ### 1.4 审阅 draft Release 并 publish
 

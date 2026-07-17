@@ -13,6 +13,7 @@ prost-build = "0.14"
 protoc-bin-vendored = "3"
 
 [dependencies]
+ha-eval-spec = { path = "../ha-eval-spec" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
@@ -122,6 +123,12 @@ rquickjs-serde = "0.6"
 
 [features]
 default = []
+# Heavy deterministic eval-only implementations are compiled by the dedicated
+# `hope-agent-eval` binary, never by the default PR test harness.
+eval-runner = []
+# Legacy internal eval tests remain opt-in while their public-suite coverage is
+# migrated to `hope-agent-eval`. This feature is intentionally absent from CI.
+eval-internal-tests = []
 # Enables the desktop-only image sources (`clipboard`, `screenshot`) of
 # `tools::image`. The desktop binary (src-tauri) opts in; ha-server's
 # Docker bin leaves the feature off so the runtime doesn't need wayland /
