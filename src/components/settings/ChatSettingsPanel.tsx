@@ -19,7 +19,8 @@ import { emitCompletedTurnCollapsePreference } from "@/components/chat/completed
 import { emitAutoSendPendingPreference } from "@/components/chat/autoSendPendingPreference"
 import { Check, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import SettingsResetControl, { type SettingsResetSection } from "./SettingsResetControl"
+import SettingsResetControl from "./SettingsResetControl"
+import type { SettingsResetSection } from "./settingsReset"
 
 type ChatTab = "basic" | "awareness" | "context-compact"
 

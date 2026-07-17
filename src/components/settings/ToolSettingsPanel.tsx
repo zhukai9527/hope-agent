@@ -9,28 +9,8 @@ import AudioGeneratePanel from "@/components/settings/AudioGeneratePanel"
 import IssueReportingPanel from "@/components/settings/IssueReportingPanel"
 import CanvasSettingsPanel from "@/components/settings/CanvasSettingsPanel"
 import AsyncToolsPanel from "@/components/settings/AsyncToolsPanel"
-import SettingsResetControl, { type SettingsResetSection } from "./SettingsResetControl"
-
-type ToolTab =
-  | "general"
-  | "webSearch"
-  | "webFetch"
-  | "imageGenerate"
-  | "audioGenerate"
-  | "canvas"
-  | "asyncTools"
-  | "issueReporting"
-
-export const RESET_SECTION_BY_TAB: Record<ToolTab, SettingsResetSection> = {
-  general: "general",
-  webSearch: "web_search",
-  webFetch: "web_fetch",
-  imageGenerate: "image_generate",
-  audioGenerate: "audio_generate",
-  canvas: "canvas",
-  asyncTools: "async_tools",
-  issueReporting: "issue_reporting",
-}
+import SettingsResetControl from "./SettingsResetControl"
+import { RESET_SECTION_BY_TAB, type ToolTab } from "./toolSettingsReset"
 
 export default function ToolSettingsPanel() {
   const { t } = useTranslation()

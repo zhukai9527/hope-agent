@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { RESET_SECTION_BY_TAB } from "./ToolSettingsPanel"
+import { RESET_SECTION_BY_TAB } from "./toolSettingsReset"
 
 describe("ToolSettingsPanel reset targets", () => {
   it("maps every tool tab to one stable backend section", () => {

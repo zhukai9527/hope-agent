@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 
-import SettingsResetControl, { RESET_SCOPE_BY_SECTION } from "./SettingsResetControl"
+import SettingsResetControl from "./SettingsResetControl"
+import { RESET_SCOPE_BY_SECTION } from "./settingsReset"
 import { AUTO_SEND_PENDING_EVENT } from "@/components/chat/autoSendPendingPreference"
 import { CHAT_DISPLAY_MODE_EVENT, CHAT_DISPLAY_MODE_STORAGE_KEY } from "@/components/chat/chatDisplayModePreference"
 import { COMPLETED_TURN_COLLAPSE_EVENT } from "@/components/chat/completedTurnCollapsePreference"
