@@ -115,6 +115,7 @@ pub fn run(step: u32, total: u32) -> Result<bool> {
         return Ok(false);
     }
     let model_id = prompt_input("Primary model id", Some(tpl.model_id))?;
+    let token_cost = matches!(tpl.kind, TemplateKind::Local).then_some(0.0);
 
     let mut provider = ProviderConfig::new(provider_name, tpl.api_type.clone(), base_url, api_key);
     provider.models = vec![ModelConfig {
@@ -125,8 +126,8 @@ pub fn run(step: u32, total: u32) -> Result<bool> {
         max_tokens: 8192,
         reasoning: false,
         thinking_style: None,
-        cost_input: 0.0,
-        cost_output: 0.0,
+        cost_input: token_cost,
+        cost_output: token_cost,
     }];
     ha_core::provider::add_and_activate_provider(provider, model_id, "cli-onboarding")?;
 
