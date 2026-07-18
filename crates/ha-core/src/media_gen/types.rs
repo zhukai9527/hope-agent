@@ -98,6 +98,44 @@ pub enum MediaVendorKind {
     Tongyi,
     /// ElevenLabs TTS / music / SFX.
     Elevenlabs,
+    /// StepFun images (`/v1/images/generations`) + TTS (`/v1/audio/speech`).
+    Stepfun,
+    /// Volcengine Ark images (ByteDance Doubao Seedream). TTS lives on a
+    /// different host with different auth — modelled separately.
+    Volcengine,
+    /// Tencent Hunyuan images via the TokenHub plane (`tokenhub.tencentmaas.com`).
+    Hunyuan,
+    /// Together AI hosted image models (OpenAI-ish, `base64` response token).
+    Together,
+    /// xAI Grok Imagine images.
+    Xai,
+    /// Recraft images — the only vendor here with native vector (SVG) output.
+    Recraft,
+    /// Baidu Qianfan images (`qianfan.baidubce.com/v2`).
+    Qianfan,
+    /// SenseNova images — OpenAI-ish request, `images_urls` response envelope.
+    Sensenova,
+    /// Cartesia Sonic TTS.
+    Cartesia,
+    /// Deepgram Aura TTS — voice *is* the model id.
+    Deepgram,
+    /// Fish Audio TTS — model travels in an HTTP header.
+    Fishaudio,
+    /// Hume Octave TTS — no `model` field, `version` selects the generation.
+    Hume,
+    /// Black Forest Labs FLUX — `x-key` auth, submit + poll, model in the path.
+    Bfl,
+    /// Stability AI — multipart images, plus Stable Audio music / SFX.
+    Stability,
+    /// Replicate — prediction submit + poll over arbitrary hosted models.
+    Replicate,
+    /// Kuaishou Kling — async task API, region-split hosts.
+    Kling,
+    /// iFlytek Spark — HMAC-signed URLs, bespoke three-section JSON.
+    Iflytek,
+    /// Volcengine "Doubao" speech. Separate from [`Self::Volcengine`]: a
+    /// different host, different auth headers, and a streaming NDJSON body.
+    VolcengineTts,
     /// Self-hosted or third-party endpoint speaking the OpenAI wire shape
     /// (images `/v1/images/generations`, speech `/v1/audio/speech`).
     /// Requires an explicit `base_url`; routed through the OpenAI adapters.
@@ -115,6 +153,24 @@ impl MediaVendorKind {
             Self::Zhipu => "https://open.bigmodel.cn/api/paas",
             Self::Tongyi => "https://dashscope.aliyuncs.com",
             Self::Elevenlabs => "https://api.elevenlabs.io",
+            Self::Stepfun => "https://api.stepfun.com",
+            Self::Volcengine => "https://ark.cn-beijing.volces.com",
+            Self::Hunyuan => "https://tokenhub.tencentmaas.com",
+            Self::Together => "https://api.together.ai",
+            Self::Xai => "https://api.x.ai",
+            Self::Recraft => "https://external.api.recraft.ai",
+            Self::Qianfan => "https://qianfan.baidubce.com",
+            Self::Sensenova => "https://token.sensenova.cn",
+            Self::Cartesia => "https://api.cartesia.ai",
+            Self::Deepgram => "https://api.deepgram.com",
+            Self::Fishaudio => "https://api.fish.audio",
+            Self::Hume => "https://api.hume.ai",
+            Self::Bfl => "https://api.bfl.ai",
+            Self::Stability => "https://api.stability.ai",
+            Self::Replicate => "https://api.replicate.com",
+            Self::Kling => "https://api-singapore.klingai.com",
+            Self::Iflytek => "https://spark-api.cn-huabei-1.xf-yun.com",
+            Self::VolcengineTts => "https://openspeech.bytedance.com",
             Self::OpenaiCompatible => "",
         }
     }
@@ -129,16 +185,45 @@ impl MediaVendorKind {
             Self::Zhipu => "ZhipuAI",
             Self::Tongyi => "Tongyi Wanxiang",
             Self::Elevenlabs => "ElevenLabs",
+            Self::Stepfun => "StepFun",
+            Self::Volcengine => "Volcengine Ark",
+            Self::Hunyuan => "Tencent Hunyuan",
+            Self::Together => "Together AI",
+            Self::Xai => "xAI",
+            Self::Recraft => "Recraft",
+            Self::Qianfan => "Baidu Qianfan",
+            Self::Sensenova => "SenseNova",
+            Self::Cartesia => "Cartesia",
+            Self::Deepgram => "Deepgram",
+            Self::Fishaudio => "Fish Audio",
+            Self::Hume => "Hume AI",
+            Self::Bfl => "Black Forest Labs",
+            Self::Stability => "Stability AI",
+            Self::Replicate => "Replicate",
+            Self::Kling => "Kling",
+            Self::Iflytek => "iFlytek Spark",
+            Self::VolcengineTts => "Doubao Speech",
             Self::OpenaiCompatible => "OpenAI-compatible",
         }
     }
 
     /// Whether this vendor exposes a listable voice catalog (used to gate
     /// the "fetch voices" UI + `list_media_voices` command).
+    ///
+    /// **Must stay in sync with the arms in [`super::voices`]** — claiming a
+    /// catalog we cannot fetch turns the UI button into a guaranteed error.
+    /// Deepgram is deliberately absent: its voices *are* model ids, so the
+    /// model picker already covers them. StepFun / Fish Audio / Hume do
+    /// publish listing endpoints, but their response shapes are not verified
+    /// yet, so they keep the free-form voice input for now.
     pub fn supports_voice_listing(&self) -> bool {
         matches!(
             self,
-            Self::Elevenlabs | Self::Openai | Self::OpenaiCompatible
+            Self::Elevenlabs
+                | Self::Openai
+                | Self::OpenaiCompatible
+                | Self::Cartesia
+                | Self::Minimax
         )
     }
 }

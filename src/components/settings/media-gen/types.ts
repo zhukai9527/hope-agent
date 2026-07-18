@@ -16,6 +16,24 @@ export type MediaVendorKind =
   | "zhipu"
   | "tongyi"
   | "elevenlabs"
+  | "stepfun"
+  | "volcengine"
+  | "hunyuan"
+  | "together"
+  | "xai"
+  | "recraft"
+  | "qianfan"
+  | "sensenova"
+  | "cartesia"
+  | "deepgram"
+  | "fishaudio"
+  | "hume"
+  | "bfl"
+  | "stability"
+  | "replicate"
+  | "kling"
+  | "iflytek"
+  | "volcengine-tts"
   | "openai-compatible"
 
 export interface ImageEditCaps {
@@ -234,7 +252,7 @@ export function firstAutoCandidate(
   return null
 }
 
-/** Deep-link to Settings → Model Providers → Generation Models. Mirrors
+/** Deep-link to Settings → Model Configuration → Media Generation Models. Mirrors
  *  `openEmbeddingModelSettings()`; requires the App-level `settings:navigate`
  *  listener to forward `modelTab`. */
 export function openMediaModelSettings() {
