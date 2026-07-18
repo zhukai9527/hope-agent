@@ -7,6 +7,7 @@
 pub mod logging;
 
 // ── New abstractions ──────────────────────────────────────────────
+pub mod eval_context;
 pub mod event_bus;
 
 // ── Initialization ────────────────────────────────────────────────

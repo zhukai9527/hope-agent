@@ -1,4 +1,8 @@
 mod adapters;
+mod model;
+mod model_adapter;
+mod model_fake;
+mod model_supervisor;
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -82,6 +86,12 @@ enum Commands {
         #[arg(long, hide = true)]
         allow_local: bool,
     },
+    /// Run real-model campaigns in a protocol and evidence domain isolated
+    /// from deterministic release evals.
+    Model {
+        #[command(subcommand)]
+        command: model::ModelCommands,
+    },
     #[command(name = "_run-case", hide = true)]
     RunCase {
         #[arg(long)]
@@ -158,6 +168,7 @@ async fn main() -> Result<()> {
             tag.as_deref(),
             allow_local,
         ),
+        Commands::Model { command } => model::execute(&root, command).await,
         Commands::RunCase {
             plan,
             suite,

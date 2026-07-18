@@ -4,6 +4,8 @@
 //! evidence can therefore be inspected and verified without constructing an
 //! Agent, loading provider configuration, or touching the product database.
 
+pub mod model;
+
 use anyhow::{anyhow, bail, Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -220,7 +222,7 @@ pub struct ShardResult {
     pub cases: Vec<CaseResult>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArtifactDigest {
     pub path: String,

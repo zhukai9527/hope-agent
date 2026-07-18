@@ -14,6 +14,8 @@ pnpm tauri build       # 构建生产包
 pnpm sync:version      # 以 package.json 为单一来源，同步各 Cargo.toml / tauri.conf.json / Cargo.lock 版本
 pnpm release:verify    # 校验 package.json / src-tauri 版本一致；可附 -- --tag vX.Y.Z
 cargo run -p ha-eval --locked -- validate  # 校验专项评测 schema / policy / suite / fixture
+cargo run -p ha-eval --locked -- model validate  # 校验真实模型 Campaign 资产（不调用模型）
+cargo run -p ha-eval --locked -- model smoke --server-bin target/debug/hope-agent-server --output target/eval-smoke/trial.json  # fake Provider 黑盒 smoke（零费用）
 node scripts/verify-eval-version-lock.mjs --base <base-sha>  # 校验专项评测版本锁只追加、不覆写
 pnpm typecheck         # 前端类型检查（tsc -b）
 pnpm lint              # Lint
@@ -49,6 +51,8 @@ pnpm test                                                                    # C
 
 - **clippy / test 只覆盖 `ha-core` + `ha-server`**（CI 也是如此）；`src-tauri` 不在钩子内，tauri-specific 问题用 `cargo {clippy,test} --workspace` 自查
 - **完整能力评测不进 PR / pre-push**：Coding / Domain / Dreaming / Memory Retrieval 整包走独立 `hope-agent-eval` 与 `Capability Evals` workflow（weekly + 发版前精确 SHA）；默认 Cargo test 只保留快速契约测试。详见 [`capability-eval.md`](docs/architecture/capability-eval.md)
+- **PR 只跑零费用评测基础设施 smoke**：Linux Rust job 会以本地 fake Provider 驱动真实 Hope Server，校验模型/tool/Goal/Loop 归因与 trial schema；它不使用真实 API Key、不衡量模型能力，也不替代 nightly/weekly/release Campaign
+- **真实模型 Campaign 同样不进 PR / pre-push**：`hope-agent-eval model` 只有显式本地运行或 `Live Model Campaign`（nightly / weekly / pre-release / monthly）才调用 Provider；App 现有 Coding / Domain 真实模型入口保留。本地 source 不得晋升，发布只接受受保护 Runner 的 clean exact-SHA evidence。详见 [`live-model-evaluation.md`](docs/architecture/live-model-evaluation.md)
 - **Rust 版本**由 [`rust-toolchain.toml`](rust-toolchain.toml) 固定，本地 / CI 共用
 - **应急开关**：`HA_SKIP_PREPUSH=1`（整段跳过，仅限纯 `.md` / 弱网紧急）/ `HA_SKIP_PREPUSH_TEST=1`（只跳 cargo test）。**禁止 `--no-verify`**——会绕过 GPG 等其它钩子
 
@@ -80,6 +84,7 @@ pnpm test                                                                    # C
 - GitHub ruleset `main-branch-protection` 的 `conditions.ref_name.include` 覆盖 `~DEFAULT_BRANCH` + `refs/heads/release/**`：必须 PR、必跑 8 项 status check、禁 force push、禁删分支、`enforce_admins: true`
 - 修改 workflow 的 job 名或 matrix 时需同步通过 `gh api` 更新 ruleset 的 `required_status_checks` context 列表
 - `capability-eval.yml` 不属于 required check；release policy 初始 advisory，达到稳定性条件后只通过配置 PR 切 enforce。发版 evidence 必须来自 GitHub、`dirty=false` 且 SHA/digest 精确匹配；本地结果不得替代
+- `model-campaign.yml` 也不属于 required check；真实模型 evidence 与 deterministic evidence 物理分离、互不替代。隔离 `config.json` 禁止保存 Provider Key，Key 只能通过受保护 `model-eval` environment 的 `MODEL_EVAL_PROVIDER_SECRETS_B64` 注入 Hope Server 内存；只允许评测专用账号、合成/授权脱敏数据及 Provider/suite allowlist 出网，禁止个人生产账号、真实用户数据和不受约束的公网访问。模型轨道转 enforce 只能通过 `evals/live/policy/release.json` 配置 PR
 
 ## 项目结构
 
@@ -88,7 +93,7 @@ Cargo.toml              Workspace 根（含产品 crates + ha-eval-spec / ha-eva
 crates/
   ha-core/              核心业务逻辑（零 Tauri 依赖，纯 Rust 库）
   ha-eval-spec/         专项评测 manifest / policy / evidence 协议（不依赖 ha-core）
-  ha-eval/              独立确定性专项评测 CLI
+  ha-eval/              独立确定性专项评测 + 真实模型 Campaign 控制面 CLI
   ha-server/            HTTP/WS 服务器（axum，REST API + WebSocket 流式推送）
   ha-browser-host/      浏览器后端辅助进程（native messaging broker / CDP host）
 src-tauri/              Tauri 桌面 Shell（薄壳，调用 ha-core）
@@ -201,6 +206,7 @@ ha-core 主要领域：`agent/` `chat_engine/` `context_compact/` `memory/` `kno
 - **Lucid Review 用户纠错闭环**：唯一编排入口 `claims::review`——`update_claim`（PATCH 语义：edit / status / move scope / pin-unpin）+ `forget_claim`（archive / permanent）；decision-type 由 `resolve_update` 纯函数从 diff 派生。**红线**：① 每个用户操作落 `dreaming::record_user_action`（完成态 run + 单 decision）；② approve/edit/reject/expire/move_scope 写最高权重 `manual_correction` evidence，pin/unpin/flag 不写；③ content 变更后 `reembed_claim` 使下一轮召回反映新文本；④ forget archive 翻 `archived` + link 转 `managed` + 仅独管的 memory `pinned=0`，permanent 删 claim 图谱 + 仅独管的 orphan memory；⑤ 发 `memory:claim_changed`。owner 平面 `claim_update` / `claim_forget`（对齐 HTTP `PATCH /api/claims/{id}` / `POST /api/claims/{id}/forget`，本机 / API key 信任）**无 agent 工具面**——claim 纠错只对用户开放，模型不能自改
 - **确定性评测**：`memory/dreaming/eval.rs` + `evals/suites/memory-dreaming/fixtures/*.json` 由独立 `hope-agent-eval` 运行（**无 LLM、不进默认 Cargo test**），只测安全红线：作用域隔离 / 过期抑制 / 证据可追溯 / 冲突进待审 / legacy-sync 隐藏 / 证据 fail-closed。**契约**：改动 claim 读路径 / effective-status / hidden-set / scope 过滤 / evidence 授权时，须加 fixture case、提升 suite version，并保专项评测绿
 - **专项评测版本与网络边界**：`evals/version-lock.json` 已有 `id@version` 只许保留原 digest，新内容必须提升版本并追加 key；PR 的 Rust fmt job 对比 base SHA 强制 append-only。GitHub capability eval 的 case 必须在仅 loopback 的 Linux network namespace 中运行，单设环境变量不能作为 `networkPolicy=deny` 证据；App 晋升 `eval_candidate` 必须同时登记 manifest、提升 suite patch version 并追加 lock，任一步失败不得标记 `promoted`
+- **真实模型评测边界**：`evals/live/version-lock.json` 同样 append-only；manifest 只允许注册 adapter / verifier / fault 枚举，禁止 shell。`EvalRunContext` 只在 `HA_MODEL_EVAL_MODE=1` 接受，新增 Goal / Workflow / Async / Agent 执行边界必须传播身份并关闭 guard。专用 Runner 的 Provider-only 外部防火墙才是网络边界，环境变量只能作为部署证明
 - **Retrieval Planner source fusion v2**：`role=injected/selected` 是既成 prompt 事实，跨源排序只能 canonical-dedup / 裁剪 `candidate/considered`，不得重排或丢弃已注入 ref。候选按 Project > Agent > Global、query intent、来源内 rank、score/confidence/salience 排序，origin/kind/id 稳定 tie-break；`memory.retrievalPlanner` 的 `maxTraceRefs` / `maxCandidatesPerOrigin`（钳值见 `RetrievalPlannerConfig::clamped`）只约束 trace 候选预算，不是权限或 prompt token 边界
 - **混合检索规模红线**：legacy / claim 共用 `adaptive_lexical_rrf_weights`，稀疏精确词法命中不得被默认高权重向量挤出 Top-K；CJK / identifier 中段走可重建 trigram shadow，只有短 query / shadow 不可用才 bounded LIKE。claim FTS 必须让虚拟表作为 JOIN 驱动（当前 `CROSS JOIN`），禁止 broad status-first 计划；vec0 先 bounded KNN overfetch 后过滤，不足时保留 prefiltered correctness fallback。改动这些路径须跑 `pnpm memory:benchmark`，需要硬延迟门禁时加 `HA_MEMORY_BENCH_ENFORCE=1`
 - **会话级无痕（`sessions.incognito`）**：单一真相源；不注入 Memory / Active Memory / Awareness、跳过自动提取；**关闭即焚**（不进侧边栏 / 全局 FTS / Dashboard 统计）；**与 Project / IM Channel 互斥**。四旁路守卫红线（Epic E，全貌见 [`session.md`](docs/architecture/session.md#四旁路守卫epic-e)）：`is_session_incognito` fail-closed 三态；大工具结果落盘走内存、异步任务 **占位不 spool**；AllowAlways 经 `choose_scope` 强制内存 `Session` scope 绝不落盘；`session:purged` 焚盘 `tool_results/` + job 行/spool；异步注入与在途回合在会话已删/已焚时跳过

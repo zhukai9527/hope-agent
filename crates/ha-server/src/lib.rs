@@ -740,6 +740,18 @@ fn build_router_with_cors(
         // Chat
         .route("/chat", post(routes::chat::chat))
         .route(
+            "/eval/model/trials/{trial_id}",
+            get(routes::chat::model_eval_trial_telemetry),
+        )
+        .route(
+            "/eval/model/trials/{trial_id}/cleanup",
+            post(routes::chat::cleanup_model_eval_trial),
+        )
+        .route(
+            "/eval/model/trials/{trial_id}/finish",
+            post(routes::chat::finish_model_eval_trial),
+        )
+        .route(
             "/chat/turn-message",
             post(routes::chat::queue_turn_user_message)
                 .patch(routes::chat::update_queued_turn_user_message),
@@ -1945,6 +1957,10 @@ fn build_router_with_cors(
         .route(
             "/sessions/{sid}/goal",
             get(routes::goal::get_active_goal).post(routes::goal::create_goal),
+        )
+        .route(
+            "/sessions/{sid}/goal/latest",
+            get(routes::goal::get_latest_goal),
         )
         .route(
             "/sessions/{sid}/activity",

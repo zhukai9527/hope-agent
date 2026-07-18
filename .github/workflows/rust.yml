@@ -170,3 +170,20 @@ jobs:
 
       - name: Run tests
         run: cargo test -p ha-core -p ha-server --no-fail-fast
+
+      # Linux-only, zero-cost black-box contract: a local fake OpenAI Chat
+      # Provider drives a real Hope server through read/write + Goal/Loop tools
+      # and must produce schema-valid, fully attributed trial evidence. This
+      # exercises the eval infrastructure on PRs without exposing Provider keys
+      # or running any stochastic capability campaign.
+      - name: Build fake-Provider smoke binaries
+        if: runner.os == 'Linux'
+        run: cargo build -p ha-server -p ha-eval --locked
+
+      - name: Run fake-Provider black-box smoke
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/model-eval-smoke"
+          target/debug/hope-agent-eval model smoke \
+            --server-bin target/debug/hope-agent-server \
+            --output "$RUNNER_TEMP/model-eval-smoke/trial.json"

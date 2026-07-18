@@ -250,6 +250,27 @@ fn run_server(args: &[String]) {
         print_top_help();
         return;
     };
+    let model_eval_mode = ha_core::eval_context::model_eval_mode_enabled();
+    let model_eval_server_token = if model_eval_mode {
+        if api_key.is_some() {
+            eprintln!(
+                "[model-eval] --api-key is forbidden; pass HA_MODEL_EVAL_SERVER_TOKEN so it can be consumed before tool processes start"
+            );
+            std::process::exit(2);
+        }
+        let token = std::env::var("HA_MODEL_EVAL_SERVER_TOKEN")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        std::env::remove_var("HA_MODEL_EVAL_SERVER_TOKEN");
+        if token.len() < 24 || token.len() > 4_096 {
+            eprintln!("[model-eval] HA_MODEL_EVAL_SERVER_TOKEN is missing or invalid");
+            std::process::exit(2);
+        }
+        Some(token)
+    } else {
+        None
+    };
 
     eprintln!(
         "[server] Starting Hope Agent server v{}",
@@ -280,6 +301,19 @@ fn run_server(args: &[String]) {
     // and init_runtime("server") MUST run before ensure_default_agent —
     // the legacy "default" → "ha-main" agent-id rename inside init_runtime
     // would otherwise race with the pre-create and orphan user data.
+    //
+    // In isolated model-eval mode this eager read also consumes the protected
+    // Provider secret overlay before init_runtime snapshots the login-shell
+    // environment or starts any background worker. Agent/tool subprocesses
+    // therefore cannot inherit the one-shot secret environment variable.
+    if model_eval_mode {
+        if let Err(error) = ha_core::config::initialize_model_eval_provider_secrets() {
+            eprintln!("[model-eval] failed to initialize isolated Provider config: {error:#}");
+            std::process::exit(2);
+        }
+    } else {
+        let _ = ha_core::config::cached_config();
+    }
     ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
     ha_core::init_runtime("server");
     if let Err(e) = ha_core::agent_loader::ensure_default_agent() {
@@ -300,17 +334,19 @@ fn run_server(args: &[String]) {
     }
 
     // Resolve the effective API key. Precedence (highest first):
-    //   1. `--api-key` CLI flag (translated from `HA_API_KEY` env by the
+    //   1. One-shot `HA_MODEL_EVAL_SERVER_TOKEN` in isolated evaluation mode;
+    //      it has already been removed from the server environment.
+    //   2. `--api-key` CLI flag (translated from `HA_API_KEY` env by the
     //      Docker entrypoint).
-    //   2. `config.server.api_key` written by the browser onboarding
+    //   3. `config.server.api_key` written by the browser onboarding
     //      wizard or the Settings → Server panel.
-    //   3. `None` — server accepts unauthenticated requests.
+    //   4. `None` — server accepts unauthenticated requests.
     //
     // Without #2 a user who enables auth in the browser, restarts the
     // container without re-exporting `HA_API_KEY`, gets a server that
     // silently downgrades to no-auth while the UI suggests otherwise.
     let saved_server_config = ha_core::config::cached_config().server.clone();
-    let api_key = api_key.or_else(|| {
+    let api_key = model_eval_server_token.or(api_key).or_else(|| {
         saved_server_config
             .api_key
             .clone()

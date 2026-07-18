@@ -3500,6 +3500,12 @@ impl AssistantAgent {
         if !self.subagent_depth_allows_subagent() {
             schemas.retain(|t| extract_tool_name(t) != tools::TOOL_SUBAGENT);
         }
+        schemas.retain(|schema| {
+            crate::eval_context::tool_allowed_for_experiment(
+                self.session_id.as_deref(),
+                tools::canonical_tool_schema_name(extract_tool_name(schema)),
+            )
+        });
 
         if caps.mcp_enabled && app_config.mcp_global.enabled {
             if let Some(mcp) = crate::mcp::McpManager::global() {

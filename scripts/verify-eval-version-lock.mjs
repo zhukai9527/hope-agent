@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 const LOCK_PATH = "evals/version-lock.json";
+const LIVE_LOCK_PATH = "evals/live/version-lock.json";
 
 function fail(message) {
   console.error(`eval version lock: ${message}`);
@@ -33,6 +34,42 @@ function parseLock(raw, label) {
     }
   }
   return lock;
+}
+
+function parseLiveLock(raw, label) {
+  let lock;
+  try {
+    lock = JSON.parse(raw);
+  } catch (error) {
+    fail(`${label} is not valid JSON: ${error.message}`);
+  }
+  if (lock?.schemaVersion !== "model-campaign-version-lock.v1") {
+    fail(`${label} has an unsupported schemaVersion`);
+  }
+  for (const section of ["suites", "policies", "scenarios"]) {
+    if (!lock[section] || Array.isArray(lock[section]) || typeof lock[section] !== "object") {
+      fail(`${label} is missing object section ${section}`);
+    }
+    for (const [key, digest] of Object.entries(lock[section])) {
+      if (typeof digest !== "string" || !/^[0-9a-f]{64}$/i.test(digest)) {
+        fail(`${label} entry ${section}.${key} is not a SHA-256 digest`);
+      }
+    }
+  }
+  return lock;
+}
+
+function verifyAppendOnly(previous, current, sections, label) {
+  for (const section of sections) {
+    for (const [key, digest] of Object.entries(previous[section])) {
+      if (!(key in current[section])) {
+        fail(`append-only violation in ${label}: removed ${section}.${key}`);
+      }
+      if (current[section][key] !== digest) {
+        fail(`immutable-version violation in ${label}: changed ${section}.${key}; increment the version and append a new entry instead`);
+      }
+    }
+  }
 }
 
 function canonicalValue(value) {
@@ -172,15 +209,21 @@ try {
 }
 
 const previous = parseLock(previousRaw, `lock at ${base}`);
-for (const section of ["suites", "policies"]) {
-  for (const [key, digest] of Object.entries(previous[section])) {
-    if (!(key in current[section])) {
-      fail(`append-only violation: removed ${section}.${key}`);
-    }
-    if (current[section][key] !== digest) {
-      fail(`immutable-version violation: changed ${section}.${key}; increment the version and append a new entry instead`);
-    }
-  }
+verifyAppendOnly(previous, current, ["suites", "policies"], LOCK_PATH);
+
+const liveCurrent = parseLiveLock(readFileSync(LIVE_LOCK_PATH, "utf8"), "working-tree live lock");
+let livePreviousRaw;
+try {
+  livePreviousRaw = execFileSync("git", ["show", `${base}:${LIVE_LOCK_PATH}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+} catch {
+  console.log(`eval version lock: ${LIVE_LOCK_PATH} does not exist at ${base}; treating this as initial introduction`);
+  console.log(`eval version lock: existing entries from ${base} are unchanged; new entries are append-only`);
+  process.exit(0);
 }
+const livePrevious = parseLiveLock(livePreviousRaw, `live lock at ${base}`);
+verifyAppendOnly(livePrevious, liveCurrent, ["suites", "policies", "scenarios"], LIVE_LOCK_PATH);
 
 console.log(`eval version lock: existing entries from ${base} are unchanged; new entries are append-only`);
