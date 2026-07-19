@@ -95,10 +95,16 @@ COPY src-tauri/Cargo.toml src-tauri/Cargo.toml
 # Now copy the actual source.
 COPY crates ./crates
 COPY src-tauri ./src-tauri
+# ha-core embeds two trees from outside crates/ via `rust-embed` at compile
+# time (the derive hard-errors if the folder is missing): the bundled skills
+# (`skills/embedded.rs`) and the Chrome extension runtime files
+# (`browser/extension/embedded.rs`). The binary materializes them under the
+# data dir on first use, so the runtime stage ships no separate copies.
+COPY skills ./skills
+COPY extensions ./extensions
 # crates/ha-core/src/agent_loader.rs include_bytes!s the frontend logo at
-# compile time. This is the only file outside `crates/` that the Rust
-# build reaches into — every other include_str!/include_bytes! stays
-# inside the crate.
+# compile time. (skills/ and extensions/ below are the other out-of-crate
+# trees the Rust build embeds.)
 COPY src/assets ./src/assets
 
 # Critical: the frontend dist MUST be present before `cargo build` runs,
@@ -161,19 +167,9 @@ COPY --from=rust /usr/local/bin/hope-agent /usr/local/bin/hope-agent
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Bundled skills. `skills::discovery::resolve_bundled_skills_dir`
-# (crates/ha-core/src/skills/discovery.rs) looks at `HOPE_AGENT_BUNDLED_SKILLS_DIR`
-# first, then exe-relative `./skills` / `../Resources/skills`. In release
-# builds the workspace fallback doesn't kick in, so without copying the
-# repo's `skills/` tree somewhere on disk and pointing the env var at
-# it, the container would ship with zero bundled skills (no /skill
-# catalog, no built-in skill blocks in the system prompt).
-COPY skills /usr/local/share/hope-agent/skills
-
 ENV HA_DATA_DIR=/data \
     HA_DEPLOYMENT=docker \
     HA_BIND=0.0.0.0:8420 \
-    HOPE_AGENT_BUNDLED_SKILLS_DIR=/usr/local/share/hope-agent/skills \
     TZ=UTC
 
 USER hope

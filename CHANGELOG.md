@@ -5,6 +5,13 @@ All notable changes to Hope Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **内置技能与浏览器扩展在所有部署形态（桌面 / Docker / 单文件）不再缺失或过时**：两者编译进主程序、随升级自动更新，单文件发布包并附带浏览器扩展桥 `ha-browser-host` 且自升级一并换新。(#506)
+  升级后 Chrome 已加载的扩展需在 `chrome://extensions` 手动 reload 一次生效。
+
 ## [0.20.0] - 2026-07-19
 
 ### Added
