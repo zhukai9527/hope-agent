@@ -113,6 +113,8 @@ After startup succeeds, Run automatically becomes the live workspace for that ex
 
 The configured duration is a hard ceiling for the whole experiment, not a full allowance for every trial. The immutable plan conservatively shares usable wall time across all trials and reserves time for startup, evidence writes, and process cleanup; Quick applies an additional per-trial cap. A per-trial deadline is reported as Budget exhausted and is not automatically retried as an infrastructure error. After experiment failure, cancellation, or interruption, active rows become Aborted and untouched rows become Not run instead of remaining Running; completed partial results remain available in History.
 
+Running scenarios refresh a redacted detail snapshot every second and can be opened to inspect elapsed time, model/tool calls, tokens, cost, loops, agents, and async jobs. This version deliberately does not offer process-freezing Pause: an already-issued Provider request, billing, and external side effects cannot be frozen safely by the local process. Cancelled or interrupted experiments cannot resume in place; Retry creates a new evaluation from the original request while preserving the prior record and its incurred usage.
+
 When the evaluation reaches a terminal state, its result remains in Run. Select “Start new evaluation” to return to configuration. History is primarily for finding prior records, annotations, exports, and retries.
 
 - **Cancel**: select Cancel in the live workspace. Hope first requests a graceful stop and terminates the entire isolated process tree if needed.

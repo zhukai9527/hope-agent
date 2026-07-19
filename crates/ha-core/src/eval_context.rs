@@ -1750,6 +1750,9 @@ pub fn telemetry_snapshot(trial_id: &str) -> Option<Value> {
         .collect::<Vec<_>>();
     let trace_closed =
         trial.root_closed && trial.active_sessions.is_empty() && trial.active_work == 0;
+    let active_children = trial
+        .active_work
+        .saturating_sub(u32::from(!trial.root_closed));
     let attribution = if trace_closed && missing.is_empty() {
         "complete"
     } else if trial.model_calls > 0 || trial.attempted_tools > 0 {
@@ -1787,6 +1790,7 @@ pub fn telemetry_snapshot(trial_id: &str) -> Option<Value> {
     });
     Some(json!({
         "attribution": attribution,
+        "activeChildren": active_children,
         "backgroundModelWork": trial.background_model_work,
         "budgetExhausted": trial.budget_exhausted,
         "budgetExhaustionReasons": trial.budget_exhaustion_reasons,
@@ -2051,12 +2055,14 @@ mod tests {
         let child_two = inherit_session("session-eval-child-1", "session-eval-child-2").unwrap();
 
         let active = telemetry_snapshot("mtrial_concurrency").unwrap();
+        assert_eq!(active["activeChildren"], 4);
         assert_eq!(active["orchestration"]["maxConcurrency"], 5);
         assert_eq!(active["orchestration"]["maxAgentDepth"], 2);
         assert!(!active["trace"]["closed"].as_bool().unwrap());
 
         drop((child_two, child_one, background_two, background_one, root));
         let closed = telemetry_snapshot("mtrial_concurrency").unwrap();
+        assert_eq!(closed["activeChildren"], 0);
         assert_eq!(closed["trace"]["orphanSpanCount"], 0);
         assert!(closed["trace"]["closed"].as_bool().unwrap());
     }

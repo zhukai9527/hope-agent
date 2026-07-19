@@ -60,6 +60,9 @@ struct ScriptedUserTurn {
 struct TelemetrySnapshot {
     attribution: AttributionCompleteness,
     #[serde(default)]
+    #[allow(dead_code)]
+    active_children: u32,
+    #[serde(default)]
     background_model_work: u32,
     #[serde(default)]
     budget_exhausted: bool,
@@ -2136,6 +2139,7 @@ fn json_subset(expected: &Value, actual: &Value) -> bool {
 fn fallback_telemetry(trial: &PlannedModelTrial, span_count: u64) -> TelemetrySnapshot {
     TelemetrySnapshot {
         attribution: AttributionCompleteness::Partial,
+        active_children: 0,
         background_model_work: 0,
         budget_exhausted: false,
         budget_exhaustion_reasons: Vec::new(),
@@ -2299,6 +2303,7 @@ mod tests {
     fn restart_telemetry() -> TelemetrySnapshot {
         TelemetrySnapshot {
             attribution: AttributionCompleteness::Complete,
+            active_children: 0,
             background_model_work: 0,
             budget_exhausted: false,
             budget_exhaustion_reasons: Vec::new(),
@@ -2487,6 +2492,7 @@ mod tests {
             ];
             TelemetrySnapshot {
                 attribution: AttributionCompleteness::Complete,
+                active_children: 0,
                 background_model_work: 0,
                 budget_exhausted: false,
                 budget_exhaustion_reasons: Vec::new(),

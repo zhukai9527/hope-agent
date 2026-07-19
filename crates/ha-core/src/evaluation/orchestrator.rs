@@ -291,6 +291,48 @@ impl<R: EvalWorkerRuntime> EvalOrchestrator<R> {
                 );
                 Ok(false)
             }
+            EvalWorkerEvent::TrialProgress {
+                campaign_id,
+                trial_id,
+                wall_ms,
+                model_calls,
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                loop_iterations,
+                spawned_agents,
+                async_jobs,
+                active_children,
+                attribution,
+                last_event,
+                last_event_status,
+                ..
+            } => {
+                self.events.emit(
+                    EVALUATION_EVENT,
+                    serde_json::json!({
+                        "experimentId": run_id,
+                        "change": "trial_progress",
+                        "campaignId": campaign_id,
+                        "trialId": trial_id,
+                        "wallMs": wall_ms,
+                        "modelCalls": model_calls,
+                        "toolCalls": tool_calls,
+                        "inputTokens": input_tokens,
+                        "outputTokens": output_tokens,
+                        "costUsd": cost_usd,
+                        "loopIterations": loop_iterations,
+                        "spawnedAgents": spawned_agents,
+                        "asyncJobs": async_jobs,
+                        "activeChildren": active_children,
+                        "attribution": attribution,
+                        "lastEvent": last_event,
+                        "lastEventStatus": last_event_status,
+                    }),
+                );
+                Ok(false)
+            }
             EvalWorkerEvent::TrialCompleted {
                 campaign_id,
                 trial_id,

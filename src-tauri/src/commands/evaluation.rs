@@ -490,6 +490,43 @@ impl EvalWorkerRuntime for DesktopEvalRuntime {
                             total,
                         });
                     }
+                    AppControlEvent::TrialProgress {
+                        campaign_id,
+                        trial_id,
+                        wall_ms,
+                        model_calls,
+                        tool_calls,
+                        input_tokens,
+                        output_tokens,
+                        cost_usd,
+                        loop_iterations,
+                        spawned_agents,
+                        async_jobs,
+                        active_children,
+                        attribution,
+                        last_event,
+                        last_event_status,
+                        ..
+                    } => {
+                        let _ = events_tx.send(EvalWorkerEvent::TrialProgress {
+                            experiment_id: run_id_owned.clone(),
+                            campaign_id,
+                            trial_id,
+                            wall_ms,
+                            model_calls,
+                            tool_calls,
+                            input_tokens,
+                            output_tokens,
+                            cost_usd,
+                            loop_iterations,
+                            spawned_agents,
+                            async_jobs,
+                            active_children,
+                            attribution,
+                            last_event,
+                            last_event_status,
+                        });
+                    }
                     AppControlEvent::TrialCompleted {
                         campaign_id,
                         trial_id,

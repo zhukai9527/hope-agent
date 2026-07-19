@@ -14,6 +14,7 @@ use ha_eval_spec::app::{
 use ha_eval_spec::model::{reject_embedded_secrets, CampaignBudget, ModelShardResult};
 use ha_eval_spec::{digest_file, read_json, stable_shard, write_json};
 use rand::RngCore;
+use serde::Deserialize;
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -623,6 +624,117 @@ struct AppShardJob {
 struct AppShardCompletion {
     output: PathBuf,
     status: Option<ExitStatus>,
+    trial_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveTelemetrySnapshot {
+    attribution: String,
+    active_children: u64,
+    timings: LiveTimingMetrics,
+    tokens: LiveTokenMetrics,
+    cost: LiveCostMetrics,
+    tools: LiveToolMetrics,
+    orchestration: LiveOrchestrationMetrics,
+    #[serde(default)]
+    events: Vec<LiveTelemetryEvent>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveTimingMetrics {
+    wall_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveTokenMetrics {
+    input: Option<u64>,
+    output: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveCostMetrics {
+    total_usd: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct LiveToolMetrics {
+    attempted: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveOrchestrationMetrics {
+    model_calls: u64,
+    loop_iterations: u64,
+    spawned_agents: u64,
+    async_jobs: u64,
+}
+
+#[derive(Deserialize)]
+struct LiveTelemetryEvent {
+    event: String,
+    status: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_live_trial_progress(
+    client: &reqwest::Client,
+    server_url: &str,
+    server_token: &str,
+    experiment_id: &str,
+    campaign_id: &str,
+    candidate_trial_ids: &BTreeSet<String>,
+    started_trial_ids: &mut BTreeSet<String>,
+    completed: u32,
+    total: u32,
+    events: &mpsc::UnboundedSender<AppControlEvent>,
+) {
+    for trial_id in candidate_trial_ids {
+        let response = match client
+            .get(format!("{server_url}/api/eval/model/trials/{trial_id}"))
+            .bearer_auth(server_token)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response,
+            _ => continue,
+        };
+        let Ok(snapshot) = response.json::<LiveTelemetrySnapshot>().await else {
+            continue;
+        };
+        if started_trial_ids.insert(trial_id.clone()) {
+            let _ = events.send(AppControlEvent::TrialStarted {
+                experiment_id: experiment_id.to_string(),
+                campaign_id: campaign_id.to_string(),
+                trial_id: trial_id.clone(),
+                completed,
+                total,
+            });
+        }
+        let latest = snapshot.events.last();
+        let _ = events.send(AppControlEvent::TrialProgress {
+            experiment_id: experiment_id.to_string(),
+            campaign_id: campaign_id.to_string(),
+            trial_id: trial_id.clone(),
+            wall_ms: snapshot.timings.wall_ms,
+            model_calls: snapshot.orchestration.model_calls,
+            tool_calls: snapshot.tools.attempted,
+            input_tokens: snapshot.tokens.input,
+            output_tokens: snapshot.tokens.output,
+            cost_usd: snapshot.cost.total_usd,
+            loop_iterations: snapshot.orchestration.loop_iterations,
+            spawned_agents: snapshot.orchestration.spawned_agents,
+            async_jobs: snapshot.orchestration.async_jobs,
+            active_children: snapshot.active_children,
+            attribution: snapshot.attribution,
+            last_event: latest.map(|event| event.event.clone()),
+            last_event_status: latest.map(|event| event.status.clone()),
+        });
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -748,6 +860,11 @@ async fn run_experiment(
         supervisor.terminate(Duration::from_secs(10)).await;
         return Ok(RunCompletion::Cancelled);
     }
+    let telemetry_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .context("building App live telemetry client")?;
+    let mut started_trial_ids = BTreeSet::new();
 
     let total = plan
         .campaigns
@@ -810,6 +927,9 @@ async fn run_experiment(
         }
         let mut running = tokio::task::JoinSet::new();
         let mut shard_paths = Vec::new();
+        let mut active_trial_ids = BTreeSet::new();
+        let mut telemetry_tick = tokio::time::interval(Duration::from_secs(1));
+        telemetry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         while !pending_shards.is_empty() || !running.is_empty() {
             while running.len() < max_parallel_trials {
                 let Some(job) = pending_shards.pop_front() else {
@@ -821,15 +941,7 @@ async fn run_experiment(
                     supervisor.terminate(Duration::from_secs(10)).await;
                     return Ok(RunCompletion::Cancelled);
                 }
-                for trial_id in &job.trial_ids {
-                    let _ = events.send(AppControlEvent::TrialStarted {
-                        experiment_id: plan.experiment_id.clone(),
-                        campaign_id: campaign.campaign_id.clone(),
-                        trial_id: trial_id.clone(),
-                        completed: completed_trials,
-                        total: total_trials,
-                    });
-                }
+                active_trial_ids.extend(job.trial_ids.iter().cloned());
                 let mut command = Command::new(&executable);
                 command
                     .arg("--root")
@@ -877,11 +989,31 @@ async fn run_experiment(
                     Ok::<_, anyhow::Error>(AppShardCompletion {
                         output: job.output,
                         status,
+                        trial_ids: job.trial_ids,
                     })
                 });
             }
 
-            let completion = match running.join_next().await {
+            let joined = loop {
+                tokio::select! {
+                    joined = running.join_next() => break joined,
+                    _ = telemetry_tick.tick() => {
+                        emit_live_trial_progress(
+                            &telemetry_client,
+                            &server_url,
+                            &server_token,
+                            &plan.experiment_id,
+                            &campaign.campaign_id,
+                            &active_trial_ids,
+                            &mut started_trial_ids,
+                            completed_trials,
+                            total_trials,
+                            events,
+                        ).await;
+                    }
+                }
+            };
+            let completion = match joined {
                 Some(Ok(Ok(completion))) => completion,
                 Some(Ok(Err(error))) => {
                     running.abort_all();
@@ -897,6 +1029,9 @@ async fn run_experiment(
                 }
                 None => break,
             };
+            for trial_id in &completion.trial_ids {
+                active_trial_ids.remove(trial_id);
+            }
             let Some(status) = completion.status else {
                 running.abort_all();
                 while running.join_next().await.is_some() {}
@@ -911,6 +1046,15 @@ async fn run_experiment(
             }
             let shard_result: ModelShardResult = read_json(&completion.output)?;
             for trial in &shard_result.trials {
+                if started_trial_ids.insert(trial.trial_id.clone()) {
+                    let _ = events.send(AppControlEvent::TrialStarted {
+                        experiment_id: plan.experiment_id.clone(),
+                        campaign_id: campaign.campaign_id.clone(),
+                        trial_id: trial.trial_id.clone(),
+                        completed: completed_trials,
+                        total: total_trials,
+                    });
+                }
                 completed_trials = completed_trials.saturating_add(1);
                 observed_model_calls =
                     observed_model_calls.saturating_add(trial.orchestration.model_calls);

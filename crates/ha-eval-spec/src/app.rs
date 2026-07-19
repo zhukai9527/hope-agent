@@ -467,6 +467,29 @@ pub enum AppControlEvent {
         completed: u32,
         total: u32,
     },
+    TrialProgress {
+        experiment_id: String,
+        campaign_id: String,
+        trial_id: String,
+        wall_ms: u64,
+        model_calls: u64,
+        tool_calls: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<f64>,
+        loop_iterations: u64,
+        spawned_agents: u64,
+        async_jobs: u64,
+        active_children: u64,
+        attribution: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_event: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_event_status: Option<String>,
+    },
     TrialCompleted {
         experiment_id: String,
         campaign_id: String,
@@ -540,6 +563,7 @@ impl AppControlEvent {
             | Self::Cancelled { experiment_id }
             | Self::BudgetWarning { experiment_id, .. } => Some(experiment_id),
             Self::TrialStarted { campaign_id, .. }
+            | Self::TrialProgress { campaign_id, .. }
             | Self::TrialCompleted { campaign_id, .. }
             | Self::ArtifactWritten { campaign_id, .. }
             | Self::CampaignCompleted { campaign_id, .. } => Some(campaign_id),

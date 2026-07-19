@@ -69,6 +69,13 @@ interface EvaluationChangedEvent {
   inputTokens?: number
   outputTokens?: number
   costUsd?: number
+  loopIterations?: number
+  spawnedAgents?: number
+  asyncJobs?: number
+  activeChildren?: number
+  attribution?: string
+  lastEvent?: string
+  lastEventStatus?: string
   dimension?: string
   observed?: number
   limit?: number
@@ -96,6 +103,13 @@ interface LiveTrialProgress {
   inputTokens?: number
   outputTokens?: number
   costUsd?: number
+  loopIterations?: number
+  spawnedAgents?: number
+  asyncJobs?: number
+  activeChildren?: number
+  attribution?: string
+  lastEvent?: string
+  lastEventStatus?: string
 }
 
 type MonitorTrialStatus = "queued" | "running" | "completed" | "aborted" | "not_run"
@@ -114,6 +128,13 @@ interface MonitorTrialRow {
   suiteId?: string
   caseId?: string
   arm?: string
+  loopIterations?: number
+  spawnedAgents?: number
+  asyncJobs?: number
+  activeChildren?: number
+  attribution?: string
+  lastEvent?: string
+  lastEventStatus?: string
   persisted: boolean
 }
 
@@ -281,6 +302,12 @@ export default function EvaluationTab() {
               total: event.total,
             }
           }
+          if (event.change === "trial_progress") {
+            return {
+              ...current,
+              currentTrial: event.trialId,
+            }
+          }
           if (event.change === "progress") {
             return {
               ...current,
@@ -307,6 +334,30 @@ export default function EvaluationTab() {
                 campaignId,
                 trialId,
                 status: "running",
+              },
+            }))
+          }
+          if (event.change === "trial_progress") {
+            setLiveTrials((current) => ({
+              ...current,
+              [key]: {
+                ...current[key],
+                campaignId,
+                trialId,
+                status: "running",
+                durationMs: event.wallMs,
+                modelCalls: event.modelCalls,
+                toolCalls: event.toolCalls,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                costUsd: event.costUsd,
+                loopIterations: event.loopIterations,
+                spawnedAgents: event.spawnedAgents,
+                asyncJobs: event.asyncJobs,
+                activeChildren: event.activeChildren,
+                attribution: event.attribution,
+                lastEvent: event.lastEvent,
+                lastEventStatus: event.lastEventStatus,
               },
             }))
           }
@@ -346,6 +397,7 @@ export default function EvaluationTab() {
         ![
           "progress",
           "trial_started",
+          "trial_progress",
           "trial_completed",
           "budget_warning",
           "artifact_written",
@@ -1377,6 +1429,7 @@ function RunMonitorPanel({
 }) {
   const { t } = useTranslation()
   const [trialDetail, setTrialDetail] = useState<EvalTrialDetail | null>(null)
+  const [selectedLiveTrialKey, setSelectedLiveTrialKey] = useState<string | null>(null)
   const [trialLoading, setTrialLoading] = useState(false)
   const [now, setNow] = useState(Date.now())
   const active = ACTIVE_STATUSES.has(run.status)
@@ -1473,7 +1526,13 @@ function RunMonitorPanel({
   ])
 
   async function openTrial(row: MonitorTrialRow) {
-    if (!row.persisted) return
+    const key = trialProgressKey(row.campaignId, row.trialId)
+    if (!row.persisted) {
+      setTrialDetail(null)
+      setSelectedLiveTrialKey(key)
+      return
+    }
+    setSelectedLiveTrialKey(null)
     setTrialLoading(true)
     try {
       setTrialDetail(
@@ -1512,7 +1571,14 @@ function RunMonitorPanel({
               <IntegrityBadge integrity={run.integrity} />
             </div>
             <div className="mt-1 truncate text-xs text-muted-foreground">
-              {run.profileId} · {active ? (live.phase ?? run.status) : run.status} · {run.id}
+              {t(`dashboard.evaluation.profiles.${run.profileId}.title`, run.profileId)} ·{" "}
+              {active
+                ? t(`dashboard.evaluation.phases.${live.phase ?? run.status}`, {
+                    defaultValue: live.phase ?? run.status,
+                  })
+                : t(`dashboard.evaluation.statuses.${run.status}`, {
+                    defaultValue: run.status,
+                  })} · {run.id}
             </div>
           </div>
           {active ? (
@@ -1594,7 +1660,7 @@ function RunMonitorPanel({
 
       <section className="rounded-xl bg-secondary/20 p-4">
         <h3 className="text-sm font-semibold">
-          {t("dashboard.evaluation.campaignStatus", "Campaign 状态")}
+          {t("dashboard.evaluation.campaignStatus", "评测批次状态")}
         </h3>
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
           {[...campaignIds].map((campaignId) => {
@@ -1648,14 +1714,14 @@ function RunMonitorPanel({
       <section className="overflow-hidden rounded-xl bg-secondary/20">
         <div className="flex items-center justify-between gap-3 px-4 py-3">
           <h3 className="text-sm font-semibold">
-            {t("dashboard.evaluation.trialStatus", "Trial 实时状态")}
+            {t("dashboard.evaluation.trialStatus", "场景实时状态")}
           </h3>
           {loading && <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         </div>
         <div className="max-h-[34rem] overflow-auto">
           {trialRows.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {t("dashboard.evaluation.waitingForTrials", "正在准备 Trial…")}
+              {t("dashboard.evaluation.waitingForTrials", "正在准备评测场景…")}
             </div>
           ) : (
             <div className="min-w-[760px]">
@@ -1669,11 +1735,16 @@ function RunMonitorPanel({
               </div>
               {trialRows.map((trial) => {
                 const tokenCount = (trial.inputTokens ?? 0) + (trial.outputTokens ?? 0)
+                const hasLiveDetail =
+                  trial.durationMs != null ||
+                  trial.modelCalls != null ||
+                  trial.toolCalls != null ||
+                  trial.lastEvent != null
                 return (
                   <button
                     key={trialProgressKey(trial.campaignId, trial.trialId)}
                     type="button"
-                    disabled={!trial.persisted || trialLoading}
+                    disabled={(!trial.persisted && !hasLiveDetail) || trialLoading}
                     onClick={() => openTrial(trial)}
                     className="grid w-full grid-cols-[minmax(240px,1fr)_120px_100px_90px_100px_100px] items-center gap-3 px-4 py-2.5 text-left text-xs transition-colors hover:bg-secondary/40 disabled:pointer-events-none"
                   >
@@ -1708,6 +1779,14 @@ function RunMonitorPanel({
         ) : (
           <TrialRecordDetail detail={trialDetail} onClose={() => setTrialDetail(null)} />
         ))}
+      {!trialDetail && selectedLiveTrialKey && (
+        <LiveTrialDetail
+          trial={trialRows.find(
+            (trial) => trialProgressKey(trial.campaignId, trial.trialId) === selectedLiveTrialKey,
+          )}
+          onClose={() => setSelectedLiveTrialKey(null)}
+        />
+      )}
     </div>
   )
 }
@@ -1760,11 +1839,9 @@ function TrialStateBadge({
             ? t("dashboard.evaluation.trialRunning", "运行中")
             : outcome === "passed"
               ? t("dashboard.evaluation.trialPassed", "通过")
-              : outcome === "infra_error"
-                ? t("dashboard.evaluation.trialInfraError", "设施错误")
-                : outcome === "budget_exhausted"
-                  ? t("dashboard.evaluation.trialBudgetExhausted", "预算耗尽")
-                  : (outcome ?? t("dashboard.evaluation.trialCompleted", "已完成"))
+              : outcome
+                ? t(`dashboard.evaluation.outcomes.${outcome}`, { defaultValue: outcome })
+                : t("dashboard.evaluation.trialCompleted", "已完成")
   return (
     <span
       className={cn(
@@ -1984,7 +2061,7 @@ function ExperimentDetail({
               <span className="font-medium">{trial.caseId}</span>
               <span className="ml-2 text-muted-foreground">{trial.arm}</span>
             </div>
-            <div>{trial.outcome}</div>
+            <TrialStateBadge status="completed" outcome={trial.outcome} />
             <div className="text-muted-foreground">
               {formatDuration(trial.durationMs)} ·{" "}
               {t("dashboard.evaluation.toolCallsShort", { count: trial.toolCalls })} ·{" "}
@@ -1995,9 +2072,12 @@ function ExperimentDetail({
           </button>
         ))}
       </div>
-      {trialDetail?.result && (
-        <TrialCausalDetail detail={trialDetail} onClose={() => setTrialDetail(null)} />
-      )}
+      {trialDetail &&
+        (trialDetail.result ? (
+          <TrialCausalDetail detail={trialDetail} onClose={() => setTrialDetail(null)} />
+        ) : (
+          <TrialRecordDetail detail={trialDetail} onClose={() => setTrialDetail(null)} />
+        ))}
       {onCreateAnnotation && (
         <div className="mt-4 space-y-2">
           <form
@@ -2052,7 +2132,12 @@ function TrialCausalDetail({ detail, onClose }: { detail: EvalTrialDetail; onClo
         </Button>
       </div>
       <div className="mt-2 grid gap-2 sm:grid-cols-4">
-        <Metric label={t("dashboard.evaluation.trialMetrics.outcome")} value={result.outcome} />
+        <Metric
+          label={t("dashboard.evaluation.trialMetrics.outcome")}
+          value={t(`dashboard.evaluation.outcomes.${result.outcome}`, {
+            defaultValue: result.outcome,
+          })}
+        />
         <Metric
           label={t("dashboard.evaluation.trialMetrics.spans")}
           value={String(result.trace.spanCount)}
@@ -2175,14 +2260,19 @@ function TrialRecordDetail({ detail, onClose }: { detail: EvalTrialDetail; onClo
     <div className="mt-4 rounded-lg bg-background/60 p-3 text-xs">
       <div className="flex items-center justify-between gap-2">
         <div className="font-semibold">
-          {record.id} · {t("dashboard.evaluation.trialStatus", "Trial 实时状态")}
+          {record.id} · {t("dashboard.evaluation.trialStatus", "场景实时状态")}
         </div>
         <Button size="sm" variant="ghost" onClick={onClose}>
           {t("common.close")}
         </Button>
       </div>
       <div className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Metric label={t("dashboard.evaluation.trialMetrics.outcome")} value={record.outcome} />
+        <Metric
+          label={t("dashboard.evaluation.trialMetrics.outcome")}
+          value={t(`dashboard.evaluation.outcomes.${record.outcome}`, {
+            defaultValue: record.outcome,
+          })}
+        />
         <Metric
           label={t("dashboard.evaluation.duration")}
           value={formatDuration(record.durationMs)}
@@ -2207,6 +2297,95 @@ function TrialRecordDetail({ detail, onClose }: { detail: EvalTrialDetail; onClo
         </div>
       )}
     </div>
+  )
+}
+
+function LiveTrialDetail({
+  trial,
+  onClose,
+}: {
+  trial?: MonitorTrialRow
+  onClose: () => void
+}) {
+  const { t } = useTranslation()
+  if (!trial) return null
+  const tokens = (trial.inputTokens ?? 0) + (trial.outputTokens ?? 0)
+  const activityKey = trial.lastEvent?.startsWith("model.")
+    ? "activityModel"
+    : trial.lastEvent?.startsWith("tool.")
+      ? "activityTool"
+      : trial.lastEvent?.startsWith("goal.")
+        ? "activityGoal"
+        : trial.lastEvent?.startsWith("workflow.")
+          ? "activityWorkflow"
+          : trial.lastEvent?.startsWith("agent.") || trial.lastEvent?.startsWith("team.")
+            ? "activityAgent"
+            : trial.lastEvent?.startsWith("budget.")
+              ? "activityBudget"
+              : trial.lastEvent
+                ? "activityRunning"
+                : "activityWaitingModel"
+  const activity = t(`dashboard.evaluation.${activityKey}`)
+  const attribution = trial.attribution
+    ? t(`dashboard.evaluation.attributions.${trial.attribution}`, {
+        defaultValue: trial.attribution,
+      })
+    : "—"
+  return (
+    <section className="rounded-xl bg-secondary/20 p-4 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold">
+            {trial.caseId ?? trial.trialId} · {t("dashboard.evaluation.liveScenarioDetail", "场景运行详情")}
+          </div>
+          <div className="mt-1 truncate text-muted-foreground">
+            {activity} · {t("dashboard.evaluation.attribution", "归因完整度")}: {attribution}
+          </div>
+        </div>
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          {t("common.close")}
+        </Button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-4 lg:grid-cols-8">
+        <Metric
+          label={t("dashboard.evaluation.duration")}
+          value={trial.durationMs == null ? "—" : formatDuration(trial.durationMs)}
+        />
+        <Metric
+          label={t("dashboard.evaluation.modelCalls")}
+          value={String(trial.modelCalls ?? 0)}
+        />
+        <Metric
+          label={t("dashboard.evaluation.toolCalls")}
+          value={String(trial.toolCalls ?? 0)}
+        />
+        <Metric label={t("dashboard.evaluation.tokens")} value={tokens ? String(tokens) : "—"} />
+        <Metric
+          label={t("dashboard.evaluation.cost")}
+          value={trial.costUsd == null ? "—" : `$${trial.costUsd.toFixed(4)}`}
+        />
+        <Metric
+          label={t("dashboard.evaluation.loopIterations", "循环次数")}
+          value={String(trial.loopIterations ?? 0)}
+        />
+        <Metric
+          label={t("dashboard.evaluation.spawnedAgents", "已创建 Agent")}
+          value={String(trial.spawnedAgents ?? 0)}
+        />
+        <Metric
+          label={t("dashboard.evaluation.asyncJobs", "异步任务")}
+          value={String(trial.asyncJobs ?? 0)}
+        />
+      </div>
+      {(trial.activeChildren ?? 0) > 0 && (
+        <div className="mt-3 rounded-lg bg-blue-500/10 px-3 py-2 text-blue-600 dark:text-blue-300">
+          {t("dashboard.evaluation.activeChildren", {
+            count: trial.activeChildren,
+            defaultValue: "{{count}} 个子任务仍在运行",
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -2683,9 +2862,10 @@ function SignatureBadge({ status }: { status: string }) {
 }
 
 function StatusBadge({ status }: { status: EvalExperimentRecord["status"] }) {
+  const { t } = useTranslation()
   return (
     <span className="inline-flex min-h-5 items-center justify-center whitespace-nowrap rounded-full bg-secondary px-2 py-0.5 text-[10px] text-muted-foreground">
-      {status}
+      {t(`dashboard.evaluation.statuses.${status}`, { defaultValue: status })}
     </span>
   )
 }
