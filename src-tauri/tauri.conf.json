@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm dev:browser-host && pnpm dev:eval-sidecar && pnpm prepare:chrome-extension && pnpm dev",
-    "beforeBuildCommand": "pnpm prepare:browser-host && pnpm prepare:eval-sidecar && pnpm prepare:chrome-extension && pnpm build"
+    "beforeDevCommand": "pnpm dev:browser-host && pnpm dev:eval-sidecar && pnpm dev",
+    "beforeBuildCommand": "pnpm prepare:browser-host && pnpm prepare:eval-sidecar && pnpm build"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -53,7 +53,6 @@
     "targets": "all",
     "resources": {
       "resources/browser-host": "browser-host",
-      "resources/chrome-extension": "chrome-extension",
       "../skills": "skills",
       "../evals/live": "evals/live"
     },

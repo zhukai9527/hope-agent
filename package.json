@@ -34,7 +34,6 @@
     "dev:browser-host": "node scripts/prepare-browser-host.mjs --dev",
     "prepare:eval-sidecar": "node scripts/prepare-eval-sidecar.mjs",
     "dev:eval-sidecar": "node scripts/prepare-eval-sidecar.mjs --dev",
-    "prepare:chrome-extension": "node scripts/prepare-chrome-extension.mjs",
     "release:verify": "node scripts/verify-release-version.mjs",
     "check:release-paths": "node scripts/check-release-paths.mjs",
     "chrome:extension:package": "pnpm --dir extensions/chrome package:webstore",
