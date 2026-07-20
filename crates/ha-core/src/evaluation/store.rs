@@ -462,11 +462,11 @@ impl EvalRepository {
             params![
                 format!("{run_id}:{}", evidence.campaign_id),
                 artifact.sha256,
-                evidence
-                    .source
-                    .is_release_eligible()
-                    .then_some(None)
-                    .unwrap_or_else(|| Some(retention_at(90))),
+                if evidence.source.is_release_eligible() {
+                    None
+                } else {
+                    Some(retention_at(90))
+                },
             ],
         )?;
         transaction.execute(
