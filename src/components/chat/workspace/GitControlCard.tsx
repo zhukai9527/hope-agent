@@ -150,6 +150,8 @@ export function GitControlCard({
   const visiblePrPreflight = prContextKey !== null && prPreflightKey === prContextKey
     ? prPreflight
     : null
+  const canOptionallyPushBeforePr = snapshot?.sync.state === "ahead"
+    || snapshot?.sync.state === "unknown"
 
   const branches = useMemo(() => {
     const query = branchQuery.trim().toLowerCase()
@@ -404,7 +406,7 @@ export function GitControlCard({
       setPrTitle(commitSubject || snapshot?.branch || "")
       const pushRequired = snapshot?.sync.state === "noUpstream"
       setPrPushRequired(pushRequired)
-      setPrPushFirst(pushRequired || snapshot?.sync.state === "ahead")
+      setPrPushFirst(pushRequired || canOptionallyPushBeforePr)
       setPrOpen(true)
       return preflight
     })
@@ -701,7 +703,7 @@ export function GitControlCard({
           <Input value={prBase} onChange={(event) => setPrBase(event.target.value)} placeholder={t("workspace.git.prBase", "目标分支")} />
           <Textarea value={prBody} onChange={(event) => setPrBody(event.target.value)} placeholder={t("workspace.git.prBody", "说明（可选）")} />
           {dirty ? <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">{t("workspace.git.prDirtyWarning", "当前未提交内容不会进入拉取请求。")}</div> : null}
-          {!prPushRequired && snapshot.sync.state === "ahead" ? (
+          {!prPushRequired && canOptionallyPushBeforePr ? (
             <ToggleRow label={t("workspace.git.pushBeforePr", "先推送当前分支")} checked={prPushFirst} onCheckedChange={setPrPushFirst} />
           ) : null}
           <ToggleRow label={t("workspace.git.draftPr", "创建为草稿")} checked={prDraft} onCheckedChange={setPrDraft} />

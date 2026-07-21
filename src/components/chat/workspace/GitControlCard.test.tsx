@@ -376,6 +376,69 @@ describe("GitControlCard", () => {
     expect(call).not.toHaveBeenCalled()
   })
 
+  it("keeps push-before-create available when branch sync state is unknown", async () => {
+    const preflight = emptyPullRequestFeedback().preflight
+    call.mockImplementation((command: string) => {
+      if (command === "load_session_git_pr_feedback_cmd") {
+        return Promise.resolve(emptyPullRequestFeedback())
+      }
+      if (command === "session_git_pr_preflight_cmd") return Promise.resolve(preflight)
+      if (command === "create_session_git_pr_cmd") {
+        return Promise.resolve({
+          revision: "rev-2",
+          head: "abc123",
+          branch: "feature",
+          message: "Pull request created",
+          url: "https://github.com/owner/repo/pull/42",
+        })
+      }
+      return Promise.resolve(null)
+    })
+    render(
+      <GitControlCard
+        sessionId="session-1"
+        state={{
+          snapshot: snapshot({
+            branch: "feature",
+            remotes: [githubRemote],
+            sync: {
+              upstream: "origin/feature",
+              remote: githubRemote.fetchUrl,
+              ahead: 0,
+              behind: 0,
+              state: "unknown",
+            },
+            capabilities: {
+              canSwitchBranch: true,
+              canCreateBranch: true,
+              canCommit: true,
+              canPush: true,
+              canCreatePullRequest: true,
+              canHandoff: true,
+            },
+          }),
+          loading: false,
+          error: null,
+          refresh: vi.fn(),
+        }}
+        managedWorktrees={[]}
+        onOpenGitDiff={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "创建拉取请求" }))
+    const pushFirst = await screen.findByRole("switch", { name: "先推送当前分支" })
+    expect(pushFirst.getAttribute("aria-checked")).toBe("true")
+
+    fireEvent.click(screen.getAllByRole("button", { name: "创建拉取请求" }).at(-1)!)
+    await waitFor(() => expect(call).toHaveBeenCalledWith(
+      "create_session_git_pr_cmd",
+      expect.objectContaining({
+        input: expect.objectContaining({ pushFirst: true }),
+      }),
+    ))
+  })
+
   it("discovers a published branch once and stops polling when it has no PR", async () => {
     vi.useFakeTimers()
     call.mockResolvedValue(emptyPullRequestFeedback())
