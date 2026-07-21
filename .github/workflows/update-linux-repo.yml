@@ -145,7 +145,7 @@ jobs:
           code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}/" 2>/tmp/curlerr || true)"
           if [[ -z "$code" || "$code" == "000" ]]; then
             echo "curl transport error:"; cat /tmp/curlerr || true
-            echo "::error::TLS handshake to the R2 endpoint failed. R2_ACCOUNT_ID is almost certainly NOT your Cloudflare Account ID. Use the 32-hex id from dash.cloudflare.com/<ACCOUNT_ID> (same as https://<ACCOUNT_ID>.r2.cloudflarestorage.com) — NOT the token's Access Key ID. See linux-repo/README.md."
+            echo "::error::TLS handshake to the R2 endpoint failed — Cloudflare only completes the handshake for an account-id host that names a REAL, provisioned R2 endpoint, so this value is not resolving to your account's endpoint. Fix: copy the exact 'S3 API' endpoint Cloudflare shows under R2 > your bucket > Settings (or on the API token page), including a '.eu.' segment if your account is EU-jurisdiction, and set R2_ACCOUNT_ID to that whole https://<...>.r2.cloudflarestorage.com value (this workflow accepts the full endpoint host verbatim). Do NOT use the token's Access Key ID. See linux-repo/README.md."
             exit 1
           fi
           echo "TLS + endpoint host OK (HTTP ${code} without auth, as expected). Any auth failure below is about the access key / secret / bucket, not the account id."
