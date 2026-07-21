@@ -133,27 +133,6 @@ jobs:
           echo "RCLONE_CONFIG_R2_ENDPOINT=https://${host}" >> "$GITHUB_ENV"
           echo "R2 endpoint host: ${host}"
 
-      - name: Probe R2 endpoint (isolate TLS/account vs auth/key failures)
-        run: |
-          set -euo pipefail
-          # Objectively isolate which secret is wrong BEFORE the opaque rclone
-          # error. Hitting the endpoint root with no auth should complete the
-          # TLS handshake and return an HTTP status (400/403) — R2 exists there.
-          #   - No HTTP status (curl 000 / SSL error)  => TLS handshake failed
-          #       => the ENDPOINT HOST is wrong => R2_ACCOUNT_ID is not your
-          #          real Account ID (likely the Access Key ID or a zone id).
-          #   - Any HTTP status                        => TLS + host are fine
-          #       => a subsequent rclone failure is about the KEYS
-          #          (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY) or R2_BUCKET.
-          host="${RCLONE_CONFIG_R2_ENDPOINT#https://}"
-          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "https://${host}/" 2>/tmp/curlerr || true)"
-          if [[ -z "$code" || "$code" == "000" ]]; then
-            echo "curl transport error:"; cat /tmp/curlerr || true
-            echo "::error::TLS handshake to the R2 endpoint failed — Cloudflare only completes the handshake for an account-id host that names a REAL, provisioned R2 endpoint, so this value is not resolving to your account's endpoint. Fix: copy the exact 'S3 API' endpoint Cloudflare shows under R2 > your bucket > Settings (or on the API token page), including a '.eu.' segment if your account is EU-jurisdiction, and set R2_ACCOUNT_ID to that whole https://<...>.r2.cloudflarestorage.com value (this workflow accepts the full endpoint host verbatim). Do NOT use the token's Access Key ID. See linux-repo/README.md."
-            exit 1
-          fi
-          echo "TLS + endpoint host OK (HTTP ${code} without auth, as expected). Any auth failure below is about the access key / secret / bucket, not the account id."
-
       - name: Resolve version from tag
         id: ver
         run: |
