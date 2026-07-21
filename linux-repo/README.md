@@ -68,6 +68,16 @@ All of this is done in the Cloudflare dashboard + `gh` CLI; none of it is in cod
 > to check readiness from a clean network: `curl -sS -o /dev/null -w '%{http_code}\n'
 > https://<account_id>.r2.cloudflarestorage.com/` — once it returns an HTTP status
 > (e.g. 400) instead of an SSL error, the endpoint is ready.
+>
+> **Can't wait? Seed via the Wrangler bridge.** The workflow accepts a
+> `via` input: `gh workflow run update-linux-repo.yml -f tag=vX.Y.Z -f via=wrangler`.
+> This uploads the built tree through the **Cloudflare API** (`api.cloudflare.com`,
+> which has a valid cert) with `wrangler r2 object put` instead of the S3
+> endpoint, bypassing the unprovisioned cert entirely. It is **seed-only** (a
+> fresh/empty bucket, no pull) and needs a `CLOUDFLARE_API_TOKEN` secret — an API
+> token with **Account → Workers R2 Storage → Edit**. Once the S3-endpoint cert
+> provisions, drop the flag; normal releases go back to the default rclone path
+> (which does the efficient incremental pull+push the bridge can't).
 
 ### Signing key info
 
