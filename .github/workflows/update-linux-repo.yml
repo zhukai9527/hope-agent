@@ -105,7 +105,11 @@ jobs:
           # which otherwise surfaces as an opaque `tls: handshake failure` —
           # into either a correct endpoint or a clear, actionable error.
           raw="$(printf '%s' "$R2_ACCOUNT_ID" | tr -d '[:space:]')"
-          raw="${raw#http://}"; raw="${raw#https://}"; raw="${raw%/}"
+          raw="${raw#http://}"; raw="${raw#https://}"
+          # Cloudflare's bucket "S3 API" panel shows the endpoint WITH the
+          # bucket path (…r2.cloudflarestorage.com/<bucket>). Strip any path
+          # so pasting that whole string resolves to the endpoint host.
+          raw="${raw%%/*}"
           if [[ "$raw" == *".r2.cloudflarestorage.com" ]]; then
             host="$raw"
           else
