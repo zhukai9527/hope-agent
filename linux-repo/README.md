@@ -56,6 +56,19 @@ All of this is done in the Cloudflare dashboard + `gh` CLI; none of it is in cod
    ```
    The verify step confirms `https://repo.hopeagent.ai/apt/dists/stable/InRelease` etc. are live. From then on it auto-fires on every `release.published`.
 
+> **New-account gotcha — `tls: handshake failure` on the first seed.** Cloudflare
+> provisions the **per-account TLS certificate for the S3 API endpoint**
+> (`<account_id>.r2.cloudflarestorage.com`) with a delay on **brand-new R2
+> accounts** — often ~20 minutes, sometimes a few hours (Cloudflare-side, see
+> cloudflare/cloudflare-docs#6252). Until it lands, rclone/aws-cli/curl all fail
+> at the TLS handshake (`alert 40`, no peer certificate) **even though the
+> account id, keys, bucket, and custom domain are all correct** — the custom
+> domain works immediately because it uses a different (Universal SSL) cert
+> path. This is not a misconfiguration: **wait and re-run the seed.** A quick way
+> to check readiness from a clean network: `curl -sS -o /dev/null -w '%{http_code}\n'
+> https://<account_id>.r2.cloudflarestorage.com/` — once it returns an HTTP status
+> (e.g. 400) instead of an SSL error, the endpoint is ready.
+
 ### Signing key info
 
 - Signing key: ed25519, fingerprint `5F80 16D5 0633 E725 909E  9AD7 F0F6 6A31 DFAA EA08`, expires 2027-05-11.
