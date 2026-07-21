@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **工作台「文件」分区不再把被工具产出的文件误标为「读」**：先读取、之后又被工具（图片生成 / 附件 / exec）产出的文件，在长会话里滚出当前消息窗口后会正确显示为「输出」并按产出时间排到最前，与窗口内的实时显示保持一致。(#527)
+
 ## [0.21.0] - 2026-07-20
 
 ### Added
