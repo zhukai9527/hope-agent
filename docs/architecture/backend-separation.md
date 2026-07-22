@@ -421,7 +421,7 @@ impl Serialize for CmdError {
 - **读** 走 `ha_core::config::cached_config()`，返回 `Arc<AppConfig>` 快照（[`crates/ha-core/src/config/persistence.rs`](../../crates/ha-core/src/config/persistence.rs)）；禁止重新引入 `Mutex<AppConfig>` 或本地克隆
 - **写** 走 `ha_core::config::mutate_config((category, source), |cfg| { ... })`：
   - 读最新快照、应用 closure、原子写盘、自动 emit `config:changed`、自动落 autosave 备份
-  - 禁止 `load_config()` + 修改 + `save_config()` 手动克隆-改-存模式 —— 无法防并发 lost-update（历史 image_generate stale bug 的根因）
+  - 禁止 `load_config()` + 修改 + `save_config()` 手动克隆-改-存模式 —— 无法防并发 lost-update
 - 不再有 `AppState::config: Mutex<AppConfig>` 这种本地可变配置；代码里出现 `state.config.lock()` 一律视为回退，应改走上面的读写入口
 
 GUI 设置面板 + `ha-settings` 技能 + Tauri / HTTP 命令对配置的所有写入路径都走这一个入口，否则会跟前端 `config:changed` 监听器、autosave 备份、CLI sync-version 这些副作用脱节。
