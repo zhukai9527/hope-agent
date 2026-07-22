@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **侧边栏在小高度窗口下更稳**：更新提示会贴合底部 Logo 展示，低频入口会按高度逐步收进「更多」菜单，避免窗口缩小时 Logo 被裁剪或入口突然空出大段空间。 (#PR)
+- **侧边栏在小高度窗口下更稳**：更新提示会贴合底部 Logo 展示，低频入口会按高度逐步收进「更多」菜单，避免窗口缩小时 Logo 被裁剪或入口突然空出大段空间。 (#539)
 
 ## [0.22.0] - 2026-07-21
 
