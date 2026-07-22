@@ -927,7 +927,7 @@ Only activate the skill most relevant to the current task — do not activate mo
 
 1. `skill` 工具按 name 查找，不需要模型知道磁盘路径
 2. 每个条目节省约 5–6 tokens × 150 技能 = ~750-900 tokens
-3. 避免模型把路径当成参数传到其他工具里（曾经的一类幻觉）
+3. 避免模型把路径当成参数传到其他工具里（一类幻觉）
 
 LLM 根据用户请求和 description 判断需要哪个技能，调 `skill` 工具激活；inline 模式返回 SKILL.md 内容作为 tool_result，fork 模式返回摘要字符串（详见 [`skill` 工具章节](#skill-工具与激活路径)）。
 

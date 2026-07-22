@@ -690,7 +690,7 @@ sequenceDiagram
 
 当结果文件不可用时，completed 通知可带 `<output-preview>`；媒体结果可带 `<media-items-json>`。失败 / 超时 / 中断走 `<error>` 子标签。注入时若父会话忙，请求进 `PENDING_INJECTIONS` 队列等下次空闲（与子 Agent 注入完全同源）。
 
-**注入终局（I7，MISC-15）**：`inject_and_run_parent` 返回 `InjectionOutcome{Injected, Queued, Abandoned}` 并接收一个 `on_injected` 回调（tool-job 传「标 `injected=1`」闭包，subagent 传 `None`）。回调仅在真正落地（父回合跑完 / 结果已被取走 / 全模型失败终局 = `Injected`）时触发，并随 `PendingInjection` 穿过重排队，使延迟注入最终落地时照样标记来源完成。父会话在 `announce_timeout` 内始终不空闲时返回 **`Abandoned`**——**不**触发回调、**不**重排队、行保持 `injected=0`，留待上面的「重启回放」补投。旧实现无论结果都在 `block_on` 后无条件 `mark_injected`，于是 `Abandoned` 被误标已注入、replay 不再补投、通知永久丢失。
+**注入终局（I7，MISC-15）**：`inject_and_run_parent` 返回 `InjectionOutcome{Injected, Queued, Abandoned}` 并接收一个 `on_injected` 回调（tool-job 传「标 `injected=1`」闭包，subagent 传 `None`）。回调仅在真正落地（父回合跑完 / 结果已被取走 / 全模型失败终局 = `Injected`）时触发，并随 `PendingInjection` 穿过重排队，使延迟注入最终落地时照样标记来源完成。父会话在 `announce_timeout` 内始终不空闲时返回 **`Abandoned`**——**不**触发回调、**不**重排队、行保持 `injected=0`，留待上面的「重启回放」补投。反之若对 `Abandoned` 也无条件 `mark_injected`，它会被误标已注入 → replay 不再补投 → 通知永久丢失。
 
 ### 终态错误分类（JobError，MISC-7）
 

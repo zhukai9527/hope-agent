@@ -514,7 +514,7 @@ sequenceDiagram
 
 #### WeChat AES streaming（commit 14）
 
-WeChat 的特殊性是密文必须经 AES-128-ECB + PKCS#7 解密。旧实现 `response.bytes()` + `decrypt(&buf)` 在内存里同时持有密文 + 明文两份 buffer，100 MB 文件 → ≥ 200 MB 峰值 RSS。现实现改成磁盘缓冲二段法：
+WeChat 的特殊性是密文必须经 AES-128-ECB + PKCS#7 解密。若把密文整个读进内存再 `decrypt(&buf)`，会同时持有密文 + 明文两份 buffer，100 MB 文件 → ≥ 200 MB 峰值 RSS，故走磁盘缓冲二段法：
 
 ```
 Stage 1  stream_to_disk(url → <ts>-<msg>.enc)        // 16 KiB read / 64 KiB write buffer
