@@ -50,6 +50,7 @@
     "updateUpToDate": "أنت تستخدم أحدث إصدار v{{version}}.",
     "updateAndRestart": "تحديث وإعادة تشغيل",
     "updateOnly": "تحديث فقط",
+    "updateShort": "تحديث",
     "updateAwaitingRestart": "تم التثبيت — أعد التشغيل للتطبيق",
     "restartNow": "أعد التشغيل الآن",
     "autoUpdateTitle": "التحديث التلقائي",

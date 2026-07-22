@@ -50,6 +50,7 @@
     "updateUpToDate": "v{{version}} sürümünde güncelsin.",
     "updateAndRestart": "Güncelle ve yeniden başlat",
     "updateOnly": "Yalnızca güncelle",
+    "updateShort": "Güncelle",
     "updateAwaitingRestart": "Kuruldu — uygulamak için yeniden başlatın",
     "restartNow": "Şimdi yeniden başlat",
     "autoUpdateTitle": "Otomatik güncelleme",

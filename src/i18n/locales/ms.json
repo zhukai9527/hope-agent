@@ -50,6 +50,7 @@
     "updateUpToDate": "Anda sudah menggunakan versi terkini v{{version}}.",
     "updateAndRestart": "Kemas kini & mula semula",
     "updateOnly": "Kemas kini sahaja",
+    "updateShort": "Kemas kini",
     "updateAwaitingRestart": "Dipasang — mula semula untuk digunakan",
     "restartNow": "Mula semula sekarang",
     "autoUpdateTitle": "Kemas kini automatik",

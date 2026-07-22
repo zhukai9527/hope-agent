@@ -82,6 +82,7 @@ interface IconSidebarProps {
   onOpenKnowledge: () => void
   onOpenDesign: () => void
   onOpenArtifacts: () => void
+  onOpenUpdatePanel?: () => void
   userAvatar?: string | null
   totalUnreadCount?: number
   onMarkAllRead?: () => void
@@ -103,6 +104,7 @@ export default function IconSidebar({
   onOpenKnowledge,
   onOpenDesign,
   onOpenArtifacts,
+  onOpenUpdatePanel,
   userAvatar,
   totalUnreadCount,
   onMarkAllRead,
@@ -591,25 +593,43 @@ export default function IconSidebar({
 
           {/* About */}
           <div className="relative flex justify-center pt-1">
-            <IconTip label={t("about.title")} side="right">
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t("about.title")}
-                className="h-11 w-11 rounded-full border border-border-soft bg-surface-floating/80 p-0 shadow-panel hover:bg-secondary/70"
-                onClick={() => onOpenSettings("about")}
-              >
-                <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-secondary">
-                  <img src={appLogoUrl} alt="" className="h-full w-full object-cover" />
-                </span>
-              </Button>
-            </IconTip>
-            {pendingUpdate && (
-              <span className="absolute -right-0.5 top-0 z-10 flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-3 w-3 rounded-full border-2 border-background bg-emerald-500" />
-              </span>
-            )}
+            <div className="relative flex justify-center">
+              <IconTip label={t("about.title")} side="right">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("about.title")}
+                  className="h-11 w-11 rounded-full border border-border-soft bg-surface-floating/80 p-0 shadow-panel hover:bg-secondary/70"
+                  onClick={() => onOpenSettings("about")}
+                >
+                  <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-secondary">
+                    <img src={appLogoUrl} alt="" className="h-full w-full object-cover" />
+                  </span>
+                </Button>
+              </IconTip>
+              {pendingUpdate && (
+                <IconTip
+                  label={t("about.updateAvailable", { version: pendingUpdate.version })}
+                  side="right"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={t("about.updateAvailable", { version: pendingUpdate.version })}
+                    className="absolute bottom-[-1px] left-1/2 z-20 h-4 w-8 -translate-x-1/2 rounded-full border-0 bg-emerald-500 px-1 text-[8px] font-semibold leading-none text-white shadow-none hover:bg-emerald-600 dark:bg-emerald-500 dark:text-white dark:hover:bg-emerald-400"
+                    onClick={() => {
+                      if (onOpenUpdatePanel) {
+                        onOpenUpdatePanel()
+                      } else {
+                        onOpenSettings("about")
+                      }
+                    }}
+                  >
+                    <span className="truncate">{t("about.updateShort")}</span>
+                  </Button>
+                </IconTip>
+              )}
+            </div>
           </div>
         </div>
       </div>

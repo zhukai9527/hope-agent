@@ -50,6 +50,7 @@
     "updateUpToDate": "You're up to date on v{{version}}.",
     "updateAndRestart": "Update & restart",
     "updateOnly": "Update only",
+    "updateShort": "Update",
     "updateAwaitingRestart": "Installed — restart to apply",
     "restartNow": "Restart now",
     "autoUpdateTitle": "Auto-update",

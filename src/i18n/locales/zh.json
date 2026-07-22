@@ -50,6 +50,7 @@
     "updateUpToDate": "当前已是最新版本 v{{version}}。",
     "updateAndRestart": "更新并重启",
     "updateOnly": "仅更新",
+    "updateShort": "更新",
     "updateAwaitingRestart": "已安装，重启后生效",
     "restartNow": "现在重启",
     "autoUpdateTitle": "自动更新",

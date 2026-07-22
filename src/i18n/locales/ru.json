@@ -50,6 +50,7 @@
     "updateUpToDate": "У вас уже установлена последняя версия v{{version}}.",
     "updateAndRestart": "Обновить и перезапустить",
     "updateOnly": "Только обновить",
+    "updateShort": "Обновить",
     "updateAwaitingRestart": "Установлено — перезапустите для применения",
     "restartNow": "Перезапустить сейчас",
     "autoUpdateTitle": "Автообновление",
