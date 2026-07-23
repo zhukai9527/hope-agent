@@ -6,11 +6,12 @@
 
 use crate::commands::CmdError;
 use ha_core::project::{
-    create_project_with_instructions_file, delete_project_cascade,
-    inspect_default_project_instructions, inspect_project_instructions, read_project_instructions,
-    save_project_instructions, update_project_with_instructions_file, CreateProjectInput, Project,
-    ProjectInstructionsDraft, ProjectInstructionsFile, ProjectMeta, ProjectOverviewSummary,
-    UpdateProjectInput,
+    create_project_with_instructions_file, delete_project_cascade, discover_project_workflows,
+    inspect_default_project_instructions, inspect_project_instructions, preview_project_workflow,
+    read_project_instructions, save_project_instructions, update_project_with_instructions_file,
+    CreateProjectInput, PreviewProjectWorkflowInput, Project, ProjectInstructionsDraft,
+    ProjectInstructionsFile, ProjectMeta, ProjectOverviewSummary, ProjectWorkflowDiscovery,
+    ProjectWorkflowPreview, UpdateProjectInput,
 };
 use ha_core::session::SessionMeta;
 use tauri::State;
@@ -59,6 +60,28 @@ pub async fn get_project_cmd(
 ) -> Result<Option<Project>, CmdError> {
     let project_db = state.project_db.clone();
     ha_core::blocking::run_blocking(move || project_db.get(&id))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn discover_project_workflows_cmd(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<ProjectWorkflowDiscovery, CmdError> {
+    let project_db = state.project_db.clone();
+    ha_core::blocking::run_blocking(move || discover_project_workflows(&id, &project_db))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn preview_project_workflow_cmd(
+    input: PreviewProjectWorkflowInput,
+    state: State<'_, AppState>,
+) -> Result<ProjectWorkflowPreview, CmdError> {
+    let project_db = state.project_db.clone();
+    ha_core::blocking::run_blocking(move || preview_project_workflow(input, &project_db))
         .await
         .map_err(Into::into)
 }

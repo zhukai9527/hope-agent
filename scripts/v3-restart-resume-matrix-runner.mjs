@@ -269,6 +269,7 @@ function startLauncher(label) {
       cwd: process.cwd(),
       detached: true,
       stdio: ["ignore", stdout, stderr],
+      windowsHide: true,
     },
   )
   child.unref()
@@ -310,6 +311,7 @@ function runProbe(phase) {
     cwd: process.cwd(),
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 20,
+    windowsHide: true,
   })
   return JSON.parse(output)
 }

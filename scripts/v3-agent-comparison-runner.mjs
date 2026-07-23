@@ -226,6 +226,7 @@ function collectPreflight(command) {
     const version = childProcess.execFileSync(binary, versionArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     })
     return { available: true, version: version.trim() }
   } catch (error) {
@@ -249,6 +250,7 @@ function runCommand(command, cwd, timeout) {
     env: { ...process.env, NO_COLOR: "1" },
     maxBuffer: 20 * 1024 * 1024,
     timeout: timeout * 1000,
+    windowsHide: true,
   })
   return {
     status: result.status ?? (result.signal ? 124 : 1),

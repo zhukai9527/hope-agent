@@ -29,6 +29,7 @@ const build = spawnSync("cargo", cargoArgs, {
   cwd: repoRoot,
   stdio: "inherit",
   env: process.env,
+  windowsHide: true,
 })
 if (build.status !== 0) process.exit(build.status ?? 1)
 
@@ -68,7 +69,7 @@ function findBuiltSidecar(candidates) {
 }
 
 function hostTriple() {
-  const output = spawnSync("rustc", ["-vV"], { encoding: "utf8" })
+  const output = spawnSync("rustc", ["-vV"], { encoding: "utf8", windowsHide: true })
   if (output.status !== 0) return ""
   return output.stdout.match(/^host:\s*(.+)$/m)?.[1]?.trim() || ""
 }
@@ -95,7 +96,7 @@ function cargoMetadataTargetDir() {
   const metadata = spawnSync(
     "cargo",
     ["metadata", "--format-version=1", "--no-deps"],
-    { cwd: repoRoot, encoding: "utf8", env: process.env },
+    { cwd: repoRoot, encoding: "utf8", env: process.env, windowsHide: true },
   )
   if (metadata.status !== 0) {
     process.stderr.write(metadata.stderr || "")

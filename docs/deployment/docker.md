@@ -93,6 +93,15 @@ volumes:
 
 镜像内置了 Debian trixie 仓库的 `chromium`（约增加 250 MB 镜像体积）。容器内默认带 `HA_DEPLOYMENT=docker`，所以 Agent 调用浏览器工具时会自动用 headless 模式启动这个 Chromium，并附加容器所需的 sandbox 兼容参数，无需额外配置。
 
+### WSL Docker 识别设计
+
+Windows + WSL Docker Desktop 场景下，后续 Docker 探测应区分三类运行面：Windows host、WSL distro、Linux container。设计约束：
+
+- Docker 可用性探测优先记录 `docker context inspect` / `docker info` 的 endpoint 与 OS 信息；发现 `npipe:////./pipe/dockerDesktopLinuxEngine`、`desktop-linux` context 或 `/mnt/<drive>/` cwd 时标记为 `wsl-docker`。
+- 路径映射必须显式：Windows `C:\...` ↔ WSL `/mnt/c/...` ↔ container mount path 三段分开保存，不能把字符串替换当成授权边界；文件授权仍以 Hope Agent 已有 canonical workspace scope 裁决。
+- 命令执行语义保持不变：显式 terminal / interactive shell 仍在用户选择的可见环境运行；后台 Docker probe 和非交互命令可用隐藏窗口与超时保护。
+- UI 诊断只展示映射摘要和修复建议（例如切换 Docker context、选择 WSL 内路径、绑定 mount），不自动迁移用户项目路径。
+
 如果你的部署不需要浏览器能力（例如纯 IM 机器人），可以 fork 仓库后从 [`Dockerfile`](../../Dockerfile) 的 runtime 阶段移除 `chromium` 及其依赖（`fonts-liberation` / `libnss3` / `libgbm1` / `libxss1`），重建后镜像更小。
 
 无 `chromium` 包的环境（比如自建的极简镜像）下，agent 仍可以通过 `profile.op=install_runtime` 在运行期下载固定版本的 Chromium snapshot 兜底，落 `~/.hope-agent/browser/runtime/`。

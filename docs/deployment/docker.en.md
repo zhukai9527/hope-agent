@@ -92,6 +92,15 @@ The directory must be writable by UID 1000 (the in-container `hope` user).
 
 The image bundles Debian trixie's `chromium` package (adds ~250 MB to the image). The container sets `HA_DEPLOYMENT=docker`, so browser tool calls automatically start this Chromium in headless mode with the container-compatible sandbox flag — no extra configuration required.
 
+### WSL Docker detection design
+
+For Windows + WSL Docker Desktop, future Docker diagnostics should distinguish three execution surfaces: Windows host, WSL distro, and Linux container. Design constraints:
+
+- Docker availability probes should record `docker context inspect` / `docker info` endpoint and OS metadata first; mark the environment as `wsl-docker` when seeing `npipe:////./pipe/dockerDesktopLinuxEngine`, the `desktop-linux` context, or a `/mnt/<drive>/` cwd.
+- Path mapping must be explicit: Windows `C:\...` ↔ WSL `/mnt/c/...` ↔ container mount path are three separate layers. String replacement is not an authorization boundary; file authorization still uses Hope Agent's canonical workspace scope checks.
+- Command execution semantics stay unchanged: explicit terminal / interactive shell commands still run in the user-selected visible environment; background Docker probes and non-interactive commands may use hidden windows and timeout protection.
+- UI diagnostics should show only mapping summaries and repair hints (for example switching Docker context, choosing a WSL path, or binding a mount), and must not auto-migrate user project paths.
+
 If your deployment doesn't need browser automation (e.g. a pure IM bot), fork the repo and remove `chromium` plus its runtime libs (`fonts-liberation` / `libnss3` / `libgbm1` / `libxss1`) from the [`Dockerfile`](../../Dockerfile)'s runtime stage to slim the image down.
 
 Even without a `chromium` package, the agent can fall back to `profile.op=install_runtime`, which downloads a pinned Chromium snapshot to `~/.hope-agent/browser/runtime/` at first use.

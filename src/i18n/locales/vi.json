@@ -159,7 +159,13 @@
     "title": "Yêu cầu phê duyệt lệnh",
     "workingDir": "Thư mục làm việc",
     "incognitoNoAllowAlways": "«Luôn cho phép» không được lưu trong phiên ẩn danh.",
-    "resolvedElsewhere": "Phê duyệt đã được xử lý trên thiết bị khác"
+    "resolvedElsewhere": "Phê duyệt đã được xử lý trên thiết bị khác",
+    "pendingBar": {
+      "title": "Cần phê duyệt lệnh",
+      "detail": "{{count}} lời nhắc quyền đang chờ",
+      "detail_one": "Một lời nhắc quyền đang chờ quyết định của bạn",
+      "openAction": "Xem xét phê duyệt"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer Token",
@@ -174,6 +180,14 @@
     "empty": "Chưa cấu hình hồ sơ luân phiên. Sẽ dùng API Key chính ở trên.",
     "labelPlaceholder": "Nhãn (vd. Key Org A)",
     "title": "Hồ sơ luân phiên API Key"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Cần trả lời",
+      "detail": "{{count}} câu hỏi đang chờ trong cuộc trò chuyện",
+      "detail_one": "Một câu hỏi đang chờ trong cuộc trò chuyện",
+      "openAction": "Trả lời ngay"
+    }
   },
   "canvas": {
     "close": "Đóng",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Kéo để thay đổi chiều rộng cài đặt dự án",
     "projectInstructionsEmptyPreview": "AGENTS.md đang trống. Chuyển sang Chỉnh sửa để thêm chỉ dẫn Markdown.",
     "projectInstructionsLoadFailed": "Không thể đọc AGENTS.md",
-    "projectInstructionsSaveFailed": "Không thể lưu AGENTS.md"
+    "projectInstructionsSaveFailed": "Không thể lưu AGENTS.md",
+    "workflows": {
+      "title": "Quy trình làm việc của dự án",
+      "hint": "Được phát hiện từ .agent-workflows trong thư mục làm việc của dự án.",
+      "notFound": "Không tìm thấy thư mục .agent-workflows cho dự án này.",
+      "modes": "Chế độ",
+      "fixedArtifacts": "Artefact cố định",
+      "verification": "Lệnh xác minh",
+      "missingFiles": "Tệp thiếu",
+      "noTemplates": "Đã tìm thấy thư mục quy trình làm việc, nhưng không có mẫu nào được phân tích.",
+      "phases": "Giai đoạn",
+      "fixedArtifactsShort": "Artefact"
+    }
   },
   "provider": {
     "addProvider": "Thêm nhà cung cấp",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Cấu hình",
       "user": "Cài đặt người dùng"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "Quy trình làm việc cần xác nhận",
+      "awaitingUserTitle": "Quy trình làm việc đang chờ bạn",
+      "detail": "{{kind}} · {{count}} mục cần xử lý",
+      "detail_one": "{{kind}} · mở quy trình làm việc để tiếp tục",
+      "openAction": "Xem quy trình làm việc"
     }
   }
 }

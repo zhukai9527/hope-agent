@@ -35,6 +35,7 @@ const build = spawnSync("cargo", cargoArgs, {
   cwd: repoRoot,
   stdio: "inherit",
   env: process.env,
+  windowsHide: true,
 })
 
 if (build.status !== 0) {
@@ -99,6 +100,7 @@ function cargoMetadataTargetDir() {
     cwd: repoRoot,
     encoding: "utf8",
     env: process.env,
+    windowsHide: true,
   })
   if (metadata.status !== 0) {
     process.stderr.write(metadata.stderr || "")

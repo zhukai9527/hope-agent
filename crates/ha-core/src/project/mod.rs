@@ -10,6 +10,7 @@ pub mod memory;
 mod overview;
 pub mod reconcile;
 mod types;
+mod workflow_templates;
 
 pub use db::ProjectDB;
 pub use files::{
@@ -23,4 +24,10 @@ pub use overview::build_project_overview;
 pub use types::{
     CreateProjectInput, Project, ProjectInstructionsStats, ProjectMeta, ProjectOverviewSummary,
     UpdateProjectInput,
+};
+pub use workflow_templates::{
+    discover_project_workflows, preview_project_workflow, PreviewProjectWorkflowInput,
+    ProjectWorkflowDiscovery, ProjectWorkflowFixedArtifact, ProjectWorkflowModeSummary,
+    ProjectWorkflowPhasePreview, ProjectWorkflowPreview, ProjectWorkflowRequiredInteraction,
+    ProjectWorkflowTemplateSummary, ProjectWorkflowVerificationCommand,
 };

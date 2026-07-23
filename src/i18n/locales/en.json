@@ -159,7 +159,13 @@
     "title": "Command Approval Required",
     "workingDir": "Working Directory",
     "incognitoNoAllowAlways": "Always allow isn't saved in incognito sessions.",
-    "resolvedElsewhere": "Approval handled on another device"
+    "resolvedElsewhere": "Approval handled on another device",
+    "pendingBar": {
+      "title": "Command approval required",
+      "detail": "{{count}} permission prompts are waiting",
+      "detail_one": "A permission prompt is waiting for your decision",
+      "openAction": "Review prompt"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer token",
@@ -174,6 +180,14 @@
     "empty": "No rotation profiles configured. The main API Key above will be used.",
     "labelPlaceholder": "Label (e.g. Org A Key)",
     "title": "API Key Rotation Profiles"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Answer needed",
+      "detail": "{{count}} questions are waiting in the conversation",
+      "detail_one": "A question is waiting in the conversation",
+      "openAction": "Answer now"
+    }
   },
   "canvas": {
     "close": "Close",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Drag to resize project settings",
     "projectInstructionsEmptyPreview": "AGENTS.md is empty. Switch to Edit to add Markdown instructions.",
     "projectInstructionsLoadFailed": "Could not read AGENTS.md",
-    "projectInstructionsSaveFailed": "Could not save AGENTS.md"
+    "projectInstructionsSaveFailed": "Could not save AGENTS.md",
+    "workflows": {
+      "title": "Project Workflows",
+      "hint": "Discovered from .agent-workflows in the project working directory.",
+      "notFound": "No .agent-workflows directory found for this project.",
+      "modes": "Modes",
+      "fixedArtifacts": "Fixed artifacts",
+      "verification": "Verification commands",
+      "missingFiles": "Missing files",
+      "noTemplates": "Workflow directory found, but no templates were parsed.",
+      "phases": "Phases",
+      "fixedArtifactsShort": "Artifacts"
+    }
   },
   "provider": {
     "addProvider": "Add Provider",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Configuration",
       "user": "User settings"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "Workflow needs confirmation",
+      "awaitingUserTitle": "Workflow is waiting for you",
+      "detail": "{{kind}} · {{count}} items need attention",
+      "detail_one": "{{kind}} · open Workflow to continue",
+      "openAction": "Review workflow"
     }
   }
 }

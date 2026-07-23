@@ -388,6 +388,7 @@ function runGit(argv) {
       cwd: process.cwd(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     })
   } catch {
     return ""

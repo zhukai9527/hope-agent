@@ -16,6 +16,7 @@ import {
   FolderOpen,
   FolderPlus,
   ImagePlus,
+  ListChecks,
   Loader2,
   Palette,
   X,
@@ -52,6 +53,7 @@ import type {
   Project,
   ProjectInstructionsDraft,
   ProjectInstructionsFile,
+  ProjectWorkflowDiscovery,
   UpdateProjectInput,
 } from "@/types/project"
 import type { AgentSummaryForSidebar } from "@/types/chat"
@@ -142,6 +144,10 @@ export default function ProjectDialog({
   const [instructionsLoading, setInstructionsLoading] = useState(false)
   const [instructionsReady, setInstructionsReady] = useState(false)
   const [instructionsError, setInstructionsError] = useState("")
+  const [workflowDiscovery, setWorkflowDiscovery] = useState<ProjectWorkflowDiscovery | null>(null)
+  const [workflowLoading, setWorkflowLoading] = useState(false)
+  const [workflowError, setWorkflowError] = useState("")
+  const workflowRequestSeq = useRef(0)
   const instructionsRequestSeq = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [logoError, setLogoError] = useState("")
@@ -230,6 +236,36 @@ export default function ProjectDialog({
       instructionsRequestSeq.current += 1
     }
   }, [initialProject?.id, loadInstructions, mode, open, resetInstructionsForNewWorkspace])
+
+  useEffect(() => {
+    if (!open || mode !== "edit" || !initialProject?.id) {
+      workflowRequestSeq.current += 1
+      setWorkflowDiscovery(null)
+      setWorkflowLoading(false)
+      setWorkflowError("")
+      return
+    }
+    const seq = ++workflowRequestSeq.current
+    setWorkflowLoading(true)
+    setWorkflowError("")
+    setWorkflowDiscovery(null)
+    getTransport()
+      .call<ProjectWorkflowDiscovery>("discover_project_workflows_cmd", { id: initialProject.id })
+      .then((discovery) => {
+        if (seq === workflowRequestSeq.current) setWorkflowDiscovery(discovery)
+      })
+      .catch((loadError) => {
+        if (seq === workflowRequestSeq.current) {
+          setWorkflowError(loadError instanceof Error ? loadError.message : String(loadError))
+        }
+      })
+      .finally(() => {
+        if (seq === workflowRequestSeq.current) setWorkflowLoading(false)
+      })
+    return () => {
+      workflowRequestSeq.current += 1
+    }
+  }, [initialProject?.id, mode, open])
 
   const selectedColor = COLOR_CHOICES.find((choice) => choice.value === color)
 
@@ -613,6 +649,14 @@ export default function ProjectDialog({
                 <ProjectKnowledgeSection projectId={initialProject.id} />
               )}
 
+              {mode === "edit" && initialProject?.id && (
+                <ProjectWorkflowsSection
+                  discovery={workflowDiscovery}
+                  loading={workflowLoading}
+                  error={workflowError}
+                />
+              )}
+
               <ProjectInstructionsField
                 key={instructionsPath}
                 value={instructions}
@@ -672,6 +716,111 @@ export default function ProjectDialog({
 /** Hard cap on raw upload size before decoding — guards against oversized
  * images crashing the canvas decoder. 8 MB is comfortable for any real logo. */
 const MAX_LOGO_SOURCE_BYTES = 8 * 1024 * 1024
+
+function ProjectWorkflowsSection({
+  discovery,
+  loading,
+  error,
+}: {
+  discovery: ProjectWorkflowDiscovery | null
+  loading: boolean
+  error: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="rounded-lg border border-border/70 bg-muted/15 p-4">
+      <div className="mb-3 flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground">
+          <ListChecks className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <Label className="text-sm font-semibold">
+            {t("project.workflows.title", { defaultValue: "Project Workflows" })}
+          </Label>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {t("project.workflows.hint", {
+              defaultValue: "Discovered from .agent-workflows in the project working directory.",
+            })}
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t("common.loading")}
+        </div>
+      ) : error ? (
+        <p className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : !discovery?.exists ? (
+        <p className="rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-muted-foreground">
+          {t("project.workflows.notFound", {
+            defaultValue: "No .agent-workflows directory found for this project.",
+          })}
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full border border-border/70 bg-background px-2 py-1">
+              {t("project.workflows.modes", { defaultValue: "Modes" })}: {discovery.modes.length}
+            </span>
+            <span className="rounded-full border border-border/70 bg-background px-2 py-1">
+              {t("project.workflows.fixedArtifacts", { defaultValue: "Fixed artifacts" })}: {discovery.fixedArtifacts.length}
+            </span>
+            <span className="rounded-full border border-border/70 bg-background px-2 py-1">
+              {t("project.workflows.verification", { defaultValue: "Verification commands" })}: {discovery.verificationCommands.length}
+            </span>
+          </div>
+          {discovery.missingFiles.length > 0 && (
+            <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              {t("project.workflows.missingFiles", { defaultValue: "Missing files" })}: {discovery.missingFiles.join(", ")}
+            </p>
+          )}
+          {discovery.templates.length === 0 ? (
+            <p className="rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-muted-foreground">
+              {t("project.workflows.noTemplates", {
+                defaultValue: "Workflow directory found, but no templates were parsed.",
+              })}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {discovery.templates.map((template) => (
+                <div key={template.id} className="rounded-md border border-border/70 bg-background p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{template.name}</p>
+                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">{template.id}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="rounded-full bg-muted px-2 py-0.5">
+                        {t("project.workflows.phases", { defaultValue: "Phases" })}: {template.phaseCount}
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5">
+                        {t("project.workflows.modes", { defaultValue: "Modes" })}: {template.modes.length}
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5">
+                        {t("project.workflows.fixedArtifactsShort", { defaultValue: "Artifacts" })}: {template.fixedArtifactsCount}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(template.taskTypes.length ? template.taskTypes : [t("common.none")]).map((taskType) => (
+                      <span key={taskType} className="rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+                        {taskType}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function getDirectoryName(path: string): string {
   const trimmed = path.trim().replace(/[\\/]+$/, "")

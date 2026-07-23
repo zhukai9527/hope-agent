@@ -197,6 +197,7 @@ verifyCurrentDigests(current);
 try {
   execFileSync("git", ["cat-file", "-e", `${base}^{commit}`], {
     stdio: "ignore",
+    windowsHide: true,
   });
 } catch {
   fail(`base ref ${base} is not available; fetch history before validating the lock`);
@@ -206,6 +207,7 @@ try {
   previousRaw = execFileSync("git", ["show", `${base}:${LOCK_PATH}`], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
 } catch {
   console.log(`eval version lock: ${LOCK_PATH} does not exist at ${base}; treating this as initial introduction`);
@@ -221,6 +223,7 @@ try {
   livePreviousRaw = execFileSync("git", ["show", `${base}:${LIVE_LOCK_PATH}`], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
 } catch {
   console.log(`eval version lock: ${LIVE_LOCK_PATH} does not exist at ${base}; treating this as initial introduction`);

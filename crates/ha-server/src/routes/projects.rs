@@ -10,11 +10,12 @@ use std::sync::Arc;
 
 use ha_core::memory::{MemoryEntry, MemoryScope};
 use ha_core::project::{
-    create_project_with_instructions_file, delete_project_cascade,
-    inspect_default_project_instructions, inspect_project_instructions, read_project_instructions,
-    save_project_instructions, update_project_with_instructions_file, CreateProjectInput, Project,
-    ProjectInstructionsDraft, ProjectInstructionsFile, ProjectMeta, ProjectOverviewSummary,
-    StaleProjectInstructionsError, UpdateProjectInput,
+    create_project_with_instructions_file, delete_project_cascade, discover_project_workflows,
+    inspect_default_project_instructions, inspect_project_instructions, preview_project_workflow,
+    read_project_instructions, save_project_instructions, update_project_with_instructions_file,
+    CreateProjectInput, PreviewProjectWorkflowInput, Project, ProjectInstructionsDraft,
+    ProjectInstructionsFile, ProjectMeta, ProjectOverviewSummary, ProjectWorkflowDiscovery,
+    ProjectWorkflowPreview, StaleProjectInstructionsError, UpdateProjectInput,
 };
 use ha_core::session::{ParentSessionFilter, ProjectFilter, SessionMeta};
 
@@ -171,6 +172,32 @@ pub async fn get_project(
     }
     .ok_or_else(|| anyhow::anyhow!("project not found: {}", id))?;
     Ok(Json(project))
+}
+
+/// `GET /api/projects/:id/workflows`
+pub async fn discover_project_workflows_route(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<ProjectWorkflowDiscovery>, AppError> {
+    let project_db = ctx.project_db.clone();
+    let discovery =
+        ha_core::blocking::run_blocking(move || discover_project_workflows(&id, &project_db))
+            .await?;
+    Ok(Json(discovery))
+}
+
+/// `POST /api/projects/:id/workflows/preview`
+pub async fn preview_project_workflow_route(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+    Json(mut input): Json<PreviewProjectWorkflowInput>,
+) -> Result<Json<ProjectWorkflowPreview>, AppError> {
+    input.project_id = id;
+    let project_db = ctx.project_db.clone();
+    let preview =
+        ha_core::blocking::run_blocking(move || preview_project_workflow(input, &project_db))
+            .await?;
+    Ok(Json(preview))
 }
 
 /// `POST /api/projects`

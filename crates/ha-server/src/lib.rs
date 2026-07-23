@@ -283,6 +283,14 @@ fn build_router_with_cors(
         )
         .route("/projects/{id}", get(routes::projects::get_project))
         .route(
+            "/projects/{id}/workflows",
+            get(routes::projects::discover_project_workflows_route),
+        )
+        .route(
+            "/projects/{id}/workflows/preview",
+            post(routes::projects::preview_project_workflow_route),
+        )
+        .route(
             "/projects/{id}/overview",
             get(routes::projects::get_project_overview),
         )

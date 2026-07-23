@@ -159,7 +159,13 @@
     "title": "需要確認命令",
     "workingDir": "工作目錄",
     "incognitoNoAllowAlways": "無痕會話不會儲存「永遠允許」。",
-    "resolvedElsewhere": "審批已由其他端處理"
+    "resolvedElsewhere": "審批已由其他端處理",
+    "pendingBar": {
+      "title": "需要命令審批",
+      "detail": "{{count}} 個權限提示正在等待",
+      "detail_one": "有一個權限提示等待你處理",
+      "openAction": "查看審批"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer Token",
@@ -174,6 +180,14 @@
     "empty": "未設定多 Key 輪換。將使用上方的主 API Key。",
     "labelPlaceholder": "名稱（如：組織 A 金鑰）",
     "title": "API Key 輪換設定"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "需要回答",
+      "detail": "對話中有 {{count}} 個問題正在等待",
+      "detail_one": "對話中有一個問題正在等待",
+      "openAction": "立即回答"
+    }
   },
   "canvas": {
     "close": "關閉",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "拖曳調整專案設定寬度",
     "projectInstructionsEmptyPreview": "AGENTS.md 是空的。切換到編輯模式即可加入 Markdown 指令。",
     "projectInstructionsLoadFailed": "無法讀取 AGENTS.md",
-    "projectInstructionsSaveFailed": "無法儲存 AGENTS.md"
+    "projectInstructionsSaveFailed": "無法儲存 AGENTS.md",
+    "workflows": {
+      "title": "專案工作流",
+      "hint": "從專案工作目錄下的 .agent-workflows 中發現。",
+      "notFound": "未找到該專案的 .agent-workflows 目錄。",
+      "modes": "模式",
+      "fixedArtifacts": "固定產物",
+      "verification": "驗證命令",
+      "missingFiles": "缺失檔案",
+      "noTemplates": "已找到工作流目錄，但未解析到任何範本。",
+      "phases": "階段",
+      "fixedArtifactsShort": "產物"
+    }
   },
   "provider": {
     "addProvider": "新增服務商",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "設定",
       "user": "使用者設定"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "工作流需要確認",
+      "awaitingUserTitle": "工作流正在等待你",
+      "detail": "{{kind}} · {{count}} 項需要處理",
+      "detail_one": "{{kind}} · 打開工作流以繼續",
+      "openAction": "查看工作流"
     }
   }
 }

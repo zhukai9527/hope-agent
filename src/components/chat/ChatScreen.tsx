@@ -18,6 +18,7 @@ import {
   Bot,
   Brain,
   ClipboardList,
+  AlertTriangle,
   Eye,
   FolderOpen,
   GitCompare,
@@ -28,6 +29,7 @@ import {
   LayoutDashboard,
   Monitor,
   MousePointer2,
+  MessageSquare,
   Users,
   type LucideIcon,
 } from "lucide-react"
@@ -90,6 +92,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import { useChatSession } from "./useChatSession"
 import { useChatStream } from "./useChatStream"
 import { useChatStreamReattach } from "./hooks/useChatStreamReattach"
@@ -202,6 +205,16 @@ export interface ChatInsert {
 
 type SwitchSessionOptions = { targetMessageId?: number; highlightTerms?: string[] }
 
+type PendingActionBarItem = {
+  key: string
+  tone: "warning" | "primary"
+  icon: LucideIcon
+  label: string
+  detail: string
+  actionLabel: string
+  onAction: () => void
+}
+
 type IncognitoLeaveIntent =
   | { type: "switchSession"; sessionId: string; opts?: SwitchSessionOptions }
   | { type: "newChat"; agentId: string; opts?: { incognito?: boolean } }
@@ -243,6 +256,56 @@ interface ManualCompactOverride {
   sessionId: string
   tokensAfter: number
   usageFingerprint: string | null
+}
+
+function PendingActionBar({ items }: { items: PendingActionBarItem[] }) {
+  if (items.length === 0) return null
+  return (
+    <div className="border-b border-border/60 bg-background/95 px-3 py-2">
+      <div className="mx-auto flex max-w-[880px] flex-col gap-2">
+        {items.map((item) => {
+          const Icon = item.icon
+          return (
+            <div
+              key={item.key}
+              className={cn(
+                "flex items-center gap-3 rounded-xl border px-3 py-2 text-sm shadow-sm",
+                item.tone === "warning"
+                  ? "border-amber-300/70 bg-amber-50 text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-50"
+                  : "border-primary/30 bg-primary/10 text-foreground",
+              )}
+            >
+              <div
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                  item.tone === "warning" ? "bg-amber-500 text-white" : "bg-primary text-primary-foreground",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold leading-5">{item.label}</div>
+                <div className="truncate text-xs opacity-80">{item.detail}</div>
+              </div>
+              <Button
+                type="button"
+                onClick={item.onAction}
+                size="sm"
+                className={cn(
+                  "h-auto shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                  item.tone === "warning"
+                    ? "bg-amber-600 text-white hover:bg-amber-700"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90",
+                )}
+              >
+                {item.actionLabel}
+              </Button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 const WORKFLOW_MODE_CHANGED_EVENT = "hope-agent:workflow-mode-changed"
@@ -748,6 +811,7 @@ export default function ChatScreen({
   const browserPanelDismissedRef = useRef(false)
   const [showFilesPanel, setShowFilesPanel] = useState(false)
   const [composerFocusSignal, setComposerFocusSignal] = useState<number | undefined>(undefined)
+  const [approvalFocusSignal, setApprovalFocusSignal] = useState(0)
   // Clicking a staged quote chip reveals that file in the browser. The nonce
   // makes each click a fresh signal, even when re-revealing the same path.
   const revealQuoteNonce = useRef(0)
@@ -3671,6 +3735,142 @@ export default function ChatScreen({
     }
   }, [workflowTitleBarRuns.runs])
 
+  const pendingActionItems = useMemo<PendingActionBarItem[]>(() => {
+    const items: PendingActionBarItem[] = []
+    const workflowRun = workflowInputProgress.run
+    if (workflowRun?.state === "awaiting_approval" || workflowRun?.state === "awaiting_user") {
+      const isApproval = workflowRun.state === "awaiting_approval"
+      items.push({
+        key: `workflow:${workflowRun.id}`,
+        tone: "warning",
+        icon: AlertTriangle,
+        label: isApproval
+          ? t("workflow.pendingBar.awaitingApprovalTitle", {
+              defaultValue: "Workflow needs confirmation",
+            })
+          : t("workflow.pendingBar.awaitingUserTitle", {
+              defaultValue: "Workflow is waiting for you",
+            }),
+        detail: t("workflow.pendingBar.detail", {
+          kind: workflowRun.kind,
+          count: workflowInputProgress.count,
+          defaultValue:
+            workflowInputProgress.count > 1
+              ? `${workflowRun.kind} · ${workflowInputProgress.count} items need attention`
+              : `${workflowRun.kind} · open Workflow to continue`,
+        }),
+        actionLabel: t("workflow.pendingBar.openAction", {
+          defaultValue: "Review workflow",
+        }),
+        onAction: openWorkspacePanel,
+      })
+    }
+
+    if (planMode.pendingQuestionGroup) {
+      const questionCount = planMode.pendingQuestionGroup.questions.length
+      items.push({
+        key: `ask-user:${planMode.pendingQuestionGroup.requestId}`,
+        tone: "primary",
+        icon: MessageSquare,
+        label: t("askUser.pendingBar.title", {
+          defaultValue: "Answer needed",
+        }),
+        detail: t("askUser.pendingBar.detail", {
+          count: questionCount,
+          defaultValue:
+            questionCount > 1
+              ? `${questionCount} questions are waiting in the conversation`
+              : "A question is waiting in the conversation",
+        }),
+        actionLabel: t("askUser.pendingBar.openAction", {
+          defaultValue: "Answer now",
+        }),
+        onAction: () => {
+          session.resetToLatest()
+        },
+      })
+    }
+
+    if (stream.approvalRequests.length > 0) {
+      items.push({
+        key: `approval:${stream.approvalRequests[0].request_id}`,
+        tone: "warning",
+        icon: AlertTriangle,
+        label: t("approval.pendingBar.title", {
+          defaultValue: "Command approval required",
+        }),
+        detail: t("approval.pendingBar.detail", {
+          count: stream.approvalRequests.length,
+          defaultValue:
+            stream.approvalRequests.length > 1
+              ? `${stream.approvalRequests.length} permission prompts are waiting`
+              : "A permission prompt is waiting for your decision",
+        }),
+        actionLabel: t("approval.pendingBar.openAction", {
+          defaultValue: "Review prompt",
+        }),
+        onAction: () => setApprovalFocusSignal((value) => value + 1),
+      })
+    }
+
+    return items
+  }, [openWorkspacePanel, planMode.pendingQuestionGroup, session.resetToLatest, stream.approvalRequests, t, workflowInputProgress])
+
+  const chatInputTopAccessory = useMemo(() => {
+    const draftBar = !session.currentSessionId && !incognitoEnabled ? (
+      <ProjectSessionDraftBar
+        project={currentProject}
+        projects={projects}
+        draft={draftProjectRuntime}
+        disabled={session.loading}
+        progressStage={projectBootstrapProgress?.stage ?? null}
+        progressError={projectBootstrapProgress?.error ?? null}
+        onDraftChange={handleProjectRuntimeDraftChange}
+        onSelectProject={(projectId, defaultAgentId) => {
+          void handleNewChatInProject(projectId, defaultAgentId)
+        }}
+        onRemoveProject={() => {
+          void handleStartNewChat(currentAgentId)
+        }}
+        onRetry={() => {
+          setProjectBootstrapProgress(null)
+          window.setTimeout(() => {
+            void stream.handleSend()
+          }, 0)
+        }}
+        onUseLocal={() => {
+          handleProjectRuntimeDraftChange({
+            ...draftProjectRuntime,
+            launchMode: "local",
+          })
+        }}
+      />
+    ) : null
+    const pendingBar = <PendingActionBar items={pendingActionItems} />
+    if (!draftBar && pendingActionItems.length === 0) return undefined
+    return (
+      <>
+        {draftBar}
+        {pendingActionItems.length > 0 && pendingBar}
+      </>
+    )
+  }, [
+    currentAgentId,
+    currentProject,
+    draftProjectRuntime,
+    handleNewChatInProject,
+    handleProjectRuntimeDraftChange,
+    handleStartNewChat,
+    incognitoEnabled,
+    pendingActionItems,
+    projectBootstrapProgress?.error,
+    projectBootstrapProgress?.stage,
+    projects,
+    session.currentSessionId,
+    session.loading,
+    stream.handleSend,
+  ])
+
   const handleRightPanelAction = useCallback(
     (panelId: string) => {
       if (!EXCLUSIVE_RIGHT_PANEL_ORDER.includes(panelId as ExclusiveRightPanel)) return
@@ -3898,6 +4098,7 @@ export default function ChatScreen({
       <ApprovalDialog
         requests={stream.approvalRequests}
         onRespond={stream.handleApprovalResponse}
+        focusSignal={approvalFocusSignal}
       />
 
       {/* Codex Auth Expired Dialog */}
@@ -4163,37 +4364,7 @@ export default function ChatScreen({
                       </div>
                     )}
                     <ChatInput
-                      topAccessory={
-                        !session.currentSessionId && !incognitoEnabled ? (
-                          <ProjectSessionDraftBar
-                            project={currentProject}
-                            projects={projects}
-                            draft={draftProjectRuntime}
-                            disabled={session.loading}
-                            progressStage={projectBootstrapProgress?.stage ?? null}
-                            progressError={projectBootstrapProgress?.error ?? null}
-                            onDraftChange={handleProjectRuntimeDraftChange}
-                            onSelectProject={(projectId, defaultAgentId) => {
-                              void handleNewChatInProject(projectId, defaultAgentId)
-                            }}
-                            onRemoveProject={() => {
-                              void handleStartNewChat(currentAgentId)
-                            }}
-                            onRetry={() => {
-                              setProjectBootstrapProgress(null)
-                              window.setTimeout(() => {
-                                void stream.handleSend()
-                              }, 0)
-                            }}
-                            onUseLocal={() => {
-                              handleProjectRuntimeDraftChange({
-                                ...draftProjectRuntime,
-                                launchMode: "local",
-                              })
-                            }}
-                          />
-                        ) : undefined
-                      }
+                      topAccessory={chatInputTopAccessory}
                       input={stream.input}
                       onInputChange={stream.setInput}
                       inputHistory={inputHistory}

@@ -159,7 +159,13 @@
     "title": "コマンドの承認が必要です",
     "workingDir": "作業ディレクトリ",
     "incognitoNoAllowAlways": "シークレットセッションでは「常に許可」は保存されません。",
-    "resolvedElsewhere": "承認は別のデバイスで処理されました"
+    "resolvedElsewhere": "承認は別のデバイスで処理されました",
+    "pendingBar": {
+      "title": "コマンド承認が必要です",
+      "detail": "{{count}} 件の権限プロンプトが待機中",
+      "detail_one": "1 件の権限プロンプトがあなたの判断を待っています",
+      "openAction": "承認を確認"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer トークン",
@@ -174,6 +180,14 @@
     "empty": "ローテーション プロファイル が未設定です。上の主 API Key を使用します。",
     "labelPlaceholder": "ラベル（例：Org A Key）",
     "title": "API Key ローテーション設定"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "回答が必要です",
+      "detail": "会話内に {{count}} 件の質問が待機中",
+      "detail_one": "会話内に 1 件の質問が待機中",
+      "openAction": "今すぐ回答"
+    }
   },
   "canvas": {
     "close": "閉じる",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "ドラッグしてプロジェクト設定の幅を変更",
     "projectInstructionsEmptyPreview": "AGENTS.md は空です。編集モードに切り替えて Markdown の指示を追加できます。",
     "projectInstructionsLoadFailed": "AGENTS.md を読み込めませんでした",
-    "projectInstructionsSaveFailed": "AGENTS.md を保存できませんでした"
+    "projectInstructionsSaveFailed": "AGENTS.md を保存できませんでした",
+    "workflows": {
+      "title": "プロジェクトワークフロー",
+      "hint": "プロジェクト作業ディレクトリの .agent-workflows から検出されました。",
+      "notFound": "このプロジェクトの .agent-workflows ディレクトリが見つかりません。",
+      "modes": "モード",
+      "fixedArtifacts": "固定アーティファクト",
+      "verification": "検証コマンド",
+      "missingFiles": "不足ファイル",
+      "noTemplates": "ワークフローディレクトリが見つかりましたが、テンプレートが解析されませんでした。",
+      "phases": "フェーズ",
+      "fixedArtifactsShort": "アーティファクト"
+    }
   },
   "provider": {
     "addProvider": "プロバイダーを追加",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "設定",
       "user": "ユーザー設定"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "ワークフローの確認が必要です",
+      "awaitingUserTitle": "ワークフローがあなたを待っています",
+      "detail": "{{kind}} · {{count}} 件に対応が必要です",
+      "detail_one": "{{kind}} · ワークフローを開いて続行",
+      "openAction": "ワークフローを確認"
     }
   }
 }

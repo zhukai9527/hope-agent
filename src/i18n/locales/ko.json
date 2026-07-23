@@ -159,7 +159,13 @@
     "title": "명령 승인 필요",
     "workingDir": "작업 디렉토리",
     "incognitoNoAllowAlways": "시크릿 세션에서는 '항상 허용'이 저장되지 않습니다.",
-    "resolvedElsewhere": "다른 기기에서 승인이 처리되었습니다"
+    "resolvedElsewhere": "다른 기기에서 승인이 처리되었습니다",
+    "pendingBar": {
+      "title": "명령 승인 필요",
+      "detail": "{{count}}개의 권한 프롬프트가 대기 중",
+      "detail_one": "1개의 권한 프롬프트가 당신의 결정을 기다리고 있습니다",
+      "openAction": "승인 검토"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer 토큰",
@@ -174,6 +180,14 @@
     "empty": "구성된 로테이션 프로필이 없습니다. 위의 주요 API Key를 사용합니다.",
     "labelPlaceholder": "레이블 (예: Org A Key)",
     "title": "API Key 로테이션 프로필"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "답변 필요",
+      "detail": "대화 중에 {{count}}개의 질문이 대기 중",
+      "detail_one": "대화 중에 1개의 질문이 대기 중",
+      "openAction": "지금 답변"
+    }
   },
   "canvas": {
     "close": "닫기",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "드래그하여 프로젝트 설정 너비 조절",
     "projectInstructionsEmptyPreview": "AGENTS.md가 비어 있습니다. 편집 모드로 전환해 Markdown 지침을 추가하세요.",
     "projectInstructionsLoadFailed": "AGENTS.md를 읽을 수 없습니다",
-    "projectInstructionsSaveFailed": "AGENTS.md를 저장할 수 없습니다"
+    "projectInstructionsSaveFailed": "AGENTS.md를 저장할 수 없습니다",
+    "workflows": {
+      "title": "프로젝트 워크플로",
+      "hint": "프로젝트 작업 디렉토리의 .agent-workflows에서 발견되었습니다.",
+      "notFound": "이 프로젝트의 .agent-workflows 디렉토리를 찾을 수 없습니다.",
+      "modes": "모드",
+      "fixedArtifacts": "고정 아티팩트",
+      "verification": "검증 명령",
+      "missingFiles": "누락된 파일",
+      "noTemplates": "워크플로 디렉토리를 찾았지만 파싱된 템플릿이 없습니다.",
+      "phases": "단계",
+      "fixedArtifactsShort": "아티팩트"
+    }
   },
   "provider": {
     "addProvider": "공급자 추가",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "구성",
       "user": "사용자 설정"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "워크플로 확인 필요",
+      "awaitingUserTitle": "워크플로가 당신을 기다리고 있습니다",
+      "detail": "{{kind}} · {{count}}건 처리 필요",
+      "detail_one": "{{kind}} · 워크플로를 열어 계속",
+      "openAction": "워크플로 검토"
     }
   }
 }

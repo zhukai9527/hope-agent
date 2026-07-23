@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { useCountdownRemainingSec } from "@/lib/countdown"
@@ -93,13 +93,20 @@ interface ApprovalDialogProps {
     requestId: string,
     response: "allow_once" | "allow_always" | "deny",
   ) => void | Promise<void>
+  focusSignal?: number
 }
 
-export default function ApprovalDialog({ requests, onRespond }: ApprovalDialogProps) {
+export default function ApprovalDialog({ requests, onRespond, focusSignal }: ApprovalDialogProps) {
   const { t } = useTranslation()
   const [respondingId, setRespondingId] = useState<string | null>(null)
   const respondingIdsRef = useRef<Set<string>>(new Set())
+  const dialogRef = useRef<HTMLDivElement | null>(null)
   const current = requests[0]
+
+  useEffect(() => {
+    if (!current || focusSignal === undefined) return
+    dialogRef.current?.focus()
+  }, [current, focusSignal])
 
   if (!current) return null
 
@@ -130,7 +137,11 @@ export default function ApprovalDialog({ requests, onRespond }: ApprovalDialogPr
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
-      <div className="bg-card border border-border rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="bg-card border border-border rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 animate-in fade-in zoom-in-95 duration-200 outline-none"
+      >
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <div

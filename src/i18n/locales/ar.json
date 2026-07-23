@@ -159,7 +159,13 @@
     "title": "يلزم تأكيد الأمر",
     "workingDir": "دليل العمل",
     "incognitoNoAllowAlways": "لا يتم حفظ «السماح دائمًا» في الجلسات المتخفية.",
-    "resolvedElsewhere": "تمت معالجة الموافقة على جهاز آخر"
+    "resolvedElsewhere": "تمت معالجة الموافقة على جهاز آخر",
+    "pendingBar": {
+      "title": "مطلوب موافقة على الأمر",
+      "detail": "{{count}} إشعارات أذونات في الانتظار",
+      "detail_one": "إشعار إذن واحد ينتظر قرارك",
+      "openAction": "مراجعة الموافقة"
+    }
   },
   "auth": {
     "tokenLabel": "رمز Bearer",
@@ -174,6 +180,14 @@
     "empty": "لا توجد ملفات تدوير مُكوَّنة. سيتم استخدام مفتاح API الرئيسي أعلاه.",
     "labelPlaceholder": "التسمية (مثال: مفتاح منظمة A)",
     "title": "ملفات تدوير مفاتيح API"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "مطلوب إجابة",
+      "detail": "{{count}} أسئلة تنتظر في المحادثة",
+      "detail_one": "سؤال واحد ينتظر في المحادثة",
+      "openAction": "أجب الآن"
+    }
   },
   "canvas": {
     "close": "إغلاق",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "اسحب لتغيير عرض إعدادات المشروع",
     "projectInstructionsEmptyPreview": "ملف AGENTS.md فارغ. انتقل إلى وضع التحرير لإضافة تعليمات Markdown.",
     "projectInstructionsLoadFailed": "تعذرت قراءة AGENTS.md",
-    "projectInstructionsSaveFailed": "تعذر حفظ AGENTS.md"
+    "projectInstructionsSaveFailed": "تعذر حفظ AGENTS.md",
+    "workflows": {
+      "title": "سير عمل المشروع",
+      "hint": "تم اكتشافها من .agent-workflows في دليل عمل المشروع.",
+      "notFound": "لم يتم العثور على دليل .agent-workflows لهذا المشروع.",
+      "modes": "الأوضاع",
+      "fixedArtifacts": "العناصر الثابتة",
+      "verification": "أوامر التحقق",
+      "missingFiles": "الملفات المفقودة",
+      "noTemplates": "تم العثور على دليل سير العمل، لكن لم يتم تحليل أي قوالب.",
+      "phases": "المراحل",
+      "fixedArtifactsShort": "العناصر"
+    }
   },
   "provider": {
     "addProvider": "إضافة مزود",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "الإعدادات",
       "user": "إعدادات المستخدم"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "سير العمل يحتاج إلى تأكيد",
+      "awaitingUserTitle": "سير العمل ينتظرك",
+      "detail": "{{kind}} · {{count}} عناصر تحتاج إلى اهتمام",
+      "detail_one": "{{kind}} · افتح سير العمل للمتابعة",
+      "openAction": "مراجعة سير العمل"
     }
   }
 }

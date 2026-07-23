@@ -159,7 +159,13 @@
     "title": "Требуется подтверждение команды",
     "workingDir": "Рабочий каталог",
     "incognitoNoAllowAlways": "«Разрешать всегда» не сохраняется в режиме инкогнито.",
-    "resolvedElsewhere": "Запрос обработан на другом устройстве"
+    "resolvedElsewhere": "Запрос обработан на другом устройстве",
+    "pendingBar": {
+      "title": "Требуется одобрение команды",
+      "detail": "{{count}} подсказок разрешений ожидают",
+      "detail_one": "Подсказка разрешения ожидает вашего решения",
+      "openAction": "Проверить одобрение"
+    }
   },
   "auth": {
     "tokenLabel": "Токен Bearer",
@@ -174,6 +180,14 @@
     "empty": "Профили ротации не настроены. Будет использован основной API Key выше.",
     "labelPlaceholder": "Метка (напр. Ключ Org A)",
     "title": "Профили ротации API Key"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Требуется ответ",
+      "detail": "{{count}} вопросов ожидают в диалоге",
+      "detail_one": "Вопрос ожидает в диалоге",
+      "openAction": "Ответить сейчас"
+    }
   },
   "canvas": {
     "close": "Закрыть",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Перетащите, чтобы изменить ширину настроек проекта",
     "projectInstructionsEmptyPreview": "AGENTS.md пуст. Переключитесь в режим редактирования, чтобы добавить инструкции Markdown.",
     "projectInstructionsLoadFailed": "Не удалось прочитать AGENTS.md",
-    "projectInstructionsSaveFailed": "Не удалось сохранить AGENTS.md"
+    "projectInstructionsSaveFailed": "Не удалось сохранить AGENTS.md",
+    "workflows": {
+      "title": "Рабочие процессы проекта",
+      "hint": "Обнаружено в .agent-workflows в рабочей директории проекта.",
+      "notFound": "Для этого проекта не найдена директория .agent-workflows.",
+      "modes": "Режимы",
+      "fixedArtifacts": "Фиксированные артефакты",
+      "verification": "Команды проверки",
+      "missingFiles": "Отсутствующие файлы",
+      "noTemplates": "Директория рабочих процессов найдена, но шаблоны не были обработаны.",
+      "phases": "Фазы",
+      "fixedArtifactsShort": "Артефакты"
+    }
   },
   "provider": {
     "addProvider": "Добавить провайдера",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Конфигурация",
       "user": "Настройки пользователя"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "Рабочий процесс требует подтверждения",
+      "awaitingUserTitle": "Рабочий процесс ждёт вас",
+      "detail": "{{kind}} · {{count}} элементов требуют внимания",
+      "detail_one": "{{kind}} · откройте рабочий процесс для продолжения",
+      "openAction": "Проверить рабочий процесс"
     }
   }
 }

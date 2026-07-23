@@ -723,6 +723,8 @@ pub fn run() {
             commands::project::list_projects_cmd,
             commands::project::get_project_overview_cmd,
             commands::project::get_project_cmd,
+            commands::project::discover_project_workflows_cmd,
+            commands::project::preview_project_workflow_cmd,
             commands::project::create_project_cmd,
             commands::project::update_project_cmd,
             commands::project::inspect_project_instructions_cmd,

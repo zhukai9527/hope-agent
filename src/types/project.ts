@@ -65,6 +65,79 @@ export interface ProjectInstructionsDraft {
   expectedFileHash: string
 }
 
+export interface ProjectWorkflowDiscovery {
+  projectId: string
+  workingDir?: string | null
+  workflowsDir: string
+  exists: boolean
+  missingFiles: string[]
+  templates: ProjectWorkflowTemplateSummary[]
+  modes: ProjectWorkflowModeSummary[]
+  fixedArtifacts: ProjectWorkflowFixedArtifact[]
+  verificationCommands: ProjectWorkflowVerificationCommand[]
+}
+
+export interface ProjectWorkflowTemplateSummary {
+  id: string
+  name: string
+  taskTypes: string[]
+  phaseCount: number
+  modes: string[]
+  fixedArtifactsCount: number
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowModeSummary {
+  id: string
+  name: string
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowFixedArtifact {
+  id: string
+  name: string
+  path?: string | null
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowVerificationCommand {
+  id: string
+  command: string
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowPreviewInput {
+  projectId: string
+  templateId: string
+  mode?: string | null
+  taskType?: string | null
+}
+
+export interface ProjectWorkflowPreview {
+  projectId: string
+  templateId: string
+  mode?: string | null
+  taskType?: string | null
+  phases: ProjectWorkflowPhasePreview[]
+  fixedArtifacts: ProjectWorkflowFixedArtifact[]
+  requiredInteractions: ProjectWorkflowRequiredInteraction[]
+  verificationCommands: ProjectWorkflowVerificationCommand[]
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowPhasePreview {
+  id: string
+  name: string
+  requiredInteractions: ProjectWorkflowRequiredInteraction[]
+  fixedArtifacts: ProjectWorkflowFixedArtifact[]
+  verificationCommands: ProjectWorkflowVerificationCommand[]
+}
+
+export interface ProjectWorkflowRequiredInteraction {
+  kind: string
+  prompt: string
+}
+
 export interface CreateProjectInput {
   name: string
   description?: string | null

@@ -159,7 +159,13 @@
     "title": "Kelulusan Perintah Diperlukan",
     "workingDir": "Direktori Kerja",
     "incognitoNoAllowAlways": "«Sentiasa benarkan» tidak disimpan dalam sesi inkognito.",
-    "resolvedElsewhere": "Kelulusan dikendalikan pada peranti lain"
+    "resolvedElsewhere": "Kelulusan dikendalikan pada peranti lain",
+    "pendingBar": {
+      "title": "Kelulusan perintah diperlukan",
+      "detail": "{{count}} pemberitahuan kebenaran sedang menunggu",
+      "detail_one": "Satu pemberitahuan kebenaran sedang menunggu keputusan anda",
+      "openAction": "Semak kelulusan"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer Token",
@@ -174,6 +180,14 @@
     "empty": "Tiada profil putaran dikonfigurasi. API Key utama di atas akan digunakan.",
     "labelPlaceholder": "Label (cth. Kunci Org A)",
     "title": "Profil Putaran API Key"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Jawapan diperlukan",
+      "detail": "{{count}} soalan sedang menunggu dalam perbualan",
+      "detail_one": "Satu soalan sedang menunggu dalam perbualan",
+      "openAction": "Jawab sekarang"
+    }
   },
   "canvas": {
     "close": "Tutup",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Seret untuk mengubah lebar tetapan projek",
     "projectInstructionsEmptyPreview": "AGENTS.md kosong. Tukar ke Edit untuk menambah arahan Markdown.",
     "projectInstructionsLoadFailed": "Tidak dapat membaca AGENTS.md",
-    "projectInstructionsSaveFailed": "Tidak dapat menyimpan AGENTS.md"
+    "projectInstructionsSaveFailed": "Tidak dapat menyimpan AGENTS.md",
+    "workflows": {
+      "title": "Aliran Kerja Projek",
+      "hint": "Ditemui daripada .agent-workflows dalam direktori kerja projek.",
+      "notFound": "Tiada direktori .agent-workflows ditemui untuk projek ini.",
+      "modes": "Mod",
+      "fixedArtifacts": "Artefak tetap",
+      "verification": "Arahan pengesahan",
+      "missingFiles": "Fail yang hilang",
+      "noTemplates": "Direktori aliran kerja ditemui, tetapi tiada templat yang dihuraikan.",
+      "phases": "Fasa",
+      "fixedArtifactsShort": "Artefak"
+    }
   },
   "provider": {
     "addProvider": "Tambah Pembekal",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Konfigurasi",
       "user": "Tetapan pengguna"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "Aliran kerja memerlukan pengesahan",
+      "awaitingUserTitle": "Aliran kerja sedang menunggu anda",
+      "detail": "{{kind}} · {{count}} item perlu ditangani",
+      "detail_one": "{{kind}} · buka aliran kerja untuk meneruskan",
+      "openAction": "Semak aliran kerja"
     }
   }
 }

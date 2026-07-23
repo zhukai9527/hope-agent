@@ -70,6 +70,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   list_projects_cmd: { method: "GET", path: "/api/projects" },
   get_project_overview_cmd: { method: "GET", path: "/api/projects/{id}/overview" },
   get_project_cmd: { method: "GET", path: "/api/projects/{id}" },
+  discover_project_workflows_cmd: { method: "GET", path: "/api/projects/{id}/workflows" },
+  preview_project_workflow_cmd: { method: "POST", path: "/api/projects/{projectId}/workflows/preview" },
   create_project_cmd: { method: "POST", path: "/api/projects" },
   update_project_cmd: { method: "PATCH", path: "/api/projects/{id}" },
   inspect_project_instructions_cmd: {
@@ -1877,6 +1879,12 @@ function normalizeHttpCommandArgs(
     const request = args?.request
     return request && typeof request === "object" && !Array.isArray(request)
       ? (request as Record<string, unknown>)
+      : args
+  }
+  if (command === "preview_project_workflow_cmd") {
+    const input = args?.input
+    return input && typeof input === "object" && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
       : args
   }
   if (command === "add_provider" || command === "test_provider") {

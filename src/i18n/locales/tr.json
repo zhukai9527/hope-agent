@@ -159,7 +159,13 @@
     "title": "Komut Onayı Gerekli",
     "workingDir": "Çalışma Dizini",
     "incognitoNoAllowAlways": "Gizli oturumlarda «Her zaman izin ver» kaydedilmez.",
-    "resolvedElsewhere": "Onay başka bir cihazda yanıtlandı"
+    "resolvedElsewhere": "Onay başka bir cihazda yanıtlandı",
+    "pendingBar": {
+      "title": "Komut onayı gerekli",
+      "detail": "{{count}} izin istemi bekliyor",
+      "detail_one": "Bir izin istemi kararınızı bekliyor",
+      "openAction": "Onayı incele"
+    }
   },
   "auth": {
     "tokenLabel": "Bearer Token",
@@ -174,6 +180,14 @@
     "empty": "Yapılandırılmış rotasyon profili yok. Yukarıdaki ana API Key kullanılacak.",
     "labelPlaceholder": "Etiket (örn. Org A Anahtarı)",
     "title": "API Key Rotasyon Profilleri"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Cevap gerekli",
+      "detail": "Sohbette {{count}} soru bekliyor",
+      "detail_one": "Sohbette bir soru bekliyor",
+      "openAction": "Şimdi cevapla"
+    }
   },
   "canvas": {
     "close": "Kapat",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Proje ayarlarının genişliğini değiştirmek için sürükleyin",
     "projectInstructionsEmptyPreview": "AGENTS.md boş. Markdown talimatları eklemek için Düzenle moduna geçin.",
     "projectInstructionsLoadFailed": "AGENTS.md okunamadı",
-    "projectInstructionsSaveFailed": "AGENTS.md kaydedilemedi"
+    "projectInstructionsSaveFailed": "AGENTS.md kaydedilemedi",
+    "workflows": {
+      "title": "Proje İş Akışları",
+      "hint": "Proje çalışma dizinindeki .agent-workflows'dan keşfedildi.",
+      "notFound": "Bu proje için .agent-workflows dizini bulunamadı.",
+      "modes": "Modlar",
+      "fixedArtifacts": "Sabit artefaktlar",
+      "verification": "Doğrulama komutları",
+      "missingFiles": "Eksik dosyalar",
+      "noTemplates": "İş akışı dizini bulundu, ancak hiçbir şablon ayrıştırılamadı.",
+      "phases": "Aşamalar",
+      "fixedArtifactsShort": "Artefaktlar"
+    }
   },
   "provider": {
     "addProvider": "Sağlayıcı Ekle",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Yapılandırma",
       "user": "Kullanıcı ayarları"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "İş akışı onay bekliyor",
+      "awaitingUserTitle": "İş akışı sizi bekliyor",
+      "detail": "{{kind}} · {{count}} öğe ilgi bekliyor",
+      "detail_one": "{{kind}} · devam etmek için iş akışını açın",
+      "openAction": "İş akışını incele"
     }
   }
 }

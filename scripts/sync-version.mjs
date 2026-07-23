@@ -63,6 +63,7 @@ try {
     {
       cwd: rootDir,
       stdio: "inherit",
+      windowsHide: true,
     },
   )
 } catch {
@@ -77,12 +78,14 @@ if (process.env.npm_lifecycle_event === "version") {
     execSync("git rev-parse --is-inside-work-tree", {
       cwd: rootDir,
       stdio: "ignore",
+      windowsHide: true,
     })
     execSync(
       "git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json crates/ha-server/Cargo.toml crates/ha-core/Cargo.toml crates/ha-browser-host/Cargo.toml crates/ha-eval/Cargo.toml Cargo.lock",
       {
         cwd: rootDir,
         stdio: "ignore",
+        windowsHide: true,
       },
     )
   } catch {

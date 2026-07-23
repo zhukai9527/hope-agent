@@ -30,7 +30,11 @@ const SSH_COMMAND = "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10"
 
 function git(args, { allowFailure = false } = {}) {
   try {
-    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()
+    return execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim()
   } catch (err) {
     if (allowFailure) return null
     throw err

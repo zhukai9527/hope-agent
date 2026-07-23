@@ -380,6 +380,7 @@ function startLauncher(label) {
       cwd: process.cwd(),
       detached: true,
       stdio: ["ignore", stdout, stderr],
+      windowsHide: true,
     },
   )
   child.unref()

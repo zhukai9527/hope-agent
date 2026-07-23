@@ -159,7 +159,13 @@
     "title": "Aprovação do comando necessária",
     "workingDir": "Diretório de trabalho",
     "incognitoNoAllowAlways": "«Permitir sempre» não é salvo em sessões anônimas.",
-    "resolvedElsewhere": "Aprovação tratada em outro dispositivo"
+    "resolvedElsewhere": "Aprovação tratada em outro dispositivo",
+    "pendingBar": {
+      "title": "Aprovação de comando necessária",
+      "detail": "{{count}} avisos de permissão aguardando",
+      "detail_one": "Um aviso de permissão aguarda sua decisão",
+      "openAction": "Revisar aprovação"
+    }
   },
   "auth": {
     "tokenLabel": "Token Bearer",
@@ -174,6 +180,14 @@
     "empty": "Nenhum perfil de rotação configurado. A API Key principal acima será usada.",
     "labelPlaceholder": "Rótulo (ex. Chave Org A)",
     "title": "Perfis de rotação de API Key"
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Resposta necessária",
+      "detail": "{{count}} perguntas estão aguardando na conversa",
+      "detail_one": "Uma pergunta está aguardando na conversa",
+      "openAction": "Responder agora"
+    }
   },
   "canvas": {
     "close": "Fechar",
@@ -3713,7 +3727,19 @@
     "resizeSettingsSheet": "Arraste para redimensionar as configurações do projeto",
     "projectInstructionsEmptyPreview": "O AGENTS.md está vazio. Mude para Editar para adicionar instruções em Markdown.",
     "projectInstructionsLoadFailed": "Não foi possível ler o AGENTS.md",
-    "projectInstructionsSaveFailed": "Não foi possível salvar o AGENTS.md"
+    "projectInstructionsSaveFailed": "Não foi possível salvar o AGENTS.md",
+    "workflows": {
+      "title": "Fluxos de trabalho do projeto",
+      "hint": "Descoberto a partir de .agent-workflows no diretório de trabalho do projeto.",
+      "notFound": "Nenhum diretório .agent-workflows encontrado para este projeto.",
+      "modes": "Modos",
+      "fixedArtifacts": "Artefatos fixos",
+      "verification": "Comandos de verificação",
+      "missingFiles": "Arquivos ausentes",
+      "noTemplates": "Diretório de fluxos encontrado, mas nenhum modelo foi analisado.",
+      "phases": "Fases",
+      "fixedArtifactsShort": "Artefatos"
+    }
   },
   "provider": {
     "addProvider": "Adicionar Provedor",
@@ -12201,6 +12227,15 @@
     "kindValues": {
       "config": "Configuração",
       "user": "Configurações do usuário"
+    }
+  },
+  "workflow": {
+    "pendingBar": {
+      "awaitingApprovalTitle": "O fluxo de trabalho precisa de confirmação",
+      "awaitingUserTitle": "O fluxo de trabalho está esperando por você",
+      "detail": "{{kind}} · {{count}} itens precisam de atenção",
+      "detail_one": "{{kind}} · abra o fluxo de trabalho para continuar",
+      "openAction": "Revisar fluxo de trabalho"
     }
   }
 }
