@@ -50,6 +50,7 @@
     "updateUpToDate": "현재 v{{version}}이 최신 버전입니다.",
     "updateAndRestart": "업데이트 후 재시작",
     "updateOnly": "업데이트만",
+    "updateShort": "업데이트",
     "updateAwaitingRestart": "설치됨 — 재시작하면 적용",
     "restartNow": "지금 재시작",
     "autoUpdateTitle": "자동 업데이트",

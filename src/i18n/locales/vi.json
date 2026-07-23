@@ -50,6 +50,7 @@
     "updateUpToDate": "Bạn đang ở phiên bản mới nhất v{{version}}.",
     "updateAndRestart": "Cập nhật và khởi động lại",
     "updateOnly": "Chỉ cập nhật",
+    "updateShort": "Cập nhật",
     "updateAwaitingRestart": "Đã cài đặt — khởi động lại để áp dụng",
     "restartNow": "Khởi động lại ngay",
     "autoUpdateTitle": "Tự động cập nhật",

@@ -50,6 +50,7 @@
     "updateUpToDate": "現在の v{{version}} は最新です。",
     "updateAndRestart": "更新して再起動",
     "updateOnly": "更新のみ",
+    "updateShort": "更新",
     "updateAwaitingRestart": "インストール済み — 再起動で適用",
     "restartNow": "今すぐ再起動",
     "autoUpdateTitle": "自動更新",

@@ -50,6 +50,7 @@
     "updateUpToDate": "Você já está na versão mais recente v{{version}}.",
     "updateAndRestart": "Atualizar e reiniciar",
     "updateOnly": "Apenas atualizar",
+    "updateShort": "Atualizar",
     "updateAwaitingRestart": "Instalado — reinicie para aplicar",
     "restartNow": "Reiniciar agora",
     "autoUpdateTitle": "Atualização automática",
