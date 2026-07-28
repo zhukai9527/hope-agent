@@ -95,6 +95,8 @@ export interface MessageAttachment {
   localPath?: string
   url?: string
   previewUrl?: string
+  /** Original composer semantics for persisted user files. */
+  semanticSource?: "upload" | "pasted_text"
   /** For `kind === "quote"` (file-browser "quote to chat"): referenced path,
    *  1-based line range (e.g. "12-20"), and the quoted snippet. */
   quotePath?: string
@@ -316,6 +318,9 @@ export interface Message {
   /** If true, this user message was sent through Goal Mode. It remains a
    *  normal user bubble, with an extra Goal badge for context. */
   isGoalTrigger?: boolean
+  /** If true, this row was consumed from the durable pending-message queue.
+   * It cannot be replayed as an independent editable turn. */
+  isQueuedMessage?: boolean
   /** If set, this is a plan inline-comment user message. The desktop GUI
    *  renders {@link PlanCommentBubble} from this structured payload instead
    *  of falling back to the markdown `content`. IM channels render the
@@ -368,6 +373,9 @@ export interface Message {
   }
   /** Database row ID, used for deduplication during streaming append */
   dbId?: number
+  /** Last persisted row that may be used as an inclusive fork boundary when
+   *  an interrupted assistant turn has blocks but no final assistant row. */
+  forkBoundaryId?: number
   /** Durable run which owns this canonical/checkpoint projection. Used only
    *  by the reload handshake to replace an in-flight projection idempotently. */
   persistenceRunId?: string
@@ -517,6 +525,8 @@ export interface SessionMeta {
   createdAt: string
   updatedAt: string
   pinnedAt?: string | null
+  /** Retained but hidden from active chat surfaces until restored. */
+  archivedAt?: string | null
   messageCount: number
   /** Regular-conversation unread flag encoded as 0 or 1. */
   unreadCount: number
@@ -584,7 +594,13 @@ export interface SessionMeta {
     senderName?: string | null
   } | null
   /** Dedicated spaces use non-regular kinds and never enter regular unread. */
-  kind?: "regular" | "knowledge" | "eval_fixture" | string
+  kind?: "regular" | "knowledge" | "design" | "eval_fixture" | string
+}
+
+/** Fork responses remain SessionMeta-compatible and optionally carry the
+ * selected user prompt's attachments, already copied into the new session. */
+export interface ForkSessionResult extends SessionMeta {
+  draftAttachmentsMeta?: string | null
 }
 
 export interface UnreadSessionTarget {
@@ -669,14 +685,32 @@ export interface AgentSummaryForSidebar {
 
 // ── Sub-Agent Types ─────────────────────────────────────────────
 
+export type SubagentStatus =
+  | "queued"
+  | "spawning"
+  | "running"
+  | "completed"
+  | "error"
+  | "timeout"
+  | "killed"
+  | "interrupted"
+
 export interface SubagentEvent {
-  eventType: "spawned" | "running" | "completed" | "error" | "killed" | "timeout" | "steered"
+  eventType:
+    | "spawned"
+    | "running"
+    | "completed"
+    | "error"
+    | "killed"
+    | "timeout"
+    | "interrupted"
+    | "steered"
   runId: string
   parentSessionId: string
   childAgentId: string
   childSessionId: string
   taskPreview: string
-  status: "queued" | "spawning" | "running" | "completed" | "error" | "timeout" | "killed"
+  status: SubagentStatus
   resultPreview?: string
   resultFull?: string
   error?: string
@@ -688,12 +722,14 @@ export interface SubagentEvent {
 
 export interface SubagentRun {
   runId: string
+  /** Stable child-conversation identity shared by every immutable attempt. */
+  threadId: string
   parentSessionId: string
   parentAgentId: string
   childAgentId: string
   childSessionId: string
   task: string
-  status: "queued" | "spawning" | "running" | "completed" | "error" | "timeout" | "killed"
+  status: SubagentStatus
   result?: string
   error?: string
   depth: number
@@ -705,6 +741,16 @@ export interface SubagentRun {
   attachmentCount?: number
   inputTokens?: number
   outputTokens?: number
+  continuationOfRunId?: string
+  triggerKind: string
+  terminalReason?: string
+  runnerOwner?: string
+  leaseEpoch: number
+  lastHeartbeatAt?: string
+  deliveryKind: "parent" | "group" | "workflow" | "none"
+  launchSpecJson?: string
+  ownerKind: "parent_session" | "workflow" | "team" | "internal"
+  ownerId: string
 }
 
 export type TaskStatus = "pending" | "in_progress" | "completed"

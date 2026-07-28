@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "切换到普通模式",
     "copied": "已复制",
     "copy": "复制",
+    "editMessage": {
+      "action": "编辑消息",
+      "inputLabel": "编辑你的消息",
+      "fileChangesWarning": "这条消息之后的对话会被删除，但已经写入文件的修改不会撤回。",
+      "send": "发送",
+      "failed": "无法编辑并重新发送这条消息"
+    },
     "messageQuote": {
       "addToChat": "添加到对话",
       "assistantMessage": "助手消息",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}}天前",
     "deleteSessionTitle": "删除对话",
     "deleteSessionWarning": "此操作将永久删除该对话及其所有消息记录，且无法恢复。请确认是否继续？",
+    "archiveSession": "归档对话",
+    "sessionArchived": "对话已归档",
+    "archiveSessionFailed": "归档对话失败",
     "detachOnDesktopNoop": "桌面端不绑定 IM 聊天，因此 detach 在此处无效。",
     "details": "详情",
     "showPlainText": "显示纯文本",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "已完成",
         "error": "出错",
+        "interrupted": "已中断",
         "killed": "已终止",
         "queued": "排队中",
         "running": "运行中",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "已归档对话",
+      "title": "已归档对话",
+      "description": "归档后，对话会从日常列表中隐藏，但消息、项目和 Agent 归属都会保留，可随时恢复。",
+      "searchPlaceholder": "搜索已归档对话",
+      "allProjects": "所有项目",
+      "noProject": "无项目",
+      "count": "{{count}} 个对话",
+      "empty": "暂无已归档对话",
+      "emptyHint": "归档的对话会显示在这里。",
+      "loadFailed": "加载已归档对话失败",
+      "loadMore": "加载更多",
+      "restore": "取消归档",
+      "restored": "对话已恢复",
+      "restoreFailed": "恢复对话失败",
+      "deletePermanently": "永久删除",
+      "deleteTitle": "永久删除此对话？",
+      "deleteWarning": "“{{title}}”及其全部消息将被永久删除，此操作无法撤销。",
+      "deleted": "对话已永久删除",
+      "deleteFailed": "永久删除对话失败",
+      "types": {
+        "all": "所有对话",
+        "regular": "普通对话",
+        "subagent": "子 Agent 对话",
+        "channel": "IM 对话",
+        "cron": "定时对话",
+        "knowledge": "知识对话",
+        "design": "设计对话"
+      }
+    },
     "resetDefaultsPageAction": "恢复本页默认值",
     "resetDefaultsTabAction": "恢复当前页签",
     "resetDefaultsRegionAction": "恢复此区域",
@@ -5015,6 +5056,8 @@
     "developer": "开发者模式",
     "dockerSetupNotInstalled": "未检测到 Docker。请选择适合当前平台的 Docker 方案。",
     "dockerSetupNotRunning": "Docker 已安装但守护进程未运行。请先启动 Docker 后重试。",
+    "dockerSetupWslNoDocker": "WSL 已就绪。可在默认 WSL 发行版中安装 Docker Engine，无需安装 Docker Desktop 即可使用沙箱。",
+    "dockerSetupWslNotRunning": "WSL 中已安装 Docker Engine，但守护进程未运行。请在 WSL 中启动 Docker 后重试。",
     "dreaming": {
       "candidateLimit": "候选上限",
       "candidateLimitDesc": "每轮送给 LLM 的最大候选数。",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "设置会话权限模式（default/smart/yolo）"
     },
+    "pet": {
+      "description": "唤醒、收起或查看桌面宠物状态"
+    },
     "plan": {
       "description": "进入/退出计划模式"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "查看子 Agent 会话",
     "agentId": "Agent ID",
     "attachments": "附件",
+    "attempt": "尝试",
     "childSessionId": "子会话",
     "depth": "嵌套深度",
     "duration": "持续时间",
@@ -8589,6 +8636,8 @@
     "parentSession": "父会话",
     "provider": "服务商",
     "runId": "运行 ID",
+    "terminalReason": "终止原因",
+    "threadId": "线程 ID",
     "startedAt": "开始时间",
     "task": "任务",
     "thinking": "思考强度",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "所有产物与代码一致",
       "checkStale": "{{n}} 个产物的代码有更新",
       "chatPrompt": "实现代码相对设计稿已变化，请根据引用的代码变更更新当前设计稿，保持设计意图与其余内容不变。"
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "宠物",
+      "wake": "桌面宠物",
+      "wakeDesc": "在桌面显示你的动画伙伴和对话动态。",
+      "desktopOnly": "唤醒和收起功能仅在桌面应用中可用。",
+      "choose": "选择宠物",
+      "localOnly": "自定义宠物仅保存在此设备。",
+      "loadFailed": "无法加载宠物",
+      "saveFailed": "无法保存宠物设置",
+      "cannotDeleteSelected": "请先选择另一只宠物再移除",
+      "deleted": "宠物已移除",
+      "undo": "撤销",
+      "deleteFailed": "无法移除宠物",
+      "deleteTitle": "移除这只宠物？",
+      "deleteDescription": "要从此设备移除 {{name}} 吗？"
+    },
+    "discovery": {
+      "title": "认识一下桌面宠物",
+      "description": "它会跟随进行中的对话，让你直接在桌面快捷回复或处理请求。",
+      "action": "立即开启"
+    },
+    "import": {
+      "action": "导入",
+      "title": "导入宠物",
+      "description": "加入 Hope 前，先预览并验证兼容 Codex 的宠物。",
+      "drop": "拖入宠物文件夹、zip、清单 + 图片、PNG 或 WebP",
+      "dropSafety": "拖入只会生成预览，确认前不会安装任何内容。",
+      "chooseFiles": "选择文件",
+      "packageFiles": "宠物包",
+      "fromCodex": "扫描 Codex 宠物",
+      "found": "找到 {{count}} 个",
+      "found_one": "找到 {{count}} 个",
+      "found_other": "找到 {{count}} 个",
+      "unknownVersion": "未知版本",
+      "previewFailed": "无法预览此宠物包",
+      "previewFailedCount": "有 {{amount}} 个宠物包无法预览",
+      "previewCount": "{{amount}} 只宠物等待确认",
+      "removePreview": "从本次导入中移除",
+      "scanFailed": "无法扫描 Codex 宠物",
+      "uploadFailed": "无法上传宠物包",
+      "duplicate": "已导入",
+      "enableAfter": "导入后使用这只宠物",
+      "confirm": "导入宠物",
+      "imported": "宠物已导入",
+      "importedCount": "已将 {{amount}} 只宠物加入宠物库",
+      "alreadyImported": "这只宠物已在你的宠物库中",
+      "commitFailed": "无法导入宠物",
+      "commitFailedCount": "有 {{amount}} 只宠物无法导入",
+      "linkPlaceholder": "粘贴 codex:// 安装链接或 HTTPS 精灵图地址",
+      "linkLabel": "宠物链接",
+      "previewLink": "预览链接"
+    },
+    "creator": {
+      "action": "创建",
+      "title": "创建宠物",
+      "description": "生成原创伙伴，预览 Codex 兼容动画后再安装。",
+      "name": "名称",
+      "shortDescription": "简短描述（可选）",
+      "prompt": "希望宠物长什么样？",
+      "generate": "生成预览",
+      "generating": "正在创建预览…",
+      "failed": "无法创建这只宠物"
+    },
+    "export": {
+      "action": "导出给 Codex",
+      "saved": "已导出 Codex 兼容宠物包",
+      "failed": "无法导出这只宠物"
+    },
+    "window": {
+      "interact": "与 Hope 宠物互动",
+      "tuckAway": "收起宠物"
+    },
+    "bubble": {
+      "needsInput": "有 {{count}} 个对话需要你处理。",
+      "needsInput_one": "我需要你的输入。",
+      "needsInput_other": "有 {{count}} 个对话需要你处理。",
+      "blocked": "有 {{count}} 个对话受阻。",
+      "blocked_one": "有一个对话受阻。",
+      "blocked_other": "有 {{count}} 个对话受阻。",
+      "ready": "有 {{count}} 个对话已就绪。",
+      "ready_one": "有一个对话已就绪。",
+      "ready_other": "有 {{count}} 个对话已就绪。",
+      "open": "在 Hope 中打开",
+      "dismiss": "关闭",
+      "running": "正在思考",
+      "reply": "回复",
+      "queued": "回复已排队",
+      "sent": "回复已发送",
+      "sendFailed": "无法发送回复"
+    },
+    "stack": {
+      "expand": "显示 {{count}} 个对话",
+      "collapse": "收起对话"
+    },
+    "tray": {
+      "title": "对话动态",
+      "reconnecting": "正在刷新状态…",
+      "count": "{{count}} 个进行中",
+      "count_one": "{{count}} 个进行中",
+      "count_other": "{{count}} 个进行中",
+      "close": "关闭动态",
+      "openRemaining": "在 Hope 中查看其余 {{count}} 个",
+      "openRemaining_one": "在 Hope 中查看其余 {{count}} 个",
+      "openRemaining_other": "在 Hope 中查看其余 {{count}} 个",
+      "incognitoTitle": "无痕对话",
+      "untitledTitle": "新对话"
+    },
+    "navigation": {
+      "unavailable": "此对话已不可用。"
     }
   },
   "configRecovery": {

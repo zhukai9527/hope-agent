@@ -83,6 +83,46 @@ struct ChatRoundOk {
     chat_start: std::time::Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChatEngineFailureKind {
+    ProviderExhausted,
+    Cancelled,
+    Infrastructure,
+}
+
+#[derive(Debug)]
+pub(crate) struct ChatEngineFailure {
+    pub kind: ChatEngineFailureKind,
+    message: String,
+}
+
+impl ChatEngineFailure {
+    fn new(kind: ChatEngineFailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for ChatEngineFailure {
+    fn from(message: String) -> Self {
+        Self::new(ChatEngineFailureKind::Infrastructure, message)
+    }
+}
+
+impl From<anyhow::Error> for ChatEngineFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self::new(ChatEngineFailureKind::Infrastructure, error.to_string())
+    }
+}
+
+impl std::fmt::Display for ChatEngineFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
 /// Drop-guarded scope for a session's visible stream lifecycle. Ensures
 /// `stream_seq::end` fires on every `run_chat_engine` return path (including
 /// panics), while allowing the successful path to end the UI stream before
@@ -482,6 +522,14 @@ pub async fn compact_session_now(
 /// → streaming execution → tool persistence → failover → context compaction
 /// → response saving → context persistence → memory extraction.
 pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResult, String> {
+    run_chat_engine_classified(params)
+        .await
+        .map_err(|failure| failure.to_string())
+}
+
+pub(crate) async fn run_chat_engine_classified(
+    params: ChatEngineParams,
+) -> Result<ChatEngineResult, ChatEngineFailure> {
     let ChatEngineParams {
         session_id,
         agent_id,
@@ -510,6 +558,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
         abort_on_cancel,
         persist_final_error_event,
         source,
+        ui_surface: _,
         origin_source,
         channel_kb_context,
         event_sink,
@@ -533,7 +582,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
     let attachments: std::sync::Arc<[crate::agent::Attachment]> = std::sync::Arc::from(attachments);
 
     if model_chain.is_empty() {
-        return Err("No model configured for chat execution".to_string());
+        return Err("No model configured for chat execution".to_string().into());
     }
 
     {
@@ -638,7 +687,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                 Some(message.clone()),
             );
             stream_lifecycle.finish();
-            return Err(message);
+            return Err(message.into());
         }
     };
     stream_lifecycle
@@ -1213,7 +1262,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                                         Some(message.clone()),
                                     );
                                     stream_lifecycle.finish();
-                                    return Err(message);
+                                    return Err(message.into());
                                 }
                                 durability.mark_interrupted(terminal.as_str());
                                 stream_lifecycle.set_terminal(
@@ -1297,7 +1346,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                                 Some(message.clone()),
                             );
                             stream_lifecycle.finish();
-                            return Err(message);
+                            return Err(message.into());
                         }
                     };
                     if let Err(error) = durability.reconcile_spool_to_sqlite().await {
@@ -1308,7 +1357,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                             Some(message.clone()),
                         );
                         stream_lifecycle.finish();
-                        return Err(message);
+                        return Err(message.into());
                     }
 
                     let mut trailing_text = durability.trailing_text();
@@ -1429,7 +1478,7 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                                 Some(message.clone()),
                             );
                             stream_lifecycle.finish();
-                            return Err(message);
+                            return Err(message.into());
                         }
                     };
                     let assistant_id = Some(committed.assistant_message_id);
@@ -1459,10 +1508,18 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
                     stream_lifecycle.finish();
                     schedule_browser_turn_finalize(source, &session_id);
 
-                    // Stop hook: the agent finished responding (normal
-                    // completion, or a user-initiated stop that still drained
-                    // to here). Observation-only this phase.
-                    crate::hooks::fire_stop(&session_id, Some(&agent_id), terminal_status.as_str());
+                    // Stop hook: the agent finished responding. `terminal_status`
+                    // distinguishes a natural `completed` from an interrupt —
+                    // block-to-continue is honored ONLY on `completed`
+                    // (fire_stop guards on it), never on a user interrupt.
+                    // `response` is the turn's final assistant text
+                    // (`last_assistant_message`), so a Stop hook can inspect it.
+                    crate::hooks::fire_stop(
+                        &session_id,
+                        Some(&agent_id),
+                        terminal_status.as_str(),
+                        Some(&response),
+                    );
 
                     if terminal_status == session::ChatTurnStatus::Completed {
                         let continuation = {
@@ -2121,7 +2178,19 @@ pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResul
 
     schedule_browser_turn_finalize(source, &session_id);
     stream_lifecycle.finish();
-    Err(final_error)
+    let failure_kind = match &reason {
+        TerminationReason::UserStop | TerminationReason::RuntimeCancel => {
+            ChatEngineFailureKind::Cancelled
+        }
+        TerminationReason::ProviderFailed { .. } | TerminationReason::NoProfileAvailable => {
+            ChatEngineFailureKind::ProviderExhausted
+        }
+        TerminationReason::CompactionFailed { .. }
+        | TerminationReason::Other { .. }
+        | TerminationReason::Shutdown
+        | TerminationReason::Crash => ChatEngineFailureKind::Infrastructure,
+    };
+    Err(ChatEngineFailure::new(failure_kind, final_error))
 }
 
 fn build_durable_assistant_message(
@@ -2369,7 +2438,7 @@ mod stream_lifecycle_tests {
     fn temp_db() -> (TempDir, Arc<SessionDB>) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.db");
-        let db = Arc::new(SessionDB::open(&path).unwrap());
+        let db = Arc::new(SessionDB::open_ephemeral_for_test(&path).unwrap());
         (dir, db)
     }
 
@@ -2490,6 +2559,7 @@ mod stream_lifecycle_tests {
             abort_on_cancel: false,
             persist_final_error_event: true,
             source: stream_seq::ChatSource::Desktop,
+            ui_surface: None,
             origin_source: None,
             channel_kb_context: None,
             event_sink: Arc::new(NoopEventSink),
@@ -2791,14 +2861,20 @@ mod stream_lifecycle_tests {
             model_id: "m1".to_string(),
         };
 
-        let result = run_chat_engine(params(
+        let result = run_chat_engine_classified(params(
             db.clone(),
             session.id.clone(),
             vec![model],
             vec![provider],
         ))
         .await;
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(ChatEngineFailure {
+                kind: ChatEngineFailureKind::ProviderExhausted,
+                ..
+            })
+        ));
 
         let messages = db.load_session_messages(&session.id).unwrap();
         let assistant_idx = messages

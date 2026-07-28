@@ -551,6 +551,9 @@ export function parseUserAttachmentsMeta(
         mimeType,
         sizeBytes: numberField(obj, "size", "sizeBytes"),
         kind: inferAttachmentKind(mimeType),
+        ...(stringField(obj, "source") === "pasted_text"
+          ? { semanticSource: "pasted_text" as const }
+          : {}),
         ...(localPath ? { localPath } : {}),
         ...(url ? { url } : {}),
       })
@@ -661,11 +664,15 @@ export function parseSessionMessages(
   const pendingTools: ToolCall[] = []
   const pendingBlocks: ContentBlock[] = []
   let pendingPersistenceRunId: string | undefined
+  let pendingForkBoundaryId: number | undefined
+  let pendingHasStreamingRow = false
   let firstUserSeen = false
   const seenPlainEventContentSinceLastUser = new Set<string>()
   for (const msg of msgs) {
     if (msg.role === "user") {
       pendingPersistenceRunId = undefined
+      pendingForkBoundaryId = undefined
+      pendingHasStreamingRow = false
       seenPlainEventContentSinceLastUser.clear()
       // Detect sub-agent result / cron trigger / plan trigger messages via attachments_meta marker
       let isSubagentResult = false
@@ -678,6 +685,7 @@ export function parseSessionMessages(
       let isWorkflowResult = false
       let isPlanTrigger = false
       let isGoalTrigger = false
+      let isQueuedMessage = false
       let planComment: { selectedText: string; comment: string } | undefined
       let channelInbound:
         | { channelId: string; accountId?: string; chatId?: string; senderName?: string }
@@ -711,6 +719,9 @@ export function parseSessionMessages(
           }
           if (meta?.goal_trigger) {
             isGoalTrigger = true
+          }
+          if (meta?.queued_message) {
+            isQueuedMessage = true
           }
           if (
             meta?.plan_comment &&
@@ -761,12 +772,15 @@ export function parseSessionMessages(
         isWorkflowResult,
         isPlanTrigger,
         isGoalTrigger,
+        isQueuedMessage,
         planComment,
         channelInbound,
         ...(attachments ? { attachments } : {}),
       })
     } else if (msg.role === "tool" && msg.toolCallId) {
       pendingPersistenceRunId ||= msg.persistenceRunId || undefined
+      pendingForkBoundaryId = msg.id
+      pendingHasStreamingRow ||= msg.streamStatus === "streaming"
       // Extract media info from tool results (for DB-loaded history):
       //   - image_generate still uses the old "Saved to:" text lines (mediaUrls)
       //   - send_attachment and future tools emit a `__MEDIA_ITEMS__<json>` header
@@ -833,6 +847,8 @@ export function parseSessionMessages(
       }
     } else if (msg.role === "thinking_block") {
       pendingPersistenceRunId ||= msg.persistenceRunId || undefined
+      pendingForkBoundaryId = msg.id
+      pendingHasStreamingRow ||= msg.streamStatus === "streaming"
       // Intermediate thinking emitted before tool calls — preserve multi-round thinking ordering
       if (msg.content) {
         const interrupted = isInterruptedStreamStatus(msg.streamStatus)
@@ -845,6 +861,8 @@ export function parseSessionMessages(
       }
     } else if (msg.role === "text_block") {
       pendingPersistenceRunId ||= msg.persistenceRunId || undefined
+      pendingForkBoundaryId = msg.id
+      pendingHasStreamingRow ||= msg.streamStatus === "streaming"
       // Intermediate text emitted before tool calls — preserve ordering
       if (msg.content) {
         const interrupted = isInterruptedStreamStatus(msg.streamStatus)
@@ -901,6 +919,8 @@ export function parseSessionMessages(
         ...(retrievalPlanner ? { retrievalPlanner } : {}),
       })
       pendingPersistenceRunId = undefined
+      pendingForkBoundaryId = undefined
+      pendingHasStreamingRow = false
     } else if (msg.role === "event") {
       let slashEvent: Message["slashEvent"] | undefined
       if (msg.attachmentsMeta) {
@@ -951,6 +971,7 @@ export function parseSessionMessages(
       toolCalls: pendingTools.length > 0 ? [...pendingTools] : undefined,
       timestamp: new Date().toISOString(),
       persistenceRunId: pendingPersistenceRunId,
+      forkBoundaryId: pendingHasStreamingRow ? undefined : pendingForkBoundaryId,
     })
   }
   return displayMessages
@@ -1143,6 +1164,7 @@ function messageContentEqual(a: Message, b: Message): boolean {
     a.slashEvent?.command === b.slashEvent?.command &&
     a.slashEvent?.mode === b.slashEvent?.mode &&
     a.isGoalTrigger === b.isGoalTrigger &&
+    a.isQueuedMessage === b.isQueuedMessage &&
     a.isLoopTrigger === b.isLoopTrigger &&
     a.thinking === b.thinking &&
     a.timestamp === b.timestamp &&

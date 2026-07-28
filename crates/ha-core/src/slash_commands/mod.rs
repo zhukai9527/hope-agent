@@ -165,14 +165,27 @@ pub async fn execute_slash_command(
     // Allow both built-in commands and dynamic skill commands
     // (skill commands are handled in handlers::dispatch fallback)
 
-    // UserPromptExpansion hook (observation): a slash command ran, matchable on
-    // the command name.
-    crate::hooks::fire_user_prompt_expansion(
+    // UserPromptExpansion hook (blocking): a hook may `exit 2` / `decision:block`
+    // to veto the expansion, matchable on the command name. Fired before the
+    // command runs so a block prevents it entirely.
+    let expansion_outcome = crate::hooks::dispatch_user_prompt_expansion(
         session_id.as_deref(),
         &agent_id,
         &name,
         &command_text,
-    );
+    )
+    .await;
+    if let Some(reason) = expansion_outcome.block_reason() {
+        return Err(format!(
+            "/{} blocked by hook{}",
+            name,
+            if reason.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", reason.trim())
+            }
+        ));
+    }
 
     app_info!(
         "slash_cmd",
@@ -706,7 +719,7 @@ mod tests {
     fn slash_history_events_are_event_rows_with_user_display_metadata() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sessions.db");
-        let db = crate::session::SessionDB::open(&path).expect("open");
+        let db = crate::session::SessionDB::open_ephemeral_for_test(&path).expect("open");
         let meta = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .expect("session");
@@ -749,7 +762,7 @@ mod tests {
     fn slash_history_result_events_persist_structured_action_fallback() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sessions.db");
-        let db = crate::session::SessionDB::open(&path).expect("open");
+        let db = crate::session::SessionDB::open_ephemeral_for_test(&path).expect("open");
         let meta = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .expect("session");
@@ -789,7 +802,7 @@ mod tests {
     fn slash_history_loop_create_hides_slash_prefix_and_result() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sessions.db");
-        let db = crate::session::SessionDB::open(&path).expect("open");
+        let db = crate::session::SessionDB::open_ephemeral_for_test(&path).expect("open");
         let meta = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .expect("session");

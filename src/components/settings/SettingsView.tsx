@@ -38,6 +38,8 @@ import {
   Webhook,
   CalendarClock,
   Files,
+  Archive,
+  PawPrint,
 } from "lucide-react"
 import type { ProviderConfig } from "@/components/settings/ProviderSettings"
 import ProviderSetup from "@/components/settings/ProviderSetup"
@@ -62,6 +64,8 @@ import PermissionsPanel from "@/components/settings/PermissionsPanel"
 import CrashHistoryPanel from "@/components/settings/CrashHistoryPanel"
 import NotificationPanel from "@/components/settings/NotificationPanel"
 import VoicePanel from "@/components/settings/voice-panel/VoicePanel"
+import ArchivedConversationsPanel from "@/components/settings/ArchivedConversationsPanel"
+import PetSettingsPanel from "@/components/settings/PetSettingsPanel"
 // Developer-only panel (clears sessions / cron / memory / config). Lazy-loaded
 // behind a `!import.meta.env.PROD` guard so Vite tree-shakes the whole module
 // + its alert-dialog deps out of release bundles, and the entry never appears
@@ -121,6 +125,11 @@ const SECTIONS: SettingsSectionItem[] = [
     labelKey: "settings.general",
   },
   {
+    id: "pets",
+    icon: <PawPrint className="h-4 w-4" />,
+    labelKey: "pet.settings.nav",
+  },
+  {
     id: "modelConfig",
     icon: <Server className="h-4 w-4" />,
     labelKey: "settings.modelConfig",
@@ -174,6 +183,11 @@ const SECTIONS: SettingsSectionItem[] = [
     id: "chat",
     icon: <MessageSquare className="h-4 w-4" />,
     labelKey: "settings.chat",
+  },
+  {
+    id: "archives",
+    icon: <Archive className="h-4 w-4" />,
+    labelKey: "settings.conversationArchive.nav",
   },
   {
     id: "cron",
@@ -290,6 +304,8 @@ export default function SettingsView({
   initialAgentId,
   initialAgentTab,
   initialChannelId,
+  initialPetInstallLink,
+  onPetInstallLinkConsumed,
   onProfileSaved,
 }: {
   onBack: () => void
@@ -306,6 +322,8 @@ export default function SettingsView({
   /** When `initialSection === "channels"`, pre-open the Add dialog with
    *  this channel pre-selected. Used by the onboarding wizard. */
   initialChannelId?: string
+  initialPetInstallLink?: string | null
+  onPetInstallLinkConsumed?: () => void
   onProfileSaved?: () => void
 }) {
   const { t } = useTranslation()
@@ -372,19 +390,12 @@ export default function SettingsView({
               className={cn(
                 "h-auto w-full justify-start gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-150",
                 activeSection === section.id
-                  ? "bg-secondary/70 text-foreground font-medium hover:bg-secondary/70 hover:text-foreground"
+                  ? "bg-secondary text-foreground font-medium hover:bg-secondary hover:text-foreground"
                   : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground",
               )}
               onClick={() => setActiveSection(section.id)}
             >
-              <span
-                className={cn(
-                  "shrink-0",
-                  "text-muted-foreground",
-                )}
-              >
-                {section.icon}
-              </span>
+              <span className={cn("shrink-0", "text-muted-foreground")}>{section.icon}</span>
               <span className="flex-1 truncate text-left">{t(section.labelKey)}</span>
               {section.id === "about" && globalPendingUpdate && (
                 <span className="relative flex h-2.5 w-2.5 shrink-0">
@@ -409,9 +420,7 @@ export default function SettingsView({
           className="h-10 flex items-end justify-between gap-3 px-6 shrink-0"
           data-tauri-drag-region
         >
-          <span className="text-sm font-semibold text-foreground pb-1.5">
-            {activeSectionLabel}
-          </span>
+          <span className="text-sm font-semibold text-foreground pb-1.5">{activeSectionLabel}</span>
           <span className="flex items-center gap-1 pb-1">
             {HELP_CHAPTER_BY_SECTION[activeSection] !== undefined && (
               <IconTip label={t("help.title")}>
@@ -443,6 +452,12 @@ export default function SettingsView({
             className="flex-1 flex flex-col min-h-0 overflow-hidden animate-in fade-in-0 slide-in-from-right-1 duration-150"
           >
             {activeSection === "general" && <GeneralPanel />}
+            {activeSection === "pets" && (
+              <PetSettingsPanel
+                initialImportLink={initialPetInstallLink}
+                onInitialImportLinkConsumed={onPetInstallLinkConsumed}
+              />
+            )}
             {activeSection === "modelConfig" &&
               (addingProvider ? (
                 <ProviderSetup
@@ -481,14 +496,13 @@ export default function SettingsView({
             {activeSection === "sandbox" && <SandboxPanel />}
             {activeSection === "browser" && <BrowserPanel />}
             {activeSection === "acp" && <AcpControlPanel />}
-            {activeSection === "channels" && (
-              <ChannelPanel initialChannelId={initialChannelId} />
-            )}
+            {activeSection === "channels" && <ChannelPanel initialChannelId={initialChannelId} />}
             {activeSection === "approval" && <ApprovalPanel />}
             {activeSection === "hooks" && <HooksPanel />}
             {activeSection === "permissions" && <PermissionsPanel />}
             {activeSection === "security" && <SecurityPanel />}
             {activeSection === "chat" && <ChatSettingsPanel />}
+            {activeSection === "archives" && <ArchivedConversationsPanel />}
             {activeSection === "cron" && <CronSettingsPanel />}
             {activeSection === "voice" && <VoicePanel />}
             {activeSection === "plan" && <PlanSettingsPanel />}

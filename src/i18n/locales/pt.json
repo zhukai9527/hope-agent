@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "Mudar para modo normal",
     "copied": "Copiado",
     "copy": "Copiar",
+    "editMessage": {
+      "action": "Editar mensagem",
+      "inputLabel": "Edite a sua mensagem",
+      "fileChangesWarning": "A conversa após esta mensagem será removida, mas as alterações já feitas nos ficheiros não serão desfeitas.",
+      "send": "Enviar",
+      "failed": "Não foi possível editar e reenviar esta mensagem"
+    },
     "messageQuote": {
       "addToChat": "Adicionar ao chat",
       "assistantMessage": "Mensagem do assistente",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}}d atrás",
     "deleteSessionTitle": "Excluir conversa",
     "deleteSessionWarning": "Esta ação excluirá permanentemente esta conversa e todas as suas mensagens. Não é possível desfazer. Tem certeza?",
+    "archiveSession": "Arquivar conversa",
+    "sessionArchived": "Conversa arquivada",
+    "archiveSessionFailed": "Falha ao arquivar a conversa",
     "detachOnDesktopNoop": "Detach não tem efeito no desktop — nenhum chat de IM vinculado a esta sessão aqui.",
     "details": "Detalhes",
     "showPlainText": "Mostrar texto simples",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "Concluído",
         "error": "Erro",
+        "interrupted": "Interrompido",
         "killed": "Encerrado",
         "queued": "Na fila",
         "running": "Em execução",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "Conversas arquivadas",
+      "title": "Conversas arquivadas",
+      "description": "Conversas arquivadas ficam ocultas das listas ativas, mas mantêm mensagens, projeto e Agent. Restaure quando quiser.",
+      "searchPlaceholder": "Pesquisar conversas arquivadas",
+      "allProjects": "Todos os projetos",
+      "noProject": "Sem projeto",
+      "count": "{{count}} conversas",
+      "empty": "Nenhuma conversa arquivada",
+      "emptyHint": "As conversas arquivadas aparecerão aqui.",
+      "loadFailed": "Falha ao carregar conversas arquivadas",
+      "loadMore": "Carregar mais",
+      "restore": "Restaurar",
+      "restored": "Conversa restaurada",
+      "restoreFailed": "Falha ao restaurar a conversa",
+      "deletePermanently": "Excluir permanentemente",
+      "deleteTitle": "Excluir esta conversa permanentemente?",
+      "deleteWarning": "“{{title}}” e todas as mensagens serão excluídas permanentemente. Esta ação não pode ser desfeita.",
+      "deleted": "Conversa excluída permanentemente",
+      "deleteFailed": "Falha ao excluir a conversa permanentemente",
+      "types": {
+        "all": "Todas as conversas",
+        "regular": "Conversas",
+        "subagent": "Conversas de subagentes",
+        "channel": "Conversas de IM",
+        "cron": "Conversas agendadas",
+        "knowledge": "Conversas de conhecimento",
+        "design": "Conversas de design"
+      }
+    },
     "resetDefaultsPageAction": "Restaurar esta página",
     "resetDefaultsTabAction": "Restaurar a aba atual",
     "resetDefaultsRegionAction": "Restaurar esta seção",
@@ -5015,6 +5056,8 @@
     "developer": "Desenvolvedor",
     "dockerSetupNotInstalled": "Docker não foi detectado. Escolha uma opção Docker para esta plataforma.",
     "dockerSetupNotRunning": "Docker está instalado, mas o daemon não está em execução. Inicie o Docker e tente novamente.",
+    "dockerSetupWslNoDocker": "O WSL está pronto. Instale o Docker Engine na distribuição WSL padrão para usar o ambiente isolado sem o Docker Desktop.",
+    "dockerSetupWslNotRunning": "O Docker Engine está instalado no WSL, mas o daemon não está em execução. Inicie o Docker no WSL e tente novamente.",
     "dreaming": {
       "candidateLimit": "Limite de candidatos",
       "candidateLimitDesc": "Máximo de candidatos enviados ao LLM por ciclo.",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "Ajustar o modo de permissão da sessão (default/smart/yolo)"
     },
+    "pet": {
+      "description": "Acordar, guardar ou consultar o mascote do ambiente de trabalho"
+    },
     "plan": {
       "description": "Entrar/sair do plano mode"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "Abrir sessão do sub-agente",
     "agentId": "Agent ID",
     "attachments": "Anexos",
+    "attempt": "Tentativa",
     "childSessionId": "Sessão secundária",
     "depth": "Profundidade",
     "duration": "Duração",
@@ -8589,6 +8636,8 @@
     "parentSession": "Sessão pai",
     "provider": "Provedor",
     "runId": "ID de execução",
+    "terminalReason": "Motivo do encerramento",
+    "threadId": "ID da thread",
     "startedAt": "Início",
     "task": "Tarefa",
     "thinking": "Raciocínio",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "Todos os artefatos correspondem ao seu código",
       "checkStale": "{{n}} artefatos têm atualizações de código",
       "chatPrompt": "O código implementado divergiu deste design. Atualize o design atual para refletir as alterações de código referenciadas, mantendo a intenção do design e todo o resto inalterado."
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "Mascotes",
+      "wake": "Mascote no ambiente de trabalho",
+      "wakeDesc": "Mostre o seu companheiro animado e a atividade das conversas no ambiente de trabalho.",
+      "desktopOnly": "Acordar e guardar estão disponíveis na aplicação de ambiente de trabalho.",
+      "choose": "Escolher um mascote",
+      "localOnly": "Os mascotes personalizados ficam neste dispositivo.",
+      "loadFailed": "Não foi possível carregar os mascotes",
+      "saveFailed": "Não foi possível guardar as definições do mascote",
+      "cannotDeleteSelected": "Escolha outro mascote antes de remover este",
+      "deleted": "Mascote removido",
+      "undo": "Desfazer",
+      "deleteFailed": "Não foi possível remover o mascote",
+      "deleteTitle": "Remover este mascote?",
+      "deleteDescription": "Remover {{name}} deste dispositivo?"
+    },
+    "discovery": {
+      "title": "Conheça seu mascote da área de trabalho",
+      "description": "Acompanhe conversas ativas e responda ou trate pedidos pela área de trabalho.",
+      "action": "Experimentar"
+    },
+    "import": {
+      "action": "Importar",
+      "title": "Importar um mascote",
+      "description": "Pré-visualize e valide mascotes compatíveis com o Codex antes de os adicionar ao Hope.",
+      "drop": "Largue uma pasta, zip, manifesto + imagem, PNG ou WebP",
+      "dropSafety": "Largar cria apenas uma pré-visualização. Nada é instalado até confirmar.",
+      "chooseFiles": "Escolher ficheiros",
+      "packageFiles": "Pacotes de mascotes",
+      "fromCodex": "Procurar mascotes do Codex",
+      "found": "{{count}} encontrados",
+      "found_one": "{{count}} encontrado",
+      "found_other": "{{count}} encontrados",
+      "unknownVersion": "versão desconhecida",
+      "previewFailed": "Não foi possível pré-visualizar este pacote",
+      "previewFailedCount": "Não foi possível pré-visualizar {{amount}} pacotes de mascote",
+      "previewCount": "{{amount}} mascotes prontos para revisão",
+      "removePreview": "Remover desta importação",
+      "scanFailed": "Não foi possível procurar mascotes do Codex",
+      "uploadFailed": "Não foi possível carregar o pacote",
+      "duplicate": "Já importado",
+      "enableAfter": "Usar este mascote depois de importar",
+      "confirm": "Importar mascote",
+      "imported": "Mascote importado",
+      "importedCount": "{{amount}} mascotes adicionados à sua biblioteca",
+      "alreadyImported": "Este mascote já está na sua biblioteca",
+      "commitFailed": "Não foi possível importar o mascote",
+      "commitFailedCount": "Não foi possível importar {{amount}} mascotes",
+      "linkPlaceholder": "Cole um link de instalação codex:// ou URL HTTPS da folha de sprites",
+      "linkLabel": "Link do mascote",
+      "previewLink": "Pré-visualizar link"
+    },
+    "creator": {
+      "action": "Criar",
+      "title": "Criar um mascote",
+      "description": "Gere um mascote original e pré-visualize a animação compatível com Codex antes de instalar.",
+      "name": "Nome",
+      "shortDescription": "Descrição curta (opcional)",
+      "prompt": "Como deve ser o seu mascote?",
+      "generate": "Gerar pré-visualização",
+      "generating": "A criar pré-visualização…",
+      "failed": "Não foi possível criar este mascote"
+    },
+    "export": {
+      "action": "Exportar para Codex",
+      "saved": "Pacote compatível com Codex exportado",
+      "failed": "Não foi possível exportar este mascote"
+    },
+    "window": {
+      "interact": "Interagir com o pet do Hope",
+      "tuckAway": "Guardar mascote"
+    },
+    "bubble": {
+      "needsInput": "{{count}} conversas precisam da sua intervenção.",
+      "needsInput_one": "Preciso da sua intervenção.",
+      "needsInput_other": "{{count}} conversas precisam da sua intervenção.",
+      "blocked": "{{count}} conversas estão bloqueadas.",
+      "blocked_one": "Uma conversa está bloqueada.",
+      "blocked_other": "{{count}} conversas estão bloqueadas.",
+      "ready": "{{count}} conversas estão prontas.",
+      "ready_one": "Uma conversa está pronta.",
+      "ready_other": "{{count}} conversas estão prontas.",
+      "open": "Abrir no Hope",
+      "dismiss": "Dispensar",
+      "running": "Pensando",
+      "reply": "Responder",
+      "queued": "Resposta na fila",
+      "sent": "Resposta enviada",
+      "sendFailed": "Não foi possível enviar a resposta"
+    },
+    "stack": {
+      "expand": "Mostrar {{count}} conversas",
+      "collapse": "Recolher conversas"
+    },
+    "tray": {
+      "title": "Atividade das conversas",
+      "reconnecting": "A atualizar o estado…",
+      "count": "{{count}} ativas",
+      "count_one": "{{count}} ativa",
+      "count_other": "{{count}} ativas",
+      "close": "Fechar atividade",
+      "openRemaining": "Ver mais {{count}} no Hope",
+      "openRemaining_one": "Ver mais {{count}} no Hope",
+      "openRemaining_other": "Ver mais {{count}} no Hope",
+      "incognitoTitle": "Conversa anónima",
+      "untitledTitle": "Nova conversa"
+    },
+    "navigation": {
+      "unavailable": "Esta conversa já não está disponível."
     }
   },
   "configRecovery": {

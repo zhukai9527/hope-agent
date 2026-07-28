@@ -359,7 +359,11 @@ impl AssistantAgent {
             return Ok(());
         }
 
-        let Some(db) = crate::get_session_db() else {
+        let Some(db) = self
+            .session_db
+            .clone()
+            .or_else(|| crate::get_session_db().cloned())
+        else {
             return Ok(());
         };
         let json = serde_json::to_string(messages)?;
@@ -488,6 +492,9 @@ impl AssistantAgent {
                     common: self.hook_common_input("PreCompact"),
                     trigger: options.trigger.hook_trigger(),
                     usage_ratio: usage_now.min(1.0),
+                    // Live custom compaction instructions, so a PreCompact hook
+                    // can enforce / audit the active policy (official field).
+                    custom_instructions: compact_config.custom_instructions.clone(),
                 };
                 let outcome = crate::hooks::HookDispatcher::dispatch(
                     crate::hooks::HookEvent::PreCompact,
@@ -1381,10 +1388,12 @@ impl AssistantAgent {
             .or_else(dirs::home_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         crate::hooks::CommonHookInput {
+            prompt_id: crate::hooks::resolve_prompt_id(&session_id),
             session_id,
             transcript_path,
             cwd,
             permission_mode: crate::hooks::PermissionMode::Default,
+            effort: crate::hooks::resolve_effort(),
             hook_event_name: event.to_string(),
             agent_id: Some(self.agent_id.clone()),
             agent_type: None,
@@ -1439,7 +1448,7 @@ impl AssistantAgent {
             common: self.hook_common_input("SessionStart"),
             source: crate::hooks::SessionStartSource::Compact,
             model: model.to_string(),
-            agent_type: None,
+            session_title: None,
         };
         let out = HookDispatcher::dispatch(HookEvent::SessionStart, start).await;
         if let Some(extra) = out.merged_additional_context() {

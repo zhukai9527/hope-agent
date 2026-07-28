@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -269,6 +270,18 @@ pub(super) fn hide_console(_cmd: &mut Command) {}
 #[allow(clippy::needless_pass_by_ref_mut)]
 pub(super) fn hide_console_tokio(_cmd: &mut tokio::process::Command) {}
 
+pub(super) fn wsl_command() -> Option<tokio::process::Command> {
+    None
+}
+
+pub(super) async fn wsl_status() -> super::WslStatus {
+    super::WslStatus::default()
+}
+
+pub(super) async fn path_to_wsl(_path: &Path) -> io::Result<Option<String>> {
+    Ok(None)
+}
+
 pub(super) fn find_chrome_executable() -> Option<PathBuf> {
     // macOS-specific .app bundles first; if present, prefer Chrome over
     // Chromium (matches the user's likely daily browser).
@@ -403,6 +416,76 @@ pub(super) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .map(|m| m.permissions().mode() & 0o777)
         .unwrap_or(0o644);
     write_replace(path, bytes, mode)
+}
+
+pub(super) fn publish_dir_atomic(source: &Path, target: &Path) -> io::Result<()> {
+    if !source.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "staging source is not a directory",
+        ));
+    }
+    rename_dir_noreplace(source, target)?;
+    if let Some(parent) = target.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn rename_dir_noreplace(source: &Path, target: &Path) -> io::Result<()> {
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let target = std::ffi::CString::new(target.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "target path contains NUL"))?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers for the
+    // duration of the call. RENAME_EXCL makes publication no-clobber atomically.
+    let result = unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn rename_dir_noreplace(source: &Path, target: &Path) -> io::Result<()> {
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let target = std::ffi::CString::new(target.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "target path contains NUL"))?;
+    // SAFETY: both pointers reference live NUL-terminated path buffers for the
+    // duration of the syscall and both directory fds are the process cwd.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE as _,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android"
+)))]
+fn rename_dir_noreplace(source: &Path, target: &Path) -> io::Result<()> {
+    if target.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "target directory already exists",
+        ));
+    }
+    fs::rename(source, target)
 }
 
 /// Atomically create a user document without replacing an existing path.

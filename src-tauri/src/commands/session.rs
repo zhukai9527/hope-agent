@@ -46,11 +46,20 @@ pub async fn create_session_cmd(
 pub async fn fork_session_cmd(
     session_id: String,
     message_id: Option<i64>,
+    before_message_id: Option<i64>,
     state: State<'_, AppState>,
-) -> Result<session::SessionMeta, CmdError> {
+) -> Result<session::ForkSessionResult, CmdError> {
+    if message_id.is_some() && before_message_id.is_some() {
+        return Err(CmdError::from(anyhow::anyhow!(
+            "message_id and before_message_id are mutually exclusive"
+        )));
+    }
     state
         .session_db
-        .run(move |db| db.fork_session(&session_id, message_id))
+        .run(move |db| match before_message_id {
+            Some(boundary) => db.fork_session_before_message_with_draft(&session_id, boundary),
+            None => db.fork_session(&session_id, message_id).map(Into::into),
+        })
         .await
         .map_err(Into::into)
 }
@@ -97,6 +106,20 @@ pub async fn list_sessions_cmd(
     session::enrich_pending_interactions(&mut sessions, &state.session_db).await?;
 
     Ok((sessions, total))
+}
+
+/// Conversations retained by the user but hidden from active chat surfaces.
+#[tauri::command]
+pub async fn list_archived_sessions_cmd(
+    limit: Option<u32>,
+    offset: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<(Vec<session::SessionMeta>, u32), CmdError> {
+    state
+        .session_db
+        .run(move |db| db.list_archived_sessions_paged(limit, offset))
+        .await
+        .map_err(Into::into)
 }
 
 /// Authoritative count of unread regular conversations. The active session is
@@ -417,9 +440,24 @@ pub async fn delete_session_cmd(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), CmdError> {
+    let cron_db = state.cron_db.clone();
+    let session_db = state.session_db.clone();
+    ha_core::blocking::run_blocking(move || {
+        ha_core::cron::delete_conversation_and_run_logs(&cron_db, &session_db, &session_id)
+    })
+    .await
+    .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_session_archived_cmd(
+    session_id: String,
+    archived: bool,
+    state: State<'_, AppState>,
+) -> Result<(), CmdError> {
     state
         .session_db
-        .run(move |db| db.delete_session(&session_id))
+        .run(move |db| db.set_session_archived(&session_id, archived))
         .await
         .map_err(Into::into)
 }

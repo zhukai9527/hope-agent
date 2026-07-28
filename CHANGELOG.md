@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **侧边栏在小高度窗口下更稳**：更新提示会贴合底部 Logo 展示，低频入口会按高度逐步收进「更多」菜单，避免窗口缩小时 Logo 被裁剪或入口突然空出大段空间。 (#539)
+## [0.24.0] - 2026-07-27
+
+### Added
+
+- **新增 Codex 兼容桌面宠物**：可从侧边栏底部开关或「设置 → 桌面宠物」开启（默认关闭），透明浮窗常驻桌面，用气泡投影主对话的运行中 / 待输入 / 失败 / 未读完成四种状态；气泡里可直接快捷回复、停止当前任务，也能回答 `ask_user_question` 与处理工具审批，点击气泡跳回对应对话（普通 / 知识空间 / 设计空间都按类型正确恢复）。宠物可从 Codex 现有安装目录扫描导入，也支持拖入目录 / zip / 精灵图、粘贴 `codex://` 与 `hope-agent://` 链接、按 `hope-agent://` 系统协议唤起，或在设置里用生图直接创建；所有导入一律走「预览 → 校验 → 确认」，不会静默安装或启用，并可导出为 Codex 兼容包。首次使用会在侧边栏彩蛋图标旁显示一次性非模态提示。**边界**：只投影第一方主对话（主聊天 / QuickChat / 知识空间 / 设计空间 / 宠物快捷回复），side query、自动化、压缩、记忆、Cron、IM、ACP、子 Agent 与后台任务不会出现在宠物上；无痕对话的标题与预览始终脱敏；浮窗是桌面专属，HTTP / Web 只能管理宠物库与选择。 (#554)
+- **最后一条提问支持原地编辑重发**：本轮回复结束或被停止后，可以直接在自己最后一条提问上改完重发，附件、Goal 元数据与 Provider 基础上下文原样保留，不必再靠分支或重新打字。发送后这条提问之后的回复与后续消息会被丢弃并以新内容重跑该轮；**上一轮已经写入的文件修改不会自动撤回**，编辑框会就此提示。流式回复进行中、有排队消息、slash 命令消息，以及定时任务与子 Agent 会话查看器不提供该入口。 (#553)
+
+### Changed
+
+- **撤回无效的 Linux WebKitGTK 视觉降级**：恢复 Linux 桌面版的毛玻璃效果与系统字体选择。0.23 为滚动文字发虚而全局禁用 `backdrop-filter`、强制 Noto 字体栈，但报告者在 KDE/KWin Wayland、1.0 缩放下复测仍可复现；问题来自 WebKitGTK/wry 的窗口与 WebView 渲染尺寸不同步，并非 CSS 合成层或分数缩放，继续由上游 [wry #1727](https://github.com/tauri-apps/wry/issues/1727) 跟踪。窗口透明度的 Linux 防御与 Windows 启动居中不受影响。 (#547)
+
+## [0.23.0] - 2026-07-25
+
+### Added
+
+- **对话支持归档**：侧边栏、项目、定时任务运行历史、知识空间与设计空间的对话都可一键归档，归档后从日常列表、全局搜索、未读角标与项目会话计数中隐藏，同时清除置顶并把当前内容标记为已读，但消息、附件、项目与 Agent 归属完整保留。新增「设置 → 已归档对话」页，按每页 50 条加载，可对已加载的记录搜索标题 / Agent / 项目名并按对话类型（普通 / 子 Agent / IM / 定时 / 知识 / 设计）与项目筛选，随时一键恢复——搜索与筛选目前只作用于已加载的分页，归档条数多时需要先「加载更多」才能命中较早的对话。**注意删除入口迁移**：侧边栏悬停按钮与右键菜单现在只有「归档」，永久删除只在归档管理页提供且需二次确认。无痕对话不可归档（仍是关闭即焚）；归档也不等于 IM 免打扰，已绑定 IM 聊天的对话收到新的入站消息会自动恢复。 (#544)
+- **Hooks 可阻断事件落地 6 个**：`Stop`（`exit 2` / `decision:block` 触发 block-to-continue——注入反馈并让 Claude 再工作一轮，带 3 次上限与 `stop_hook_active` 再入标记；仅自然结束的回合会被再驱动，用户手动中断的回合不会被 hook 复活）、`PostToolBatch`（阻断则本轮结果落盘后停止 agent 循环）、`TaskCreated` / `TaskCompleted`（阻断则否决任务创建 / 完成，仅限模型调 `task` 工具那条路径；Workflow 内部建的任务仍是纯观察）、`UserPromptExpansion`（阻断则拒绝 slash 命令展开）、`PermissionRequest`（阻断则自动拒绝审批，仅 deny——hook 的 allow 不会绕过用户 / strict）。**用户影响**：Claude Code 里靠这些事件阻断的社区脚本现在在本项目生效。出于安全考量，`ConfigChange` veto（会让 hook 拦住用户改设置 / 关闭 hooks）、`SubagentStop` 续跑、`Elicitation*` 阻断刻意不做（见 hooks 架构文档 §2.4）。 (#546)
+- **子 Agent 线程可续跑，新增 `send` 统一跟进入口**：`send` 按 durable 状态自动在「插话」（运行中，消息现已持久化、重启不再丢）与「续跑」（已终态）之间选择，也可用 `mode` 锁定其一；完成、模型失败、超时或进程中断的子 Agent 可在同一子会话里开新一轮 attempt，复用原对话与工作目录，而用户停止、审批拒绝、父级 / Workflow 取消这几类终态一律不允许续跑、只能重新派发。Workflow V5（新脚本默认）同步支持显式 `resumeAgent`、失败处理与崩溃恢复，未处理的失败子任务不会再被静默算作 Workflow 成功。 (#545)
+- **Windows Docker 沙箱可直接使用 WSL 内的 Docker Engine**：宿主机未运行 Docker Desktop 时，Hope Agent 会探测默认 WSL 发行版中的本地 Docker daemon，并自动切换到 WSL 后端执行沙箱命令；设置页会按检测到的 WSL / Engine 状态切换提示文案，把 Windows 的安装主入口从 Docker Desktop 换成 WSL 内的 Docker Engine，daemon 没起来时提示到 WSL 里启动。远程 Docker Context 不会被隐式采用，WSL 路径与 Docker Socket 挂载继续 fail-closed，超时或取消也会可靠清理容器。 (#541)
+
+### Changed
+
+- **Hooks 与 Claude Code 官方协议重新字段级对齐**：官方协议演进后，本项目补齐了大批差异——payload 字段名对齐官方（`SessionEnd.reason` / `Notification.type` / `StopFailure.error_type` / `FileChanged.file_path` / `UserPromptExpansion.command_name`+`raw_input` / `TaskCreated`+`TaskCompleted.task_name` / `WorktreeCreate.worktree_name` / `SubagentStart`+`Stop.agent_type`）、`PostToolBatch` 现携带官方 `tool_calls[]`、`Stop`/`SubagentStop` 携 `last_assistant_message`、`PreCompact` 新增 `custom_instructions`（用户配的自定义压缩指令）；输出侧 `updatedToolOutput`（可改写工具结果做脱敏）与 `decision.behavior` 已接入生效，`retry` / `suppressOutput` 目前只解析入 `HookOutcome`、`terminalSequence` 只解析入 stdout schema，三者均无消费方（脚本可以返回，但不会改变行为）；`defer` 决策不再被静默放行；command handler 支持官方 `args` exec 形；默认超时对齐官方（http/mcp_tool=600s、prompt=30s、agent=60s）；matcher 列表分隔符新增 `,`（与 `|` 并列，各项 trim 空格），字面字符集纳入空格 / 连字符（如 `general-purpose` 走精确匹配而非误判正则；空格 / 连字符是**项内字符、非分隔符**），正则改为**非锚定**（对齐官方 unanchored）；payload 新增 `effort.level`（取全局 reasoning-effort，UI picker / `/thinking` 设的值）+ 同源 `CLAUDE_EFFORT` 环境变量；payload 新增 `prompt_id`（复用既有 per-turn UUID，同一轮内的 `UserPromptSubmit` / PreToolUse / PostToolUse / Stop 等共享一个 id，脚本可按轮分组）。**注意覆盖范围**：桌面 / HTTP / IM 三个入口的整轮事件共享同一 id；ACP 只有 `UserPromptSubmit` 带 id，同一轮的后续事件不带；cron、后台子 Agent 的回合完全不带 id——按 `prompt_id` 开桶收桶的脚本在这些场景下需要回退到 `session_id`；新增 `Setup` / `MessageDisplay` 协议保留事件（可配置、暂不触发），`SessionStart` 的 `fork` 来源与 `session_title` 同为协议占位、生产暂不产出。**用户影响**：此前 `jq` 读官方字段名（如 `.reason`/`.file_path`/`.type`）落空的社区脚本现可直接命中；反过来，按本项目旧字段名（`.source` / `.path` / `.notification_type` / `.content`）写的存量脚本会静默读到 null——旧名已彻底移除、没有兼容别名，须改用官方名；含 `^前缀` 正则的 matcher 语义从「整串匹配」变为「前缀匹配」（对齐官方）。 (#546, #549)
+- **`PermissionRequest` / `PermissionDenied` 的 matcher 改按工具名匹配**：这两个事件此前一律拿命令串当 matcher 目标，现在优先按工具名匹配（`Bash` / `Write` 等官方别名自动归一到内部名），仅在调用点没给出工具名时才回退命令串。**用户影响**：按命令模式写的存量 `PermissionRequest` matcher（如 `"rm -rf.*"`）不再触发，需改成工具名，或用 `if` 规则去匹配入参。 (#546)
+- **异步 Agent 派发与通用后台任务显式分家**：subagent、Workflow、ACP 与 Team 统一声明为自管理的 durable 工作，各自返回 run / thread handle，由原生状态机负责排队、取消、恢复和结果投递；对它们传 `run_in_background` 现在会直接报错，而不再被静默忽略。 (#545)
+- **子 Agent 面板与工作台「子智能体」分区按线程折叠**：续跑不再刷出多行，同一子 Agent 只占一项并显示累计尝试次数，可在历史 attempt 之间切换；分区计数口径随之从「运行次数」变为「线程数」，详情面板新增线程 ID、尝试序号与终止原因。 (#545)
+- **模型的 `kill_all` 只终止它自己派发的子 Agent**：不再连带打断同一会话里由 Workflow、Team 或内部流程派发的子 Agent。 (#545)
+- **应用退出或进程中断后的子 Agent 显示为「已中断」**：此前一律笼统标成「出错」且主 Agent 完全感知不到，现在会保留中断原因并把中断结果投递给主 Agent，由它决定是否续跑（无痕会话不投递）。 (#545)
+- **自动更新的后台检查改为默认每 30 分钟**：默认检查间隔从 12 小时降到 0.5 小时，允许的最小间隔也从 1 小时降到 0.5 小时（`checkIntervalHours` 现支持小数，钳到 `[0.5, 168]`），新版发布后能更快收到提示。**注意**：默认向发布服务器的检查频率因此提高，桌面与 headless 共用该配置，嫌频繁可在「关于」页调大；安装与重启仍始终需要用户确认。 (#539)
+- **侧边栏的更新标记改为可点击按钮，低频入口按窗口高度收纳**：底部 Logo 上的更新标记从不可点的呼吸圆点换成「更新」按钮，把更新弹窗关掉或忽略之后仍可随时从这里重新打开（此前一旦 dismiss 就只能重启应用才会再出现）；低频入口会按窗口高度分级收进「更多」菜单，避免窗口缩小时 Logo 被裁剪或入口突然空出大段空间。 (#539)
+- **审批类 hook 现在能看到工具参数**：`PermissionRequest` / `PermissionDenied` 事件补齐官方 `tool_input` 与 `tool_use_id`，脚本可直接判 `.tool_input.command`，不必再从截断的 `command` 描述里猜，也能按 `tool_use_id` 与 PostToolUse 对账。注意这里给的是权限引擎真正评估的那份入参（PreToolUse `updatedInput` 之后的影子值），所以有 PreToolUse hook 改写入参时会与 PreToolUse 自己的 payload 不同。 (#549)
+- **没配 hook 时不再有额外开销**：同步 hook 触发点新增一道无需会话工作目录的预检，未配置对应事件时直接返回，省掉此前每次触发都会做的一次会话查库（`FileChanged` 这类高频事件受益最明显）。该预检在默认配置（项目级 hooks 关闭）下生效，开启项目级 hooks 后仍需回落到按工作目录解析的二级判断。 (#546)
+
+### Fixed
+
+- **消息「在新会话中继续」修正分支边界，用户提问会还原成可编辑草稿**：在自己的某条提问上分支，新会话现在只复制这条提问**之前**的历史，而提问正文、随手上传 / 粘贴的文件与文件 / 消息引用会恢复进新会话输入框并自动聚焦，可以改完再发（此前会把这条提问连同附件一起复制成历史里既发不出去也改不了的死消息，想换个方向只能重新打字）；普通对话与设计空间对话都已修好。在助手回复上分支仍连同该回复一起复制，而被中途停止、没有最终回复行的助手回合现在也能分支——此前这类回合完全没有分支入口。分支入口同时收敛到普通提问与已结束的助手回复上，定时触发、子 Agent 回执、Plan 执行 / 审阅留言、IM 入站等消息不再出现分支按钮；复制过来的中断回合不会再在下次启动时被当成待恢复的运行、多出一条异常中断提示，个别附件恢复失败时会在输入框标出失败原因并阻止整条消息发出（不会少带文件就发出去）。此外远端 / 网页端查看带文件的 Plan 审阅留言与 `/goal` 目标触发消息时，附件链接现在也会被正确改写（此前这类消息的附件在远端打不开）；fork 接口新增与 `messageId` 互斥的 `beforeMessageId` 边界参数（HTTP 同时传返回 400）。 (#551)
+- **全局选中态更醒目、标签与 Tab 反馈统一**：侧栏视图入口、会话 / 笔记 / 文件列表、卡片、模式切换与运行记录的持久选中改用实色底，不再和悬停态或页面底色糊成一片；单选与多选标签收敛到同一套反白样式，明暗两种主题下都有悬停反馈，选中不再靠边框、阴影或额外勾选表达；Tab 选中面去掉阴影并在切换时平滑滑到新标签（系统开启「减少动态效果」时直接切换）。服务商模板与自定义向导的「返回」同时从底部移到标题栏左上，底部只留「下一步」/「保存」，减少误点。 (#543)
+- **Docker 沙箱不再因为 `docker` 命令不在应用 PATH 里就报「未安装」**：daemon 可直连时即视为可用（执行本身走 Docker API，不需要 CLI），修好 macOS / Linux 上「Docker 明明在跑，沙箱工具却被拒绝执行」的情况。 (#541)
+- **MCP 长任务工具的后台执行现在真的生效**：声明 `taskSupport` 的 MCP 工具此前虽然在 schema 里露出 `run_in_background`，实际调用却被静默同步执行；现在会按服务器声明正确进入后台任务并支持自动后台。 (#545)
+- **尝试缓解 Linux 下滚动聊天窗口周期性发虚（后续确认未解决）**：主窗口与 QuickChat 窗口在 Linux 关闭透明，Linux 桌面版的全部毛玻璃表面统一降级并补充 Noto 字体栈；QuickChat 窗口随之在 Linux 上改为方角。报告者升级 0.23 后仍可复现，CSS 与字体降级已在后续版本撤回；Windows 主窗口找回丢失的启动居中。 (#548)
+- **hooks 文档更正：hook 收到的工具参数不脱敏**：架构文档此前称 `tool_input` 会走脱敏，实际并没有——payload 原样进入 command hook 的 stdin、http hook 的请求体，以及 prompt handler 拼给模型的指令。这与官方 Claude Code 行为一致（否则判 `.tool_input.command` 的脚本无法工作），但**给某工具配 hook 就等于授权该 hook 读到该工具的全部入参，包括其中的凭据**；hooks 本身是 opt-in、仓库内 hooks 默认不生效。 (#549)
 
 ## [0.22.0] - 2026-07-21
 

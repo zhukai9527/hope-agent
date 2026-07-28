@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "التبديل إلى الوضع العادي",
     "copied": "تم النسخ",
     "copy": "نسخ",
+    "editMessage": {
+      "action": "تعديل الرسالة",
+      "inputLabel": "عدّل رسالتك",
+      "fileChangesWarning": "ستُحذف المحادثة بعد هذه الرسالة، لكن لن يتم التراجع عن تغييرات الملفات التي أُجريت بالفعل.",
+      "send": "إرسال",
+      "failed": "تعذر تعديل هذه الرسالة وإعادة إرسالها"
+    },
     "messageQuote": {
       "addToChat": "إضافة إلى المحادثة",
       "assistantMessage": "رسالة المساعد",
@@ -542,6 +549,9 @@
     "daysAgo": "منذ {{count}} يوم",
     "deleteSessionTitle": "حذف المحادثة",
     "deleteSessionWarning": "سيؤدي هذا الإجراء إلى حذف هذه المحادثة وجميع رسائلها نهائيًا. لا يمكن التراجع عن هذا الإجراء. هل أنت متأكد؟",
+    "archiveSession": "أرشفة المحادثة",
+    "sessionArchived": "تمت أرشفة المحادثة",
+    "archiveSessionFailed": "تعذرت أرشفة المحادثة",
     "detachOnDesktopNoop": "لا توجد محادثة IM مرتبطة بهذه الجلسة على سطح المكتب — detach لا يفعل شيئًا هنا.",
     "details": "التفاصيل",
     "showPlainText": "عرض النص العادي",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "مكتمل",
         "error": "خطأ",
+        "interrupted": "تمت مقاطعته",
         "killed": "تم إنهاؤه",
         "queued": "في قائمة الانتظار",
         "running": "قيد التشغيل",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "المحادثات المؤرشفة",
+      "title": "المحادثات المؤرشفة",
+      "description": "تُخفى المحادثات المؤرشفة من القوائم النشطة مع الاحتفاظ بالرسائل والمشروع وAgent، ويمكن استعادتها في أي وقت.",
+      "searchPlaceholder": "البحث في المحادثات المؤرشفة",
+      "allProjects": "كل المشاريع",
+      "noProject": "بدون مشروع",
+      "count": "{{count}} محادثات",
+      "empty": "لا توجد محادثات مؤرشفة",
+      "emptyHint": "ستظهر المحادثات التي تؤرشفها هنا.",
+      "loadFailed": "تعذر تحميل المحادثات المؤرشفة",
+      "loadMore": "تحميل المزيد",
+      "restore": "استعادة",
+      "restored": "تمت استعادة المحادثة",
+      "restoreFailed": "تعذرت استعادة المحادثة",
+      "deletePermanently": "حذف نهائي",
+      "deleteTitle": "هل تريد حذف هذه المحادثة نهائيًا؟",
+      "deleteWarning": "سيتم حذف «{{title}}» وجميع رسائلها نهائيًا، ولا يمكن التراجع عن ذلك.",
+      "deleted": "تم حذف المحادثة نهائيًا",
+      "deleteFailed": "تعذر حذف المحادثة نهائيًا",
+      "types": {
+        "all": "كل المحادثات",
+        "regular": "المحادثات",
+        "subagent": "محادثات الوكلاء الفرعيين",
+        "channel": "محادثات الرسائل الفورية",
+        "cron": "المحادثات المجدولة",
+        "knowledge": "محادثات المعرفة",
+        "design": "محادثات التصميم"
+      }
+    },
     "resetDefaultsPageAction": "استعادة افتراضيات هذه الصفحة",
     "resetDefaultsTabAction": "استعادة افتراضيات علامة التبويب الحالية",
     "resetDefaultsRegionAction": "استعادة افتراضيات هذا القسم",
@@ -5015,6 +5056,8 @@
     "developer": "المطور",
     "dockerSetupNotInstalled": "لم يتم الكشف عن Docker. اختر خيار Docker لهذا النظام الأساسي.",
     "dockerSetupNotRunning": "تم تثبيت Docker لكن البرنامج الخفي لا يعمل. ابدأ تشغيل Docker وحاول مرة أخرى.",
+    "dockerSetupWslNoDocker": "WSL جاهز. ثبّت Docker Engine في توزيعة WSL الافتراضية لاستخدام البيئة المعزولة من دون Docker Desktop.",
+    "dockerSetupWslNotRunning": "تم تثبيت Docker Engine في WSL لكن البرنامج الخفي لا يعمل. ابدأ Docker داخل WSL وحاول مرة أخرى.",
     "dreaming": {
       "candidateLimit": "حد المرشح",
       "candidateLimitDesc": "يتم إرسال الحد الأقصى من المرشحين إلى LLM لكل دورة.",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "تعيين وضع صلاحية الجلسة (default/smart/yolo)"
     },
+    "pet": {
+      "description": "إيقاظ حيوان سطح المكتب أو إخفاؤه أو فحص حالته"
+    },
     "plan": {
       "description": "الدخول/الخروج من خطة Mode"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "فتح جلسة العميل الفرعي",
     "agentId": "Agent ID",
     "attachments": "المرفقات",
+    "attempt": "المحاولة",
     "childSessionId": "جلسة فرعية",
     "depth": "العمق",
     "duration": "المدة",
@@ -8589,6 +8636,8 @@
     "parentSession": "الجلسة الأصل",
     "provider": "المزود",
     "runId": "معرّف التشغيل",
+    "terminalReason": "سبب الانتهاء",
+    "threadId": "معرّف سلسلة المحادثة",
     "startedAt": "وقت البدء",
     "task": "مهمة",
     "thinking": "مستوى التفكير",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "جميع المخرجات تطابق كودها",
       "checkStale": "{{n}} من المخرجات لديها تحديثات في الكود",
       "chatPrompt": "لقد تباعد الكود المنفَّذ عن هذا التصميم. حدِّث التصميم الحالي ليعكس تغييرات الكود المشار إليها، مع الحفاظ على مقصد التصميم وكل شيء آخر دون تغيير."
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "الحيوانات الأليفة",
+      "wake": "حيوان أليف على سطح المكتب",
+      "wakeDesc": "اعرض رفيقك المتحرك ونشاط المحادثات على سطح المكتب.",
+      "desktopOnly": "يتوفر الإيقاظ والإخفاء في تطبيق سطح المكتب.",
+      "choose": "اختر حيوانًا أليفًا",
+      "localOnly": "تبقى الحيوانات المخصصة على هذا الجهاز.",
+      "loadFailed": "تعذر تحميل الحيوانات الأليفة",
+      "saveFailed": "تعذر حفظ إعدادات الحيوان الأليف",
+      "cannotDeleteSelected": "اختر حيوانًا آخر قبل إزالة هذا الحيوان",
+      "deleted": "تمت إزالة الحيوان الأليف",
+      "undo": "تراجع",
+      "deleteFailed": "تعذرت إزالة الحيوان الأليف",
+      "deleteTitle": "هل تريد إزالة هذا الحيوان؟",
+      "deleteDescription": "هل تريد إزالة {{name}} من هذا الجهاز؟"
+    },
+    "discovery": {
+      "title": "تعرّف على حيوانك الأليف على سطح المكتب",
+      "description": "تابع المحادثات النشطة وتعامل مع الردود أو الطلبات مباشرة من سطح المكتب.",
+      "action": "جرّبه"
+    },
+    "import": {
+      "action": "استيراد",
+      "title": "استيراد حيوان أليف",
+      "description": "عاين الحيوانات المتوافقة مع Codex وتحقق منها قبل إضافتها إلى Hope.",
+      "drop": "أفلت مجلدًا أو zip أو بيانًا + صورة أو PNG أو WebP",
+      "dropSafety": "ينشئ الإفلات معاينة فقط. لن يتم تثبيت شيء قبل التأكيد.",
+      "chooseFiles": "اختيار الملفات",
+      "packageFiles": "حزم الحيوانات الأليفة",
+      "fromCodex": "فحص حيوانات Codex",
+      "found": "تم العثور على {{count}}",
+      "found_one": "تم العثور على {{count}}",
+      "found_other": "تم العثور على {{count}}",
+      "unknownVersion": "إصدار غير معروف",
+      "previewFailed": "تعذرت معاينة هذه الحزمة",
+      "previewFailedCount": "تعذرت معاينة {{amount}} من حزم الحيوانات الأليفة",
+      "previewCount": "{{amount}} حيوانات أليفة جاهزة للمراجعة",
+      "removePreview": "إزالة من عملية الاستيراد هذه",
+      "scanFailed": "تعذر فحص حيوانات Codex",
+      "uploadFailed": "تعذر رفع الحزمة",
+      "duplicate": "مستورَد بالفعل",
+      "enableAfter": "استخدام هذا الحيوان بعد الاستيراد",
+      "confirm": "استيراد الحيوان",
+      "imported": "تم استيراد الحيوان",
+      "importedCount": "تمت إضافة {{amount}} حيوانات أليفة إلى مكتبتك",
+      "alreadyImported": "هذا الحيوان موجود بالفعل في مكتبتك",
+      "commitFailed": "تعذر استيراد الحيوان",
+      "commitFailedCount": "تعذر استيراد {{amount}} حيوانات أليفة",
+      "linkPlaceholder": "الصق رابط تثبيت codex:// أو رابط HTTPS لصورة الحركة",
+      "linkLabel": "رابط الحيوان الأليف",
+      "previewLink": "معاينة الرابط"
+    },
+    "creator": {
+      "action": "إنشاء",
+      "title": "إنشاء حيوان أليف",
+      "description": "أنشئ شخصية أصلية وعاين الحركة المتوافقة مع Codex قبل تثبيتها.",
+      "name": "الاسم",
+      "shortDescription": "وصف قصير (اختياري)",
+      "prompt": "كيف تريد أن يبدو حيوانك الأليف؟",
+      "generate": "إنشاء معاينة",
+      "generating": "جارٍ إنشاء المعاينة…",
+      "failed": "تعذر إنشاء هذا الحيوان"
+    },
+    "export": {
+      "action": "تصدير إلى Codex",
+      "saved": "تم تصدير حزمة متوافقة مع Codex",
+      "failed": "تعذر تصدير هذا الحيوان"
+    },
+    "window": {
+      "interact": "تفاعل مع حيوان Hope الأليف",
+      "tuckAway": "إخفاء الحيوان"
+    },
+    "bubble": {
+      "needsInput": "تحتاج {{count}} محادثات إلى إدخالك.",
+      "needsInput_one": "أحتاج إلى إدخالك.",
+      "needsInput_other": "تحتاج {{count}} محادثات إلى إدخالك.",
+      "blocked": "هناك {{count}} محادثات متوقفة.",
+      "blocked_one": "هناك محادثة متوقفة.",
+      "blocked_other": "هناك {{count}} محادثات متوقفة.",
+      "ready": "هناك {{count}} محادثات جاهزة.",
+      "ready_one": "هناك محادثة جاهزة.",
+      "ready_other": "هناك {{count}} محادثات جاهزة.",
+      "open": "فتح في Hope",
+      "dismiss": "إغلاق",
+      "running": "جارٍ التفكير",
+      "reply": "رد",
+      "queued": "تم وضع الرد في قائمة الانتظار",
+      "sent": "تم إرسال الرد",
+      "sendFailed": "تعذر إرسال الرد"
+    },
+    "stack": {
+      "expand": "عرض {{count}} محادثات",
+      "collapse": "طي المحادثات"
+    },
+    "tray": {
+      "title": "نشاط المحادثات",
+      "reconnecting": "جارٍ تحديث الحالة…",
+      "count": "{{count}} نشطة",
+      "count_one": "{{count}} نشطة",
+      "count_other": "{{count}} نشطة",
+      "close": "إغلاق النشاط",
+      "openRemaining": "عرض {{count}} أخرى في Hope",
+      "openRemaining_one": "عرض {{count}} أخرى في Hope",
+      "openRemaining_other": "عرض {{count}} أخرى في Hope",
+      "incognitoTitle": "محادثة متخفية",
+      "untitledTitle": "محادثة جديدة"
+    },
+    "navigation": {
+      "unavailable": "لم تعد هذه المحادثة متاحة."
     }
   },
   "configRecovery": {

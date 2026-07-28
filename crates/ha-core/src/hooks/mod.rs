@@ -134,6 +134,56 @@ pub fn reset_precompact_blocks(session_id: &str) {
     }
 }
 
+/// Consecutive `Stop`-hook block-to-continue injections per session. Bounds a
+/// Stop hook that keeps blocking (asking Claude to continue) so it can't spin
+/// an unbounded token-burning loop.
+static STOP_CONTINUE_COUNTS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+
+/// Max consecutive Stop-hook continues honored before forcing the turn to stop.
+const MAX_STOP_CONTINUES: u32 = 3;
+
+/// Record a Stop-hook continue for `session_id` and return whether it should be
+/// HONORED. Returns `false` (force stop, reset the count) once the cap is hit.
+fn honor_stop_continue(session_id: &str) -> bool {
+    let map = STOP_CONTINUE_COUNTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    let count = guard.entry(session_id.to_string()).or_insert(0);
+    *count += 1;
+    if *count > MAX_STOP_CONTINUES {
+        guard.remove(session_id);
+        false
+    } else {
+        true
+    }
+}
+
+/// Whether a Stop-hook continue loop is currently active for `session_id`
+/// (drives the official `stop_hook_active` field so the hook can detect
+/// re-entrancy and stop blocking).
+fn stop_continue_active(session_id: &str) -> bool {
+    STOP_CONTINUE_COUNTS
+        .get()
+        .map(|m| {
+            m.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(session_id)
+                .copied()
+                .unwrap_or(0)
+                > 0
+        })
+        .unwrap_or(false)
+}
+
+/// Reset the Stop-hook continue counter — called on a normal stop (hook didn't
+/// block) so the next independent stop starts fresh.
+fn reset_stop_continue(session_id: &str) {
+    if let Some(m) = STOP_CONTINUE_COUNTS.get() {
+        m.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(session_id);
+    }
+}
+
 /// Pending `UserPromptSubmit` `additionalContext` per session. The preflight
 /// chokepoint sets this after the hook runs; the turn drains it once at start
 /// and folds it into `extra_system_context` next to `SessionStart`. Keyed by
@@ -181,8 +231,8 @@ pub use config::{
 };
 pub use transcript::{TranscriptLine, TranscriptMessage, TranscriptMirror};
 pub use types::{
-    CommonHookInput, CompactTrigger, HookDecision, HookEvent, HookInput, HookOutcome, HookOutput,
-    PermissionMode, SessionStartSource,
+    CommonHookInput, CompactTrigger, HookDecision, HookEffort, HookEvent, HookInput, HookOutcome,
+    HookOutput, PermissionMode, SessionStartSource, ToolCallSummary,
 };
 
 /// Entry point for business code: run all hooks matching `event`/`input` and
@@ -484,8 +534,14 @@ pub(crate) fn fire_and_forget_runtime() -> Option<&'static tokio::runtime::Runti
 
 /// Fire an observation hook without waiting for or consuming its output —
 /// for events that don't feed back into the current flow (`SessionEnd`,
-/// `Notification`). No-op when no hook is configured for the event, so call
-/// sites stay cheap. Bridges synchronous call sites onto a runtime.
+/// `Notification`). Bridges synchronous call sites onto a runtime.
+///
+/// This is the *second* of two gates. It is cwd-aware (so a project/local-only
+/// hook still fires) but needs the input to already exist, and building one
+/// costs a `sessions.working_dir` lookup. The `fire_*` helpers therefore run
+/// [`scopes::definitely_no_handlers_for`] first, which answers the common
+/// "nothing configured" case without touching the DB. Callers constructing an
+/// input by hand should do the same.
 pub fn fire_and_forget(event: HookEvent, input: HookInput) {
     let wd = session_working_dir(&input);
     if !scopes::any_handlers_for(event, wd.as_deref().map(std::path::Path::new)) {
@@ -517,6 +573,50 @@ fn session_working_dir(input: &HookInput) -> Option<String> {
     crate::session::effective_session_working_dir(Some(sid))
 }
 
+/// The current reasoning effort as the hook `effort` object (official
+/// `{ level }`), or `None` when unset. Reads the live global reasoning-effort
+/// cell — the value the UI picker / `/thinking` slash set and that provider
+/// loops apply each round. Uses `try_lock` so it stays sync-safe at the
+/// (synchronous) hook-input build sites; a momentarily-contended lock, an
+/// uninitialized cell, or an unset value (`none` / empty) all yield `None`.
+///
+/// It reflects the **global** effort, not a per-agent override
+/// (`Agent::effective_reasoning_effort` is async and per-agent) — a hint, not a
+/// guarantee. `effort.level` may be a Hope Agent value (`minimal`) outside the
+/// official `low|medium|high|xhigh|max` set.
+pub(crate) fn resolve_effort() -> Option<types::HookEffort> {
+    let cell = crate::globals::get_reasoning_effort_cell()?;
+    let level = cell.try_lock().ok()?.clone();
+    if level.is_empty() || level == "none" {
+        return None;
+    }
+    Some(types::HookEffort { level })
+}
+
+/// The active user turn's id as the hook `prompt_id` (the official per-turn
+/// correlation UUID), or `None` when no turn is active for this session.
+///
+/// Reuses the existing `chat_engine` per-turn UUID rather than minting a second
+/// id: `active_turn::current` is a synchronous in-memory registry lookup keyed
+/// by session, so it fits the (synchronous) hook-input build sites. Every hook
+/// that fires *inside* a turn (`PreToolUse` / `PostToolUse` / `PostToolBatch` /
+/// `Stop` / `PermissionRequest` / …) therefore shares one `prompt_id` and a
+/// script can group them into a single user turn.
+///
+/// **Known gap (§2.4)**: only four production sites ever acquire an active turn
+/// (Desktop `chat`, HTTP `/chat`, the IM dispatcher and manual compaction), so
+/// engine runs that bypass them — ACP, cron, background subagents, eval — carry
+/// `None` on *every* hook of the run. `UserPromptSubmit` is the exception: it
+/// takes the caller-minted turn id directly (see [`fire_user_prompt_submit`]),
+/// which is why the IM and ACP entry points still report an id here even though
+/// they fire the hook before / without acquiring.
+pub(crate) fn resolve_prompt_id(session_id: &str) -> Option<String> {
+    if session_id.is_empty() {
+        return None;
+    }
+    crate::chat_engine::active_turn::current(session_id).map(|snapshot| snapshot.turn_id)
+}
+
 /// Common hook-input fields for app-/session-level (non-tool) observation
 /// hooks. `cwd` is the session working dir (falling back to home);
 /// `agent_id`/`agent_type` unknown at these sites.
@@ -534,9 +634,11 @@ fn observation_common(event: &str, session_id: &str) -> CommonHookInput {
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     CommonHookInput {
         session_id: session_id.to_string(),
+        prompt_id: resolve_prompt_id(session_id),
         transcript_path,
         cwd,
         permission_mode: PermissionMode::Default,
+        effort: resolve_effort(),
         hook_event_name: event.to_string(),
         agent_id: None,
         agent_type: None,
@@ -574,6 +676,11 @@ pub async fn dispatch_worktree_create(
 /// Fire a `WorktreeRemove` observation hook after the built-in cleanup removes
 /// a managed git worktree.
 pub fn fire_worktree_remove(session_id: &str, worktree_path: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::WorktreeRemove) {
+        return;
+    }
+
     let mut common = observation_common("WorktreeRemove", session_id);
     common.cwd = std::path::PathBuf::from(worktree_path);
     let input = HookInput::WorktreeRemove {
@@ -587,6 +694,11 @@ pub fn fire_worktree_remove(session_id: &str, worktree_path: &str) {
 /// desktop-notification bridging. `additionalContext` is not injected this
 /// phase (these sites are outside a turn).
 pub fn fire_notification(session_id: &str, notification_type: &str, message: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::Notification) {
+        return;
+    }
+
     let input = HookInput::Notification {
         common: observation_common("Notification", session_id),
         notification_type: notification_type.to_string(),
@@ -601,11 +713,32 @@ pub fn fire_notification(session_id: &str, notification_type: &str, message: &st
 /// injected context for the turn. Returns `noop()` early when no hook is
 /// configured. `prompt` is the raw user text about to be persisted; `agent_id`
 /// is the agent that will run the turn (lets scripts gate per agent).
+///
+/// `turn_id` is the id the entry point will hand to
+/// [`crate::chat_engine::active_turn::try_acquire`], and it **overrides** the
+/// registry lookup in [`observation_common`]: some entry points fire this hook
+/// before acquiring (IM, which deliberately captures inbound history ahead of
+/// the single-flight gate) or never acquire at all (ACP), so the registry
+/// cannot see the turn yet. Taking the caller's id — rather than a slot in
+/// process-global state — is what makes `UserPromptSubmit` share one
+/// `prompt_id` with the rest of the turn without a way to leak an id across
+/// turns.
+///
+/// Pass `""` only where no turn will run: it means "omit `prompt_id`", and it
+/// means that UNCONDITIONALLY — the caller's id fully replaces the registry
+/// lookup rather than falling back to it. That matters because a caller with no
+/// turn of its own may still be running on a session that has one, and falling
+/// back would silently stamp that unrelated turn's id onto this prompt, merging
+/// two turns for any script correlating on the field.
 pub async fn fire_user_prompt_submit(
     session_id: &str,
     agent_id: Option<&str>,
     prompt: &str,
+    turn_id: &str,
 ) -> HookOutcome {
+    if scopes::definitely_no_handlers_for(HookEvent::UserPromptSubmit) {
+        return HookOutcome::noop();
+    }
     let wd = crate::session::effective_session_working_dir(Some(session_id));
     if !scopes::any_handlers_for(
         HookEvent::UserPromptSubmit,
@@ -615,6 +748,8 @@ pub async fn fire_user_prompt_submit(
     }
     let mut common = observation_common("UserPromptSubmit", session_id);
     common.agent_id = agent_id.map(|s| s.to_string());
+    // Unconditional assignment, NOT `if !is_empty()` — see the doc above.
+    common.prompt_id = (!turn_id.is_empty()).then(|| turn_id.to_string());
     let input = HookInput::UserPromptSubmit {
         common,
         prompt: prompt.to_string(),
@@ -638,6 +773,14 @@ pub async fn fire_session_start_observation(
     agent_id: &str,
     model: &str,
 ) -> Option<String> {
+    // Pre-gate before the input build costs a session lookup. Note this fires
+    // once per TURN (the `claim_session_start` dedup is below), so without it an
+    // unconfigured install paid a `sessions.working_dir` read every turn for a
+    // hook that can run at most once per session.
+    if scopes::definitely_no_handlers_for(HookEvent::SessionStart) {
+        return None;
+    }
+
     let wd = crate::session::effective_session_working_dir(Some(session_id));
     if !scopes::any_handlers_for(
         HookEvent::SessionStart,
@@ -660,7 +803,7 @@ pub async fn fire_session_start_observation(
         common,
         source,
         model: model.to_string(),
-        agent_type: None,
+        session_title: None,
     };
     HookDispatcher::dispatch(HookEvent::SessionStart, input)
         .await
@@ -669,6 +812,11 @@ pub async fn fire_session_start_observation(
 
 /// Fire a `SessionEnd` hook. Pure observation (no `hookSpecificOutput`).
 pub fn fire_session_end(session_id: &str, source: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::SessionEnd) {
+        return;
+    }
+
     let input = HookInput::SessionEnd {
         common: observation_common("SessionEnd", session_id),
         source: source.to_string(),
@@ -680,6 +828,11 @@ pub fn fire_session_end(session_id: &str, source: &str) {
 /// actually finish before the process exits (e.g. the server's graceful
 /// shutdown). Synchronous, fire-and-forget call sites use [`fire_session_end`].
 pub async fn dispatch_session_end(session_id: &str, source: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::SessionEnd) {
+        return;
+    }
+
     let wd = crate::session::effective_session_working_dir(Some(session_id));
     if !scopes::any_handlers_for(
         HookEvent::SessionEnd,
@@ -697,8 +850,16 @@ pub async fn dispatch_session_end(session_id: &str, source: &str) {
 /// Fire a `SubagentStart` observation hook (sub-agent spawned). `session_id` is
 /// the parent session; `subagent_id` is the spawned agent's id (matcher target).
 pub fn fire_subagent_start(session_id: &str, subagent_id: &str, run_id: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::SubagentStart) {
+        return;
+    }
+
     let input = HookInput::SubagentStart {
         common: observation_common("SubagentStart", session_id),
+        // The passed id is the agent's id/name, which also serves as the
+        // official `agent_type` matcher target.
+        agent_type: subagent_id.to_string(),
         subagent_id: subagent_id.to_string(),
         run_id: run_id.to_string(),
     };
@@ -706,35 +867,176 @@ pub fn fire_subagent_start(session_id: &str, subagent_id: &str, run_id: &str) {
 }
 
 /// Fire a `SubagentStop` observation hook (sub-agent reached a terminal state).
-pub fn fire_subagent_stop(session_id: &str, subagent_id: &str, run_id: &str, status: &str) {
+/// `last_message` is the sub-agent's final assistant text when available.
+pub fn fire_subagent_stop(
+    session_id: &str,
+    subagent_id: &str,
+    run_id: &str,
+    status: &str,
+    last_message: Option<&str>,
+) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::SubagentStop) {
+        return;
+    }
+
     let input = HookInput::SubagentStop {
         common: observation_common("SubagentStop", session_id),
+        agent_type: subagent_id.to_string(),
         subagent_id: subagent_id.to_string(),
         run_id: run_id.to_string(),
         status: status.to_string(),
+        last_assistant_message: last_message.map(str::to_string),
     };
     fire_and_forget(HookEvent::SubagentStop, input);
 }
 
-/// Fire the `Stop` observation hook — a turn finished responding without an
-/// error (normal completion or a user-initiated stop). `status` is the terminal
-/// turn status (`completed` / `interrupted`). Fire-and-forget; block-to-continue
-/// is not implemented this phase.
-pub fn fire_stop(session_id: &str, agent_id: Option<&str>, status: &str) {
-    let mut common = observation_common("Stop", session_id);
-    common.agent_id = agent_id.map(|s| s.to_string());
-    let input = HookInput::Stop {
-        common,
-        status: status.to_string(),
-        stop_hook_active: false,
+/// Fire the `Stop` hook — a turn finished responding without an error (normal
+/// completion or a user-initiated stop). `status` is the terminal turn status
+/// (`completed` / `interrupted`).
+///
+/// **Block-to-continue** (official `Stop` `exit 2` / `decision:block` = "prevent
+/// stopping, continue"): if the hook blocks, its reason is injected as a
+/// system-reminder and the session is re-driven for another turn (reusing the
+/// subagent injection pipeline, like `asyncRewake`). Bounded by
+/// [`MAX_STOP_CONTINUES`] and gated by `stop_hook_active` so a hook can detect
+/// re-entrancy. A normal stop (no block) resets the counter.
+pub fn fire_stop(
+    session_id: &str,
+    agent_id: Option<&str>,
+    status: &str,
+    last_message: Option<&str>,
+) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::Stop) {
+        return;
+    }
+
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(HookEvent::Stop, wd.as_deref().map(std::path::Path::new)) {
+        return;
+    }
+    let session_id = session_id.to_string();
+    let agent_id = agent_id.map(|s| s.to_string());
+    let status = status.to_string();
+    let last_message = last_message.map(|s| s.to_string());
+    let run = async move {
+        // Block-to-continue applies ONLY to a natural completion — a
+        // user-initiated interrupt (`status="interrupted"`, fired from the
+        // finalize path) must never be resurrected by a blocking Stop hook.
+        let is_natural_stop = status == "completed";
+        let mut common = observation_common("Stop", &session_id);
+        common.agent_id = agent_id.clone();
+        let input = HookInput::Stop {
+            common,
+            status,
+            last_assistant_message: last_message,
+            // True when already inside a continue loop, so the hook can stop.
+            stop_hook_active: stop_continue_active(&session_id),
+        };
+        let outcome = HookDispatcher::dispatch(HookEvent::Stop, input).await;
+        let wants_continue = if is_natural_stop {
+            outcome.stop_wants_continue()
+        } else {
+            None
+        };
+        match wants_continue {
+            Some(reason) if honor_stop_continue(&session_id) => {
+                // If we can't actually re-drive (no session DB / unresolvable
+                // agent), undo the counter bump so the next independent stop
+                // isn't penalized with a spurious `stop_hook_active` / a shrunk
+                // continue budget.
+                if !stop_continue_inject(&session_id, agent_id.as_deref(), &reason).await {
+                    reset_stop_continue(&session_id);
+                }
+            }
+            // Normal stop, a non-natural (interrupted) stop, or the continue cap
+            // was hit → let the turn end and reset so the next independent stop
+            // starts fresh.
+            _ => reset_stop_continue(&session_id),
+        }
     };
-    fire_and_forget(HookEvent::Stop, input);
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(run);
+    } else if let Some(rt) = fire_and_forget_runtime() {
+        rt.spawn(run);
+    }
+}
+
+/// Inject a `Stop`-hook block reason as a system-reminder and re-drive the
+/// session for another turn (block-to-continue). Reuses the subagent injection
+/// pipeline (waits for idle, appends a `ParentInjection` user message, runs one
+/// turn) — the same mechanism as `asyncRewake`. No-op without a resolvable
+/// session / agent.
+///
+/// Returns whether the continue should COUNT against the session's budget. The
+/// caller undoes its counter bump on `false`, so this must be false exactly when
+/// no re-drive happened and none is pending:
+/// - `Injected` → true. The turn ran, or failed terminally (empty model chain,
+///   deleted session). A terminal failure still consumes an attempt on purpose —
+///   re-driving into a broken config would spin.
+/// - `Queued` → true. The task is in `PENDING_INJECTIONS` and the next flush
+///   owns it, so the continue is merely deferred, not lost.
+/// - `Abandoned` → **false**. Nothing was persisted and nothing in-process will
+///   retry. Counting it would both shrink the budget for a continue that never
+///   happened and leave `stop_hook_active` reporting a loop that isn't running —
+///   which a conforming Stop hook reads as "stop blocking", silently dropping
+///   the next legitimate continue.
+async fn stop_continue_inject(session_id: &str, agent_id: Option<&str>, reason: &str) -> bool {
+    let Some(db) = crate::globals::get_session_db().cloned() else {
+        return false;
+    };
+    let agent_id = match agent_id {
+        Some(a) => a.to_string(),
+        None => match crate::session::lookup_session_meta(Some(session_id)).map(|m| m.agent_id) {
+            Some(a) => a,
+            None => return false,
+        },
+    };
+    let push = format!(
+        "<stop-hook-feedback>\n{}\n</stop-hook-feedback>",
+        escape_xml_text(reason.trim())
+    );
+    crate::app_info!(
+        "hooks",
+        "stop_continue",
+        "session={} Stop hook requested continue — re-driving with feedback",
+        session_id
+    );
+    let outcome = crate::subagent::injection::inject_and_run_parent(
+        session_id.to_string(),
+        agent_id.clone(),
+        agent_id,
+        format!("stop-hook-continue-{}", uuid::Uuid::new_v4()),
+        push,
+        db,
+        None,
+    )
+    .await;
+    match outcome {
+        crate::subagent::injection::InjectionOutcome::Abandoned => {
+            crate::app_warn!(
+                "hooks",
+                "stop_continue",
+                "session={} Stop-hook continue was abandoned (nothing persisted) — \
+                 not counting it against the continue budget",
+                session_id
+            );
+            false
+        }
+        _ => true,
+    }
 }
 
 /// Fire the `StopFailure` observation hook — a turn ended because of an error.
 /// `reason` is the failure category (matcher target, e.g. `provider_failed`);
 /// `error` is the message, when there is one.
 pub fn fire_stop_failure(session_id: &str, reason: &str, error: Option<&str>) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::StopFailure) {
+        return;
+    }
+
     let input = HookInput::StopFailure {
         common: observation_common("StopFailure", session_id),
         reason: reason.to_string(),
@@ -751,6 +1053,11 @@ pub fn fire_task_created(
     active_form: Option<&str>,
     batch_id: &str,
 ) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::TaskCreated) {
+        return;
+    }
+
     let input = HookInput::TaskCreated {
         common: observation_common("TaskCreated", session_id),
         content: content.to_string(),
@@ -762,6 +1069,11 @@ pub fn fire_task_created(
 
 /// Fire a `TaskCompleted` observation hook (a task transitioned to completed).
 pub fn fire_task_completed(session_id: &str, task_id: i64, content: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::TaskCompleted) {
+        return;
+    }
+
     let input = HookInput::TaskCompleted {
         common: observation_common("TaskCompleted", session_id),
         task_id,
@@ -770,10 +1082,70 @@ pub fn fire_task_completed(session_id: &str, task_id: i64, content: &str) {
     fire_and_forget(HookEvent::TaskCompleted, input);
 }
 
+/// Blocking `TaskCreated` dispatch: returns the aggregated outcome so the
+/// interactive `task_create` tool can veto (roll back) creation on a hook
+/// `exit 2` / `decision:block` (official). `HookOutcome::noop()` fast path when
+/// no TaskCreated hook is configured. The workflow path uses the fire-and-forget
+/// [`fire_task_created`] (a block there has no effect — documented).
+pub async fn dispatch_task_created(
+    session_id: &str,
+    content: &str,
+    active_form: Option<&str>,
+    batch_id: &str,
+) -> HookOutcome {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::TaskCreated) {
+        return HookOutcome::noop();
+    }
+
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(
+        HookEvent::TaskCreated,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
+    let input = HookInput::TaskCreated {
+        common: observation_common("TaskCreated", session_id),
+        content: content.to_string(),
+        active_form: active_form.map(|s| s.to_string()),
+        batch_id: batch_id.to_string(),
+    };
+    HookDispatcher::dispatch(HookEvent::TaskCreated, input).await
+}
+
+/// Blocking `TaskCompleted` dispatch: returns the outcome so the tool can veto
+/// marking a task complete on a hook block (official). Noop fast path.
+pub async fn dispatch_task_completed(session_id: &str, task_id: i64, content: &str) -> HookOutcome {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::TaskCompleted) {
+        return HookOutcome::noop();
+    }
+
+    let wd = crate::session::effective_session_working_dir(Some(session_id));
+    if !scopes::any_handlers_for(
+        HookEvent::TaskCompleted,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
+    let input = HookInput::TaskCompleted {
+        common: observation_common("TaskCompleted", session_id),
+        task_id,
+        content: content.to_string(),
+    };
+    HookDispatcher::dispatch(HookEvent::TaskCompleted, input).await
+}
+
 /// Fire a `ConfigChange` observation hook (app config was written). App-global
 /// (no session). `category` is the matcher target (the config domain that
 /// changed); `source` is who triggered it.
 pub fn fire_config_change(category: &str, source: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::ConfigChange) {
+        return;
+    }
+
     let input = HookInput::ConfigChange {
         common: observation_common("ConfigChange", ""),
         category: category.to_string(),
@@ -784,6 +1156,11 @@ pub fn fire_config_change(category: &str, source: &str) {
 
 /// Fire a `CwdChanged` observation hook (a session's working dir changed).
 pub fn fire_cwd_changed(session_id: &str, old_cwd: Option<&str>, new_cwd: Option<&str>) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::CwdChanged) {
+        return;
+    }
+
     let input = HookInput::CwdChanged {
         common: observation_common("CwdChanged", session_id),
         old_cwd: old_cwd.map(|s| s.to_string()),
@@ -797,6 +1174,11 @@ pub fn fire_cwd_changed(session_id: &str, old_cwd: Option<&str>, new_cwd: Option
 /// `action` is `create` / `edit` / `delete` / `patch`. No-op fast path when no
 /// FileChanged hook is configured, so it's cheap to call on every file write.
 pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::FileChanged) {
+        return;
+    }
+
     // `fire_and_forget` applies the cwd-aware multi-scope gate.
     let input = HookInput::FileChanged {
         common: observation_common("FileChanged", session_id.unwrap_or("")),
@@ -806,19 +1188,47 @@ pub fn fire_file_changed(session_id: Option<&str>, path: &str, action: &str) {
     fire_and_forget(HookEvent::FileChanged, input);
 }
 
-/// Fire a `PermissionRequest` observation hook (a tool approval prompt was
-/// raised). `command` is the matcher target (the command / tool being gated);
-/// `tool_use_id` correlates it with the PreToolUse/PostToolUse for the same
-/// call. `job_id` stays `None` — approval always runs before a call detaches
-/// (B5), so there is never a live job id at this point.
-pub fn fire_permission_request(session_id: Option<&str>, command: &str, tool_use_id: Option<&str>) {
+/// Blocking `PermissionRequest` dispatch: returns the outcome so the approval
+/// flow can auto-DENY on a hook `exit 2` / `decision:block` /
+/// `decision.behavior:"deny"` (official). Noop fast path when nothing is
+/// configured. **Deny-only**: an explicit hook `allow` is intentionally NOT
+/// honored as an auto-approve (that would let a hook bypass the user / strict
+/// mode); it falls through to the normal approval prompt.
+///
+/// `tool_input` is borrowed, never owned: the clone happens *after* the
+/// `any_handlers_for` gate, so an unconfigured install pays nothing per
+/// approval.
+pub async fn dispatch_permission_request(
+    session_id: Option<&str>,
+    tool_name: Option<&str>,
+    tool_input: Option<&serde_json::Value>,
+    command: &str,
+    tool_use_id: Option<&str>,
+) -> HookOutcome {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::PermissionRequest) {
+        return HookOutcome::noop();
+    }
+
+    let sid = session_id.unwrap_or("");
+    let wd = (!sid.is_empty())
+        .then(|| crate::session::effective_session_working_dir(Some(sid)))
+        .flatten();
+    if !scopes::any_handlers_for(
+        HookEvent::PermissionRequest,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
     let input = HookInput::PermissionRequest {
-        common: observation_common("PermissionRequest", session_id.unwrap_or("")),
+        common: observation_common("PermissionRequest", sid),
+        tool_name: tool_name.map(str::to_string),
+        tool_input: tool_input.cloned(),
         command: command.to_string(),
         tool_use_id: tool_use_id.map(str::to_string),
         job_id: None,
     };
-    fire_and_forget(HookEvent::PermissionRequest, input);
+    HookDispatcher::dispatch(HookEvent::PermissionRequest, input).await
 }
 
 /// Fire a `PermissionDenied` observation hook (a tool was denied). `reason` is
@@ -827,12 +1237,21 @@ pub fn fire_permission_request(session_id: Option<&str>, command: &str, tool_use
 /// (approval runs before detach, B5).
 pub fn fire_permission_denied(
     session_id: Option<&str>,
+    tool_name: Option<&str>,
+    tool_input: Option<&serde_json::Value>,
     command: &str,
     reason: &str,
     tool_use_id: Option<&str>,
 ) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::PermissionDenied) {
+        return;
+    }
+
     let input = HookInput::PermissionDenied {
         common: observation_common("PermissionDenied", session_id.unwrap_or("")),
+        tool_name: tool_name.map(str::to_string),
+        tool_input: tool_input.cloned(),
         command: command.to_string(),
         reason: reason.to_string(),
         tool_use_id: tool_use_id.map(str::to_string),
@@ -868,6 +1287,11 @@ pub fn fire_async_job_terminal(
     is_interrupt: bool,
     result_or_error: &str,
 ) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::PostToolUse) {
+        return;
+    }
+
     let event = if is_error {
         HookEvent::PostToolUseFailure
     } else {
@@ -922,6 +1346,11 @@ pub fn fire_user_prompt_expansion(
     command: &str,
     command_text: &str,
 ) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::UserPromptExpansion) {
+        return;
+    }
+
     let mut common = observation_common("UserPromptExpansion", session_id.unwrap_or(""));
     common.agent_id = Some(agent_id.to_string());
     let input = HookInput::UserPromptExpansion {
@@ -932,8 +1361,47 @@ pub fn fire_user_prompt_expansion(
     fire_and_forget(HookEvent::UserPromptExpansion, input);
 }
 
+/// Blocking `UserPromptExpansion` dispatch: returns the outcome so the slash
+/// command runner can veto expansion (not run the command) on a hook block
+/// (official). Noop fast path when nothing is configured.
+pub async fn dispatch_user_prompt_expansion(
+    session_id: Option<&str>,
+    agent_id: &str,
+    command: &str,
+    command_text: &str,
+) -> HookOutcome {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::UserPromptExpansion) {
+        return HookOutcome::noop();
+    }
+
+    let sid = session_id.unwrap_or("");
+    let wd = (!sid.is_empty())
+        .then(|| crate::session::effective_session_working_dir(Some(sid)))
+        .flatten();
+    if !scopes::any_handlers_for(
+        HookEvent::UserPromptExpansion,
+        wd.as_deref().map(std::path::Path::new),
+    ) {
+        return HookOutcome::noop();
+    }
+    let mut common = observation_common("UserPromptExpansion", sid);
+    common.agent_id = Some(agent_id.to_string());
+    let input = HookInput::UserPromptExpansion {
+        common,
+        command: command.to_string(),
+        command_text: command_text.to_string(),
+    };
+    HookDispatcher::dispatch(HookEvent::UserPromptExpansion, input).await
+}
+
 /// Fire an `Elicitation` observation hook (`ask_user_question` raised a prompt).
 pub fn fire_elicitation(session_id: &str, request_id: &str, question_count: usize) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::Elicitation) {
+        return;
+    }
+
     let input = HookInput::Elicitation {
         common: observation_common("Elicitation", session_id),
         request_id: request_id.to_string(),
@@ -945,6 +1413,11 @@ pub fn fire_elicitation(session_id: &str, request_id: &str, question_count: usiz
 /// Fire an `ElicitationResult` observation hook (an `ask_user_question` group
 /// reached a terminal state). `status` is `answered` / `cancelled` / `timeout`.
 pub fn fire_elicitation_result(session_id: &str, request_id: &str, status: &str) {
+    // Pre-gate before the input build costs a session lookup.
+    if scopes::definitely_no_handlers_for(HookEvent::ElicitationResult) {
+        return;
+    }
+
     let input = HookInput::ElicitationResult {
         common: observation_common("ElicitationResult", session_id),
         request_id: request_id.to_string(),
@@ -987,6 +1460,35 @@ mod guard_tests {
     }
 
     #[test]
+    fn prompt_id_reuses_active_turn_id() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        let _lock = crate::chat_engine::active_turn::test_lock();
+        let sid = "pid-test-sess";
+        // Empty session id → never a prompt_id.
+        assert!(resolve_prompt_id("").is_none());
+        // No active turn (ACP / cron / background subagent runs, which never
+        // acquire) → None. `UserPromptSubmit` is not in this bucket: it takes
+        // the caller-minted turn id directly, see `fire_user_prompt_submit`.
+        assert!(resolve_prompt_id(sid).is_none());
+        // Inside a turn → the turn's UUID, shared by every in-turn hook fire.
+        let turn_id = uuid::Uuid::new_v4().to_string();
+        let guard = crate::chat_engine::active_turn::try_acquire(
+            sid,
+            crate::chat_engine::ChatSource::Desktop,
+            turn_id.clone(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("acquire active turn");
+        assert_eq!(resolve_prompt_id(sid).as_deref(), Some(turn_id.as_str()));
+        // Stable across repeated reads within the same turn.
+        assert_eq!(resolve_prompt_id(sid), resolve_prompt_id(sid));
+        drop(guard);
+        // Turn released → back to None.
+        assert!(resolve_prompt_id(sid).is_none());
+    }
+
+    #[test]
     fn pending_prompt_context_set_take_and_clear() {
         // Set then take → returns once, cleared after.
         set_user_prompt_context("guard-test-ups-A", Some("CTX".into()));
@@ -1003,6 +1505,90 @@ mod guard_tests {
         set_user_prompt_context("guard-test-ups-C", Some(String::new()));
         assert!(take_user_prompt_context("guard-test-ups-C").is_none());
     }
+
+    #[test]
+    fn observation_common_never_sets_agent_type() {
+        // `SubagentStart`/`SubagentStop` re-declare `agent_type` alongside the
+        // flattened common block, and both serialize to the same JSON key. The
+        // variant field is kept (it is the required matcher target, and a
+        // `String` can't silently degrade the matcher to wildcard-only the way
+        // an unset `Option` would), so the invariant that keeps the key unique
+        // is: the production builder must never populate `common.agent_type`.
+        //
+        // This drives that builder for real. The sibling test in `types.rs`
+        // hand-builds its common block and is therefore blind here: setting
+        // `agent_type: Some(..)` below ships two `"agent_type"` keys on every
+        // `fire_subagent_start` payload while that test stays green.
+        let common = observation_common("SubagentStart", "agent-type-invariant-sess");
+        assert!(
+            common.agent_type.is_none(),
+            "observation_common must leave agent_type unset — Subagent* re-declares it, \
+             so populating both emits a duplicate JSON key (see HookInput::SubagentStart)"
+        );
+
+        let input = HookInput::SubagentStart {
+            common,
+            subagent_id: "sa-1".into(),
+            agent_type: "code-reviewer".into(),
+            run_id: "r-1".into(),
+        };
+        let text = serde_json::to_string(&input).expect("serialize");
+        assert_eq!(
+            text.matches("\"agent_type\"").count(),
+            1,
+            "duplicate agent_type key in the payload the fire site actually builds: {text}"
+        );
+        // jq silently keeps the LAST of two duplicate keys, so a duplicate would
+        // make an official subagent hook read a different value than the matcher
+        // targeted — assert the survivor is the variant's.
+        let v: serde_json::Value = serde_json::from_str(&text).expect("parse");
+        assert_eq!(v["agent_type"], "code-reviewer");
+    }
+
+    #[test]
+    fn stop_continue_counter_caps_resets_and_never_leaks() {
+        // Unique ids: STOP_CONTINUE_COUNTS is a process-global keyed by session.
+        let sid = "stop-continue-test-A";
+        let other = "stop-continue-test-B";
+
+        // Nothing recorded yet → the payload's `stop_hook_active` is false, so a
+        // hook can tell a first stop from a re-driven one.
+        assert!(!stop_continue_active(sid));
+
+        // The first MAX_STOP_CONTINUES blocks are honored, and the loop reads as
+        // active between them.
+        for n in 1..=MAX_STOP_CONTINUES {
+            assert!(honor_stop_continue(sid), "continue #{n} must be honored");
+            assert!(stop_continue_active(sid), "loop active after continue #{n}");
+        }
+
+        // One past the cap is refused AND the entry is dropped in the same call.
+        // Leaving the count behind (returning false without removing) is the
+        // leak this pins: the session would then read as permanently "in a
+        // continue loop" and every later Stop would report stop_hook_active.
+        assert!(!honor_stop_continue(sid), "the cap must force a stop");
+        assert!(
+            !stop_continue_active(sid),
+            "hitting the cap must clear the counter, not leak it"
+        );
+
+        // A later, independent stop on the same session starts fresh.
+        assert!(honor_stop_continue(sid));
+        assert!(stop_continue_active(sid));
+
+        // The engine's own reset (hook didn't block / turn was interrupted).
+        reset_stop_continue(sid);
+        assert!(!stop_continue_active(sid));
+        // Resetting an absent entry is a no-op, not a panic.
+        reset_stop_continue(sid);
+        assert!(!stop_continue_active(sid));
+
+        // Sessions never cross-contaminate.
+        assert!(honor_stop_continue(other));
+        assert!(stop_continue_active(other));
+        assert!(!stop_continue_active(sid));
+        reset_stop_continue(other);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1014,9 +1600,11 @@ mod tests {
     fn common(event: &str) -> CommonHookInput {
         CommonHookInput {
             session_id: "s1".into(),
+            prompt_id: None,
             transcript_path: PathBuf::from("/tmp/t.jsonl"),
             cwd: PathBuf::from("/tmp"),
             permission_mode: PermissionMode::Default,
+            effort: None,
             hook_event_name: event.into(),
             agent_id: None,
             agent_type: None,
@@ -1119,6 +1707,62 @@ mod tests {
                 .await;
         assert_eq!(out.decision, HookDecision::Allow);
         assert!(out.continue_execution);
+    }
+
+    #[tokio::test]
+    async fn task_created_block_survives_dispatch() {
+        // TaskCreated is now gate-capable — an exit-2 Block must survive
+        // aggregation (not be neutralized like an observation event).
+        let reg = registry_from(
+            r#"{"TaskCreated":[{"hooks":[
+                {"type":"command","shell":"bash","command":"echo nope 1>&2; exit 2"}
+            ]}]}"#,
+        );
+        let input = HookInput::TaskCreated {
+            common: common("TaskCreated"),
+            content: "t".into(),
+            active_form: None,
+            batch_id: "b".into(),
+        };
+        let out = HookDispatcher::dispatch_with(&reg, HookEvent::TaskCreated, input).await;
+        assert!(matches!(out.decision, HookDecision::Block { .. }));
+        assert!(out.block_reason().is_some());
+    }
+
+    #[tokio::test]
+    async fn permission_request_matches_on_tool_name_alias() {
+        // matcher "Bash" normalizes to internal "exec"; a PermissionRequest
+        // carrying tool_name=Some("exec") must match and (being gate-capable)
+        // yield Block — proving tool-name matching works once the tool name is
+        // threaded through the approval path.
+        let reg = registry_from(
+            r#"{"PermissionRequest":[{"matcher":"Bash","hooks":[
+                {"type":"command","shell":"bash","command":"echo denied 1>&2; exit 2"}
+            ]}]}"#,
+        );
+        let with_name = HookInput::PermissionRequest {
+            common: common("PermissionRequest"),
+            tool_name: Some("exec".into()),
+            tool_input: None,
+            command: "npm test".into(),
+            tool_use_id: None,
+            job_id: None,
+        };
+        let out =
+            HookDispatcher::dispatch_with(&reg, HookEvent::PermissionRequest, with_name).await;
+        assert!(matches!(out.decision, HookDecision::Block { .. }));
+        // Without a tool name, a tool-name matcher falls back to `command`
+        // ("npm test") which "Bash"→"exec" never matches → no veto.
+        let no_name = HookInput::PermissionRequest {
+            common: common("PermissionRequest"),
+            tool_name: None,
+            tool_input: None,
+            command: "npm test".into(),
+            tool_use_id: None,
+            job_id: None,
+        };
+        let out2 = HookDispatcher::dispatch_with(&reg, HookEvent::PermissionRequest, no_name).await;
+        assert_eq!(out2.decision, HookDecision::Allow);
     }
 
     #[tokio::test]

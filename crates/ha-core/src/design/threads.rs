@@ -57,6 +57,8 @@ pub fn create_thread(session_id: &str, project_id: &str) -> Result<()> {
          ON CONFLICT(session_id) DO NOTHING",
         params![session_id, project_id, now],
     )?;
+    drop(conn);
+    crate::pet::emit_activity_changed();
     Ok(())
 }
 
@@ -91,7 +93,7 @@ pub fn latest_thread_for_project(project_id: &str) -> Result<Option<String>> {
             "SELECT t.session_id
              FROM design_chat_threads t
              JOIN sessions s ON s.id = t.session_id
-             WHERE t.project_id = ?1
+             WHERE t.project_id = ?1 AND s.archived_at IS NULL
              ORDER BY s.updated_at DESC
              LIMIT 1",
             params![project_id],
@@ -158,6 +160,7 @@ pub fn list_threads(
              FROM design_chat_threads t
              JOIN sessions s ON s.id = t.session_id
              WHERE t.project_id = ?1
+               AND s.archived_at IS NULL
                AND t.session_id IN (
                    SELECT DISTINCT m.session_id FROM messages_fts fts
                    JOIN messages m ON m.id = fts.rowid
@@ -174,7 +177,7 @@ pub fn list_threads(
             "SELECT {SELECT}
              FROM design_chat_threads t
              JOIN sessions s ON s.id = t.session_id
-             WHERE t.project_id = ?1
+             WHERE t.project_id = ?1 AND s.archived_at IS NULL
              ORDER BY s.updated_at DESC
              LIMIT ?2 OFFSET ?3"
         );

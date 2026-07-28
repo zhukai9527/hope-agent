@@ -19,8 +19,8 @@ use super::super::types::HookInput;
 use super::{HookHandler, RawHookResult};
 use crate::subagent::{spawn_subagent, SpawnParams, HOOK_SPAWN_LABEL};
 
-/// Default `agent` hook timeout when waiting for a synchronous run.
-const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 120;
+/// Default `agent` hook timeout when waiting for a synchronous run (official 60s).
+const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 60;
 /// Poll interval while waiting for a synchronous sub-agent run.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -99,6 +99,9 @@ impl HookHandler for AgentHandler {
             origin_channel_kb_context: None,
             // Internal hook-spawned subagent (skip_parent_injection) — never grouped (R5).
             group_id: None,
+            owner_kind: crate::subagent::SubagentOwnerKind::Internal,
+            owner_id: format!("hook:{}", common.session_id),
+            delivery_kind: crate::subagent::SubagentDeliveryKind::None,
         };
 
         let run_id = match spawn_subagent(params, session_db.clone(), cancel_registry.clone()).await

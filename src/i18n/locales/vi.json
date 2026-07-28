@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "Chuyển sang chế độ thường",
     "copied": "Đã sao chép",
     "copy": "Sao chép",
+    "editMessage": {
+      "action": "Chỉnh sửa tin nhắn",
+      "inputLabel": "Chỉnh sửa tin nhắn của bạn",
+      "fileChangesWarning": "Cuộc trò chuyện sau tin nhắn này sẽ bị xóa, nhưng các thay đổi đã thực hiện với tệp sẽ không được hoàn tác.",
+      "send": "Gửi",
+      "failed": "Không thể chỉnh sửa và gửi lại tin nhắn này"
+    },
     "messageQuote": {
       "addToChat": "Thêm vào cuộc trò chuyện",
       "assistantMessage": "Tin nhắn của trợ lý",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}} ngày trước",
     "deleteSessionTitle": "Xóa cuộc trò chuyện",
     "deleteSessionWarning": "Thao tác này sẽ xóa vĩnh viễn cuộc trò chuyện này và tất cả tin nhắn. Không thể hoàn tác. Bạn có chắc chắn không?",
+    "archiveSession": "Lưu trữ cuộc trò chuyện",
+    "sessionArchived": "Đã lưu trữ cuộc trò chuyện",
+    "archiveSessionFailed": "Không thể lưu trữ cuộc trò chuyện",
     "detachOnDesktopNoop": "Trên máy tính không có liên kết IM chat — detach không có tác dụng ở đây.",
     "details": "Chi tiết",
     "showPlainText": "Hiển thị văn bản thuần",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "Hoàn tất",
         "error": "Lỗi",
+        "interrupted": "Bị gián đoạn",
         "killed": "Đã chấm dứt",
         "queued": "Đang chờ",
         "running": "Đang chạy",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "Cuộc trò chuyện đã lưu trữ",
+      "title": "Cuộc trò chuyện đã lưu trữ",
+      "description": "Cuộc trò chuyện đã lưu trữ sẽ ẩn khỏi danh sách hoạt động nhưng vẫn giữ tin nhắn, dự án và Agent. Bạn có thể khôi phục bất cứ lúc nào.",
+      "searchPlaceholder": "Tìm cuộc trò chuyện đã lưu trữ",
+      "allProjects": "Tất cả dự án",
+      "noProject": "Không có dự án",
+      "count": "{{count}} cuộc trò chuyện",
+      "empty": "Không có cuộc trò chuyện đã lưu trữ",
+      "emptyHint": "Các cuộc trò chuyện bạn lưu trữ sẽ xuất hiện ở đây.",
+      "loadFailed": "Không thể tải các cuộc trò chuyện đã lưu trữ",
+      "loadMore": "Tải thêm",
+      "restore": "Khôi phục",
+      "restored": "Đã khôi phục cuộc trò chuyện",
+      "restoreFailed": "Không thể khôi phục cuộc trò chuyện",
+      "deletePermanently": "Xóa vĩnh viễn",
+      "deleteTitle": "Xóa vĩnh viễn cuộc trò chuyện này?",
+      "deleteWarning": "“{{title}}” và tất cả tin nhắn sẽ bị xóa vĩnh viễn. Không thể hoàn tác thao tác này.",
+      "deleted": "Đã xóa vĩnh viễn cuộc trò chuyện",
+      "deleteFailed": "Không thể xóa vĩnh viễn cuộc trò chuyện",
+      "types": {
+        "all": "Tất cả cuộc trò chuyện",
+        "regular": "Cuộc trò chuyện",
+        "subagent": "Cuộc trò chuyện Agent con",
+        "channel": "Cuộc trò chuyện IM",
+        "cron": "Cuộc trò chuyện theo lịch",
+        "knowledge": "Cuộc trò chuyện kiến thức",
+        "design": "Cuộc trò chuyện thiết kế"
+      }
+    },
     "resetDefaultsPageAction": "Khôi phục trang này",
     "resetDefaultsTabAction": "Khôi phục thẻ hiện tại",
     "resetDefaultsRegionAction": "Khôi phục khu vực này",
@@ -5015,6 +5056,8 @@
     "developer": "Nhà phát triển",
     "dockerSetupNotInstalled": "Docker không được phát hiện. Chọn tùy chọn Docker cho nền tảng này.",
     "dockerSetupNotRunning": "Docker đã được cài đặt nhưng daemon không chạy. Hãy khởi động Docker và thử lại.",
+    "dockerSetupWslNoDocker": "WSL đã sẵn sàng. Hãy cài Docker Engine trong bản phân phối WSL mặc định để dùng hộp cát mà không cần Docker Desktop.",
+    "dockerSetupWslNotRunning": "Docker Engine đã được cài trong WSL nhưng daemon chưa chạy. Hãy khởi động Docker trong WSL rồi thử lại.",
     "dreaming": {
       "candidateLimit": "giới hạn ứng viên",
       "candidateLimitDesc": "Số lượng ứng cử viên tối đa được gửi tới LLM trong mỗi chu kỳ.",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "Đặt chế độ quyền phiên (default/smart/yolo)"
     },
+    "pet": {
+      "description": "Đánh thức, ẩn hoặc xem trạng thái thú cưng trên màn hình"
+    },
     "plan": {
       "description": "Vào/thoát kế hoạch mode"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "Mở phiên của sub-agent",
     "agentId": "Agent ID",
     "attachments": "Tệp đính kèm",
+    "attempt": "Lần thử",
     "childSessionId": "Phiên con",
     "depth": "Độ sâu",
     "duration": "Thời lượng",
@@ -8589,6 +8636,8 @@
     "parentSession": "Phiên cha",
     "provider": "Nhà cung cấp",
     "runId": "ID lần chạy",
+    "terminalReason": "Lý do kết thúc",
+    "threadId": "ID luồng",
     "startedAt": "Bắt đầu",
     "task": "Nhiệm vụ",
     "thinking": "Mức suy luận",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "Tất cả sản phẩm khớp với mã của chúng",
       "checkStale": "{{n}} sản phẩm có cập nhật mã",
       "chatPrompt": "Mã đã triển khai đã khác với thiết kế này. Hãy cập nhật thiết kế hiện tại để phản ánh các thay đổi mã được tham chiếu, giữ nguyên ý đồ thiết kế và mọi thứ còn lại."
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "Thú cưng",
+      "wake": "Thú cưng trên màn hình",
+      "wakeDesc": "Hiển thị bạn đồng hành hoạt hình và trạng thái hội thoại trên màn hình.",
+      "desktopOnly": "Tính năng đánh thức và ẩn có trong ứng dụng máy tính.",
+      "choose": "Chọn thú cưng",
+      "localOnly": "Thú cưng tùy chỉnh chỉ được lưu trên thiết bị này.",
+      "loadFailed": "Không thể tải thú cưng",
+      "saveFailed": "Không thể lưu cài đặt thú cưng",
+      "cannotDeleteSelected": "Hãy chọn thú cưng khác trước khi xóa",
+      "deleted": "Đã xóa thú cưng",
+      "undo": "Hoàn tác",
+      "deleteFailed": "Không thể xóa thú cưng",
+      "deleteTitle": "Xóa thú cưng này?",
+      "deleteDescription": "Xóa {{name}} khỏi thiết bị này?"
+    },
+    "discovery": {
+      "title": "Làm quen với thú cưng trên màn hình",
+      "description": "Theo dõi cuộc trò chuyện đang diễn ra và xử lý phản hồi hoặc yêu cầu ngay trên màn hình.",
+      "action": "Dùng thử"
+    },
+    "import": {
+      "action": "Nhập",
+      "title": "Nhập thú cưng",
+      "description": "Xem trước và xác thực thú cưng tương thích Codex trước khi thêm vào Hope.",
+      "drop": "Thả thư mục, zip, tệp kê khai + ảnh, PNG hoặc WebP",
+      "dropSafety": "Thả tệp chỉ tạo bản xem trước. Không có gì được cài đặt trước khi bạn xác nhận.",
+      "chooseFiles": "Chọn tệp",
+      "packageFiles": "Gói thú cưng",
+      "fromCodex": "Quét thú cưng Codex",
+      "found": "Đã tìm thấy {{count}}",
+      "found_one": "Đã tìm thấy {{count}}",
+      "found_other": "Đã tìm thấy {{count}}",
+      "unknownVersion": "phiên bản không rõ",
+      "previewFailed": "Không thể xem trước gói này",
+      "previewFailedCount": "Không thể xem trước {{amount}} gói thú cưng",
+      "previewCount": "{{amount}} thú cưng sẵn sàng để xem lại",
+      "removePreview": "Xóa khỏi lần nhập này",
+      "scanFailed": "Không thể quét thú cưng Codex",
+      "uploadFailed": "Không thể tải gói lên",
+      "duplicate": "Đã nhập",
+      "enableAfter": "Dùng thú cưng này sau khi nhập",
+      "confirm": "Nhập thú cưng",
+      "imported": "Đã nhập thú cưng",
+      "importedCount": "Đã thêm {{amount}} thú cưng vào thư viện",
+      "alreadyImported": "Thú cưng này đã có trong thư viện",
+      "commitFailed": "Không thể nhập thú cưng",
+      "commitFailedCount": "Không thể nhập {{amount}} thú cưng",
+      "linkPlaceholder": "Dán liên kết cài đặt codex:// hoặc URL HTTPS của bảng sprite",
+      "linkLabel": "Liên kết thú cưng",
+      "previewLink": "Xem trước liên kết"
+    },
+    "creator": {
+      "action": "Tạo",
+      "title": "Tạo thú cưng",
+      "description": "Tạo linh vật nguyên bản và xem trước hoạt ảnh tương thích Codex trước khi cài đặt.",
+      "name": "Tên",
+      "shortDescription": "Mô tả ngắn (không bắt buộc)",
+      "prompt": "Bạn muốn thú cưng trông như thế nào?",
+      "generate": "Tạo bản xem trước",
+      "generating": "Đang tạo bản xem trước…",
+      "failed": "Không thể tạo thú cưng này"
+    },
+    "export": {
+      "action": "Xuất cho Codex",
+      "saved": "Đã xuất gói tương thích Codex",
+      "failed": "Không thể xuất thú cưng này"
+    },
+    "window": {
+      "interact": "Tương tác với thú cưng Hope",
+      "tuckAway": "Cất thú cưng"
+    },
+    "bubble": {
+      "needsInput": "{{count}} cuộc hội thoại cần bạn phản hồi.",
+      "needsInput_one": "Tôi cần bạn phản hồi.",
+      "needsInput_other": "{{count}} cuộc hội thoại cần bạn phản hồi.",
+      "blocked": "{{count}} cuộc hội thoại đang bị chặn.",
+      "blocked_one": "Một cuộc hội thoại đang bị chặn.",
+      "blocked_other": "{{count}} cuộc hội thoại đang bị chặn.",
+      "ready": "{{count}} cuộc hội thoại đã sẵn sàng.",
+      "ready_one": "Một cuộc hội thoại đã sẵn sàng.",
+      "ready_other": "{{count}} cuộc hội thoại đã sẵn sàng.",
+      "open": "Mở trong Hope",
+      "dismiss": "Đóng",
+      "running": "Đang suy nghĩ",
+      "reply": "Trả lời",
+      "queued": "Đã xếp hàng phản hồi",
+      "sent": "Đã gửi phản hồi",
+      "sendFailed": "Không thể gửi phản hồi"
+    },
+    "stack": {
+      "expand": "Hiển thị {{count}} cuộc hội thoại",
+      "collapse": "Thu gọn hội thoại"
+    },
+    "tray": {
+      "title": "Hoạt động hội thoại",
+      "reconnecting": "Đang làm mới trạng thái…",
+      "count": "{{count}} đang hoạt động",
+      "count_one": "{{count}} đang hoạt động",
+      "count_other": "{{count}} đang hoạt động",
+      "close": "Đóng hoạt động",
+      "openRemaining": "Xem thêm {{count}} trong Hope",
+      "openRemaining_one": "Xem thêm {{count}} trong Hope",
+      "openRemaining_other": "Xem thêm {{count}} trong Hope",
+      "incognitoTitle": "Hội thoại ẩn danh",
+      "untitledTitle": "Hội thoại mới"
+    },
+    "navigation": {
+      "unavailable": "Cuộc hội thoại này không còn khả dụng."
     }
   },
   "configRecovery": {

@@ -491,11 +491,23 @@ async fn handle_inbound_message(
     // `UserPromptSubmit` hook here. The raw prompt is the persisted `user_text`
     // (not the LLM-bound `engine_message`), keeping transcript + hook input
     // consistent with what lands in history.
+    //
+    // The turn id is minted here rather than at the `try_acquire` in 5c below
+    // purely so the hook can carry it as `prompt_id`: IM deliberately runs the
+    // preflight *before* the single-flight gate (see 5c), so without hoisting
+    // the id, `UserPromptSubmit` and the rest of the turn would report two
+    // different ids. This is a hoist, not a reorder — the acquire stays exactly
+    // where it is. A prompt that is later deferred at 5c therefore emits a
+    // `UserPromptSubmit` for a turn that never runs; correlating scripts must
+    // tolerate a `UserPromptSubmit` with no following `Stop` (already true
+    // before the id existed).
+    let turn_id = uuid::Uuid::new_v4().to_string();
     let effective_prompt = match crate::agent::preflight::user_prompt_preflight(
         crate::agent::preflight::PreflightArgs {
             session_id: &session_id,
             agent_id: Some(agent_id.as_str()),
             raw_prompt: user_text,
+            turn_id: &turn_id,
         },
     )
     .await
@@ -552,15 +564,39 @@ async fn handle_inbound_message(
     let mut user_msg = crate::session::NewMessage::user(&effective_prompt)
         .with_source(crate::chat_engine::ChatSource::Channel);
     user_msg.attachments_meta = Some(attachments_meta_json.clone());
-    let _ = session_db.append_message(&session_id, &user_msg);
-
-    // Auto-generate fallback title from the first real message (same logic as normal chat).
-    let _ = crate::session::ensure_first_message_title(
-        &session_db,
-        &session_id,
-        &effective_prompt,
-        Some(&attachments_meta_json),
-    );
+    // Archive is not a mute boundary. A fresh inbound IM message restores the
+    // attached conversation so it cannot continue accumulating out of sight.
+    // Keep all synchronous SessionDB work off this async dispatcher's Tokio
+    // workers and preserve restore-before-append ordering in one blocking task.
+    let persist_session_id = session_id.clone();
+    let title_prompt = effective_prompt.clone();
+    let title_attachments_meta = attachments_meta_json.clone();
+    let persist_result = session_db
+        .run(move |db| -> anyhow::Result<()> {
+            db.set_session_archived(&persist_session_id, false)?;
+            db.append_message(&persist_session_id, &user_msg)?;
+            // Auto-generate fallback title from the first real message (same
+            // logic as normal chat).
+            let _ = crate::session::ensure_first_message_title(
+                db,
+                &persist_session_id,
+                &title_prompt,
+                Some(&title_attachments_meta),
+            )?;
+            Ok(())
+        })
+        .await;
+    if let Err(error) = persist_result {
+        app_warn!(
+            "channel",
+            "worker",
+            "[{}] Failed to restore/persist inbound conversation {}: {}",
+            channel_id_str,
+            session_id,
+            error
+        );
+        return Err(error);
+    }
 
     // Notify the desktop / web side that a fresh user message landed on
     // this session from IM, so an attached GUI view can pull it into
@@ -618,13 +654,15 @@ async fn handle_inbound_message(
     // The synthetic turn id only keys the single-flight registry entry; the
     // engine keeps `turn_id: None` (IM streams on the `channel:*` bus, not the
     // `chat:*` seq-tracked bus, so giving it a tracked turn id would change
-    // stream acceptance/broadcast semantics). The shared `cancel` Arc is reused
-    // by `engine_params` below so a cross-surface cancel (session delete /
-    // GUI stop walking `active_turn`) actually aborts this engine run.
+    // stream acceptance/broadcast semantics). It is minted above the preflight
+    // so `UserPromptSubmit` reports the same `prompt_id` as this turn's other
+    // hooks. The shared `cancel` Arc is reused by `engine_params` below so a
+    // cross-surface cancel (session delete / GUI stop walking `active_turn`)
+    // actually aborts this engine run.
     let _active_turn_guard = match crate::chat_engine::active_turn::try_acquire(
         &session_id,
         crate::chat_engine::stream_seq::ChatSource::Channel,
-        uuid::Uuid::new_v4().to_string(),
+        turn_id.clone(),
         cancel.clone(),
     ) {
         Ok(guard) => guard,
@@ -821,6 +859,7 @@ async fn handle_inbound_message(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: crate::chat_engine::stream_seq::ChatSource::Channel,
+        ui_surface: None,
         origin_source: None,
         // WS8: carry the IM origin identity so `effective_kb_access` can apply the
         // per-account (+ per-group-chat) KB opt-in. `is_group` = any non-DM chat

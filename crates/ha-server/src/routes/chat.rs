@@ -1,4 +1,6 @@
 use axum::extract::{Multipart, Path, State};
+use axum::http::HeaderMap;
+use axum::Extension;
 use axum::Json;
 
 use super::helpers::parse_file_upload_to_temp;
@@ -17,7 +19,7 @@ use ha_core::session;
 use ha_core::tools;
 
 use crate::error::AppError;
-use crate::AppContext;
+use crate::{AppContext, UiRequestPolicy};
 
 // ── Request / Response Types ───────────────────────────────────
 //
@@ -39,6 +41,8 @@ pub struct InitialGoalRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ChatRequest {
     pub message: String,
+    #[serde(default)]
+    pub ui_surface: Option<ha_core::pet::ChatUiSurface>,
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
@@ -79,6 +83,10 @@ pub struct ChatRequest {
     /// attachments from SQLite before starting the turn.
     #[serde(default)]
     pub queued_request_id: Option<String>,
+    /// Existing latest user-message id being edited. The server atomically
+    /// replaces that settled turn and registers this request's new turn.
+    #[serde(default)]
+    pub edit_message_id: Option<i64>,
     /// When true, persists the user row with
     /// `attachments_meta = {"plan_trigger": true}` so the UI renders it as a
     /// Plan Mode approve/resume chip (mirrors the Tauri `chat` command).
@@ -496,10 +504,35 @@ pub struct SystemPromptBody {
 
 // ── Handlers ───────────────────────────────────────────────────
 
-/// `POST /api/chat` — run chat engine, streaming events via WebSocket.
+/// Public HTTP chat API. Product UI routing metadata is deliberately ignored:
+/// callers that are not the bundled message-list/composer must never create a
+/// Pet activity merely by sending a `uiSurface` field.
 pub async fn chat(
     State(ctx): State<Arc<AppContext>>,
     Json(mut body): Json<ChatRequest>,
+) -> Result<Json<ChatResponse>, AppError> {
+    body.ui_surface = None;
+    chat_inner(ctx, body).await
+}
+
+/// Bundled first-party HTTP UI chat. `HttpTransport.startChat` uses this route
+/// only when a fixed `ChatUiSurface` was supplied by a first-party product
+/// message-list/composer surface (including Pet quick reply).
+pub async fn ui_chat(
+    State(ctx): State<Arc<AppContext>>,
+    Extension(ui_request_policy): Extension<UiRequestPolicy>,
+    headers: HeaderMap,
+    Json(body): Json<ChatRequest>,
+) -> Result<Json<ChatResponse>, AppError> {
+    if !ui_request_policy.accepts(&headers) {
+        return Err(AppError::forbidden("ui_chat_browser_proof_required"));
+    }
+    chat_inner(ctx, body).await
+}
+
+async fn chat_inner(
+    ctx: Arc<AppContext>,
+    mut body: ChatRequest,
 ) -> Result<Json<ChatResponse>, AppError> {
     let db = ctx.session_db.clone();
     let eval_context_pending = body.eval_context.take();
@@ -543,6 +576,16 @@ pub async fn chat(
         .as_ref()
         .map(|bootstrap| bootstrap.request_id.clone());
     let auto_create_session = existing_session_id.is_none();
+    if body.edit_message_id.is_some() && auto_create_session {
+        return Err(AppError::bad_request(
+            "editMessageId requires an existing session",
+        ));
+    }
+    if body.edit_message_id.is_some() && body.queued_request_id.is_some() {
+        return Err(AppError::bad_request(
+            "editMessageId cannot be combined with queuedRequestId",
+        ));
+    }
     if !auto_create_session && body.project_bootstrap.is_some() {
         return Err(AppError::bad_request(
             "projectBootstrap is only valid when creating a new project session",
@@ -897,6 +940,7 @@ pub async fn chat(
             session_id: &sid,
             agent_id: Some(agent_id.as_str()),
             raw_prompt,
+            turn_id: &turn_id,
         },
     )
     .await
@@ -905,6 +949,11 @@ pub async fn chat(
             effective_prompt
         }
         ha_core::agent::preflight::PreflightOutcome::Block { reason } => {
+            if body.edit_message_id.is_some() {
+                return Err(AppError::bad_request(format!(
+                    "Message edit was blocked: {reason}"
+                )));
+            }
             if let Some(request_id) = queued_request_id.as_ref() {
                 let sid_for_remove = sid.clone();
                 let request_id_for_remove = request_id.clone();
@@ -1079,6 +1128,7 @@ pub async fn chat(
         body.is_plan_trigger.unwrap_or(false),
         body.plan_comment.as_ref(),
         body.goal_trigger.unwrap_or(false),
+        queued_request_id.is_some(),
         attachments_meta,
     );
     let title_attachments_meta = user_msg.attachments_meta.clone();
@@ -1087,18 +1137,35 @@ pub async fn chat(
         let turn_id = turn_id.clone();
         let effective_prompt = effective_prompt.clone();
         let queue_id_for_consume = queued_request_id.clone();
+        let edit_message_id = body.edit_message_id;
+        let ui_surface_for_turn = body.ui_surface;
         db.run(move |db| -> anyhow::Result<_> {
+            if let Some(message_id) = edit_message_id {
+                let replacement_id = db.replace_last_user_message_for_edit(
+                    &sid,
+                    message_id,
+                    &user_msg,
+                    &turn_id,
+                    ha_core::chat_engine::ChatSource::Http.as_str(),
+                    ui_surface_for_turn,
+                )?;
+                let turn = db
+                    .get_chat_turn(&turn_id)?
+                    .ok_or_else(|| anyhow::anyhow!("replacement chat turn was not created"))?;
+                return Ok((Some(replacement_id), turn));
+            }
             let user_message_id = if queue_id_for_consume.is_some() {
                 Some(db.append_message(&sid, &user_msg)?)
             } else {
                 db.append_message(&sid, &user_msg).ok()
             };
-            let turn = db.create_chat_turn_with_id(
+            let turn = db.create_chat_turn_with_id_surface(
                 &turn_id,
                 &sid,
                 ha_core::chat_engine::ChatSource::Http.as_str(),
                 None,
                 user_message_id,
+                ui_surface_for_turn,
             )?;
             if let Some(request_id) = queue_id_for_consume.as_deref() {
                 db.consume_dispatched_turn_message(&sid, request_id, &turn_id)?;
@@ -1295,6 +1362,7 @@ pub async fn chat(
         abort_on_cancel: false,
         persist_final_error_event: true,
         source: ha_core::chat_engine::stream_seq::ChatSource::Http,
+        ui_surface: body.ui_surface,
         origin_source: None,
         // HTTP owner turn — KB access via attach, not the IM opt-in gate.
         channel_kb_context: None,

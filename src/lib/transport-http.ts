@@ -36,6 +36,7 @@ import type {
   ArtifactListOptions,
   ArtifactExportReceipt,
   DomainArtifactExportGuardReport,
+  PetAssetLease,
 } from "@/lib/transport"
 import { uploadFileInChunks } from "@/lib/fileUpload"
 import { TRANSPORT_EVENT_RESYNC_REQUIRED } from "@/lib/transport"
@@ -320,6 +321,36 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   file_upload_chunk: { method: "PUT", path: "/api/file-uploads/{uploadId}/chunk" },
   file_upload_complete: { method: "POST", path: "/api/file-uploads/{uploadId}/complete" },
   file_upload_discard: { method: "DELETE", path: "/api/file-uploads/{uploadId}" },
+  // -- Desktop pet (library/import/activity also available in HTTP mode) --
+  get_pet_config_cmd: { method: "GET", path: "/api/pets/config" },
+  save_pet_config_cmd: { method: "PUT", path: "/api/pets/config" },
+  pet_set_enabled_cmd: { method: "POST", path: "/api/pets/enabled" },
+  pet_list_cmd: { method: "GET", path: "/api/pets" },
+  pet_asset_path_cmd: { method: "GET", path: "/api/pets/asset" },
+  pet_codex_candidates_cmd: { method: "GET", path: "/api/pets/codex-candidates" },
+  pet_candidate_thumbnail_cmd: {
+    method: "GET",
+    path: "/api/pets/codex-candidates/{candidateId}/thumbnail",
+  },
+  pet_preview_thumbnail_cmd: {
+    method: "GET",
+    path: "/api/pets/import/previews/{previewToken}/thumbnail",
+  },
+  pet_create_preview_cmd: { method: "POST", path: "/api/pets/create/preview" },
+  pet_import_preview_cmd: { method: "POST", path: "/api/pets/import/preview" },
+  pet_import_preview_cancel_cmd: {
+    method: "POST",
+    path: "/api/pets/import/preview/cancel",
+  },
+  pet_import_commit_cmd: { method: "POST", path: "/api/pets/import/commit" },
+  pet_delete_cmd: { method: "POST", path: "/api/pets/delete" },
+  pet_restore_cmd: { method: "POST", path: "/api/pets/restore" },
+  pet_export_cmd: { method: "POST", path: "/api/pets/export" },
+  pet_activity_snapshot_cmd: { method: "GET", path: "/api/pets/activity" },
+  pet_take_install_link_cmd: { method: "GET", path: "/api/pets/install-link/pending" },
+  pet_apply_window_bounds_cmd: { method: "POST", path: "/api/pets/window/bounds" },
+  pet_sync_window_cmd: { method: "POST", path: "/api/pets/window/sync" },
+  pet_focus_target_cmd: { method: "POST", path: "/api/pets/focus-target" },
   // Preview by absolute path (file-operations unification). Session-scoped +
   // authorized server-side; `{sessionId}` is interpolated, `path` → query.
   preview_read_text: { method: "GET", path: "/api/sessions/{sessionId}/files/read" },
@@ -327,6 +358,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Sessions --
   list_sessions_cmd: { method: "GET", path: "/api/sessions" },
+  list_archived_sessions_cmd: { method: "GET", path: "/api/sessions/archived" },
   create_session_cmd: { method: "POST", path: "/api/sessions" },
   fork_session_cmd: { method: "POST", path: "/api/sessions/{sessionId}/fork" },
   get_session_cmd: { method: "GET", path: "/api/sessions/{sessionId}" },
@@ -379,6 +411,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
     path: "/api/sessions/{sessionId}/stream-snapshot",
   },
   delete_session_cmd: { method: "DELETE", path: "/api/sessions/{sessionId}" },
+  set_session_archived_cmd: { method: "PATCH", path: "/api/sessions/{sessionId}/archived" },
   rename_session_cmd: { method: "PATCH", path: "/api/sessions/{sessionId}" },
   mark_session_read_cmd: { method: "POST", path: "/api/sessions/{sessionId}/read" },
   mark_session_read_batch_cmd: { method: "POST", path: "/api/sessions/read-batch" },
@@ -394,7 +427,9 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   },
 
   // -- Chat --
-  chat: { method: "POST", path: "/api/chat" },
+  // Bundled web UI route. The public owner API remains POST /api/chat and
+  // clears uiSurface server-side; both routes share the same chat engine.
+  chat: { method: "POST", path: "/api/chat/ui" },
   queue_turn_user_message: { method: "POST", path: "/api/chat/turn-message" },
   list_queued_turn_user_messages: {
     method: "GET",
@@ -1795,7 +1830,9 @@ function parseDispositionFilename(disposition: string): string | null {
 
 function normalizeCommandResponse(command: string, value: unknown): unknown {
   if (
-    (command === "list_sessions_cmd" || command === "list_project_sessions_cmd") &&
+    (command === "list_sessions_cmd" ||
+      command === "list_archived_sessions_cmd" ||
+      command === "list_project_sessions_cmd") &&
     value &&
     typeof value === "object" &&
     !Array.isArray(value) &&
@@ -2494,6 +2531,23 @@ export class HttpTransport implements Transport {
     }
 
     return null
+  }
+
+  async loadPetAsset(assetId: string, builtinSrc: string): Promise<PetAssetLease> {
+    if (assetId === "builtin/hope-default") {
+      return { src: builtinSrc, revoke: () => undefined }
+    }
+    const url = new URL(`${this.baseUrl}/api/pets/sprite`)
+    url.searchParams.set("assetId", assetId)
+    const headers: Record<string, string> = {}
+    if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`
+    const response = await fetch(url, { headers })
+    if (!response.ok) {
+      this.handleAuthFailure(response.status)
+      throw new Error(`Failed to load pet asset (${response.status})`)
+    }
+    const blobUrl = URL.createObjectURL(await response.blob())
+    return { src: blobUrl, revoke: () => URL.revokeObjectURL(blobUrl) }
   }
 
   async openMedia(item: MediaItem): Promise<void> {

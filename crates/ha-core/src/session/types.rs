@@ -64,6 +64,7 @@ pub struct SessionMemoryPolicy {
 pub const ATTACHMENT_META_KEY_PLAN_TRIGGER: &str = "plan_trigger";
 pub const ATTACHMENT_META_KEY_PLAN_COMMENT: &str = "plan_comment";
 pub const ATTACHMENT_META_KEY_GOAL_TRIGGER: &str = "goal_trigger";
+pub const ATTACHMENT_META_KEY_QUEUED_MESSAGE: &str = "queued_message";
 pub const ATTACHMENT_META_KEY_TOOL_MEDIA_ITEMS: &str = "tool_media_items";
 pub const ATTACHMENT_META_KEY_ACTIVE_MEMORY: &str = "active_memory";
 pub const ATTACHMENT_META_KEY_USED_MEMORY_REFS: &str = "used_memory_refs";
@@ -71,16 +72,18 @@ pub const ATTACHMENT_META_KEY_RETRIEVAL_PLANNER: &str = "retrieval_planner";
 
 /// Resolve the `attachments_meta` value for a user-message coming from the
 /// `chat` API surface (Tauri command + HTTP route). Centralizes the
-/// plan_trigger > plan_comment > goal_trigger > user_attachments precedence so
-/// both shells can't silently drift; if the caller sets both `plan_trigger` and
-/// `plan_comment`, plan_trigger wins (a trigger is never also a comment).
+/// plan_trigger > plan_comment > goal_trigger > user_attachments precedence,
+/// then overlays the durable-queue marker so both shells can't silently drift;
+/// if the caller sets both `plan_trigger` and `plan_comment`, plan_trigger wins
+/// (a trigger is never also a comment).
 pub fn build_chat_user_attachments_meta(
     plan_trigger: bool,
     plan_comment: Option<&Value>,
     goal_trigger: bool,
+    queued_message: bool,
     user_attachments: Option<String>,
 ) -> Option<String> {
-    if plan_trigger {
+    let resolved = if plan_trigger {
         Some(json!({ ATTACHMENT_META_KEY_PLAN_TRIGGER: true }).to_string())
     } else if let Some(payload) = plan_comment {
         Some(merge_user_message_meta(
@@ -94,6 +97,14 @@ pub fn build_chat_user_attachments_meta(
         ))
     } else {
         user_attachments
+    };
+    if queued_message {
+        Some(merge_user_message_meta(
+            json!({ ATTACHMENT_META_KEY_QUEUED_MESSAGE: true }),
+            resolved,
+        ))
+    } else {
+        resolved
     }
 }
 
@@ -219,6 +230,11 @@ pub struct SessionMeta {
     /// When set, the sidebar sorts this session above unpinned sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<String>,
+    /// When set, the conversation is retained but hidden from active chat
+    /// surfaces. Restoring clears this timestamp without changing messages or
+    /// project / Agent ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
     pub message_count: i64,
     /// Whether this regular desktop conversation is unread, encoded as `0` or
     /// `1` for transport compatibility. Any number of assistant messages after
@@ -311,6 +327,30 @@ pub struct SessionMeta {
     pub kind: SessionKind,
 }
 
+/// Result returned by the user-facing fork APIs. The session fields stay
+/// flattened for backwards compatibility with clients that deserialize a
+/// fork response directly as [`SessionMeta`]. When a user prompt is forked,
+/// its attachments are copied into the new session and returned separately so
+/// the client can restore them into the composer without retaining a reference
+/// to the source session's files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkSessionResult {
+    #[serde(flatten)]
+    pub session: SessionMeta,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_attachments_meta: Option<String>,
+}
+
+impl From<SessionMeta> for ForkSessionResult {
+    fn from(session: SessionMeta) -> Self {
+        Self {
+            session,
+            draft_attachments_meta: None,
+        }
+    }
+}
+
 /// The next regular unread conversation that the sidebar should reveal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -339,6 +379,7 @@ impl SessionMeta {
             && self.parent_session_id.is_none()
             && self.channel_info.is_none()
             && !self.incognito
+            && self.archived_at.is_none()
             && self.kind == SessionKind::Regular
     }
 }
@@ -754,6 +795,7 @@ mod tests {
             created_at: "2026-05-01T00:00:00Z".to_string(),
             updated_at: "2026-05-01T00:00:00Z".to_string(),
             pinned_at: None,
+            archived_at: None,
             message_count: 0,
             unread_count: 0,
             channel_unread_count: 0,

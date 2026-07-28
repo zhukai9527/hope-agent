@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "Normal moda geç",
     "copied": "Kopyalandı",
     "copy": "Kopyala",
+    "editMessage": {
+      "action": "Mesajı düzenle",
+      "inputLabel": "Mesajınızı düzenleyin",
+      "fileChangesWarning": "Bu mesajdan sonraki konuşma kaldırılır, ancak dosyalarda daha önce yapılan değişiklikler geri alınmaz.",
+      "send": "Gönder",
+      "failed": "Bu mesaj düzenlenip yeniden gönderilemedi"
+    },
     "messageQuote": {
       "addToChat": "Sohbete ekle",
       "assistantMessage": "Asistan mesajı",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}} gün önce",
     "deleteSessionTitle": "Sohbeti Sil",
     "deleteSessionWarning": "Bu işlem bu sohbeti ve tüm mesajlarını kalıcı olarak silecektir. Bu işlem geri alınamaz. Emin misiniz?",
+    "archiveSession": "Sohbeti arşivle",
+    "sessionArchived": "Sohbet arşivlendi",
+    "archiveSessionFailed": "Sohbet arşivlenemedi",
     "detachOnDesktopNoop": "Masaüstünde IM sohbetine bağlama yok — detach burada etkisiz.",
     "details": "Ayrıntılar",
     "showPlainText": "Düz metni göster",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "Tamamlandı",
         "error": "Hata",
+        "interrupted": "Kesintiye uğradı",
         "killed": "Sonlandırıldı",
         "queued": "Sırada",
         "running": "Çalışıyor",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "Arşivlenmiş sohbetler",
+      "title": "Arşivlenmiş sohbetler",
+      "description": "Arşivlenen sohbetler etkin listelerden gizlenir; mesajları, projesi ve Agent bilgisi korunur. İstediğiniz zaman geri yükleyebilirsiniz.",
+      "searchPlaceholder": "Arşivlenmiş sohbetlerde ara",
+      "allProjects": "Tüm projeler",
+      "noProject": "Proje yok",
+      "count": "{{count}} sohbet",
+      "empty": "Arşivlenmiş sohbet yok",
+      "emptyHint": "Arşivlediğiniz sohbetler burada görünür.",
+      "loadFailed": "Arşivlenmiş sohbetler yüklenemedi",
+      "loadMore": "Daha fazla yükle",
+      "restore": "Geri yükle",
+      "restored": "Sohbet geri yüklendi",
+      "restoreFailed": "Sohbet geri yüklenemedi",
+      "deletePermanently": "Kalıcı olarak sil",
+      "deleteTitle": "Bu sohbet kalıcı olarak silinsin mi?",
+      "deleteWarning": "“{{title}}” ve tüm mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+      "deleted": "Sohbet kalıcı olarak silindi",
+      "deleteFailed": "Sohbet kalıcı olarak silinemedi",
+      "types": {
+        "all": "Tüm sohbetler",
+        "regular": "Sohbetler",
+        "subagent": "Alt Agent sohbetleri",
+        "channel": "IM sohbetleri",
+        "cron": "Zamanlanmış sohbetler",
+        "knowledge": "Bilgi sohbetleri",
+        "design": "Tasarım sohbetleri"
+      }
+    },
     "resetDefaultsPageAction": "Bu sayfayı varsayılana döndür",
     "resetDefaultsTabAction": "Geçerli sekmeyi varsayılana döndür",
     "resetDefaultsRegionAction": "Bu bölümü varsayılana döndür",
@@ -5015,6 +5056,8 @@
     "developer": "Geliştirici",
     "dockerSetupNotInstalled": "Docker algılanmadı. Bu platform için bir Docker seçeneği seçin.",
     "dockerSetupNotRunning": "Docker kurulu ancak arka plan programı çalışmıyor. Docker'i başlatın ve tekrar deneyin.",
+    "dockerSetupWslNoDocker": "WSL hazır. Docker Desktop olmadan korumalı alanı kullanmak için varsayılan WSL dağıtımına Docker Engine kurun.",
+    "dockerSetupWslNotRunning": "Docker Engine WSL'de kurulu ancak arka plan programı çalışmıyor. WSL'de Docker'ı başlatıp tekrar deneyin.",
     "dreaming": {
       "candidateLimit": "Aday sınırı",
       "candidateLimitDesc": "Döngü başına LLM'e gönderilen maksimum aday.",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "Oturum izin modunu ayarla (default/smart/yolo)"
     },
+    "pet": {
+      "description": "Masaüstü evcil hayvanını uyandır, gizle veya durumunu kontrol et"
+    },
     "plan": {
       "description": "Plan mode'a gir/çık"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "Alt ajan oturumunu aç",
     "agentId": "Agent ID",
     "attachments": "Ekler",
+    "attempt": "Deneme",
     "childSessionId": "Alt oturum",
     "depth": "Derinlik",
     "duration": "Süre",
@@ -8589,6 +8636,8 @@
     "parentSession": "Üst oturum",
     "provider": "Sağlayıcı",
     "runId": "Çalıştırma ID’si",
+    "terminalReason": "Sonlandırma nedeni",
+    "threadId": "İş parçacığı ID’si",
     "startedAt": "Başlangıç",
     "task": "Görev",
     "thinking": "Düşünme",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "Tüm çıktılar koduyla eşleşiyor",
       "checkStale": "{{n}} çıktıda kod güncellemesi var",
       "chatPrompt": "Uygulanan kod bu tasarımdan ayrıştı. Referans alınan kod değişikliklerini yansıtacak şekilde mevcut tasarımı güncelleyin; tasarım amacını ve diğer her şeyi değiştirmeyin."
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "Evcil hayvanlar",
+      "wake": "Masaüstü evcil hayvanı",
+      "wakeDesc": "Animasyonlu arkadaşınızı ve konuşma etkinliğini masaüstünde gösterin.",
+      "desktopOnly": "Uyandırma ve gizleme masaüstü uygulamasında kullanılabilir.",
+      "choose": "Bir evcil hayvan seçin",
+      "localOnly": "Özel evcil hayvanlar yalnızca bu cihazda kalır.",
+      "loadFailed": "Evcil hayvanlar yüklenemedi",
+      "saveFailed": "Evcil hayvan ayarları kaydedilemedi",
+      "cannotDeleteSelected": "Bunu kaldırmadan önce başka bir evcil hayvan seçin",
+      "deleted": "Evcil hayvan kaldırıldı",
+      "undo": "Geri al",
+      "deleteFailed": "Evcil hayvan kaldırılamadı",
+      "deleteTitle": "Bu evcil hayvan kaldırılsın mı?",
+      "deleteDescription": "{{name}} bu cihazdan kaldırılsın mı?"
+    },
+    "discovery": {
+      "title": "Masaüstü evcil hayvanınızla tanışın",
+      "description": "Etkin konuşmaları takip edin, yanıtları ve istekleri masaüstünden yönetin.",
+      "action": "Dene"
+    },
+    "import": {
+      "action": "İçe aktar",
+      "title": "Evcil hayvan içe aktar",
+      "description": "Codex uyumlu evcil hayvanları Hope'a eklemeden önce önizleyin ve doğrulayın.",
+      "drop": "Evcil hayvan klasörü, zip, bildirim + görsel, PNG veya WebP bırakın",
+      "dropSafety": "Bırakma yalnızca önizleme oluşturur. Onaylayana kadar hiçbir şey kurulmaz.",
+      "chooseFiles": "Dosya seç",
+      "packageFiles": "Evcil hayvan paketleri",
+      "fromCodex": "Codex evcil hayvanlarını tara",
+      "found": "{{count}} bulundu",
+      "found_one": "{{count}} bulundu",
+      "found_other": "{{count}} bulundu",
+      "unknownVersion": "bilinmeyen sürüm",
+      "previewFailed": "Bu paket önizlenemedi",
+      "previewFailedCount": "{{amount}} evcil hayvan paketi önizlenemedi",
+      "previewCount": "{{amount}} evcil hayvan incelenmeye hazır",
+      "removePreview": "Bu içe aktarmadan çıkar",
+      "scanFailed": "Codex evcil hayvanları taranamadı",
+      "uploadFailed": "Paket yüklenemedi",
+      "duplicate": "Zaten içe aktarıldı",
+      "enableAfter": "İçe aktardıktan sonra bunu kullan",
+      "confirm": "Evcil hayvanı içe aktar",
+      "imported": "Evcil hayvan içe aktarıldı",
+      "importedCount": "Kitaplığınıza {{amount}} evcil hayvan eklendi",
+      "alreadyImported": "Bu evcil hayvan zaten kitaplığınızda",
+      "commitFailed": "Evcil hayvan içe aktarılamadı",
+      "commitFailedCount": "{{amount}} evcil hayvan içe aktarılamadı",
+      "linkPlaceholder": "codex:// kurulum bağlantısı veya HTTPS sprite sayfası URL'si yapıştırın",
+      "linkLabel": "Evcil hayvan bağlantısı",
+      "previewLink": "Bağlantıyı önizle"
+    },
+    "creator": {
+      "action": "Oluştur",
+      "title": "Evcil hayvan oluştur",
+      "description": "Özgün bir maskot oluşturun ve kurmadan önce Codex uyumlu animasyonu önizleyin.",
+      "name": "Ad",
+      "shortDescription": "Kısa açıklama (isteğe bağlı)",
+      "prompt": "Evcil hayvanınız nasıl görünmeli?",
+      "generate": "Önizleme oluştur",
+      "generating": "Önizleme oluşturuluyor…",
+      "failed": "Bu evcil hayvan oluşturulamadı"
+    },
+    "export": {
+      "action": "Codex için dışa aktar",
+      "saved": "Codex uyumlu paket dışa aktarıldı",
+      "failed": "Bu evcil hayvan dışa aktarılamadı"
+    },
+    "window": {
+      "interact": "Hope evcil hayvanıyla etkileşime geç",
+      "tuckAway": "Evcil hayvanı kaldır"
+    },
+    "bubble": {
+      "needsInput": "{{count}} konuşma girdinize ihtiyaç duyuyor.",
+      "needsInput_one": "Girdinize ihtiyacım var.",
+      "needsInput_other": "{{count}} konuşma girdinize ihtiyaç duyuyor.",
+      "blocked": "{{count}} konuşma engellendi.",
+      "blocked_one": "Bir konuşma engellendi.",
+      "blocked_other": "{{count}} konuşma engellendi.",
+      "ready": "{{count}} konuşma hazır.",
+      "ready_one": "Bir konuşma hazır.",
+      "ready_other": "{{count}} konuşma hazır.",
+      "open": "Hope'ta aç",
+      "dismiss": "Kapat",
+      "running": "Düşünüyor",
+      "reply": "Yanıtla",
+      "queued": "Yanıt sıraya alındı",
+      "sent": "Yanıt gönderildi",
+      "sendFailed": "Yanıt gönderilemedi"
+    },
+    "stack": {
+      "expand": "{{count}} konuşmayı göster",
+      "collapse": "Konuşmaları daralt"
+    },
+    "tray": {
+      "title": "Konuşma etkinliği",
+      "reconnecting": "Durum yenileniyor…",
+      "count": "{{count}} etkin",
+      "count_one": "{{count}} etkin",
+      "count_other": "{{count}} etkin",
+      "close": "Etkinliği kapat",
+      "openRemaining": "{{count}} tane daha Hope'ta görüntüle",
+      "openRemaining_one": "{{count}} tane daha Hope'ta görüntüle",
+      "openRemaining_other": "{{count}} tane daha Hope'ta görüntüle",
+      "incognitoTitle": "Gizli konuşma",
+      "untitledTitle": "Yeni konuşma"
+    },
+    "navigation": {
+      "unavailable": "Bu konuşma artık kullanılamıyor."
     }
   },
   "configRecovery": {

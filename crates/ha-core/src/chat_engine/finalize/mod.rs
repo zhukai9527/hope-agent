@@ -315,13 +315,15 @@ pub(crate) async fn finalize_turn_context(
 ) -> FinalizeOutcome {
     let mut outcome = apply_finalize(db, session_id, &reason, &partial, source);
     if !outcome.was_already_finalized {
-        // Stop / StopFailure hook (observation this phase). A user-initiated
-        // stop is a normal `Stop`; every other termination reason (provider /
-        // compaction failure, shutdown, crash, …) is a `StopFailure` carrying
-        // the failure category + error text. Mutually exclusive with the
-        // success-path `Stop` fired in the engine, so a turn fires exactly one.
+        // Stop / StopFailure hook. A user-initiated stop is a normal `Stop` with
+        // status "interrupted" — fire_stop deliberately does NOT honor
+        // block-to-continue on an interrupt (never resurrects a cancelled turn).
+        // Every other termination reason (provider / compaction failure,
+        // shutdown, crash, …) is a `StopFailure` carrying the failure category +
+        // error text. Mutually exclusive with the success-path `Stop` fired in
+        // the engine, so a turn fires exactly one.
         if reason.is_user_initiated() {
-            crate::hooks::fire_stop(session_id, None, "interrupted");
+            crate::hooks::fire_stop(session_id, None, "interrupted", None);
         } else {
             crate::hooks::fire_stop_failure(
                 session_id,
@@ -629,7 +631,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.db");
         std::mem::forget(dir);
-        Arc::new(SessionDB::open(&path).unwrap())
+        Arc::new(SessionDB::open_ephemeral_for_test(&path).unwrap())
     }
 
     fn fresh_session(db: &Arc<SessionDB>) -> (String, String) {

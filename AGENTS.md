@@ -40,7 +40,7 @@
 
 ## 易错提醒（新增即同步）
 
-Tauri 命令 → `invoke_handler!`；HTTP 端点 → `build_router_with_cors`；两者任一改动 → [api-reference](docs/architecture/api-reference.md)。Rust 依赖变更先 `cargo check --workspace`。
+Tauri 命令 → `invoke_handler!`；HTTP 端点 → `build_router_with_cors`；两者任一改动 → [api-reference](docs/architecture/api-reference.md)。Rust 依赖变更先 `cargo check --workspace`。改 `tauri.conf.json` 主窗口字段须同步 `tauri.windows/linux.conf.json`（平台 conf 对 `app.windows` **数组整体替换**，漏同步即该平台静默丢字段——Windows 曾因此丢 `center`）。
 
 ## 编码规范
 
@@ -81,7 +81,7 @@ Tauri 命令 → `invoke_handler!`；HTTP 端点 → `build_router_with_cors`；
 - 结构化副输出唯一通道：`ToolExecContext.metadata_sink`→`messages.tool_metadata`→工作台；新工具禁自开旁路。
 - 后台单元唯一入口 `async_jobs::JobManager`，禁平行 API；命名分裂勿改：模块/log `async_jobs`、DB `background_jobs`、事件 `job:*`；审批 park 桥在 `tools::approval`（tools 零依赖 async_jobs）。
 - 双域勿合并：tool 池 `async_jobs::slots`，后台 subagent 池 `subagent::queue`；资源类（槽满）入队非拒绝，结构类（depth/batch/turn）硬拒不排队；parked 持槽不释放（否则 resume 无空槽死锁）、预算 timer 排除 parked 时长；`approval_projection_watcher` 只补 label、绝不 gate 执行。
-- 重试白名单代码级：`is_retry_eligible` 仅 `web_search`/`web_fetch`；新 async_capable 工具有副作用/计费就别加。
+- 重试白名单代码级：`is_retry_eligible` 仅 `web_search`/`web_fetch`；新 `BackgroundPolicy::GenericJob` 工具有副作用/计费就别加。
 - `AsyncToolsConfig` 的 `0`：仅 `max_concurrent_jobs`/`_per_session` 真不限，其余 bounded-resource 旁钮钳到地板、绝非无限（`completion_merge_window_secs` 的 `0`=关，不在此列）。
 - incognito：`output_tail` 永不注册；工作台聚合跳后端、只用 live tail。
 - 图/音生成必走 `media_gen::execute_image`/`execute_audio`，禁各写 provider 循环；凭据只 owner UI 可写。
@@ -139,6 +139,12 @@ Tauri 命令 → `invoke_handler!`；HTTP 端点 → `build_router_with_cors`；
 - **API-Round 分组**：新 Provider adapter 须经 `push_and_stamp` 标 `_oc_round`（否则压缩切割拆散 tool_use / tool_result 配对），请求体构建前统一 `prepare_messages_for_api()` 剥离元数据
 - **前台 idle guard 单一入口**：`run_chat_engine` 按 `ChatSource::holds_foreground_idle_guard()` 统一建 `ChatSessionGuard`（ACP 自建），新增对话入口不得手搓 per-shell guard
 
+### 桌面宠物（Pet）
+
+详见 [pet](docs/architecture/pet.md)。
+
+- **主对话投影边界**：只接入显式携带第一方 `ChatUiSurface` 的主动多轮主对话；side query、automation、compact、Memory、Cron、IM、ACP、subagent 与后台 job 等额外 LLM 请求不得接入。Pet 点击气泡只发 typed navigation，**不得提前清未读**；必须由目标消息列表真实加载并渲染后的 read receipt 推进 watermark
+
 ### 上下文压缩
 
 5 层渐进式 + `ContextEngine` / `CompactionProvider` 可插拔；阈值、TTL 节流、反应式微压缩、Tier 3 文件恢复详见 [context-compact](docs/architecture/context-compact.md)。
@@ -175,10 +181,10 @@ Tauri 命令 → `invoke_handler!`；HTTP 端点 → `build_router_with_cors`；
 
 ### Hooks
 
-详见 [hooks](docs/architecture/hooks.md)（单一真相源，字段级对齐 Claude Code hooks 协议，`hooks_compat.rs` 硬验收）。
+详见 [hooks](docs/architecture/hooks.md)（单一真相源，字段级对齐 Claude Code hooks 协议）。**硬验收 = 5 个套件**（协议面 `hooks_compat` / 字段名 `hooks_compat_payload` / 可阻断 `hooks_compat_blocking` / 输出面 `hooks_compat_output` / Stop 再驱动 `hooks_stop_continue`），跑法见 hooks.md §14；只跑 `hooks_compat` 只覆盖 1/5。
 
 - **唯一入口 `HookDispatcher::dispatch` / `hooks::fire_*`**；调用方只读 `HookOutcome`，严禁 match handler 类型
-- **新 user message 入口须过 `agent::preflight::user_prompt_preflight`**（`UserPromptSubmit` 阻断点）；新 hook 事件须埋点 + 测试 + 同步 `types.rs` 三处 match（`common`/`matcher_target`/`is_observation_only`）——**漏登记 `is_observation_only` 则新观察事件意外可阻断**
+- **新 user message 入口须过 `agent::preflight::user_prompt_preflight`**（`UserPromptSubmit` 阻断点），并把交给 `active_turn::try_acquire` 的**同一个** `turn_id` 填进 `PreflightArgs`；**不 acquire 的入口**（如 ACP）传自铸 id 或 `""`——`""` 恒等于「省略 `prompt_id`」，绝不回落注册表(否则会把同会话另一轮的 id 盖上来)；新 hook 事件须埋点 + 测试 + 同步 `types.rs` 三处 match（`common`/`matcher_target`/`is_observation_only`）——**漏登记 `is_observation_only` 则新观察事件意外可阻断**
 - **project/local scope 默认关**（`hooks_allow_project_scope`，供应链防护：开启即信任所有未来 cwd）；`ha-settings` 对 hooks 只读，可写 = 模型自装命令执行
 
 ### Plan Mode
@@ -288,5 +294,3 @@ cargo run -p ha-eval --locked -- validate   # 评测资产校验
 同 PR 同步：功能/命令/模块增删 → `CHANGELOG.md` + `AGENTS.md`；技术栈/架构/规范/契约 → AGENTS.md；子系统边界/数据流/持久化/跨模块 contract → architecture 文档，新增架构级能力新建文档 + 登记索引；Tauri 命令/HTTP 路由/`COMMAND_MAP` 增删 → `docs/architecture/api-reference.md`；子系统/架构文档/运行时 DB/稳定 log `category` 增删 → `skills/ha-self-diagnosis/references/diagnostic-playbook.md`；README/release notes 任一语言 → 同步 .en.md。
 
 **CHANGELOG 单行**：用户视角一句 + `(#PR)`，不写实现；契约/红线可加一行用户影响。
-
-**规划归档**：调研/roadmap 归外部 iCloud `HopeAI/Hope Agent/Plans/`，**仓库内任何路径不留已完成 roadmap**；落地后须把设计决策同步回架构文档。

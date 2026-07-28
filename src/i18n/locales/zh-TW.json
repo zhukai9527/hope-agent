@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "切換到普通模式",
     "copied": "已複製",
     "copy": "複製",
+    "editMessage": {
+      "action": "編輯訊息",
+      "inputLabel": "編輯你的訊息",
+      "fileChangesWarning": "這則訊息之後的對話會被刪除，但已寫入檔案的修改不會復原。",
+      "send": "傳送",
+      "failed": "無法編輯並重新傳送這則訊息"
+    },
     "messageQuote": {
       "addToChat": "新增至對話",
       "assistantMessage": "助理訊息",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}}天前",
     "deleteSessionTitle": "刪除對話",
     "deleteSessionWarning": "此操作將永久刪除該對話及其所有訊息記錄，且無法恢復。請確認是否繼續？",
+    "archiveSession": "歸檔對話",
+    "sessionArchived": "對話已歸檔",
+    "archiveSessionFailed": "歸檔對話失敗",
     "detachOnDesktopNoop": "桌面端不綁定 IM 聊天，因此 detach 在此處無效。",
     "details": "詳情",
     "showPlainText": "顯示純文字",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "已完成",
         "error": "發生錯誤",
+        "interrupted": "已中斷",
         "killed": "已終止",
         "queued": "排隊中",
         "running": "執行中",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "已歸檔對話",
+      "title": "已歸檔對話",
+      "description": "歸檔後，對話會從日常清單中隱藏，但訊息、專案和 Agent 歸屬都會保留，可隨時恢復。",
+      "searchPlaceholder": "搜尋已歸檔對話",
+      "allProjects": "所有專案",
+      "noProject": "無專案",
+      "count": "{{count}} 個對話",
+      "empty": "暫無已歸檔對話",
+      "emptyHint": "歸檔的對話會顯示在這裡。",
+      "loadFailed": "載入已歸檔對話失敗",
+      "loadMore": "載入更多",
+      "restore": "取消歸檔",
+      "restored": "對話已恢復",
+      "restoreFailed": "恢復對話失敗",
+      "deletePermanently": "永久刪除",
+      "deleteTitle": "永久刪除此對話？",
+      "deleteWarning": "「{{title}}」及其全部訊息將被永久刪除，此操作無法復原。",
+      "deleted": "對話已永久刪除",
+      "deleteFailed": "永久刪除對話失敗",
+      "types": {
+        "all": "所有對話",
+        "regular": "一般對話",
+        "subagent": "子 Agent 對話",
+        "channel": "IM 對話",
+        "cron": "定時對話",
+        "knowledge": "知識對話",
+        "design": "設計對話"
+      }
+    },
     "resetDefaultsPageAction": "還原本頁預設值",
     "resetDefaultsTabAction": "還原目前分頁",
     "resetDefaultsRegionAction": "還原此區域",
@@ -5015,6 +5056,8 @@
     "developer": "開發者模式",
     "dockerSetupNotInstalled": "未檢測到 Docker。為此平臺選擇 Docker 選項。",
     "dockerSetupNotRunning": "Docker 已安裝，但守護程式未執行。啟動 Docker 並重試。",
+    "dockerSetupWslNoDocker": "WSL 已就緒。可在預設 WSL 發行版中安裝 Docker Engine，無需安裝 Docker Desktop 即可使用沙箱。",
+    "dockerSetupWslNotRunning": "WSL 中已安裝 Docker Engine，但守護程式未執行。請在 WSL 中啟動 Docker 後重試。",
     "dreaming": {
       "candidateLimit": "候選上限",
       "candidateLimitDesc": "每輪送給 LLM 的最大候選數。",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "設定工作階段權限模式（default/smart/yolo）"
     },
+    "pet": {
+      "description": "喚醒、收起或查看桌面寵物狀態"
+    },
     "plan": {
       "description": "進入/退出計畫模式"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "開啟子 Agent 會話",
     "agentId": "Agent ID",
     "attachments": "附件",
+    "attempt": "嘗試",
     "childSessionId": "子會話",
     "depth": "巢狀深度",
     "duration": "持續時間",
@@ -8589,6 +8636,8 @@
     "parentSession": "父工作階段",
     "provider": "服務商",
     "runId": "執行 ID",
+    "terminalReason": "終止原因",
+    "threadId": "執行緒 ID",
     "startedAt": "開始時間",
     "task": "任務",
     "thinking": "思考強度",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "所有產物與程式碼一致",
       "checkStale": "{{n}} 個產物的程式碼有更新",
       "chatPrompt": "實作程式碼相對設計稿已變化，請根據引用的程式碼變更更新目前設計稿，保持設計意圖與其餘內容不變。"
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "寵物",
+      "wake": "桌面寵物",
+      "wakeDesc": "在桌面顯示你的動畫夥伴與對話動態。",
+      "desktopOnly": "喚醒與收起功能僅在桌面應用程式中可用。",
+      "choose": "選擇寵物",
+      "localOnly": "自訂寵物只會保存在此裝置。",
+      "loadFailed": "無法載入寵物",
+      "saveFailed": "無法儲存寵物設定",
+      "cannotDeleteSelected": "請先選擇另一隻寵物再移除",
+      "deleted": "寵物已移除",
+      "undo": "復原",
+      "deleteFailed": "無法移除寵物",
+      "deleteTitle": "移除這隻寵物？",
+      "deleteDescription": "要從此裝置移除 {{name}} 嗎？"
+    },
+    "discovery": {
+      "title": "認識一下桌面寵物",
+      "description": "它會跟隨進行中的對話，讓你直接在桌面快速回覆或處理請求。",
+      "action": "立即開啟"
+    },
+    "import": {
+      "action": "匯入",
+      "title": "匯入寵物",
+      "description": "加入 Hope 前，先預覽並驗證相容 Codex 的寵物。",
+      "drop": "拖入寵物資料夾、zip、清單 + 圖片、PNG 或 WebP",
+      "dropSafety": "拖入只會建立預覽，確認前不會安裝任何內容。",
+      "chooseFiles": "選擇檔案",
+      "packageFiles": "寵物套件",
+      "fromCodex": "掃描 Codex 寵物",
+      "found": "找到 {{count}} 個",
+      "found_one": "找到 {{count}} 個",
+      "found_other": "找到 {{count}} 個",
+      "unknownVersion": "未知版本",
+      "previewFailed": "無法預覽此寵物套件",
+      "previewFailedCount": "有 {{amount}} 個寵物套件無法預覽",
+      "previewCount": "{{amount}} 隻寵物等待確認",
+      "removePreview": "從本次匯入中移除",
+      "scanFailed": "無法掃描 Codex 寵物",
+      "uploadFailed": "無法上傳寵物套件",
+      "duplicate": "已匯入",
+      "enableAfter": "匯入後使用這隻寵物",
+      "confirm": "匯入寵物",
+      "imported": "寵物已匯入",
+      "importedCount": "已將 {{amount}} 隻寵物加入收藏庫",
+      "alreadyImported": "這隻寵物已在你的寵物庫中",
+      "commitFailed": "無法匯入寵物",
+      "commitFailedCount": "有 {{amount}} 隻寵物無法匯入",
+      "linkPlaceholder": "貼上 codex:// 安裝連結或 HTTPS 精靈圖網址",
+      "linkLabel": "寵物連結",
+      "previewLink": "預覽連結"
+    },
+    "creator": {
+      "action": "建立",
+      "title": "建立寵物",
+      "description": "生成原創夥伴，預覽 Codex 相容動畫後再安裝。",
+      "name": "名稱",
+      "shortDescription": "簡短描述（選填）",
+      "prompt": "希望寵物長什麼樣子？",
+      "generate": "生成預覽",
+      "generating": "正在建立預覽…",
+      "failed": "無法建立這隻寵物"
+    },
+    "export": {
+      "action": "匯出給 Codex",
+      "saved": "已匯出 Codex 相容寵物包",
+      "failed": "無法匯出這隻寵物"
+    },
+    "window": {
+      "interact": "與 Hope 寵物互動",
+      "tuckAway": "收起寵物"
+    },
+    "bubble": {
+      "needsInput": "有 {{count}} 個對話需要你處理。",
+      "needsInput_one": "我需要你的輸入。",
+      "needsInput_other": "有 {{count}} 個對話需要你處理。",
+      "blocked": "有 {{count}} 個對話受阻。",
+      "blocked_one": "有一個對話受阻。",
+      "blocked_other": "有 {{count}} 個對話受阻。",
+      "ready": "有 {{count}} 個對話已就緒。",
+      "ready_one": "有一個對話已就緒。",
+      "ready_other": "有 {{count}} 個對話已就緒。",
+      "open": "在 Hope 中開啟",
+      "dismiss": "關閉",
+      "running": "正在思考",
+      "reply": "回覆",
+      "queued": "回覆已排隊",
+      "sent": "回覆已傳送",
+      "sendFailed": "無法傳送回覆"
+    },
+    "stack": {
+      "expand": "顯示 {{count}} 個對話",
+      "collapse": "收起對話"
+    },
+    "tray": {
+      "title": "對話動態",
+      "reconnecting": "正在重新整理狀態…",
+      "count": "{{count}} 個進行中",
+      "count_one": "{{count}} 個進行中",
+      "count_other": "{{count}} 個進行中",
+      "close": "關閉動態",
+      "openRemaining": "在 Hope 中查看其餘 {{count}} 個",
+      "openRemaining_one": "在 Hope 中查看其餘 {{count}} 個",
+      "openRemaining_other": "在 Hope 中查看其餘 {{count}} 個",
+      "incognitoTitle": "無痕對話",
+      "untitledTitle": "新對話"
+    },
+    "navigation": {
+      "unavailable": "此對話已無法使用。"
     }
   },
   "configRecovery": {

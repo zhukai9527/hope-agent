@@ -267,6 +267,12 @@ pub struct ToolExecContext {
     pub session_working_dir: Option<String>,
     /// Current session ID (for sub-agent spawning context)
     pub session_id: Option<String>,
+    /// Durable Workflow owner identity for tools invoked by the Workflow host.
+    ///
+    /// This is an execution-context capability, not a model argument. Internal
+    /// Workflow fields such as `__hope_workflow_run_id` must match it before a
+    /// tool may control Workflow-owned resources.
+    pub workflow_run_id: Option<String>,
     /// Session DB bound to this agent/runtime path. When absent, tools fall
     /// back to the process-global session DB for legacy callers.
     pub session_db: Option<SessionDbHandle>,
@@ -551,10 +557,12 @@ impl ToolExecContext {
             crate::hooks::PermissionMode::Default
         };
         crate::hooks::CommonHookInput {
+            prompt_id: crate::hooks::resolve_prompt_id(&session_id),
             session_id,
             transcript_path,
             cwd: std::path::PathBuf::from(self.default_cwd()),
             permission_mode,
+            effort: crate::hooks::resolve_effort(),
             hook_event_name: event.to_string(),
             agent_id: self.agent_id.clone(),
             // `agent_type` is the agent's *type/role*, which the exec context
@@ -920,6 +928,24 @@ fn migrate_exec_process_mode_to_async_job_args(args: &Value) -> Option<Value> {
 }
 
 fn validate_async_background_contract(name: &str, args: &Value) -> anyhow::Result<()> {
+    if explicit_async_job_requested(args) {
+        match super::background_policy_for_tool(name) {
+            Some(super::BackgroundPolicy::GenericJob) => {}
+            Some(super::BackgroundPolicy::SelfManaged { work_kind }) => {
+                anyhow::bail!(
+                    "tool '{}' manages its own {:?} lifecycle and already returns a durable handle; remove `run_in_background` to avoid a nested async job",
+                    name,
+                    work_kind
+                );
+            }
+            Some(super::BackgroundPolicy::ForegroundOnly) | None => {
+                anyhow::bail!(
+                    "tool '{}' does not support generic `run_in_background` execution",
+                    name
+                );
+            }
+        }
+    }
     if name == TOOL_EXEC {
         if let (true, Some(process_mode)) = (
             explicit_async_job_requested(args),
@@ -962,7 +988,7 @@ fn decide_async_path_with_config(
     if ctx.bypass_async_dispatch {
         return AsyncDecision::Sync;
     }
-    if !super::is_async_capable(name) {
+    if !super::is_generic_job_capable(name) {
         return AsyncDecision::Sync;
     }
     if !async_enabled {
@@ -1132,15 +1158,16 @@ async fn fire_pre_tool_use_hook(name: &str, args: &Value, ctx: &ToolExecContext)
     // live under the session working dir, so this fast-path gate must use
     // `any_handlers_for(event, cwd)` (not the global-only registry) or a
     // project-only `PreToolUse` hook is silently skipped while `dispatch` would
-    // have run it. Mirrors `hooks::session_working_dir` (empty sid → no cwd).
-    let wd = ctx
-        .session_id
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .and_then(|sid| crate::session::effective_session_working_dir(Some(sid)));
+    // have run it.
+    //
+    // Read it off the context rather than re-querying: this fires per TOOL CALL,
+    // and `effective_session_working_dir` is a synchronous `SessionDB::get_session`
+    // on the exclusive writer connection. `ctx.session_working_dir` already holds
+    // the same value (the `PostToolUse` twin in `streaming_loop` uses it), so the
+    // re-query was one blocking DB round-trip per call for nothing.
     if !crate::hooks::scopes::any_handlers_for(
         HookEvent::PreToolUse,
-        wd.as_deref().map(std::path::Path::new),
+        ctx.session_working_dir.as_deref().map(std::path::Path::new),
     ) {
         return PreToolGate::Proceed {
             updated_input: None,
@@ -1309,6 +1336,9 @@ pub(super) async fn run_tool_approval(
         cwd,
         ctx.session_id.as_deref(),
         reason_payload,
+        Some(name),
+        Some(args),
+        ctx.tool_call_id.as_deref(),
     )
     .await
     {
@@ -1614,6 +1644,18 @@ pub async fn execute_tool_with_context(
                 // approval layer instead).
                 crate::hooks::fire_permission_denied(
                     ctx.session_id.as_deref(),
+                    Some(name),
+                    // The fully-shadowed args: PreToolUse `updatedInput`, then
+                    // mac_control sanitize, then the exec legacy-background
+                    // migrate. This is what the permission engine actually
+                    // evaluated and denied, and it matches what PostToolUse and
+                    // history report (`emit_effective_args` pushes the same
+                    // value). It deliberately does NOT match the PreToolUse
+                    // payload: that hook is the *producer* of `updatedInput`, so
+                    // it necessarily ran before the rewrite. A script
+                    // reconciling the two on `tool_use_id` will see different
+                    // `tool_input` whenever a PreToolUse hook rewrote the call.
+                    Some(args),
                     name,
                     "policy",
                     ctx.tool_call_id.as_deref(),
@@ -1999,7 +2041,7 @@ pub async fn execute_tool_with_context(
                     .map_err(|e| anyhow::anyhow!(e))
             }
             TOOL_GET_SETTINGS => settings::tool_get_settings(args).await,
-            TOOL_UPDATE_SETTINGS => settings::tool_update_settings(args).await,
+            TOOL_UPDATE_SETTINGS => settings::tool_update_settings(args, dispatch_ctx).await,
             TOOL_LIST_SETTINGS_BACKUPS => settings::tool_list_settings_backups(args).await,
             TOOL_RESTORE_SETTINGS_BACKUP => settings::tool_restore_settings_backup(args).await,
             TOOL_SEND_ATTACHMENT => send_attachment::tool_send_attachment(args, dispatch_ctx).await,
@@ -2568,7 +2610,7 @@ mod tests {
     async fn workflow_execution_uses_bound_session_db_and_mode_gate() {
         let dir = tempfile::tempdir().expect("temp session db dir");
         let db = Arc::new(
-            crate::session::SessionDB::open(&dir.path().join("sessions.db"))
+            crate::session::SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
                 .expect("open session db"),
         );
         let session = db.create_session("ha-main").expect("create session");
@@ -2756,6 +2798,29 @@ export default async function main(workflow) {
         assert!(message.contains("exec background conflict"));
         assert!(message.contains("do not combine `run_in_background`"));
         assert!(message.contains("process session"));
+    }
+
+    #[test]
+    fn explicit_async_job_cannot_wrap_self_managed_work() {
+        for (tool, action) in [
+            (crate::tools::TOOL_SUBAGENT, "spawn"),
+            (crate::tools::TOOL_WORKFLOW, "create"),
+        ] {
+            let err = validate_async_background_contract(
+                tool,
+                &json!({
+                    "action": action,
+                    "task": "inspect the repository",
+                    "run_in_background": true
+                }),
+            )
+            .expect_err("self-managed work must not be nested inside a generic job");
+
+            let message = err.to_string();
+            assert!(message.contains("manages its own"));
+            assert!(message.contains("durable handle"));
+            assert!(message.contains("remove `run_in_background`"));
+        }
     }
 
     #[test]

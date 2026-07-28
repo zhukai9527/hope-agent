@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures_util::future::join_all;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::api_types::FunctionCallItem;
 use super::content::build_user_content_for_provider;
@@ -49,6 +49,42 @@ fn terminal_assistant_text_for_history<'a>(
     } else {
         final_assistant_text
     }
+}
+
+/// Decide how a round that produced no assistant prose must terminate.
+///
+/// `Ok(Some(notice))` — a `PostToolBatch` hook stopped the loop after a
+/// tool-only round: append the notice and finalize cleanly.
+/// `Ok(None)` — nothing to do; the round terminates normally.
+/// `Err(_)` — genuinely empty round: the provider returned nothing.
+///
+/// The two outcomes are decided TOGETHER on purpose. They were previously a
+/// predicate followed by a separate `if collected_text.is_empty() { return
+/// Err(...) }` at the call site, and the only thing linking them was that the
+/// caller pushed the notice into `collected_text` before the check ran. That
+/// coupling was invisible to tests: deleting the push left an intentional
+/// hook-driven stop surfacing to the user as `No content received from
+/// {provider} API`, with an exhaustive truth-table test over the predicate
+/// still green. Folding the error into the same function makes the ordering an
+/// property of one testable unit instead of a call-site convention.
+fn resolve_empty_round_outcome(
+    post_batch_stopped: bool,
+    collected_text: &str,
+    cancelled: bool,
+    provider_label: &str,
+) -> anyhow::Result<Option<&'static str>> {
+    // A cancel wins over both: a cancelled turn must neither synthesize text it
+    // never produced nor be reported as a provider failure.
+    if cancelled || !collected_text.is_empty() {
+        return Ok(None);
+    }
+    if post_batch_stopped {
+        return Ok(Some("(stopped by PostToolBatch hook)"));
+    }
+    Err(anyhow::anyhow!(
+        "No content received from {} API",
+        provider_label
+    ))
 }
 
 async fn wait_for_cancel(cancel: &AtomicBool) {
@@ -92,6 +128,31 @@ fn final_round_handoff_guidance(max_rounds: u32) -> String {
          unless every required item has actually been verified.",
         max_rounds
     )
+}
+
+fn has_checkpointed_subagent_dispatch(messages: &[Value], dispatch_id: &str) -> bool {
+    messages.iter().any(|message| {
+        message
+            .get(crate::context_compact::SUBAGENT_DISPATCH_IDS_KEY)
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(dispatch_id)))
+    })
+}
+
+fn stamp_checkpointed_subagent_dispatch(messages: &mut [Value], dispatch_id: &str) -> Result<()> {
+    let message = messages
+        .last_mut()
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| anyhow::anyhow!("steer message was not appended to conversation history"))?;
+    let ids = message
+        .entry(crate::context_compact::SUBAGENT_DISPATCH_IDS_KEY)
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| anyhow::anyhow!("invalid durable steer dispatch metadata"))?;
+    if !ids.iter().any(|id| id.as_str() == Some(dispatch_id)) {
+        ids.push(Value::String(dispatch_id.to_string()));
+    }
+    Ok(())
 }
 
 // ── Tool execution helpers (private to streaming_loop, no other caller).
@@ -231,6 +292,16 @@ async fn fire_post_tool_use_hook(
         }
     };
     let outcome = HookDispatcher::dispatch(event, input).await;
+    // `updatedToolOutput` (official): a `PostToolUse` hook may rewrite the tool
+    // result before it re-enters history (e.g. redact secrets). Applied on the
+    // success path only. A JSON string replaces verbatim; any other JSON value
+    // is stringified.
+    if let Some(updated) = outcome.updated_mcp_output.as_ref() {
+        *clean_result = match updated {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+    }
     if let Some(extra) = outcome.merged_additional_context() {
         // Frame the injected context so the model can tell hook output apart
         // from the tool's own result.
@@ -281,6 +352,9 @@ async fn drain_queued_turn_user_messages<F>(
                 session_id,
                 agent_id: Some(&agent.agent_id),
                 raw_prompt,
+                // A mid-turn injected prompt deliberately rides the enclosing
+                // turn's id: it is folded into the running turn, not a new one.
+                turn_id: &active.turn_id,
             },
         )
         .await
@@ -343,6 +417,7 @@ async fn drain_queued_turn_user_messages<F>(
             item.is_plan_trigger,
             item.plan_comment.as_ref(),
             item.goal_trigger,
+            true,
             attachment_meta,
         );
         let mut user_msg =
@@ -910,6 +985,10 @@ impl AssistantAgent {
         let mut round: u32 = 0;
         let mut effective_max_rounds = max_rounds;
         let mut activation_grace_used = false;
+        // Set when a PostToolBatch hook stopped the agentic loop (so the
+        // post-loop empty-content guard treats it as a clean stop, not an
+        // API error).
+        let mut post_batch_stopped = false;
         while round < effective_max_rounds {
             if cancel.load(Ordering::SeqCst) {
                 break;
@@ -949,13 +1028,59 @@ impl AssistantAgent {
                 self.apply_engine_prompt_addition(&mut system_prompt);
             }
 
-            // Drain steer mailbox: inject any pending steer messages as user msgs.
+            // Drain steer mailbox and checkpoint the injected user messages
+            // before acknowledging durable dispatches. If the process dies
+            // after the checkpoint but before the acknowledgement, the marker
+            // suppresses duplicate content when the accepted row is replayed.
             if let Some(ref rid) = self.steer_run_id {
-                for msg in crate::subagent::SUBAGENT_MAILBOX.drain(rid) {
-                    Self::push_user_message(
-                        &mut messages,
-                        json!(format!("[Steer from parent agent]: {}", msg)),
-                    );
+                let pending = crate::subagent::SUBAGENT_MAILBOX.drain(rid);
+                if !pending.is_empty() {
+                    let mut durable_dispatch_ids = Vec::new();
+                    for envelope in pending {
+                        let already_checkpointed =
+                            envelope.dispatch_id.as_deref().is_some_and(|dispatch_id| {
+                                has_checkpointed_subagent_dispatch(&messages, dispatch_id)
+                            });
+                        if !already_checkpointed {
+                            Self::push_user_message(
+                                &mut messages,
+                                json!(format!("[Steer from parent agent]: {}", envelope.message)),
+                            );
+                            if let Some(dispatch_id) = envelope.dispatch_id.as_deref() {
+                                stamp_checkpointed_subagent_dispatch(&mut messages, dispatch_id)?;
+                            }
+                        }
+                        if let Some(dispatch_id) = envelope.dispatch_id {
+                            durable_dispatch_ids.push(dispatch_id);
+                        }
+                    }
+                    self.persist_round_context(&messages).await?;
+                    if !durable_dispatch_ids.is_empty() {
+                        let dispatch_count = durable_dispatch_ids.len();
+                        let db = self
+                            .session_db
+                            .clone()
+                            .or_else(|| crate::get_session_db().cloned())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "session database unavailable while acknowledging steer dispatches"
+                                )
+                            })?;
+                        db.run(move |db| {
+                            for dispatch_id in &durable_dispatch_ids {
+                                db.mark_subagent_dispatch_delivered(dispatch_id)?;
+                            }
+                            Ok::<(), anyhow::Error>(())
+                        })
+                        .await?;
+                        crate::app_info!(
+                            "subagent",
+                            "dispatch",
+                            "checkpointed {} steer dispatch(es) for run {}",
+                            dispatch_count,
+                            rid
+                        );
+                    }
                 }
             }
 
@@ -1527,6 +1652,11 @@ impl AssistantAgent {
             // tool call in the round settles, before the round lands in
             // history. Skipped for pure-text rounds (no tools). Any
             // additionalContext is queued for the next round's reminder.
+            // Set when a PostToolBatch hook `exit 2` / `decision:block`s to stop
+            // the agentic loop (official: "stops agentic loop before next model
+            // call"). Honored at the bottom of the loop body so this round's
+            // results are still persisted first.
+            let mut post_batch_stop: Option<String> = None;
             let post_tool_batch_wd =
                 crate::session::effective_session_working_dir(self.session_id.as_deref());
             if !executed.is_empty()
@@ -1539,6 +1669,15 @@ impl AssistantAgent {
                     common: self.hook_common_input("PostToolBatch"),
                     round,
                     tool_names: executed.iter().map(|e| e.name.clone()).collect(),
+                    tool_calls: executed
+                        .iter()
+                        .map(|e| crate::hooks::types::ToolCallSummary {
+                            tool_name: e.name.clone(),
+                            tool_input: serde_json::from_str(&e.arguments)
+                                .unwrap_or(serde_json::Value::Null),
+                            tool_response: serde_json::Value::String(e.clean_result.clone()),
+                        })
+                        .collect(),
                 };
                 let outcome = crate::hooks::HookDispatcher::dispatch(
                     crate::hooks::HookEvent::PostToolBatch,
@@ -1548,6 +1687,7 @@ impl AssistantAgent {
                 if let Some(extra) = outcome.merged_additional_context() {
                     self.push_pending_hook_context(extra);
                 }
+                post_batch_stop = outcome.block_reason();
             }
 
             // A later model round must never observe a tool result which is
@@ -1581,6 +1721,22 @@ impl AssistantAgent {
                 on_delta,
             )
             .await?;
+            // PostToolBatch hook stopped the loop: this round is fully
+            // persisted above, so break before the next model call.
+            if let Some(reason) = post_batch_stop {
+                crate::app_info!(
+                    "hooks",
+                    "post_tool_batch",
+                    "PostToolBatch hook stopped the agentic loop{}",
+                    if reason.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", reason.trim())
+                    }
+                );
+                post_batch_stopped = true;
+                break;
+            }
             round = round.saturating_add(1);
         }
 
@@ -1594,11 +1750,17 @@ impl AssistantAgent {
             final_assistant_text.push_str(&notice);
             emit_round_limit_event(on_delta, max_rounds);
         }
-        if collected_text.is_empty() && !cancelled {
-            return Err(anyhow::anyhow!(
-                "No content received from {} API",
-                provider_label
-            ));
+        // A PostToolBatch hook that stops the loop after a tool-only round (no
+        // assistant prose) must end cleanly rather than as a provider failure.
+        // Both outcomes come from one call so the precedence can't drift.
+        if let Some(notice) = resolve_empty_round_outcome(
+            post_batch_stopped,
+            &collected_text,
+            cancelled,
+            provider_label,
+        )? {
+            collected_text.push_str(notice);
+            final_assistant_text.push_str(notice);
         }
 
         // Persist the terminal assistant message in this provider's native
@@ -1681,7 +1843,10 @@ impl AssistantAgent {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_started_job_id, terminal_assistant_text_for_history};
+    use super::{
+        extract_started_job_id, has_checkpointed_subagent_dispatch, resolve_empty_round_outcome,
+        stamp_checkpointed_subagent_dispatch, terminal_assistant_text_for_history,
+    };
     use crate::async_jobs::{synthetic_started_result, JobOrigin};
 
     #[test]
@@ -1711,6 +1876,58 @@ mod tests {
             terminal_assistant_text_for_history(false, "", "partial"),
             ""
         );
+    }
+
+    #[test]
+    fn post_batch_stop_with_empty_output_yields_clean_notice_not_api_error() {
+        let resolve = |stopped, text: &str, cancelled| {
+            resolve_empty_round_outcome(stopped, text, cancelled, "Anthropic")
+        };
+
+        // THE property: a hook-driven stop after a tool-only round must produce
+        // a notice, NOT the provider error. Both halves are asserted from the
+        // same call, so the precedence cannot be broken at a call site.
+        let notice = resolve(true, "", false)
+            .expect("a hook stop with no prose must not be a provider failure")
+            .expect("...and must synthesize a terminal notice");
+        assert!(
+            !notice.is_empty(),
+            "an empty notice would leave the turn with no assistant text at all"
+        );
+
+        // No hook stop and no prose → this IS a genuine provider failure.
+        let err = resolve(false, "", false).expect_err("an empty non-hook round must error");
+        assert!(
+            err.to_string()
+                .contains("No content received from Anthropic"),
+            "got {err}"
+        );
+
+        // A cancel wins over both: no synthesized text, and no bogus failure.
+        assert_eq!(resolve(true, "", true).unwrap(), None);
+        assert_eq!(resolve(false, "", true).unwrap(), None);
+        // Prose already collected → never double-append, never error.
+        for stopped in [true, false] {
+            for cancelled in [true, false] {
+                assert_eq!(resolve(stopped, "answer", cancelled).unwrap(), None);
+            }
+        }
+    }
+
+    #[test]
+    fn durable_steer_marker_deduplicates_checkpoint_replay() {
+        let mut messages = vec![serde_json::json!({
+            "role": "user",
+            "content": "[Steer from parent agent]: continue"
+        })];
+        stamp_checkpointed_subagent_dispatch(&mut messages, "dispatch-1").unwrap();
+
+        assert!(has_checkpointed_subagent_dispatch(&messages, "dispatch-1"));
+        assert!(!has_checkpointed_subagent_dispatch(&messages, "dispatch-2"));
+        let api = crate::context_compact::prepare_messages_for_api(&messages);
+        assert!(api[0]
+            .get(crate::context_compact::SUBAGENT_DISPATCH_IDS_KEY)
+            .is_none());
     }
 
     #[tokio::test]

@@ -518,6 +518,13 @@
     "sidebarDetailedMode": "通常表示に切り替え",
     "copied": "コピーしました",
     "copy": "コピー",
+    "editMessage": {
+      "action": "メッセージを編集",
+      "inputLabel": "メッセージを編集",
+      "fileChangesWarning": "このメッセージ以降の会話は削除されますが、すでに行われたファイル変更は元に戻りません。",
+      "send": "送信",
+      "failed": "このメッセージを編集して再送信できませんでした"
+    },
     "messageQuote": {
       "addToChat": "チャットに追加",
       "assistantMessage": "アシスタントのメッセージ",
@@ -542,6 +549,9 @@
     "daysAgo": "{{count}}日前",
     "deleteSessionTitle": "会話を削除",
     "deleteSessionWarning": "この操作により、この会話とすべてのメッセージが完全に削除されます。この操作は元に戻せません。続行しますか？",
+    "archiveSession": "会話をアーカイブ",
+    "sessionArchived": "会話をアーカイブしました",
+    "archiveSessionFailed": "会話をアーカイブできませんでした",
     "detachOnDesktopNoop": "デスクトップでは IM チャットへの接続がないため、detach は何もしません。",
     "details": "詳細",
     "showPlainText": "プレーンテキストを表示",
@@ -2784,6 +2794,7 @@
       "status": {
         "completed": "完了",
         "error": "エラー",
+        "interrupted": "中断",
         "killed": "終了済み",
         "queued": "待機中",
         "running": "実行中",
@@ -4014,6 +4025,36 @@
     }
   },
   "settings": {
+    "conversationArchive": {
+      "nav": "アーカイブ済みの会話",
+      "title": "アーカイブ済みの会話",
+      "description": "アーカイブした会話は通常の一覧から非表示になりますが、メッセージ、プロジェクト、Agent は保持され、いつでも復元できます。",
+      "searchPlaceholder": "アーカイブ済みの会話を検索",
+      "allProjects": "すべてのプロジェクト",
+      "noProject": "プロジェクトなし",
+      "count": "{{count}} 件の会話",
+      "empty": "アーカイブ済みの会話はありません",
+      "emptyHint": "アーカイブした会話がここに表示されます。",
+      "loadFailed": "アーカイブ済みの会話を読み込めませんでした",
+      "loadMore": "さらに読み込む",
+      "restore": "復元",
+      "restored": "会話を復元しました",
+      "restoreFailed": "会話を復元できませんでした",
+      "deletePermanently": "完全に削除",
+      "deleteTitle": "この会話を完全に削除しますか？",
+      "deleteWarning": "「{{title}}」とすべてのメッセージが完全に削除されます。この操作は元に戻せません。",
+      "deleted": "会話を完全に削除しました",
+      "deleteFailed": "会話を完全に削除できませんでした",
+      "types": {
+        "all": "すべての会話",
+        "regular": "会話",
+        "subagent": "サブ Agent の会話",
+        "channel": "IM の会話",
+        "cron": "予約会話",
+        "knowledge": "ナレッジの会話",
+        "design": "デザインの会話"
+      }
+    },
     "resetDefaultsPageAction": "このページをデフォルトに戻す",
     "resetDefaultsTabAction": "現在のタブをデフォルトに戻す",
     "resetDefaultsRegionAction": "このセクションをデフォルトに戻す",
@@ -5015,6 +5056,8 @@
     "developer": "開発者",
     "dockerSetupNotInstalled": "Docker が検出されませんでした。このプラットフォームには Docker オプションを選択してください。",
     "dockerSetupNotRunning": "Docker はインストールされていますが、デーモンが実行されていません。 Docker を起動して、再試行してください。",
+    "dockerSetupWslNoDocker": "WSL は使用可能です。既定の WSL ディストリビューションに Docker Engine をインストールすると、Docker Desktop なしでサンドボックスを使用できます。",
+    "dockerSetupWslNotRunning": "WSL に Docker Engine はインストールされていますが、デーモンが実行されていません。WSL で Docker を起動して再試行してください。",
     "dreaming": {
       "candidateLimit": "候補上限",
       "candidateLimitDesc": "1 サイクルで LLM に渡す候補の最大数。",
@@ -8500,6 +8543,9 @@
     "permission": {
       "description": "セッション権限モードを設定 (default/smart/yolo)"
     },
+    "pet": {
+      "description": "デスクトップペットを起こす、しまう、または状態を確認"
+    },
     "plan": {
       "description": "プランモードに入る/終了"
     },
@@ -8578,6 +8624,7 @@
     "viewChildSession": "サブエージェントのセッションを開く",
     "agentId": "Agent ID",
     "attachments": "添付ファイル",
+    "attempt": "試行",
     "childSessionId": "子セッション",
     "depth": "ネスト深度",
     "duration": "期間",
@@ -8589,6 +8636,8 @@
     "parentSession": "親セッション",
     "provider": "プロバイダー",
     "runId": "実行 ID",
+    "terminalReason": "終了理由",
+    "threadId": "スレッド ID",
     "startedAt": "開始時刻",
     "task": "タスク",
     "thinking": "思考強度",
@@ -12187,6 +12236,118 @@
       "checkCleanAll": "すべての成果物がコードと一致しています",
       "checkStale": "{{n}} 件の成果物にコード更新があります",
       "chatPrompt": "実装コードがこのデザインと乖離しています。参照したコード変更に合わせて現在のデザインを更新し、デザインの意図とその他の内容は変えないでください。"
+    }
+  },
+  "pet": {
+    "settings": {
+      "nav": "ペット",
+      "wake": "デスクトップペット",
+      "wakeDesc": "アニメーションする相棒と会話の状況をデスクトップに表示します。",
+      "desktopOnly": "起こす／しまう操作はデスクトップアプリで利用できます。",
+      "choose": "ペットを選択",
+      "localOnly": "カスタムペットはこのデバイスだけに保存されます。",
+      "loadFailed": "ペットを読み込めませんでした",
+      "saveFailed": "ペット設定を保存できませんでした",
+      "cannotDeleteSelected": "削除する前に別のペットを選んでください",
+      "deleted": "ペットを削除しました",
+      "undo": "元に戻す",
+      "deleteFailed": "ペットを削除できませんでした",
+      "deleteTitle": "このペットを削除しますか？",
+      "deleteDescription": "{{name}} をこのデバイスから削除しますか？"
+    },
+    "discovery": {
+      "title": "デスクトップペットをご紹介",
+      "description": "進行中の会話を見守り、デスクトップから返信や確認依頼に対応できます。",
+      "action": "試してみる"
+    },
+    "import": {
+      "action": "インポート",
+      "title": "ペットをインポート",
+      "description": "Codex 互換ペットを Hope に追加する前にプレビューして検証します。",
+      "drop": "ペットフォルダー、zip、マニフェスト + 画像、PNG、WebP をドロップ",
+      "dropSafety": "ドロップではプレビューだけを作成します。確認するまでインストールされません。",
+      "chooseFiles": "ファイルを選択",
+      "packageFiles": "ペットパッケージ",
+      "fromCodex": "Codex ペットをスキャン",
+      "found": "{{count}} 件見つかりました",
+      "found_one": "{{count}} 件見つかりました",
+      "found_other": "{{count}} 件見つかりました",
+      "unknownVersion": "不明なバージョン",
+      "previewFailed": "このペットパッケージをプレビューできませんでした",
+      "previewFailedCount": "{{amount}} 件のペットパッケージをプレビューできませんでした",
+      "previewCount": "{{amount}} 匹のペットを確認できます",
+      "removePreview": "今回のインポートから外す",
+      "scanFailed": "Codex ペットをスキャンできませんでした",
+      "uploadFailed": "ペットパッケージをアップロードできませんでした",
+      "duplicate": "インポート済み",
+      "enableAfter": "インポート後にこのペットを使用",
+      "confirm": "ペットをインポート",
+      "imported": "ペットをインポートしました",
+      "importedCount": "{{amount}} 匹のペットをライブラリに追加しました",
+      "alreadyImported": "このペットはすでにライブラリにあります",
+      "commitFailed": "ペットをインポートできませんでした",
+      "commitFailedCount": "{{amount}} 匹のペットをインポートできませんでした",
+      "linkPlaceholder": "codex:// インストールリンクまたは HTTPS スプライトシート URL を貼り付け",
+      "linkLabel": "ペットリンク",
+      "previewLink": "リンクをプレビュー"
+    },
+    "creator": {
+      "action": "作成",
+      "title": "ペットを作成",
+      "description": "オリジナルのマスコットを生成し、Codex 互換アニメーションを確認してからインストールします。",
+      "name": "名前",
+      "shortDescription": "短い説明（任意）",
+      "prompt": "どんな見た目のペットにしますか？",
+      "generate": "プレビューを生成",
+      "generating": "プレビューを作成中…",
+      "failed": "このペットを作成できませんでした"
+    },
+    "export": {
+      "action": "Codex 用にエクスポート",
+      "saved": "Codex 互換パッケージをエクスポートしました",
+      "failed": "このペットをエクスポートできませんでした"
+    },
+    "window": {
+      "interact": "Hope ペットとふれあう",
+      "tuckAway": "ペットをしまう"
+    },
+    "bubble": {
+      "needsInput": "{{count}} 件の会話で入力が必要です。",
+      "needsInput_one": "入力が必要です。",
+      "needsInput_other": "{{count}} 件の会話で入力が必要です。",
+      "blocked": "{{count}} 件の会話がブロックされています。",
+      "blocked_one": "会話がブロックされています。",
+      "blocked_other": "{{count}} 件の会話がブロックされています。",
+      "ready": "{{count}} 件の会話の準備ができました。",
+      "ready_one": "会話の準備ができました。",
+      "ready_other": "{{count}} 件の会話の準備ができました。",
+      "open": "Hope で開く",
+      "dismiss": "閉じる",
+      "running": "考え中",
+      "reply": "返信",
+      "queued": "返信をキューに追加しました",
+      "sent": "返信を送信しました",
+      "sendFailed": "返信を送信できませんでした"
+    },
+    "stack": {
+      "expand": "{{count}} 件の会話を表示",
+      "collapse": "会話を折りたたむ"
+    },
+    "tray": {
+      "title": "会話アクティビティ",
+      "reconnecting": "状態を更新中…",
+      "count": "{{count}} 件がアクティブ",
+      "count_one": "{{count}} 件がアクティブ",
+      "count_other": "{{count}} 件がアクティブ",
+      "close": "アクティビティを閉じる",
+      "openRemaining": "残り {{count}} 件を Hope で表示",
+      "openRemaining_one": "残り {{count}} 件を Hope で表示",
+      "openRemaining_other": "残り {{count}} 件を Hope で表示",
+      "incognitoTitle": "シークレット会話",
+      "untitledTitle": "新しい会話"
+    },
+    "navigation": {
+      "unavailable": "この会話は利用できなくなりました。"
     }
   },
   "configRecovery": {

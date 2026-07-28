@@ -12,7 +12,7 @@
 //! - Keep signatures the same across platforms so callers never need a
 //!   `#[cfg]` branch themselves.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub(crate) mod keep_awake;
@@ -160,6 +160,36 @@ pub fn hide_console_tokio(cmd: &mut tokio::process::Command) {
     imp::hide_console_tokio(cmd);
 }
 
+/// Windows Subsystem for Linux availability relevant to command execution.
+///
+/// `installed` means the WSL runtime itself answered its status probe, while
+/// `distribution_installed` additionally means the default Linux distribution
+/// can execute commands. Non-Windows platforms always return `false` for both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WslStatus {
+    pub installed: bool,
+    pub distribution_installed: bool,
+}
+
+/// Probe WSL without opening a console window.
+pub async fn wsl_status() -> WslStatus {
+    imp::wsl_status().await
+}
+
+/// Build a hidden async `wsl.exe` command on Windows.
+///
+/// Returns `None` on non-Windows platforms so shared callers can keep their
+/// platform branching in this module.
+pub fn wsl_command() -> Option<tokio::process::Command> {
+    imp::wsl_command()
+}
+
+/// Convert a host path into the default WSL distribution's Linux path.
+/// Returns `None` where WSL is not available.
+pub async fn path_to_wsl(path: &Path) -> std::io::Result<Option<String>> {
+    imp::path_to_wsl(path).await
+}
+
 /// Return a short, human-readable OS version string for diagnostic /
 /// error reporting (e.g. `"macOS 14.2.1"`, `"Windows 11 (26100)"`,
 /// `"Linux 6.8.0"`). Never fails — returns `"unknown"` as a last resort.
@@ -232,6 +262,22 @@ pub fn publish_atomic_file(
     overwrite: bool,
 ) -> std::io::Result<()> {
     imp::publish_atomic_file(source, target, overwrite)
+}
+
+/// Publish a fully prepared sibling directory without exposing a partial
+/// package.  Both paths must share the same parent and `target` must not exist.
+/// The caller is responsible for fsyncing files inside `source` first.
+pub fn publish_dir_atomic(
+    source: &std::path::Path,
+    target: &std::path::Path,
+) -> std::io::Result<()> {
+    if source.parent() != target.parent() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "directory publish requires sibling paths",
+        ));
+    }
+    imp::publish_dir_atomic(source, target)
 }
 
 /// Best-effort search for a Chrome / Chromium / Edge executable when the

@@ -36,13 +36,24 @@ import ApprovalDialog from "@/components/chat/ApprovalDialog"
 import AgentSwitcher from "@/components/chat/AgentSwitcher"
 import { useSidebarDisplayMode } from "@/components/chat/sidebar/useSidebarDisplayMode"
 import { useChatStream } from "@/components/chat/hooks/useChatStream"
+import { useEmbeddedChatReadReceipt } from "@/components/chat/hooks/useEmbeddedChatReadReceipt"
 import { useChatDisplayPreferences } from "@/components/chat/hooks/useChatDisplayPreferences"
 import { useClickOutside } from "@/hooks/useClickOutside"
 import { getTransport } from "@/lib/transport-provider"
 import { logger } from "@/lib/logger"
 import type { ChatAttachment } from "@/lib/transport"
 import { createDraftAttachment } from "@/components/chat/files/types"
-import type { ActiveModel, Message, PendingFileQuote } from "@/types/chat"
+import {
+  forkComposerDraftForMessage,
+  forkSessionRequestForMessage,
+  type ForkComposerDraft,
+} from "@/components/chat/message/messageFork"
+import type {
+  ActiveModel,
+  ForkSessionResult,
+  Message,
+  PendingFileQuote,
+} from "@/types/chat"
 import type { DesignRecipe } from "@/types/design"
 import { useDesignChat } from "./useDesignChat"
 import { DesignConversationHistory } from "./DesignConversationHistory"
@@ -157,6 +168,8 @@ export interface DesignChatPanelHandle {
    *  Returns false when a turn is already streaming so the caller can surface a
    *  "busy" hint instead of silently dropping the request. */
   submitPrompt: (text: string) => boolean
+  /** Open an exact design-thread session (pet/history deep navigation). */
+  focusThread: (sessionId: string) => void
 }
 
 interface Props {
@@ -263,6 +276,13 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
   const { displayMode, autoCollapseCompletedTurns } = useChatDisplayPreferences()
   const seqRef = useRef<Map<string, number>>(new Map())
   const endedRef = useRef<Map<string, string>>(new Map())
+  const [messageTailVisible, setMessageTailVisible] = useState(true)
+  useEmbeddedChatReadReceipt(
+    isActive,
+    messageTailVisible,
+    session.currentSessionId,
+    session.messages,
+  )
   const [historyOpen, setHistoryOpen] = useState(false)
   const historyRef = useRef<HTMLDivElement>(null)
   useClickOutside(
@@ -315,6 +335,7 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
   )
 
   const stream = useChatStream({
+    uiSurface: "design_chat",
     messages: session.messages,
     setMessages: session.setMessages,
     currentSessionId: session.currentSessionId,
@@ -340,6 +361,28 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
     draftDesignProjectId: projectId,
     getExtraAttachments,
   })
+  const [composerFocusSignal, setComposerFocusSignal] = useState<number | undefined>(undefined)
+  const pendingForkComposerRef = useRef<{
+    sessionId: string
+    draft: ForkComposerDraft
+  } | null>(null)
+
+  useEffect(() => {
+    const pending = pendingForkComposerRef.current
+    if (!pending || session.currentSessionId !== pending.sessionId) return
+    pendingForkComposerRef.current = null
+    stream.setInput(pending.draft.text)
+    stream.setAttachedFiles(pending.draft.attachedFiles)
+    stream.setPendingQuotes(pending.draft.pendingQuotes)
+    stream.setPendingMessageQuotes(pending.draft.pendingMessageQuotes)
+    setComposerFocusSignal((value) => (value ?? 0) + 1)
+  }, [
+    session.currentSessionId,
+    stream.setAttachedFiles,
+    stream.setInput,
+    stream.setPendingMessageQuotes,
+    stream.setPendingQuotes,
+  ])
 
   // Live streaming flag for the imperative submitPrompt guard (avoid firing a
   // second turn while one is in flight) without rebuilding the handle each tick.
@@ -389,8 +432,9 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
         void stream.handleSend(text)
         return true
       },
+      focusThread: (sessionId) => void session.switchThread(sessionId),
     }),
-    [stream, t],
+    [session, stream, t],
   )
 
   // 本轮产物 chip 条（B0-8）：从 assistant 消息的 design 工具调用里提取产/改的产物，
@@ -490,18 +534,23 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
   // 拒进行中流式 / 边界裁剪），产物仍是本项目的设计线程（后端补建 design_chat_threads 锚点）。
   // 切到新线程继续探索另一方向而不丢原线。交互与普通对话「消息下方 fork」一致。
   const handleForkFromMessage = useCallback(
-    async (messageId: number) => {
+    async (message: Message) => {
       const sid = session.currentSessionId
       if (!sid) return
+      const request = forkSessionRequestForMessage(sid, message)
+      if (!request) return
       try {
-        const forked = await getTransport().call<{ id: string }>("fork_session_cmd", {
-          sessionId: sid,
-          messageId,
+        const forked = await getTransport().call<ForkSessionResult>("fork_session_cmd", {
+          ...request,
         })
+        const composerDraft = await forkComposerDraftForMessage(message, forked)
         await session.reloadThreads()
+        pendingForkComposerRef.current =
+          composerDraft == null ? null : { sessionId: forked.id, draft: composerDraft }
         await session.switchThread(forked.id)
         toast.success(t("design.chat.forked", "已分支为新对话"))
       } catch (e) {
+        pendingForkComposerRef.current = null
         logger.error("design", "DesignChatPanel", "fork failed", e)
         toast.error(
           e instanceof Error && e.message ? e.message : t("design.chat.forkFailed", "分支失败"),
@@ -641,16 +690,21 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
                   logger.error("ui", "DesignChat::rename", "rename thread failed", e),
                 )
             }}
-            onDelete={(sid) => {
+            onArchive={(sid) => {
               void getTransport()
-                .call("delete_session_cmd", { sessionId: sid })
+                .call("set_session_archived_cmd", { sessionId: sid, archived: true })
                 .then(() => {
-                  // 删的是当前线程 → 回到草稿态；否则仅刷新历史。
+                  window.dispatchEvent(
+                    new CustomEvent("hope:session-archive-changed", {
+                      detail: { sessionId: sid, archived: true },
+                    }),
+                  )
+                  // 归档的是当前线程 → 回到草稿态；否则仅刷新历史。
                   if (session.currentSessionIdRef.current === sid) session.handleNewThread()
                   return session.reloadThreads()
                 })
                 .catch((e) =>
-                  logger.error("ui", "DesignChat::delete", "delete thread failed", e),
+                  logger.error("ui", "DesignChat::archive", "archive thread failed", e),
                 )
             }}
           />
@@ -711,6 +765,7 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
             askUserVariant="design"
             displayMode={displayMode}
             autoCollapseCompletedTurns={autoCollapseCompletedTurns}
+            onAtBottomChange={setMessageTailVisible}
           />
         )}
       </div>
@@ -781,6 +836,7 @@ export const DesignChatPanel = forwardRef<DesignChatPanelHandle, Props>(function
             stream.setPendingQuotes((prev) => prev.filter((_, idx) => idx !== i))
           }
           onJumpToQuote={onJumpToQuote}
+          focusSignal={composerFocusSignal}
           pendingMessage={stream.pendingMessage}
           onCancelPending={() => stream.setPendingMessage(null)}
           // 生成中排队多条：接内核已有 pendingSends 队列 UI（逐条编辑/删除/工具边界 force-insert 插队），

@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next"
 import { initLanguageFromConfig } from "@/i18n/i18n"
 import { Plus, ChevronDown, Bot, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { isLinuxDesktop } from "@/lib/platform"
 import { FloatingMenu } from "@/components/ui/floating-menu"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import ChatInput from "@/components/chat/ChatInput"
@@ -17,6 +18,7 @@ import ApprovalDialog from "@/components/chat/ApprovalDialog"
 import IncognitoToggle from "@/components/chat/input/IncognitoToggle"
 import { useQuickChatSession } from "@/components/chat/useQuickChatSession"
 import { useChatStream } from "@/components/chat/useChatStream"
+import { useEmbeddedChatReadReceipt } from "@/components/chat/hooks/useEmbeddedChatReadReceipt"
 import type { CommandResult } from "@/components/chat/slash-commands/types"
 import type { AgentSummaryForSidebar, PendingMessageQuote } from "@/types/chat"
 
@@ -29,6 +31,13 @@ export default function QuickChatWindow() {
   const quickStreamSeqRef = useRef<Map<string, number>>(new Map())
   const quickEndedStreamIdsRef = useRef<Map<string, string>>(new Map())
   const [composerFocusSignal, setComposerFocusSignal] = useState<number | undefined>(undefined)
+  const [messageTailVisible, setMessageTailVisible] = useState(true)
+  useEmbeddedChatReadReceipt(
+    true,
+    messageTailVisible,
+    session.currentSessionId,
+    session.messages,
+  )
 
   // Effective incognito = persisted session.incognito (continued chat) or
   // draft toggle (new chat). Mirrors `ChatScreen` semantics so the toggle
@@ -45,6 +54,7 @@ export default function QuickChatWindow() {
     : session.draftIncognito
 
   const stream = useChatStream({
+    uiSurface: "quick_chat",
     messages: session.messages,
     setMessages: session.setMessages,
     currentSessionId: session.currentSessionId,
@@ -90,8 +100,11 @@ export default function QuickChatWindow() {
     initLanguageFromConfig()
   }, [])
 
-  // Transparent html/body so CSS border-radius shows rounded corners on macOS
+  // Transparent html/body so CSS border-radius shows rounded corners on macOS.
+  // Linux 窗口本身不透明（shortcuts.rs 关了 transparent，#547），保持默认背景，
+  // 圆角与 clip-path 一并退化为方角。
   useEffect(() => {
+    if (isLinuxDesktop()) return
     document.documentElement.style.background = "transparent"
     document.body.style.background = "transparent"
   }, [])
@@ -155,7 +168,12 @@ export default function QuickChatWindow() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen rounded-2xl border border-border/60 bg-background/95 shadow-2xl [clip-path:inset(0_round_16px)]">
+      <div
+        className={cn(
+          "flex flex-col h-screen border border-border/60 bg-background/95 shadow-2xl",
+          !isLinuxDesktop() && "rounded-2xl [clip-path:inset(0_round_16px)]",
+        )}
+      >
         {/* ── Title bar (draggable) ─────────────── */}
         <div
           className="flex items-center gap-2 px-4 py-2 shrink-0 select-none"
@@ -215,6 +233,7 @@ export default function QuickChatWindow() {
           sessionId={session.currentSessionId}
           incognito={incognitoEnabled}
           onAddMessageQuote={handleMessageQuote}
+          onAtBottomChange={setMessageTailVisible}
         />
 
         {/* ── Approval Dialog ────────────────────── */}

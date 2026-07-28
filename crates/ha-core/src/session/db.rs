@@ -32,6 +32,40 @@ pub struct LastAssistantTokens {
 /// Number of read-only connections in the pool (mirrors the memory backend).
 const READ_POOL_SIZE: usize = 4;
 
+#[derive(Clone, Copy)]
+enum SessionDbOpenMode {
+    Durable,
+    #[cfg(test)]
+    EphemeralTest,
+}
+
+impl SessionDbOpenMode {
+    fn configure_writer(self, conn: &Connection) -> Result<()> {
+        match self {
+            Self::Durable => {
+                // Stream journals acknowledge user-visible deltas only after
+                // SQLite reports a durable commit. FULL is required here:
+                // NORMAL may lose the newest WAL frames after an OS/power
+                // failure even though COMMIT returned successfully.
+                conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;")?;
+            }
+            #[cfg(test)]
+            Self::EphemeralTest => {
+                // These databases still use a real file so the read-only pool
+                // observes the writer, but their contents are disposable. Keep
+                // journals and temporary tables in memory and skip fsyncs;
+                // persistence/reopen/locking tests deliberately use `open()`.
+                conn.execute_batch(
+                    "PRAGMA journal_mode=MEMORY;
+                     PRAGMA synchronous=OFF;
+                     PRAGMA temp_store=MEMORY;",
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct SessionDB {
     /// Exclusive write connection — also the *only* connection used by every
     /// write path, read-write transaction, and external module that touches
@@ -52,6 +86,94 @@ pub struct SessionDB {
 /// DB rows than the requested page size — useful for tuning PAGE_SIZE and
 /// deciding when virtual scrolling becomes necessary.
 const LARGE_TURN_EXTENSION_LOG_THRESHOLD: usize = 200;
+
+fn provider_history_item_is_user(value: &serde_json::Value) -> bool {
+    value.get("role").and_then(serde_json::Value::as_str) == Some("user")
+}
+
+fn provider_history_contains_text(value: &serde_json::Value, expected: &str) -> bool {
+    match value {
+        serde_json::Value::String(text) => text == expected,
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(|item| provider_history_contains_text(item, expected)),
+        serde_json::Value::Object(fields) => fields
+            .values()
+            .any(|item| provider_history_contains_text(item, expected)),
+        _ => false,
+    }
+}
+
+/// Remove only the edited prompt suffix from provider-native history. Some
+/// adapters merge consecutive user prompts into a single top-level user item;
+/// in that case preserve the earlier prefix instead of truncating the whole
+/// item. Ambiguous legacy shapes fail closed.
+fn rewind_provider_context_before_user(
+    context_json: &str,
+    expected_content: &str,
+    require_user_at_end: bool,
+) -> Result<String> {
+    let mut history: Vec<serde_json::Value> =
+        serde_json::from_str(context_json).map_err(|error| {
+            anyhow::anyhow!("cannot parse provider context for message edit: {error}")
+        })?;
+    let Some(user_index) = history.iter().rposition(provider_history_item_is_user) else {
+        anyhow::bail!("provider context has no user boundary for message edit");
+    };
+    if require_user_at_end && user_index + 1 != history.len() {
+        anyhow::bail!("provider context checkpoint is not positioned at the edited user prompt");
+    }
+    let expected = expected_content.trim();
+    if expected.is_empty() {
+        anyhow::bail!("provider context cannot safely rewind an empty edited message");
+    }
+    let user_item = &mut history[user_index];
+    let content = user_item
+        .get_mut("content")
+        .ok_or_else(|| anyhow::anyhow!("provider context user item has no content"))?;
+    let remove_whole_item = match content {
+        serde_json::Value::String(text) => {
+            let exact = text == expected_content || text == expected;
+            if exact {
+                true
+            } else {
+                let raw_suffix = format!("\n\n{expected_content}");
+                let trimmed_suffix = format!("\n\n{expected}");
+                let prefix_len = text
+                    .strip_suffix(&raw_suffix)
+                    .or_else(|| text.strip_suffix(&trimmed_suffix))
+                    .map(str::len)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "provider context user boundary does not match the edited message"
+                        )
+                    })?;
+                text.truncate(prefix_len);
+                false
+            }
+        }
+        serde_json::Value::Array(items) => {
+            if items.len() == 1
+                && (provider_history_contains_text(&items[0], expected_content)
+                    || provider_history_contains_text(&items[0], expected))
+            {
+                true
+            } else {
+                anyhow::bail!(
+                    "provider context has an ambiguous multi-part user boundary for message edit"
+                );
+            }
+        }
+        _ => anyhow::bail!("provider context user content has an unsupported shape"),
+    };
+    history.truncate(if remove_whole_item {
+        user_index
+    } else {
+        user_index + 1
+    });
+    serde_json::to_string(&history)
+        .map_err(|error| anyhow::anyhow!("cannot serialize rewound provider context: {error}"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UnreadDomain {
@@ -153,6 +275,7 @@ pub(crate) fn regular_session_scope_sql(session_alias: &str) -> String {
         "{session_alias}.is_cron = 0
          AND {session_alias}.parent_session_id IS NULL
          AND {session_alias}.incognito = 0
+         AND {session_alias}.archived_at IS NULL
          AND {session_alias}.kind = 'regular'
          AND NOT EXISTS (
              SELECT 1 FROM channel_conversations cc_regular_scope
@@ -205,6 +328,7 @@ fn session_meta_select() -> String {
            CASE WHEN s.is_cron = 0
                   AND s.parent_session_id IS NULL
                   AND s.incognito = 0
+                  AND s.archived_at IS NULL
                   AND s.kind = 'regular'
                   AND EXISTS (SELECT 1 FROM channel_conversations cc_unread WHERE cc_unread.session_id = s.id)
                 THEN EXISTS(
@@ -217,7 +341,8 @@ fn session_meta_select() -> String {
            s.sandbox_mode, s.temperature, s.runtime_defaults_initialized,
            s.execution_mode, s.workflow_mode,
            s.forked_from_session_id, s.forked_from_message_id,
-           (SELECT p.title FROM sessions p WHERE p.id = s.forked_from_session_id) as forked_from_session_title
+           (SELECT p.title FROM sessions p WHERE p.id = s.forked_from_session_id) as forked_from_session_title,
+           s.archived_at
      FROM sessions s
      LEFT JOIN channel_conversations cc ON cc.session_id = s.id"
     )
@@ -227,6 +352,20 @@ impl SessionDB {
     /// Open (or create) the database at the given path, enable WAL mode,
     /// and ensure tables exist.
     pub fn open(db_path: &PathBuf) -> Result<Self> {
+        Self::open_with_mode(db_path, SessionDbOpenMode::Durable)
+    }
+
+    /// Open a disposable, file-backed database without durability barriers.
+    ///
+    /// Kept test-only so production call sites cannot accidentally opt out of
+    /// WAL + FULL. Tests that exercise reopen, crash recovery, journal mode,
+    /// locking, or durability must continue to call [`Self::open`].
+    #[cfg(test)]
+    pub(crate) fn open_ephemeral_for_test(db_path: &PathBuf) -> Result<Self> {
+        Self::open_with_mode(db_path, SessionDbOpenMode::EphemeralTest)
+    }
+
+    fn open_with_mode(db_path: &PathBuf, mode: SessionDbOpenMode) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -234,13 +373,7 @@ impl SessionDB {
 
         let conn = Connection::open(db_path)?;
 
-        // Enable WAL mode for crash safety and better concurrent read performance
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        // Stream journals acknowledge user-visible deltas only after SQLite
-        // reports a durable commit. FULL is required here: NORMAL may lose the
-        // newest WAL frames after an OS/power failure even though COMMIT
-        // returned successfully.
-        conn.execute_batch("PRAGMA synchronous=FULL;")?;
+        mode.configure_writer(&conn)?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         // Wait up to 5s on a busy lock instead of returning SQLITE_BUSY
         // immediately — removes spurious write failures under WAL contention.
@@ -269,6 +402,7 @@ impl SessionDB {
                 incognito INTEGER NOT NULL DEFAULT 0,
                 title_source TEXT NOT NULL DEFAULT 'manual',
                 pinned_at TEXT,
+                archived_at TEXT,
                 kind TEXT NOT NULL DEFAULT 'regular',
                 execution_mode TEXT NOT NULL DEFAULT 'off',
                 workflow_mode TEXT NOT NULL DEFAULT 'off',
@@ -345,11 +479,76 @@ impl SessionDB {
                 label TEXT,
                 attachment_count INTEGER DEFAULT 0,
                 input_tokens INTEGER,
-                output_tokens INTEGER
+                output_tokens INTEGER,
+                continuation_of_run_id TEXT,
+                trigger_kind TEXT NOT NULL DEFAULT 'spawn',
+                terminal_reason TEXT,
+                runner_owner TEXT,
+                lease_epoch INTEGER NOT NULL DEFAULT 0,
+                last_heartbeat_at TEXT,
+                delivery_kind TEXT NOT NULL DEFAULT 'parent',
+                launch_spec_json TEXT,
+                owner_kind TEXT NOT NULL DEFAULT 'parent_session',
+                owner_id TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_subagent_parent ON subagent_runs(parent_session_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_subagent_status ON subagent_runs(status);
             CREATE INDEX IF NOT EXISTS idx_subagent_label ON subagent_runs(label);
+
+            -- Stable child-conversation identity and control-plane ownership.
+            -- `subagent_runs` remains the attempt truth source; this table only
+            -- owns serialization, fencing, and lifecycle state for the thread.
+            CREATE TABLE IF NOT EXISTS subagent_threads (
+                thread_id TEXT PRIMARY KEY,
+                parent_session_id TEXT NOT NULL,
+                parent_agent_id TEXT NOT NULL,
+                child_agent_id TEXT NOT NULL,
+                depth INTEGER NOT NULL,
+                owner_kind TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                lifecycle_state TEXT NOT NULL DEFAULT 'open',
+                current_run_id TEXT,
+                lease_epoch INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_subagent_threads_parent
+                ON subagent_threads(parent_session_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_subagent_threads_owner
+                ON subagent_threads(owner_kind, owner_id, updated_at DESC);
+
+            -- Durable parent/workflow dispatch provenance. A replay reuses the
+            -- dispatch id rather than delivering the same child message twice.
+            CREATE TABLE IF NOT EXISTS subagent_dispatches (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                source_run_id TEXT NOT NULL,
+                target_run_id TEXT,
+                dispatch_kind TEXT NOT NULL,
+                owner_kind TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                delivered_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_subagent_dispatches_thread
+                ON subagent_dispatches(thread_id, created_at DESC);
+
+            -- Durable ordinary-parent result delivery. Workflow and Group
+            -- children use their own aggregation/checkpoint paths.
+            CREATE TABLE IF NOT EXISTS subagent_result_deliveries (
+                run_id TEXT PRIMARY KEY,
+                parent_session_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                suppress_reason TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                requested_at TEXT NOT NULL,
+                delivered_at TEXT,
+                last_error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_subagent_result_deliveries_pending
+                ON subagent_result_deliveries(state, requested_at);
 
             -- Unified model usage ledger. Dashboard token/cost totals read this
             -- table so non-chat model calls (side_query / embedding / STT /
@@ -441,6 +640,95 @@ impl SessionDB {
                     SELECT new.id, new.content
                     WHERE new.role IN ('user', 'assistant') AND length(new.content) > 0;
             END;"
+        )?;
+
+        // Sub-agent Thread/Attempt migration. Keep every addition probe-based:
+        // users can open databases produced by any earlier minor without a
+        // version-table dependency or a destructive rebuild.
+        let subagent_run_columns = [
+            (
+                "continuation_of_run_id",
+                "ALTER TABLE subagent_runs ADD COLUMN continuation_of_run_id TEXT;",
+            ),
+            (
+                "trigger_kind",
+                "ALTER TABLE subagent_runs ADD COLUMN trigger_kind TEXT NOT NULL DEFAULT 'spawn';",
+            ),
+            (
+                "terminal_reason",
+                "ALTER TABLE subagent_runs ADD COLUMN terminal_reason TEXT;",
+            ),
+            (
+                "runner_owner",
+                "ALTER TABLE subagent_runs ADD COLUMN runner_owner TEXT;",
+            ),
+            (
+                "lease_epoch",
+                "ALTER TABLE subagent_runs ADD COLUMN lease_epoch INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "last_heartbeat_at",
+                "ALTER TABLE subagent_runs ADD COLUMN last_heartbeat_at TEXT;",
+            ),
+            (
+                "delivery_kind",
+                "ALTER TABLE subagent_runs ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'parent';",
+            ),
+            (
+                "launch_spec_json",
+                "ALTER TABLE subagent_runs ADD COLUMN launch_spec_json TEXT;",
+            ),
+            (
+                "owner_kind",
+                "ALTER TABLE subagent_runs ADD COLUMN owner_kind TEXT NOT NULL DEFAULT 'parent_session';",
+            ),
+            (
+                "owner_id",
+                "ALTER TABLE subagent_runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';",
+            ),
+        ];
+        for (column, migration) in subagent_run_columns {
+            let probe = format!("SELECT {column} FROM subagent_runs LIMIT 1");
+            if conn.prepare(&probe).is_err() {
+                conn.execute_batch(migration)?;
+            }
+        }
+        // Historical ordinary subagents were owned by their parent session.
+        // Workflow/Team ownership is reconciled after those subsystem tables
+        // have been created below.
+        conn.execute(
+            "UPDATE subagent_runs
+                SET owner_id = parent_session_id
+              WHERE owner_id = ''",
+            [],
+        )?;
+        // Older schemas relied only on application-level serialization. If a
+        // crash/race left duplicate live attempts, settle every non-newest row
+        // before installing the database-level invariant; silently refusing to
+        // open the user's database would make recovery strictly worse.
+        let migration_now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "WITH ranked AS (
+                SELECT run_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY child_session_id
+                           ORDER BY started_at DESC, run_id DESC
+                       ) AS position
+                  FROM subagent_runs
+                 WHERE status IN ('queued', 'spawning', 'running')
+             )
+             UPDATE subagent_runs
+                SET status = 'interrupted',
+                    terminal_reason = 'process_interrupted',
+                    error = COALESCE(error, 'Interrupted while repairing duplicate active attempts'),
+                    finished_at = COALESCE(finished_at, ?1)
+              WHERE run_id IN (SELECT run_id FROM ranked WHERE position > 1)",
+            params![migration_now],
+        )?;
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_subagent_one_active_run_per_thread
+                ON subagent_runs(child_session_id)
+                WHERE status IN ('queued', 'spawning', 'running');",
         )?;
 
         // Migration: add is_cron column if missing
@@ -578,6 +866,21 @@ impl SessionDB {
         // they can reach these migrations.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_sessions_forked_from ON sessions(forked_from_session_id);",
+        )?;
+
+        // Migration: reversible conversation archive. NULL means active; a
+        // timestamp retains when the user archived the conversation and powers
+        // the Settings archive manager's recency ordering.
+        let has_archived_at = conn
+            .prepare("SELECT archived_at FROM sessions LIMIT 1")
+            .is_ok();
+        if !has_archived_at {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN archived_at TEXT;")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_archived_at
+               ON sessions(archived_at DESC)
+             WHERE archived_at IS NOT NULL;",
         )?;
 
         Self::ensure_model_usage_table(&conn)?;
@@ -1170,6 +1473,74 @@ impl SessionDB {
                 "ALTER TABLE team_templates ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';",
             )?;
         }
+
+        // Reconstruct control-plane ownership for historical durable children.
+        // Workflow and Team evidence is authoritative; all remaining legacy
+        // rows retain the historical parent-session ownership default.
+        conn.execute_batch(
+            "UPDATE subagent_runs
+                SET owner_kind = 'workflow',
+                    owner_id = (
+                        SELECT wo.run_id
+                          FROM workflow_ops wo
+                         WHERE wo.child_handle = subagent_runs.run_id
+                           AND wo.op_type IN ('spawnAgent','resumeAgent')
+                         ORDER BY wo.started_at ASC, wo.id ASC
+                         LIMIT 1
+                    ),
+                    delivery_kind = 'workflow'
+              WHERE EXISTS (
+                    SELECT 1 FROM workflow_ops wo
+                     WHERE wo.child_handle = subagent_runs.run_id
+                       AND wo.op_type IN ('spawnAgent','resumeAgent')
+              );
+
+             UPDATE subagent_runs
+                SET owner_kind = 'team',
+                    owner_id = (
+                        SELECT tm.team_id
+                          FROM team_members tm
+                         WHERE tm.run_id = subagent_runs.run_id
+                         LIMIT 1
+                    ),
+                    delivery_kind = 'group'
+              WHERE EXISTS (
+                    SELECT 1 FROM team_members tm
+                     WHERE tm.run_id = subagent_runs.run_id
+              );
+
+             INSERT OR IGNORE INTO subagent_threads (
+                 thread_id, parent_session_id, parent_agent_id, child_agent_id,
+                 depth, owner_kind, owner_id, lifecycle_state, current_run_id,
+                 lease_epoch, created_at, updated_at
+             )
+             SELECT latest.child_session_id,
+                    latest.parent_session_id,
+                    latest.parent_agent_id,
+                    latest.child_agent_id,
+                    latest.depth,
+                    latest.owner_kind,
+                    latest.owner_id,
+                    'open',
+                    latest.run_id,
+                    latest.lease_epoch,
+                    first_seen.created_at,
+                    COALESCE(latest.finished_at, latest.started_at)
+               FROM subagent_runs latest
+               JOIN (
+                    SELECT child_session_id, MIN(started_at) AS created_at
+                      FROM subagent_runs
+                     GROUP BY child_session_id
+               ) first_seen
+                 ON first_seen.child_session_id = latest.child_session_id
+              WHERE latest.run_id = (
+                    SELECT candidate.run_id
+                      FROM subagent_runs candidate
+                     WHERE candidate.child_session_id = latest.child_session_id
+                     ORDER BY candidate.started_at DESC, candidate.run_id DESC
+                     LIMIT 1
+              );",
+        )?;
 
         // One-time cleanup: drop legacy builtin templates (design moved to user-managed
         // presets via Settings → Teams panel; see AGENTS.md Team 系统 section).
@@ -1789,6 +2160,7 @@ impl SessionDB {
             created_at: now.clone(),
             updated_at: now,
             pinned_at: None,
+            archived_at: None,
             message_count: 0,
             unread_count: 0,
             channel_unread_count: 0,
@@ -1828,8 +2200,404 @@ impl SessionDB {
         source_session_id: &str,
         source_message_id: Option<i64>,
     ) -> Result<SessionMeta> {
+        self.fork_session_with_boundary(source_session_id, source_message_id, false)
+            .map(|result| result.session)
+    }
+
+    /// Fork a session with a transcript boundary immediately before a source
+    /// message. Unlike a full or inclusive fork, this intentionally permits an
+    /// empty copied transcript when `before_message_id` is the first message.
+    pub fn fork_session_before_message(
+        &self,
+        source_session_id: &str,
+        before_message_id: i64,
+    ) -> Result<SessionMeta> {
+        self.fork_session_before_message_with_draft(source_session_id, before_message_id)
+            .map(|result| result.session)
+    }
+
+    /// Same boundary semantics as [`Self::fork_session_before_message`], plus
+    /// the selected user prompt's attachment metadata rewritten to files owned
+    /// by the new session. This is consumed by GUI transports to reconstruct an
+    /// editable composer draft.
+    pub fn fork_session_before_message_with_draft(
+        &self,
+        source_session_id: &str,
+        before_message_id: i64,
+    ) -> Result<crate::session::ForkSessionResult> {
+        let result =
+            self.fork_session_with_boundary(source_session_id, Some(before_message_id), true);
+        match &result {
+            Ok(forked) => crate::app_info!(
+                "session",
+                "fork",
+                "exclusive fork completed: source_session_id={} before_message_id={} forked_session_id={}",
+                source_session_id,
+                before_message_id,
+                forked.session.id
+            ),
+            Err(error) => crate::app_warn!(
+                "session",
+                "fork",
+                "exclusive fork failed: source_session_id={} before_message_id={} error={}",
+                source_session_id,
+                before_message_id,
+                error
+            ),
+        }
+        result
+    }
+
+    /// Atomically replace the latest settled user turn and register its new
+    /// running turn. This is the durable boundary for inline edit + resend:
+    /// callers must never delete the old branch in a separate request.
+    ///
+    /// The target must still be the latest non-queued user row and its prior
+    /// chat turn must be terminal. Callers additionally hold the in-memory
+    /// `active_turn` guard; the SQL checks keep the operation fail-closed
+    /// across process or transport races.
+    pub fn replace_last_user_message_for_edit(
+        &self,
+        session_id: &str,
+        user_message_id: i64,
+        replacement: &NewMessage,
+        new_turn_id: &str,
+        source: &str,
+        ui_surface: Option<crate::pet::ChatUiSurface>,
+    ) -> Result<i64> {
+        let result = (|| {
+            if replacement.role != MessageRole::User {
+                anyhow::bail!("message edit replacement must be a user message");
+            }
+            if replacement.queue_request_id.is_some() {
+                anyhow::bail!("message edit cannot be combined with a queued message");
+            }
+
+            let mut conn = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+            let tx = conn.transaction()?;
+
+            let (target_role, target_content, target_queue_request_id): (
+                String,
+                String,
+                Option<String>,
+            ) = tx
+                .query_row(
+                    "SELECT role, content, queue_request_id
+                     FROM messages WHERE session_id = ?1 AND id = ?2",
+                    params![session_id, user_message_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("user message not found in session"))?;
+            if target_role != MessageRole::User.as_str() {
+                anyhow::bail!("message edit target must be a user message");
+            }
+            if target_queue_request_id.is_some() {
+                anyhow::bail!("queued messages cannot be edited after dispatch");
+            }
+
+            let latest_user_id: Option<i64> = tx.query_row(
+                "SELECT MAX(id) FROM messages WHERE session_id = ?1 AND role = 'user'",
+                params![session_id],
+                |row| row.get(0),
+            )?;
+            if latest_user_id != Some(user_message_id) {
+                anyhow::bail!("only the latest user message can be edited");
+            }
+
+            let queued_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM queued_turn_user_messages WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )?;
+            if queued_count > 0 {
+                anyhow::bail!("session has queued messages; wait for them before editing");
+            }
+
+            let active_turn_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM chat_turns
+                 WHERE session_id = ?1 AND status IN ('running', 'cancelling')",
+                params![session_id],
+                |row| row.get(0),
+            )?;
+            if active_turn_count > 0 {
+                anyhow::bail!(
+                    "session has an active response; wait for it to finish before editing"
+                );
+            }
+
+            let (turn_id, turn_status, assistant_message_id, previous_had_ui_surface): (
+                String,
+                String,
+                Option<i64>,
+                bool,
+            ) = tx
+                .query_row(
+                    "SELECT id, status, assistant_message_id, ui_surface IS NOT NULL
+                     FROM chat_turns
+                     WHERE session_id = ?1 AND user_message_id = ?2
+                     ORDER BY started_at DESC LIMIT 1",
+                    params![session_id, user_message_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("user message has no completed assistant turn"))?;
+            if !matches!(turn_status.as_str(), "completed" | "interrupted" | "failed") {
+                anyhow::bail!("assistant response must be completed or terminated before editing");
+            }
+
+            let (stored_context, context_run_id): (Option<String>, Option<String>) = tx
+                .query_row(
+                    "SELECT context_json, context_run_id FROM sessions WHERE id = ?1",
+                    params![session_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("session not found: {session_id}"))?;
+
+            let persistence_run: Option<(String, Option<String>)> = tx
+                .query_row(
+                    "SELECT run_id, base_context_json FROM chat_stream_runs
+                     WHERE session_id = ?1 AND turn_id = ?2
+                     ORDER BY started_at DESC LIMIT 1",
+                    params![session_id, turn_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let persistence_run_id = persistence_run.as_ref().map(|(run_id, _)| run_id.as_str());
+
+            // New runs persist the exact provider context from before this user
+            // turn. `"null"` is an explicit sentinel for a genuinely empty
+            // first-turn context; SQL NULL identifies a legacy run that predates
+            // the base-context column and needs the conservative fallback below.
+            let recorded_base_context = persistence_run
+                .as_ref()
+                .and_then(|(_, context)| context.as_deref());
+
+            // Legacy compatibility: older runs only have the seq=0 checkpoint,
+            // recorded after the user item was appended.
+            let checkpoint_context = match persistence_run_id {
+                Some(run_id) => tx
+                    .query_row(
+                        "SELECT context_json FROM chat_stream_context_checkpoints
+                         WHERE run_id = ?1 AND through_seq = 0
+                         ORDER BY attempt_no DESC LIMIT 1",
+                        params![run_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?,
+                None => None,
+            };
+
+            let rewound_context = if let Some(base_context) = recorded_base_context {
+                (base_context != "null").then(|| base_context.to_string())
+            } else if let Some(checkpoint) = checkpoint_context.as_deref() {
+                // The transcript may store a display-only form (for example a
+                // slash-skill label) while the provider checkpoint contains
+                // its expanded prompt. The run/turn foreign keys and the
+                // end-position check establish the boundary without comparing
+                // those intentionally different strings.
+                Some(rewind_provider_context_before_user(
+                    checkpoint,
+                    &target_content,
+                    true,
+                )?)
+            } else if persistence_run_id == context_run_id.as_deref()
+                && persistence_run_id.is_some()
+            {
+                // A terminal convergence may have committed context even when
+                // the provider failed before the seq=0 checkpoint. In that
+                // narrow case the mutable context belongs to this exact run.
+                stored_context
+                    .as_deref()
+                    .map(|context| {
+                        rewind_provider_context_before_user(context, &target_content, false)
+                    })
+                    .transpose()?
+            } else if persistence_run_id.is_none()
+                && assistant_message_id
+                    .and_then(|id| {
+                        tx.query_row(
+                            "SELECT model FROM messages WHERE session_id = ?1 AND id = ?2",
+                            params![session_id, id],
+                            |row| row.get::<_, Option<String>>(0),
+                        )
+                        .optional()
+                        .ok()
+                        .flatten()
+                        .flatten()
+                    })
+                    .is_some()
+            {
+                // Incognito turns intentionally have no durable stream run.
+                // A model-stamped assistant row distinguishes a real provider
+                // turn from local replies whose commit path leaves context
+                // untouched.
+                stored_context
+                    .as_deref()
+                    .map(|context| {
+                        rewind_provider_context_before_user(context, &target_content, false)
+                    })
+                    .transpose()?
+            } else {
+                // Local replies (for example a plan-subagent acknowledgement)
+                // never append this user turn to provider context.
+                stored_context
+            };
+
+            // Remove the journal before its chat_turn FK can be nulled. The
+            // journal represents the discarded assistant execution and must
+            // not become the session's latest reattach snapshot.
+            tx.execute(
+                "DELETE FROM chat_stream_runs WHERE turn_id = ?1 AND session_id = ?2",
+                params![turn_id, session_id],
+            )?;
+            tx.execute(
+                "DELETE FROM chat_turns WHERE id = ?1 AND session_id = ?2",
+                params![turn_id, session_id],
+            )?;
+            let removed = tx.execute(
+                "DELETE FROM messages WHERE session_id = ?1 AND id >= ?2",
+                params![session_id, user_message_id],
+            )?;
+            if removed == 0 {
+                anyhow::bail!("message edit rewind removed no transcript rows");
+            }
+
+            let now = chrono::Utc::now().to_rfc3339();
+            let timestamp = if replacement.timestamp.is_empty() {
+                now.as_str()
+            } else {
+                replacement.timestamp.as_str()
+            };
+            tx.execute(
+                "INSERT INTO messages (session_id, role, content, timestamp,
+                    attachments_meta, model, tokens_in, tokens_out, reasoning_effort,
+                    tool_call_id, tool_name, tool_arguments, tool_result,
+                    tool_duration_ms, is_error, thinking, ttft_ms, tokens_in_last,
+                    tokens_cache_creation, tokens_cache_read, tool_metadata, stream_status, source,
+                    queue_request_id, persistence_run_id, logical_block_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                params![
+                    session_id,
+                    replacement.role.as_str(),
+                    replacement.content,
+                    timestamp,
+                    replacement.attachments_meta,
+                    replacement.model,
+                    replacement.tokens_in,
+                    replacement.tokens_out,
+                    replacement.reasoning_effort,
+                    replacement.tool_call_id,
+                    replacement.tool_name,
+                    replacement.tool_arguments,
+                    replacement.tool_result,
+                    replacement.tool_duration_ms,
+                    replacement.is_error.map(|value| if value { 1i64 } else { 0i64 }),
+                    replacement.thinking,
+                    replacement.ttft_ms,
+                    replacement.tokens_in_last,
+                    replacement.tokens_cache_creation,
+                    replacement.tokens_cache_read,
+                    replacement.tool_metadata,
+                    replacement.stream_status,
+                    replacement.source,
+                    replacement.queue_request_id,
+                    replacement.persistence_run_id,
+                    replacement.logical_block_seq,
+                ],
+            )?;
+            let replacement_message_id = tx.last_insert_rowid();
+
+            tx.execute(
+                "INSERT INTO chat_turns (
+                    id, session_id, source, status, interrupt_reason, stream_id,
+                    user_message_id, assistant_message_id, error, started_at, ended_at, updated_at,
+                    ui_surface
+                 ) VALUES (?1, ?2, ?3, 'running', NULL, NULL, ?4, NULL, NULL, ?5, NULL, ?5, ?6)",
+                params![
+                    new_turn_id,
+                    session_id,
+                    source,
+                    replacement_message_id,
+                    now,
+                    ui_surface.map(crate::pet::ChatUiSurface::as_str),
+                ],
+            )?;
+
+            let context_changed = tx.execute(
+                "UPDATE sessions
+                 SET context_json = ?1,
+                     context_revision = context_revision + 1,
+                     context_run_id = NULL,
+                     updated_at = ?2
+                 WHERE id = ?3",
+                params![rewound_context, now, session_id],
+            )?;
+            if context_changed != 1 {
+                anyhow::bail!("session context rewind affected {context_changed} rows");
+            }
+
+            tx.commit()?;
+            Ok((
+                replacement_message_id,
+                removed,
+                previous_had_ui_surface || ui_surface.is_some(),
+            ))
+        })();
+
+        if result.is_ok() {
+            let cwd =
+                crate::session::effective_session_working_dir(Some(session_id)).unwrap_or_default();
+            if let Err(error) =
+                crate::hooks::transcript::TranscriptMirror::rewrite_session(self, session_id, &cwd)
+            {
+                crate::app_warn!(
+                    "hooks",
+                    "transcript",
+                    "failed to rewrite transcript after message edit: session_id={} error={}",
+                    session_id,
+                    error
+                );
+            }
+        }
+        if matches!(&result, Ok((_, _, true))) {
+            crate::pet::emit_activity_changed();
+        }
+
+        match &result {
+            Ok((replacement_message_id, removed, _)) => crate::app_info!(
+                "session",
+                "edit_resend",
+                "replaced latest user turn atomically: session_id={} user_message_id={} replacement_message_id={} removed_messages={}",
+                session_id,
+                user_message_id,
+                replacement_message_id,
+                removed
+            ),
+            Err(error) => crate::app_warn!(
+                "session",
+                "edit_resend",
+                "failed to rewind latest user turn: session_id={} user_message_id={} error={}",
+                session_id,
+                user_message_id,
+                error
+            ),
+        }
+        result.map(|(replacement_message_id, _, _)| replacement_message_id)
+    }
+
+    fn fork_session_with_boundary(
+        &self,
+        source_session_id: &str,
+        source_message_id: Option<i64>,
+        exclude_boundary: bool,
+    ) -> Result<crate::session::ForkSessionResult> {
         let new_session_id = uuid::Uuid::new_v4().to_string();
-        let fork_result = (|| -> Result<()> {
+        let fork_result = (|| -> Result<Option<String>> {
             let mut conn = self
                 .conn
                 .lock()
@@ -1930,12 +2698,27 @@ impl SessionDB {
                 }
             }
 
+            let boundary_attachments_meta = if exclude_boundary {
+                let (role, attachments_meta): (String, Option<String>) = tx.query_row(
+                    "SELECT role, attachments_meta FROM messages
+                     WHERE session_id = ?1 AND id = ?2",
+                    params![source_session_id, source_message_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                if role != MessageRole::User.as_str() {
+                    anyhow::bail!("exclusive fork boundary must be a user message");
+                }
+                attachments_meta
+            } else {
+                None
+            };
+
             let active_streaming_rows: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM messages
              WHERE session_id = ?1
-               AND (?2 IS NULL OR id <= ?2)
+               AND (?2 IS NULL OR (?3 = 0 AND id <= ?2) OR (?3 = 1 AND id < ?2))
                AND stream_status = 'streaming'",
-                params![source_session_id, source_message_id],
+                params![source_session_id, source_message_id, exclude_boundary],
                 |row| row.get(0),
             )?;
             if active_streaming_rows > 0 {
@@ -1947,11 +2730,11 @@ impl SessionDB {
             let copied_count: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM messages
              WHERE session_id = ?1
-               AND (?2 IS NULL OR id <= ?2)",
-                params![source_session_id, source_message_id],
+               AND (?2 IS NULL OR (?3 = 0 AND id <= ?2) OR (?3 = 1 AND id < ?2))",
+                params![source_session_id, source_message_id, exclude_boundary],
                 |row| row.get(0),
             )?;
-            if copied_count == 0 {
+            if copied_count == 0 && !exclude_boundary {
                 anyhow::bail!("cannot fork an empty session");
             }
 
@@ -1964,11 +2747,11 @@ impl SessionDB {
                 tx.query_row(
                     "SELECT content FROM messages
                  WHERE session_id = ?1
-                   AND (?2 IS NULL OR id <= ?2)
+                   AND (?2 IS NULL OR (?3 = 0 AND id <= ?2) OR (?3 = 1 AND id < ?2))
                    AND role = 'user'
                    AND length(trim(content)) > 0
                  ORDER BY id ASC LIMIT 1",
-                    params![source_session_id, source_message_id],
+                    params![source_session_id, source_message_id, exclude_boundary],
                     |row| row.get::<_, String>(0),
                 )
                 .optional()?
@@ -1999,6 +2782,18 @@ impl SessionDB {
                 None => None,
             };
 
+            let copied_through_message_id = if source_message_id.is_some() {
+                tx.query_row(
+                    "SELECT MAX(id) FROM messages
+                     WHERE session_id = ?1
+                       AND (?2 IS NULL OR (?3 = 0 AND id <= ?2) OR (?3 = 1 AND id < ?2))",
+                    params![source_session_id, source_message_id, exclude_boundary],
+                    |row| row.get::<_, Option<i64>>(0),
+                )?
+            } else {
+                None
+            };
+
             let now = chrono::Utc::now().to_rfc3339();
             tx.execute(
             "INSERT INTO sessions (
@@ -2027,7 +2822,7 @@ impl SessionDB {
                 working_dir,
                 kind,
                 source_session_id,
-                source_message_id,
+                copied_through_message_id,
             ],
         )?;
 
@@ -2043,25 +2838,33 @@ impl SessionDB {
                 tokens_in, tokens_out, reasoning_effort, tool_call_id, tool_name,
                 tool_arguments, tool_result, tool_duration_ms, is_error, thinking,
                 ttft_ms, tokens_in_last, tokens_cache_creation, tokens_cache_read,
-                tool_metadata, stream_status, source
+                tool_metadata,
+                CASE WHEN stream_status = 'orphaned' THEN 'recovered' ELSE stream_status END,
+                source
              FROM messages
              WHERE session_id = ?2
-               AND (?3 IS NULL OR id <= ?3)
+               AND (?3 IS NULL OR (?4 = 0 AND id <= ?3) OR (?4 = 1 AND id < ?3))
              ORDER BY id ASC",
-                params![new_session_id, source_session_id, source_message_id],
+                params![
+                    new_session_id,
+                    source_session_id,
+                    source_message_id,
+                    exclude_boundary
+                ],
             )?;
 
             let attachment_meta_rewrites = {
                 let mut stmt = tx.prepare(
                     "SELECT DISTINCT attachments_meta FROM messages
                  WHERE session_id = ?1
-                   AND (?2 IS NULL OR id <= ?2)
+                   AND (?2 IS NULL OR (?3 = 0 AND id <= ?2) OR (?3 = 1 AND id < ?2))
                    AND attachments_meta IS NOT NULL",
                 )?;
                 let raw_values = stmt
-                    .query_map(params![source_session_id, source_message_id], |row| {
-                        row.get::<_, String>(0)
-                    })?
+                    .query_map(
+                        params![source_session_id, source_message_id, exclude_boundary],
+                        |row| row.get::<_, String>(0),
+                    )?
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 raw_values
                     .into_iter()
@@ -2085,6 +2888,17 @@ impl SessionDB {
                     )?;
                 }
             }
+
+            let draft_attachments_meta = boundary_attachments_meta
+                .as_deref()
+                .map(|raw| {
+                    crate::attachments::fork_attachments_meta(
+                        source_session_id,
+                        &new_session_id,
+                        raw,
+                    )
+                })
+                .transpose()?;
 
             // 设计线程 fork：补建 `design_chat_threads` 锚点，让设计工具经
             // `project_for_session` 解析回源设计项目（否则会落到新草稿项目）。以锚表为
@@ -2132,18 +2946,26 @@ impl SessionDB {
             }
 
             tx.commit()?;
-            Ok(())
+            Ok(draft_attachments_meta)
         })();
 
-        if let Err(error) = fork_result {
-            if let Ok(attachments_dir) = crate::paths::attachments_dir(&new_session_id) {
-                let _ = std::fs::remove_dir_all(attachments_dir);
+        let draft_attachments_meta = match fork_result {
+            Ok(meta) => meta,
+            Err(error) => {
+                if let Ok(attachments_dir) = crate::paths::attachments_dir(&new_session_id) {
+                    let _ = std::fs::remove_dir_all(attachments_dir);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
+        };
 
-        self.get_session(&new_session_id)?
-            .ok_or_else(|| anyhow::anyhow!("forked session disappeared: {}", new_session_id))
+        let session = self
+            .get_session(&new_session_id)?
+            .ok_or_else(|| anyhow::anyhow!("forked session disappeared: {}", new_session_id))?;
+        Ok(crate::session::ForkSessionResult {
+            session,
+            draft_attachments_meta,
+        })
     }
 
     /// Split a session title into its base and optional trailing ` (N)` sequence.
@@ -2445,6 +3267,7 @@ impl SessionDB {
         // main session list / picker — hide them unconditionally (no active
         // exception, unlike incognito below).
         where_clauses.push("s.kind NOT IN ('knowledge','design','eval_fixture')".to_string());
+        where_clauses.push("s.archived_at IS NULL".to_string());
 
         // Cron run sessions live in the cron panel's "conversations" timeline,
         // never the main sidebar list — hide them when the sidebar asks.
@@ -2496,6 +3319,36 @@ impl SessionDB {
             sessions.push(row?);
         }
 
+        Ok((sessions, total))
+    }
+
+    /// Paginated archive-manager list. Unlike the main sidebar this includes
+    /// every conversation kind a user may have explicitly archived (regular,
+    /// project, IM, sub-agent, cron, Knowledge, and Design), while retaining
+    /// the incognito / eval-fixture invisibility guarantees.
+    pub fn list_archived_sessions_paged(
+        &self,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<(Vec<SessionMeta>, u32)> {
+        let conn = self.read_conn()?;
+        let where_sql =
+            " WHERE s.archived_at IS NOT NULL AND s.incognito = 0 AND s.kind != 'eval_fixture'";
+        let total: u32 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM sessions s{where_sql}"),
+            [],
+            |row| row.get(0),
+        )?;
+        let pagination = limit
+            .map(|value| format!(" LIMIT {value} OFFSET {}", offset.unwrap_or(0)))
+            .unwrap_or_default();
+        let sql = format!(
+            "{}{where_sql} ORDER BY s.archived_at DESC, s.updated_at DESC, s.id ASC{pagination}",
+            session_meta_select()
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], Self::row_to_session_meta)?;
+        let sessions = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok((sessions, total))
     }
 
@@ -2898,6 +3751,7 @@ impl SessionDB {
             reasoning_effort: row.get(24).ok().flatten(),
             runtime_defaults_initialized: row.get::<_, i64>(30).unwrap_or(0) != 0,
             pinned_at: row.get(25).ok().flatten(),
+            archived_at: row.get(36).ok().flatten(),
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
             message_count: row.get(8)?,
@@ -4328,8 +5182,8 @@ impl SessionDB {
     }
 
     /// Drain rows that reference `session_id` in tables without FK cascade
-    /// (`session_skill_activation`, `session_tool_activation`, `learning_events`, `subagent_runs`,
-    /// `acp_runs`). Bundled in a single transaction to amortize fsync.
+    /// (`session_skill_activation`, `session_tool_activation`, `learning_events`, subagent control
+    /// tables, `acp_runs`). Bundled in a single transaction to amortize fsync.
     /// Best-effort: failures are logged via `app_warn!` so a corrupted side
     /// table never blocks the primary delete.
     fn cleanup_session_orphan_tables(&self, session_id: &str) {
@@ -4342,7 +5196,14 @@ impl SessionDB {
                 "DELETE FROM session_skill_activation WHERE session_id = ?1",
                 "DELETE FROM session_tool_activation WHERE session_id = ?1",
                 "DELETE FROM learning_events WHERE session_id = ?1",
-                "DELETE FROM subagent_runs WHERE parent_session_id = ?1",
+                "DELETE FROM subagent_result_deliveries WHERE parent_session_id = ?1",
+                "DELETE FROM subagent_dispatches
+                   WHERE thread_id IN (
+                         SELECT thread_id FROM subagent_threads
+                          WHERE parent_session_id = ?1 OR thread_id = ?1
+                   )",
+                "DELETE FROM subagent_threads WHERE parent_session_id = ?1 OR thread_id = ?1",
+                "DELETE FROM subagent_runs WHERE parent_session_id = ?1 OR child_session_id = ?1",
                 "DELETE FROM acp_runs WHERE parent_session_id = ?1",
             ] {
                 conn.execute(sql, params![session_id])?;
@@ -4419,6 +5280,74 @@ impl SessionDB {
             session_id,
             crate::session::events::SessionDeleteReason::UserDelete,
         )
+    }
+
+    /// Archive or restore a persisted conversation without deleting any of its
+    /// messages or related records. Archiving clears the pin and advances the
+    /// read watermark so a hidden conversation cannot keep global unread badges
+    /// alive. Incognito conversations are deliberately excluded: their close
+    /// contract is deletion, not durable retention.
+    pub fn set_session_archived(&self, session_id: &str, archived: bool) -> Result<()> {
+        let archived_at = archived.then(|| chrono::Utc::now().to_rfc3339());
+        let changed = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+            let incognito = conn
+                .query_row(
+                    "SELECT incognito FROM sessions WHERE id = ?1",
+                    params![session_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(incognito) = incognito else {
+                anyhow::bail!("session not found: {session_id}");
+            };
+            if incognito != 0 {
+                anyhow::bail!("incognito sessions cannot be archived");
+            }
+            if archived {
+                conn.execute(
+                    "UPDATE sessions
+                        SET archived_at = ?2,
+                            pinned_at = NULL,
+                            last_read_message_id = (
+                                SELECT COALESCE(MAX(id), 0) FROM messages
+                                 WHERE session_id = ?1
+                            )
+                      WHERE id = ?1 AND archived_at IS NULL",
+                    params![session_id, archived_at],
+                )?
+            } else {
+                conn.execute(
+                    "UPDATE sessions SET archived_at = NULL
+                      WHERE id = ?1 AND archived_at IS NOT NULL",
+                    params![session_id],
+                )?
+            }
+        };
+        if changed > 0 {
+            emit_unread_changed(Some(session_id), None);
+            if let Some(bus) = crate::get_event_bus() {
+                bus.emit(
+                    "session:archive_changed",
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "archived": archived,
+                        "archivedAt": archived_at,
+                    }),
+                );
+            }
+            app_info!(
+                "session",
+                "db::set_session_archived",
+                "session {} archived={}",
+                session_id,
+                archived
+            );
+        }
+        Ok(())
     }
 
     /// Delete a session and all its messages (CASCADE) and attachments, tagging
@@ -4830,6 +5759,7 @@ impl SessionDB {
                         {} AS is_unread
                    FROM sessions s
                   WHERE s.is_cron = 0
+                    AND s.archived_at IS NULL
                     AND s.kind NOT IN ('knowledge', 'eval_fixture')
                     AND (
                         (s.project_id IS NULL
@@ -4914,6 +5844,7 @@ impl SessionDB {
         if let Some(domain) = unread_domain {
             emit_unread_changed(Some(session_id), Some(domain));
         }
+        crate::pet::emit_activity_changed();
         Ok(())
     }
 
@@ -4935,6 +5866,7 @@ impl SessionDB {
         drop(stmt);
         drop(conn);
         emit_unread_changed(None, None);
+        crate::pet::emit_activity_changed();
         Ok(())
     }
 
@@ -4957,6 +5889,7 @@ impl SessionDB {
         conn.execute(&sql, params![project_id])?;
         drop(conn);
         emit_unread_changed(None, Some(UnreadDomain::Regular));
+        crate::pet::emit_activity_changed();
         Ok(())
     }
 
@@ -4980,22 +5913,23 @@ impl SessionDB {
         conn.execute(&sql, [])?;
         drop(conn);
         emit_unread_changed(None, Some(UnreadDomain::Regular));
+        crate::pet::emit_activity_changed();
         Ok(())
     }
 
     // ── Cron timeline / unread (cron panel "conversations" view) ─────────────
 
-    /// Batch-fetch `(title, unread_flag)` for the given cron session
+    /// Batch-fetch `(title, unread_flag, archived)` for the given cron session
     /// ids — used to hydrate the cross-job run timeline (`cron_run_timeline`).
-    /// Returns a map `session_id -> (title, unread)`; ids whose session row is
-    /// missing (purged) are simply absent, and the caller falls back to the job
-    /// name / 0. The unread predicate mirrors `SESSION_META_SELECT` *minus* the
-    /// `is_cron = 0` clause. Cron owns a separate unread domain, so message
-    /// source does not affect whether a run transcript has been read.
+    /// Returns a map `session_id -> (title, unread, archived)`; ids whose
+    /// session row is missing (purged) are simply absent, and the caller falls
+    /// back to the job name / 0. SessionLoop rows share a regular parent
+    /// session: they participate in archive filtering but keep title / unread
+    /// fallback semantics so the Cron domain never consumes regular unread.
     pub fn cron_session_read_state(
         &self,
         session_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, (Option<String>, i64)>> {
+    ) -> Result<std::collections::HashMap<String, (Option<String>, i64, bool)>> {
         use std::collections::HashMap;
         if session_ids.is_empty() {
             return Ok(HashMap::new());
@@ -5008,13 +5942,17 @@ impl SessionDB {
         // IN-list stays small.
         let placeholders: Vec<String> = (1..=session_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT s.id, s.title,
-                    EXISTS(SELECT 1 FROM messages m
-                      WHERE m.session_id = s.id
-                        AND m.id > COALESCE(s.last_read_message_id, 0)
-                        AND m.role = 'assistant') AS unread
+            "SELECT s.id,
+                    CASE WHEN s.is_cron = 1 THEN s.title ELSE NULL END AS title,
+                    CASE WHEN s.is_cron = 1 THEN EXISTS(
+                      SELECT 1 FROM messages m
+                       WHERE m.session_id = s.id
+                         AND m.id > COALESCE(s.last_read_message_id, 0)
+                         AND m.role = 'assistant'
+                    ) ELSE 0 END AS unread,
+                    s.archived_at IS NOT NULL AS archived
              FROM sessions s
-             WHERE s.is_cron = 1 AND s.id IN ({})",
+             WHERE s.id IN ({})",
             placeholders.join(",")
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -5028,7 +5966,8 @@ impl SessionDB {
             let id: String = row.get(0)?;
             let title: Option<String> = row.get(1)?;
             let unread: i64 = row.get(2)?;
-            map.insert(id, (title, unread));
+            let archived = row.get::<_, i64>(3)? != 0;
+            map.insert(id, (title, unread, archived));
         }
         Ok(map)
     }
@@ -5042,8 +5981,9 @@ impl SessionDB {
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
         let total: i64 = conn.query_row(
             "SELECT COUNT(*)
-               FROM sessions s
+              FROM sessions s
               WHERE s.is_cron = 1
+                AND s.archived_at IS NULL
                 AND EXISTS (
                     SELECT 1 FROM messages m
                      WHERE m.session_id = s.id
@@ -5070,7 +6010,7 @@ impl SessionDB {
                     SELECT COALESCE(MAX(id), 0) FROM messages
                      WHERE messages.session_id = sessions.id
                 )
-              WHERE is_cron = 1",
+              WHERE is_cron = 1 AND archived_at IS NULL",
             [],
         )?;
         drop(conn);
@@ -5190,6 +6130,7 @@ impl SessionDB {
             // session and is allowed to search its content while it is open.
             where_clauses.push("s.incognito = 0".to_string());
             where_clauses.push("s.kind NOT IN ('knowledge','design','eval_fixture')".to_string());
+            where_clauses.push("s.archived_at IS NULL".to_string());
         }
 
         // Session type filter — channel presence is detected via LEFT JOIN.
@@ -5517,6 +6458,7 @@ impl SessionDB {
                 "SELECT s.id, COALESCE(s.title, '') AS title
                  FROM sessions s
                  WHERE s.incognito = 0
+                   AND s.archived_at IS NULL
                    AND s.kind NOT IN ('knowledge','design','eval_fixture')
                    AND COALESCE(s.title, '') LIKE ?1 ESCAPE '\\'
                  ORDER BY s.updated_at DESC
@@ -5555,6 +6497,7 @@ impl SessionDB {
                      WHERE messages_fts MATCH ?1
                        AND m.role IN ('user', 'assistant')
                        AND s.incognito = 0
+                       AND s.archived_at IS NULL
                        AND s.kind NOT IN ('knowledge','design','eval_fixture')
                  ) WHERE rn = 1
                  ORDER BY rank
@@ -5591,6 +6534,7 @@ impl SessionDB {
                      WHERE messages_trigram_fts MATCH ?1
                        AND m.role IN ('user', 'assistant')
                        AND s.incognito = 0
+                       AND s.archived_at IS NULL
                        AND s.kind NOT IN ('knowledge','design','eval_fixture')
                  ) WHERE rn = 1
                  ORDER BY rank
@@ -5845,8 +6789,13 @@ impl SessionDB {
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionDB, SessionTypeFilter, SEARCH_MATCH_KIND_MESSAGE, SEARCH_MATCH_KIND_TITLE};
-    use crate::session::{NewMessage, SessionKind};
+    use super::{
+        rewind_provider_context_before_user, SessionDB, SessionTypeFilter,
+        SEARCH_MATCH_KIND_MESSAGE, SEARCH_MATCH_KIND_TITLE,
+    };
+    use crate::session::{
+        ChatTurnStatus, CommitAssistantTurn, CreateStreamRun, NewMessage, SessionKind,
+    };
     use rusqlite::{Connection, OptionalExtension};
 
     fn ensure_channel_conversations_table(db: &SessionDB) {
@@ -5896,6 +6845,72 @@ mod tests {
         std::env::temp_dir().join(unique)
     }
 
+    #[test]
+    fn provider_context_rewind_removes_the_edited_turn_suffix() {
+        let context = serde_json::json!([
+            {"role": "user", "content": "earlier"},
+            {"role": "assistant", "content": "earlier answer"},
+            {"role": "user", "content": [{"type": "input_text", "text": "edit me"}]},
+            {"role": "assistant", "content": "discard me"}
+        ])
+        .to_string();
+
+        let rewound = rewind_provider_context_before_user(&context, "edit me", false)
+            .expect("rewind context");
+        let value: serde_json::Value = serde_json::from_str(&rewound).expect("parse rewound");
+        assert_eq!(value.as_array().map(Vec::len), Some(2));
+        assert_eq!(value[1]["content"], "earlier answer");
+    }
+
+    #[test]
+    fn provider_context_rewind_preserves_a_merged_previous_user_prompt() {
+        let context = serde_json::json!([
+            {"role": "user", "content": "earlier\n\nedit me"},
+            {"role": "assistant", "content": "discard me"}
+        ])
+        .to_string();
+
+        let rewound = rewind_provider_context_before_user(&context, "edit me", false)
+            .expect("rewind merged context");
+        let value: serde_json::Value = serde_json::from_str(&rewound).expect("parse rewound");
+        assert_eq!(value.as_array().map(Vec::len), Some(1));
+        assert_eq!(value[0]["content"], "earlier");
+    }
+
+    #[test]
+    fn ephemeral_test_open_does_not_change_production_durability() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sessions.db");
+
+        {
+            let db = SessionDB::open_ephemeral_for_test(&path).expect("open ephemeral db");
+            let conn = db.conn.lock().expect("lock ephemeral db");
+            let journal: String = conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .expect("read journal mode");
+            let synchronous: i64 = conn
+                .query_row("PRAGMA synchronous", [], |row| row.get(0))
+                .expect("read synchronous mode");
+            let temp_store: i64 = conn
+                .query_row("PRAGMA temp_store", [], |row| row.get(0))
+                .expect("read temp store mode");
+            assert_eq!(journal, "memory");
+            assert_eq!(synchronous, 0);
+            assert_eq!(temp_store, 2);
+        }
+
+        let db = SessionDB::open(&path).expect("reopen durable db");
+        let conn = db.conn.lock().expect("lock durable db");
+        let journal: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("read durable journal mode");
+        let synchronous: i64 = conn
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .expect("read durable synchronous mode");
+        assert_eq!(journal, "wal");
+        assert_eq!(synchronous, 2);
+    }
+
     fn set_session_updated_at(db: &SessionDB, session_id: &str, updated_at: &str) {
         let conn = db.conn.lock().expect("lock connection");
         conn.execute(
@@ -5903,6 +6918,56 @@ mod tests {
             rusqlite::params![updated_at, session_id],
         )
         .expect("update session timestamp");
+    }
+
+    #[test]
+    fn archived_session_leaves_active_surfaces_and_can_be_restored() {
+        let db_path = temp_db_path("session-archive-lifecycle");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let session = db.create_session("ha-main").expect("create session");
+        db.append_message(&session.id, &NewMessage::user("hello"))
+            .expect("append user message");
+        db.append_message(&session.id, &NewMessage::assistant("hi"))
+            .expect("append assistant message");
+        db.set_session_pinned(&session.id, true)
+            .expect("pin session");
+
+        assert_eq!(db.regular_unread_total(None).expect("unread total"), 1);
+        assert_eq!(db.list_sessions(None).expect("active list").len(), 1);
+
+        db.set_session_archived(&session.id, true)
+            .expect("archive session");
+
+        let archived_meta = db
+            .get_session(&session.id)
+            .expect("get archived session")
+            .expect("archived session exists");
+        assert!(archived_meta.archived_at.is_some());
+        assert!(archived_meta.pinned_at.is_none());
+        assert!(db.list_sessions(None).expect("active list").is_empty());
+        assert_eq!(db.regular_unread_total(None).expect("unread total"), 0);
+        let (archived, total) = db
+            .list_archived_sessions_paged(None, None)
+            .expect("archive list");
+        assert_eq!(total, 1);
+        assert_eq!(archived[0].id, session.id);
+
+        db.set_session_archived(&session.id, false)
+            .expect("restore session");
+
+        let restored = db.list_sessions(None).expect("restored active list");
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].archived_at.is_none());
+        assert_eq!(db.regular_unread_total(None).expect("unread total"), 0);
+        assert!(db
+            .list_archived_sessions_paged(None, None)
+            .expect("archive list")
+            .0
+            .is_empty());
+
+        let _ = std::fs::remove_file(&db_path);
     }
 
     /// Sidebar countdown source: only pending rows with a real, still-future
@@ -6984,6 +8049,373 @@ mod tests {
     }
 
     #[test]
+    fn edit_resend_atomically_replaces_turn_and_restores_exact_base_context() {
+        let db_path = temp_db_path("session-edit-rewind");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let session = db.create_session("ha-main").expect("session");
+        db.append_message(&session.id, &NewMessage::user("earlier prompt"))
+            .expect("append earlier user");
+        // Deliberately end on a user item: provider adapters merge the next
+        // prompt into this item, so stripping the final top-level user would
+        // incorrectly discard "earlier prompt". The run's exact base context
+        // is the safe rewind boundary.
+        let pre_turn_context =
+            serde_json::json!([{"role": "user", "content": "earlier prompt"}]).to_string();
+        db.save_context(&session.id, &pre_turn_context)
+            .expect("save pre-turn context");
+
+        let user_message_id = db
+            .append_message(&session.id, &NewMessage::user("edit this prompt"))
+            .expect("append edited user");
+        let turn_id = "edit-rewind-turn";
+        db.create_chat_turn_with_id(
+            turn_id,
+            &session.id,
+            crate::chat_engine::ChatSource::Desktop.as_str(),
+            None,
+            Some(user_message_id),
+        )
+        .expect("create turn");
+        let run_id = "edit-rewind-run";
+        let registration = db
+            .create_stream_run(&CreateStreamRun {
+                run_id: run_id.to_string(),
+                session_id: session.id.clone(),
+                source: crate::chat_engine::ChatSource::Desktop.as_str().to_string(),
+                stream_id: None,
+                turn_id: Some(turn_id.to_string()),
+                provider_shape: Some("openai_responses".to_string()),
+            })
+            .expect("create stream run");
+        db.begin_stream_attempt(run_id, 1, Some("provider"), Some("model"), None)
+            .expect("begin stream attempt");
+        let checkpoint = serde_json::json!([
+            {"role": "user", "content": "earlier prompt\n\nexpanded provider prompt"}
+        ])
+        .to_string();
+        let checkpoint_revision = db
+            .checkpoint_stream_context(run_id, 1, registration.context_revision, &checkpoint, 0)
+            .expect("checkpoint user boundary");
+        let final_context = serde_json::json!([
+            {"role": "user", "content": "earlier prompt\n\nexpanded provider prompt"},
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "discarded answer"}]}
+        ])
+        .to_string();
+        db.commit_assistant_turn(&CommitAssistantTurn {
+            run_id: Some(run_id.to_string()),
+            attempt_no: 1,
+            session_id: session.id.clone(),
+            assistant: NewMessage::assistant("discarded answer")
+                .with_source(crate::chat_engine::ChatSource::Desktop),
+            trailing_placeholder_id: None,
+            context_json: final_context,
+            expected_context_revision: checkpoint_revision,
+            turn_id: Some(turn_id.to_string()),
+            usage: None,
+            final_seq: 0,
+        })
+        .expect("commit assistant turn");
+        db.append_message(&session.id, &NewMessage::event("discarded trailing event"))
+            .expect("append trailing event");
+
+        let replacement_id = db
+            .replace_last_user_message_for_edit(
+                &session.id,
+                user_message_id,
+                &NewMessage::user("replacement prompt")
+                    .with_source(crate::chat_engine::ChatSource::Desktop),
+                "replacement-turn",
+                crate::chat_engine::ChatSource::Desktop.as_str(),
+                Some(crate::pet::ChatUiSurface::MainChat),
+            )
+            .expect("replace latest turn");
+        let remaining = db
+            .load_session_messages(&session.id)
+            .expect("load remaining messages");
+        assert_eq!(
+            remaining
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["earlier prompt", "replacement prompt"]
+        );
+        assert_eq!(
+            remaining.last().map(|message| message.id),
+            Some(replacement_id)
+        );
+        assert_eq!(
+            db.load_context(&session.id)
+                .expect("load context")
+                .as_deref(),
+            Some(pre_turn_context.as_str())
+        );
+        assert!(db.get_chat_turn(turn_id).expect("load turn").is_none());
+        let replacement_turn = db
+            .get_chat_turn("replacement-turn")
+            .expect("load replacement turn")
+            .expect("replacement turn exists");
+        assert_eq!(replacement_turn.user_message_id, Some(replacement_id));
+        assert_eq!(replacement_turn.status, ChatTurnStatus::Running);
+        assert_eq!(
+            replacement_turn.ui_surface,
+            Some(crate::pet::ChatUiSurface::MainChat)
+        );
+        assert!(db
+            .latest_stream_run(&session.id)
+            .expect("load latest stream run")
+            .is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn edit_resend_rejects_non_latest_user_message_without_mutation() {
+        let db_path = temp_db_path("session-edit-rewind-not-latest");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+        let session = db.create_session("ha-main").expect("session");
+        let first = db
+            .append_message(&session.id, &NewMessage::user("first"))
+            .expect("first user");
+        db.append_message(&session.id, &NewMessage::user("second"))
+            .expect("second user");
+
+        let error = db
+            .replace_last_user_message_for_edit(
+                &session.id,
+                first,
+                &NewMessage::user("replacement"),
+                "replacement-turn",
+                crate::chat_engine::ChatSource::Desktop.as_str(),
+                None,
+            )
+            .expect_err("older user message must be rejected");
+        assert!(error.to_string().contains("latest user message"));
+        assert_eq!(
+            db.load_session_messages(&session.id)
+                .expect("messages remain")
+                .len(),
+            2
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn edit_resend_rolls_back_old_branch_when_replacement_insert_fails() {
+        let db_path = temp_db_path("session-edit-resend-rollback");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let session = db.create_session("ha-main").expect("session");
+        let user_id = db
+            .append_message(&session.id, &NewMessage::user("original prompt"))
+            .expect("append user");
+        let assistant_id = db
+            .append_message(&session.id, &NewMessage::assistant("original answer"))
+            .expect("append assistant");
+        db.create_chat_turn_with_id(
+            "original-turn",
+            &session.id,
+            crate::chat_engine::ChatSource::Desktop.as_str(),
+            None,
+            Some(user_id),
+        )
+        .expect("create original turn");
+        db.finish_chat_turn_once(
+            "original-turn",
+            ChatTurnStatus::Completed,
+            None,
+            None,
+            Some(assistant_id),
+        )
+        .expect("finish original turn");
+
+        let other = db.create_session("ha-main").expect("other session");
+        db.create_chat_turn_with_id(
+            "duplicate-replacement-turn",
+            &other.id,
+            crate::chat_engine::ChatSource::Desktop.as_str(),
+            None,
+            None,
+        )
+        .expect("create conflicting turn id");
+
+        db.replace_last_user_message_for_edit(
+            &session.id,
+            user_id,
+            &NewMessage::user("replacement prompt"),
+            "duplicate-replacement-turn",
+            crate::chat_engine::ChatSource::Desktop.as_str(),
+            None,
+        )
+        .expect_err("duplicate turn id must fail the transaction");
+
+        let messages = db
+            .load_session_messages(&session.id)
+            .expect("load original transcript");
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["original prompt", "original answer"]
+        );
+        assert!(db
+            .get_chat_turn("original-turn")
+            .expect("load original turn")
+            .is_some());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fork_session_before_user_message_excludes_prompt_and_allows_empty_history() {
+        let db_path = temp_db_path("session-fork-before-user");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let source = db.create_session("ha-main").expect("source session");
+        db.update_session_title_with_source(
+            &source.id,
+            "Original task",
+            crate::session_title::TITLE_SOURCE_LLM,
+        )
+        .expect("title");
+        let first_user = db
+            .append_message(&source.id, &NewMessage::user("first prompt"))
+            .expect("append first user");
+        let first_answer = db
+            .append_message(&source.id, &NewMessage::assistant("first answer"))
+            .expect("append first answer");
+        let second_user = db
+            .append_message(&source.id, &NewMessage::user("second prompt"))
+            .expect("append second user");
+
+        let from_second = db
+            .fork_session_before_message(&source.id, second_user)
+            .expect("fork before second prompt");
+        let copied = db
+            .load_session_messages(&from_second.id)
+            .expect("load forked messages");
+        assert_eq!(
+            copied
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first prompt", "first answer"]
+        );
+        assert_eq!(from_second.forked_from_message_id, Some(first_answer));
+
+        let from_first = db
+            .fork_session_before_message(&source.id, first_user)
+            .expect("fork before first prompt");
+        assert_eq!(from_first.message_count, 0);
+        assert_eq!(from_first.forked_from_message_id, None);
+        assert!(db
+            .load_session_messages(&from_first.id)
+            .expect("load empty fork")
+            .is_empty());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fork_session_before_user_message_returns_new_session_owned_draft_attachments() {
+        let db_path = temp_db_path("session-fork-user-draft-attachments");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let source = db.create_session("ha-main").expect("source session");
+        let source_dir = crate::paths::attachments_dir(&source.id).expect("source attachments dir");
+        std::fs::create_dir_all(&source_dir).expect("create source attachments dir");
+        let source_path = source_dir.join("prompt-image.png");
+        std::fs::write(&source_path, b"png bytes").expect("write source attachment");
+
+        let mut prompt = NewMessage::user("");
+        prompt.attachments_meta = Some(
+            serde_json::json!([{
+                "name": "prompt-image.png",
+                "mime_type": "image/png",
+                "size": 9,
+                "path": source_path,
+                "source": "upload"
+            }])
+            .to_string(),
+        );
+        let prompt_id = db
+            .append_message(&source.id, &prompt)
+            .expect("append attachment-only prompt");
+
+        let forked = db
+            .fork_session_before_message_with_draft(&source.id, prompt_id)
+            .expect("fork before attachment prompt");
+        assert_eq!(forked.session.message_count, 0);
+        let draft_meta: serde_json::Value = serde_json::from_str(
+            forked
+                .draft_attachments_meta
+                .as_deref()
+                .expect("fork draft attachment metadata"),
+        )
+        .expect("parse fork draft metadata");
+        let forked_path = std::path::PathBuf::from(
+            draft_meta[0]["path"]
+                .as_str()
+                .expect("forked draft attachment path"),
+        );
+        let forked_dir =
+            crate::paths::attachments_dir(&forked.session.id).expect("fork attachments dir");
+        assert!(forked_path.starts_with(&forked_dir));
+        assert_eq!(
+            std::fs::read(&forked_path).expect("read forked draft attachment"),
+            b"png bytes"
+        );
+
+        db.delete_session(&source.id)
+            .expect("delete source session");
+        assert!(
+            forked_path.exists(),
+            "fork draft must not depend on source files"
+        );
+        db.delete_session(&forked.session.id)
+            .expect("delete fork session");
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn fork_session_normalizes_orphaned_assistant_rows_to_recovered() {
+        let db_path = temp_db_path("session-fork-orphaned-status");
+        let db = SessionDB::open(&db_path).expect("open session db");
+        ensure_channel_conversations_table(&db);
+
+        let source = db.create_session("ha-main").expect("source session");
+        db.append_message(&source.id, &NewMessage::user("prompt"))
+            .expect("append user");
+        let mut interrupted = NewMessage::assistant("partial answer");
+        interrupted.stream_status = Some("orphaned".to_string());
+        let boundary = db
+            .append_message(&source.id, &interrupted)
+            .expect("append interrupted assistant");
+
+        let forked = db
+            .fork_session(&source.id, Some(boundary))
+            .expect("fork interrupted assistant");
+        let messages = db
+            .load_session_messages(&forked.id)
+            .expect("load fork messages");
+        assert_eq!(
+            messages
+                .last()
+                .and_then(|message| message.stream_status.as_deref()),
+            Some("recovered")
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn sidebar_pagination_filters_project_and_parent_before_limit() {
         let db_path = temp_db_path("sidebar-filtered-pagination");
         let db = SessionDB::open(&db_path).expect("open session db");
@@ -7305,6 +8737,11 @@ mod tests {
             "expected pinned_at column to be added before pinned index creation"
         );
         assert!(
+            conn.prepare("SELECT archived_at FROM sessions LIMIT 1")
+                .is_ok(),
+            "expected archived_at column to be added before archived index creation"
+        );
+        assert!(
             conn.prepare("SELECT sandbox_mode FROM sessions LIMIT 1")
                 .is_ok(),
             "expected sandbox_mode column to be added during migration"
@@ -7340,6 +8777,13 @@ mod tests {
                 .iter()
                 .any(|index| index == "idx_sessions_pinned_at"),
             "expected pinned_at index after migration, got {:?}",
+            indexes
+        );
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index == "idx_sessions_archived_at"),
+            "expected archived_at index after migration, got {:?}",
             indexes
         );
         assert!(

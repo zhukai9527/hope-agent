@@ -20,9 +20,12 @@ import ApprovalDialog from "@/components/chat/ApprovalDialog"
 import AgentSwitcher from "@/components/chat/AgentSwitcher"
 import { useSidebarDisplayMode } from "@/components/chat/sidebar/useSidebarDisplayMode"
 import { useChatStream } from "@/components/chat/hooks/useChatStream"
+import { useEmbeddedChatReadReceipt } from "@/components/chat/hooks/useEmbeddedChatReadReceipt"
 import { useChatDisplayPreferences } from "@/components/chat/hooks/useChatDisplayPreferences"
 import { useClickOutside } from "@/hooks/useClickOutside"
+import { logger } from "@/lib/logger"
 import type { ChatAttachment } from "@/lib/transport"
+import { getTransport } from "@/lib/transport-provider"
 import type { Message, PendingFileQuote, PendingMessageQuote } from "@/types/chat"
 import type { KbDraftAttachment } from "@/types/knowledge"
 import { useKnowledgeChat } from "./useKnowledgeChat"
@@ -51,6 +54,8 @@ export interface KnowledgeChatPanelHandle {
   addQuote: (quote: PendingFileQuote) => void
   /** Append a `[[note]]` reference (or any token) to the composer input. */
   insertToken: (token: string) => void
+  /** Open an exact knowledge-thread session (pet/history deep navigation). */
+  focusThread: (sessionId: string) => void
 }
 
 interface Props {
@@ -90,6 +95,13 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
     const { displayMode, autoCollapseCompletedTurns } = useChatDisplayPreferences()
     const seqRef = useRef<Map<string, number>>(new Map())
     const endedRef = useRef<Map<string, string>>(new Map())
+    const [messageTailVisible, setMessageTailVisible] = useState(true)
+    useEmbeddedChatReadReceipt(
+      isActive,
+      messageTailVisible,
+      session.currentSessionId,
+      session.messages,
+    )
     const [historyOpen, setHistoryOpen] = useState(false)
     const [historyQuery, setHistoryQuery] = useState("")
     const [filingMessage, setFilingMessage] = useState<Message | null>(null)
@@ -153,6 +165,7 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
     )
 
     const stream = useChatStream({
+      uiSurface: "knowledge_chat",
       messages: session.messages,
       setMessages: session.setMessages,
       currentSessionId: session.currentSessionId,
@@ -225,8 +238,9 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
           ),
         insertToken: (token) =>
           stream.setInput((prev) => (prev.trim() ? `${prev} ${token}` : token)),
+        focusThread: (sessionId) => void session.switchThread(sessionId),
       }),
-      [stream],
+      [session, stream],
     )
 
     const sprite = useKnowledgeSprite({
@@ -411,6 +425,22 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
                 closeHistory()
                 void session.switchThread(sid)
               }}
+              onArchive={(sid) => {
+                void getTransport()
+                  .call("set_session_archived_cmd", { sessionId: sid, archived: true })
+                  .then(() => {
+                    window.dispatchEvent(
+                      new CustomEvent("hope:session-archive-changed", {
+                        detail: { sessionId: sid, archived: true },
+                      }),
+                    )
+                    if (session.currentSessionIdRef.current === sid) session.handleNewThread()
+                    return session.reloadThreads("")
+                  })
+                  .catch((error) =>
+                    logger.error("ui", "KnowledgeChat::archive", "archive thread failed", error),
+                  )
+              }}
             />
           </div>
         </div>
@@ -435,6 +465,7 @@ export const KnowledgeChatPanel = forwardRef<KnowledgeChatPanelHandle, Props>(
             displayMode={displayMode}
             autoCollapseCompletedTurns={autoCollapseCompletedTurns}
             onAddMessageQuote={handleMessageQuote}
+            onAtBottomChange={setMessageTailVisible}
           />
         </div>
 

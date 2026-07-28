@@ -9,6 +9,12 @@ import { subscribeAskAiQuotes } from "@/lib/manual/askAi"
 import type { SettingsSection } from "@/components/settings/types"
 import { requestMemoryFocus } from "@/components/settings/memory-panel/memoryFocus"
 import { memorySourceLabel } from "./message/memoryTraceFormat"
+import {
+  forkComposerDraftForMessage,
+  forkSessionRequestForMessage,
+  resendComposerDraftForMessage,
+  type ForkComposerDraft,
+} from "./message/messageFork"
 import { BrowserExtensionNudge } from "./BrowserExtensionNudge"
 import { useViewportMediaQuery } from "@/hooks/useViewportMediaQuery"
 import { useReadableSurface } from "@/hooks/useReadableSurface"
@@ -39,6 +45,7 @@ import type {
   ActiveModel,
   AvailableModel,
   ChatRuntimeDefaults,
+  ForkSessionResult,
   Message,
   PendingMessageQuote,
   SessionMessage,
@@ -811,6 +818,10 @@ export default function ChatScreen({
   const browserPanelDismissedRef = useRef(false)
   const [showFilesPanel, setShowFilesPanel] = useState(false)
   const [composerFocusSignal, setComposerFocusSignal] = useState<number | undefined>(undefined)
+  const pendingForkComposerRef = useRef<{
+    sessionId: string
+    draft: ForkComposerDraft
+  } | null>(null)
   const [approvalFocusSignal, setApprovalFocusSignal] = useState(0)
   // Clicking a staged quote chip reveals that file in the browser. The nonce
   // makes each click a fresh signal, even when re-revealing the same path.
@@ -1807,6 +1818,17 @@ export default function ChatScreen({
     [reloadSessions],
   )
 
+  // Settings can restore an archived conversation while ChatScreen remains
+  // mounted behind the settings view. Refresh both session rows and project
+  // counts so the restored conversation is visible immediately on return.
+  useEffect(() => {
+    const handleArchiveChanged = () => {
+      void Promise.all([reloadSessions(), reloadProjects()])
+    }
+    window.addEventListener("hope:session-archive-changed", handleArchiveChanged)
+    return () => window.removeEventListener("hope:session-archive-changed", handleArchiveChanged)
+  }, [reloadProjects, reloadSessions])
+
   const handleIncognitoChange = useCallback(
     (enabled: boolean) => {
       if (session.currentSessionId) return
@@ -2065,6 +2087,7 @@ export default function ChatScreen({
 
   // ── Stream Hook ─────────────────────────────────────────────
   const stream = useChatStream({
+    uiSurface: "main_chat",
     messages: session.messages,
     setMessages: session.setMessages,
     currentSessionId: session.currentSessionId,
@@ -2102,8 +2125,24 @@ export default function ChatScreen({
     draftKbAttachments,
     onSandboxModeSynced: handleSandboxModeSynced,
     parentInjectionDeltasViaChatStream: true,
-    activeSessionReadableRef,
   })
+
+  useEffect(() => {
+    const pending = pendingForkComposerRef.current
+    if (!pending || session.currentSessionId !== pending.sessionId) return
+    pendingForkComposerRef.current = null
+    stream.setInput(pending.draft.text)
+    stream.setAttachedFiles(pending.draft.attachedFiles)
+    stream.setPendingQuotes(pending.draft.pendingQuotes)
+    stream.setPendingMessageQuotes(pending.draft.pendingMessageQuotes)
+    setComposerFocusSignal((value) => (value ?? 0) + 1)
+  }, [
+    session.currentSessionId,
+    stream.setAttachedFiles,
+    stream.setInput,
+    stream.setPendingMessageQuotes,
+    stream.setPendingQuotes,
+  ])
 
   // Ambient file-action wiring for persisted resources and renderer-only drafts.
   const setAttachedFiles = stream.setAttachedFiles
@@ -3033,15 +3072,19 @@ export default function ChatScreen({
   )
 
   const handleForkFromMessage = useCallback(
-    async (messageId: number) => {
+    async (message: Message) => {
       const sourceSessionId = session.currentSessionId
       if (!sourceSessionId) return
+      const request = forkSessionRequestForMessage(sourceSessionId, message)
+      if (!request) return
       try {
-        const forked = await getTransport().call<SessionMeta>("fork_session_cmd", {
-          sessionId: sourceSessionId,
-          messageId,
+        const forked = await getTransport().call<ForkSessionResult>("fork_session_cmd", {
+          ...request,
         })
+        const composerDraft = await forkComposerDraftForMessage(message, forked)
         await reloadSessions()
+        pendingForkComposerRef.current =
+          composerDraft == null ? null : { sessionId: forked.id, draft: composerDraft }
         await rawHandleSwitchSession(forked.id)
         toast.success(
           t("chat.fork.created", {
@@ -3049,6 +3092,7 @@ export default function ChatScreen({
           }),
         )
       } catch (e) {
+        pendingForkComposerRef.current = null
         logger.error("ui", "ChatScreen::forkSession", "Failed to fork session", e)
         toast.error(
           e instanceof Error
@@ -3058,6 +3102,59 @@ export default function ChatScreen({
       }
     },
     [rawHandleSwitchSession, reloadSessions, session.currentSessionId, t],
+  )
+
+  const handleEditAndResend = useCallback(
+    async (message: Message, content: string) => {
+      const sessionId = session.currentSessionId
+      const messageId = message.dbId
+      if (!sessionId || typeof messageId !== "number") return
+
+      try {
+        // Restore source-owned files before the rewind. If any attachment is
+        // unavailable, keep the original transcript intact rather than
+        // silently resending an incomplete prompt.
+        const draft = await resendComposerDraftForMessage(message)
+        await new Promise<void>((resolve, reject) => {
+          let dispatchSettled = false
+          const rejectDispatch = (error: unknown) => {
+            if (dispatchSettled) return
+            dispatchSettled = true
+            reject(error)
+          }
+          const acceptDispatch = () => {
+            if (dispatchSettled) return
+            dispatchSettled = true
+            resolve()
+          }
+          const goalEdit = message.isGoalTrigger === true
+          void stream
+            .handleSend(goalEdit ? goalTurnPrompt(content) : content, {
+              draftOverride: {
+                attachedFiles: draft.attachedFiles,
+                pendingQuotes: draft.pendingQuotes,
+                pendingMessageQuotes: draft.pendingMessageQuotes,
+              },
+              editMessageId: messageId,
+              displayText: goalEdit ? content : undefined,
+              goalTrigger: goalEdit || undefined,
+              onDispatchAccepted: acceptDispatch,
+              onPreparationError: rejectDispatch,
+            })
+            .catch(rejectDispatch)
+        })
+      } catch (error) {
+        logger.error("ui", "ChatScreen::editMessage", "Failed to edit and resend message", error)
+        toast.error(
+          t("chat.editMessage.failed", {
+            defaultValue: "Could not edit and resend this message",
+          }),
+          { description: error instanceof Error ? error.message : String(error) },
+        )
+        throw error
+      }
+    },
+    [session.currentSessionId, stream, t],
   )
 
   // ── Plan Request Changes Handler ──────────────────────────────
@@ -3962,7 +4059,7 @@ export default function ChatScreen({
         onSidebarCollapsedChange={handleSidebarCollapsedChange}
         onSwitchSession={handleSwitchSession}
         onNewChat={handleStartNewChat}
-        onDeleteSession={session.handleDeleteSession}
+        onArchiveSession={session.handleArchiveSession}
         onEditAgent={onOpenAgentSettings}
         onToggleSessionPinned={session.handleToggleSessionPinned}
         onReorderAgents={session.handleReorderAgents}
@@ -4272,6 +4369,11 @@ export default function ChatScreen({
                   void stream.handleSend(message)
                 }}
                 onForkFromMessage={handleForkFromMessage}
+                onEditAndResend={
+                  !isCronSession && !isSubagentSession && stream.pendingSends.length === 0
+                    ? handleEditAndResend
+                    : undefined
+                }
                 onOpenMemorySettings={onOpenSettings ? () => onOpenSettings("memory") : undefined}
                 onOpenKnowledge={onOpenKnowledge}
                 onAddQuickPrompt={incognitoEnabled ? undefined : handleAddQuickPrompt}
