@@ -198,7 +198,7 @@ jobs:
           version="${RELEASE_TAG#v}"
           gh release download "${RELEASE_TAG}" --pattern latest.json --dir .
 
-          export ARCHIVE_URL="https://github.com/shiwenwen/hope-agent/releases/download/${RELEASE_TAG}/hope-agent-${version}-darwin-x86_64.tar.gz"
+          export ARCHIVE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/hope-agent-${version}-darwin-x86_64.tar.gz"
 
           node -e '
             const fs = require("fs");
