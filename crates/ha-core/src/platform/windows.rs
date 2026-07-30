@@ -110,14 +110,17 @@ pub(super) fn hide_console_tokio(cmd: &mut tokio::process::Command) {
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
-pub(super) fn wsl_command() -> Option<tokio::process::Command> {
+pub(super) fn wsl_command(distro: Option<&str>) -> Option<tokio::process::Command> {
     let mut cmd = tokio::process::Command::new("wsl.exe");
     cmd.creation_flags(CREATE_NO_WINDOW).kill_on_drop(true);
+    if let Some(distro) = distro.filter(|value| !value.trim().is_empty()) {
+        cmd.args(["-d", distro]);
+    }
     Some(cmd)
 }
 
 async fn wsl_command_succeeds(args: &[&str]) -> bool {
-    let Some(mut cmd) = wsl_command() else {
+    let Some(mut cmd) = wsl_command(None) else {
         return false;
     };
     cmd.args(args)
@@ -130,19 +133,55 @@ async fn wsl_command_succeeds(args: &[&str]) -> bool {
 }
 
 pub(super) async fn wsl_status() -> super::WslStatus {
-    let installed = wsl_command_succeeds(&["--status"]).await;
-    if !installed {
-        return super::WslStatus::default();
-    }
-
+    // `wsl.exe --status` is not reliable enough as the sole availability probe:
+    // older Windows builds, localized output, or restricted service contexts can
+    // fail it even though `wsl.exe --exec ...` works. Prefer the executable test
+    // and treat a working default distribution as proof that WSL is installed.
+    let status_ok = wsl_command_succeeds(&["--status"]).await;
+    let exec_ok = wsl_command_succeeds(&["--exec", "true"]).await;
     super::WslStatus {
-        installed: true,
-        distribution_installed: wsl_command_succeeds(&["--exec", "true"]).await,
+        installed: status_ok || exec_ok,
+        distribution_installed: exec_ok,
     }
 }
 
-pub(super) async fn path_to_wsl(path: &Path) -> io::Result<Option<String>> {
-    let Some(mut cmd) = wsl_command() else {
+pub(super) async fn wsl_distributions() -> Vec<String> {
+    let Some(mut cmd) = wsl_command(None) else {
+        return Vec::new();
+    };
+    cmd.args(["--list", "--quiet"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let Ok(Ok(output)) = tokio::time::timeout(Duration::from_secs(5), cmd.output()).await else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let utf16le = output.stdout.starts_with(&[0xff, 0xfe])
+        || output
+            .stdout
+            .chunks_exact(2)
+            .take(16)
+            .any(|chunk| chunk[1] == 0);
+    let text = if utf16le {
+        let bytes = output.stdout.strip_prefix(&[0xff, 0xfe]).unwrap_or(&output.stdout);
+        let words: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        String::from_utf16_lossy(&words)
+    } else {
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    text.lines()
+        .map(|line| line.trim().trim_matches('\u{0}').trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+pub(super) async fn path_to_wsl(path: &Path, distro: Option<&str>) -> io::Result<Option<String>> {
+    let Some(mut cmd) = wsl_command(distro) else {
         return Ok(None);
     };
     let path = path.to_string_lossy();
@@ -179,7 +218,7 @@ pub(super) async fn path_to_wsl(path: &Path) -> io::Result<Option<String>> {
     // Resolve Linux-side symlinks before the caller applies its mount
     // blocklist. Windows canonicalization alone cannot safely classify WSL UNC
     // paths such as \\wsl.localhost\<distro>\var\run.
-    let Some(mut canonicalizer) = wsl_command() else {
+    let Some(mut canonicalizer) = wsl_command(distro) else {
         return Ok(None);
     };
     canonicalizer.args(["--exec", "readlink", "-f", "--", converted]);

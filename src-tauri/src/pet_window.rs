@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "macos"))]
 use tauri::Size;
-use tauri::{Emitter, Manager, PhysicalPosition, Position, WebviewWindow};
+use tauri::{ Manager, PhysicalPosition, Position, WebviewWindow};
 
 const PET_WINDOW_LABEL: &str = "pet";
 const PET_ONLY_WIDTH: f64 = 120.0;

@@ -146,6 +146,15 @@ Session 读写 API：
 | `no_new_privileges` | `true` | `security_opt=no-new-privileges` |
 | `pids_limit` | `256` | 容器内进程数限制 |
 | `tmpfs` | `/tmp` 64M、`/var/tmp` 32M、`/run` 16M | rootfs 只读时提供临时写入区 |
+| `docker_backend` | `"auto"` | Windows 下 Docker 后端选择：`auto` 先本机 Windows Docker、失败后 WSL Docker；`windows` 仅本机；`wsl` 仅 WSL |
+| `wsl_distro` | `null` | 可选 WSL 发行版名称；为空时使用默认发行版，仅影响 WSL Docker 后端 |
+
+Windows WSL Docker 后端约束：
+
+- 通过宿主机 `wsl.exe` 调用 WSL 内 Docker CLI，不要求暴露 `DOCKER_HOST=tcp://localhost:2375`。
+- 工作区挂载只转换当前 cwd / workspace 路径，例如 `D:\develop\ai\hope-agent` → `/mnt/d/develop/ai/hope-agent`，`\\?\D:\company\project` → `/mnt/d/company/project`。
+- WSL 后端继续沿用执行沙箱安全参数：`--network none`、只读 rootfs、drop capabilities、`no-new-privileges`、PID limit、tmpfs、仅挂载当前 workspace。
+- `windows` 模式不会探测或 fallback WSL；`wsl` 模式不会使用本机 Windows Docker；`auto` 只有在本机 Docker daemon 不可用时才探测 WSL。
 
 该配置属于 Sandbox 设置页已有配置，走：
 

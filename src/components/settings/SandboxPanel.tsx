@@ -30,6 +30,8 @@ interface SandboxConfig {
   no_new_privileges: boolean
   pids_limit: number | null
   tmpfs: string[]
+  docker_backend: "auto" | "windows" | "wsl"
+  wsl_distro: string | null
 }
 
 const DEFAULT_CONFIG: SandboxConfig = {
@@ -42,6 +44,8 @@ const DEFAULT_CONFIG: SandboxConfig = {
   no_new_privileges: true,
   pids_limit: 256,
   tmpfs: ["/tmp:size=64M", "/var/tmp:size=32M", "/run:size=16M"],
+  docker_backend: "auto",
+  wsl_distro: null,
 }
 
 export default function SandboxPanel() {
@@ -146,6 +150,43 @@ export default function SandboxPanel() {
           <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
             {t("settings.sandboxSectionContainer")}
           </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium">{t("settings.sandboxDockerBackend")}</span>
+              <Select
+                value={config.docker_backend}
+                onValueChange={(v) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    docker_backend: v as SandboxConfig["docker_backend"],
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t("settings.sandboxDockerBackendAuto")}</SelectItem>
+                  <SelectItem value="windows">{t("settings.sandboxDockerBackendWindows")}</SelectItem>
+                  <SelectItem value="wsl">{t("settings.sandboxDockerBackendWsl")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t("settings.sandboxDockerBackendDesc")}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium">{t("settings.sandboxWslDistro")}</span>
+              <Input
+                value={config.wsl_distro ?? ""}
+                onChange={(e) =>
+                  setConfig((prev) => ({ ...prev, wsl_distro: e.target.value.trim() || null }))
+                }
+                placeholder={t("settings.sandboxWslDistroPlaceholder")}
+              />
+              <p className="text-xs text-muted-foreground">{t("settings.sandboxWslDistroDesc")}</p>
+            </div>
+          </div>
           <div className="space-y-1.5">
             <span className="text-sm font-medium">{t("settings.sandboxImage")}</span>
             <Input

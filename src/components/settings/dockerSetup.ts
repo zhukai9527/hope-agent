@@ -8,6 +8,8 @@ export interface DockerStatus {
   wslInstalled?: boolean | null
   wslDistributionInstalled?: boolean | null
   wslDockerInstalled?: boolean | null
+  wslDistro?: string | null
+  wslDockerError?: string | null
 }
 
 interface DockerOption {

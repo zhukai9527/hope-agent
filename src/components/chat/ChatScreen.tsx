@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils"
 import {
   Bot,
   Brain,
+  ClipboardCheck,
   ClipboardList,
   AlertTriangle,
   Eye,
@@ -135,6 +136,20 @@ import { FileActionsContext, type FileActionsContextValue } from "./files/fileAc
 import WorkspacePanel, { type WorkspaceFocusRequest } from "./workspace/WorkspacePanel"
 import { confirmDiscardDirtyFileEditors } from "./files/fileDirtyRegistry"
 import { PullRequestPanel } from "./workspace/PullRequestPanel"
+import TaskDeliveryPanel from "./task-delivery/TaskDeliveryPanel"
+import {
+  buildTaskDeliveryActionPrompt,
+  buildTaskDeliveryArtifactRepairPrompt,
+  buildTaskDeliveryPhaseActionPrompt,
+  buildTaskDeliveryVerificationActionPrompt,
+  type TaskDeliveryActionKind,
+  type TaskDeliveryArtifactState,
+  type TaskDeliveryPhaseActionKind,
+  type TaskDeliveryPhaseState,
+  type TaskDeliveryVerificationActionKind,
+  type TaskDeliveryVerificationState,
+} from "./task-delivery/taskDelivery"
+import { useTaskDeliveryState } from "./task-delivery/useTaskDeliveryState"
 import BackgroundJobsPanel from "./background-jobs/BackgroundJobsPanel"
 import { decideBackgroundJobsAutoOpen } from "./background-jobs/autoOpenPolicy"
 import { useBackgroundJobs } from "./background-jobs/useBackgroundJobs"
@@ -332,6 +347,7 @@ function latestAssistantUsageFingerprint(messages: Message[]): string | null {
 
 type ExclusiveRightPanel =
   | "workspace"
+  | "task-delivery"
   | "pull-request"
   | "diff"
   | "plan"
@@ -357,11 +373,13 @@ const EXCLUSIVE_RIGHT_PANEL_ORDER: readonly ExclusiveRightPanel[] = [
   "background-jobs",
   "subagent",
   "workspace",
+  "task-delivery",
   "preview",
 ]
 
 const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
   workspace: false,
+  "task-delivery": false,
   "pull-request": false,
   diff: false,
   plan: false,
@@ -377,6 +395,7 @@ const EMPTY_RIGHT_PANEL_VISIBILITY: ExclusiveRightPanelVisibility = {
 
 const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
   workspace: LayoutDashboard,
+  "task-delivery": ClipboardCheck,
   "pull-request": GitPullRequest,
   diff: GitCompare,
   plan: ClipboardList,
@@ -392,6 +411,7 @@ const EXCLUSIVE_RIGHT_PANEL_ICONS: Record<ExclusiveRightPanel, LucideIcon> = {
 
 const EXCLUSIVE_RIGHT_PANEL_LABEL_KEYS: Record<ExclusiveRightPanel, string> = {
   workspace: "workspace.panelTitle",
+  "task-delivery": "taskDelivery.panelTitle",
   "pull-request": "workspace.git.pullRequestPanelTitle",
   diff: "diffPanel.title",
   plan: "planMode.panelTitle",
@@ -407,6 +427,7 @@ const EXCLUSIVE_RIGHT_PANEL_LABEL_KEYS: Record<ExclusiveRightPanel, string> = {
 
 const PERSISTENT_RIGHT_PANEL_ORDER: readonly ExclusiveRightPanel[] = [
   "workspace",
+  "task-delivery",
   "files",
   "background-jobs",
   "subagent",
@@ -776,6 +797,7 @@ export default function ChatScreen({
   // Workspace 面板：聚合任务进度 / 碰到的文件 / 引用来源。首次有内容时自动
   // 展开一次，用户关闭后本会话不再自动弹（dismissedRef 跟踪，仿 browser 面板）。
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false)
+  const [showTaskDeliveryPanel, setShowTaskDeliveryPanel] = useState(false)
   const [workspaceFocusRequest, setWorkspaceFocusRequest] = useState<WorkspaceFocusRequest | null>(
     null,
   )
@@ -2317,6 +2339,10 @@ export default function ChatScreen({
   // ── Plan Mode Hook ─────────────────────────────────────────
   const planMode = usePlanMode(session.currentSessionId, planModeState, setPlanModeState)
   const taskProgressSnapshot = useTaskProgressSnapshot(session.currentSessionId, session.messages)
+  const taskDelivery = useTaskDeliveryState({
+    project: currentProject,
+    taskSnapshot: taskProgressSnapshot,
+  })
   // Context-window fullness for the input-dock bottom bar. Derived from the
   // active model's window + the latest assistant usage (shared helper, same
   // numbers as the status popover / workspace session card).
@@ -2347,6 +2373,53 @@ export default function ChatScreen({
   const setPlanState = planMode.setPlanState
   const sendMessage = stream.handleSend
   const [draftWorkflowMode, setDraftWorkflowMode] = useState<"off" | "on" | "ultracode">("off")
+
+  const handleTaskDeliveryAction = useCallback(
+    (action: TaskDeliveryActionKind) => {
+      const prompt = buildTaskDeliveryActionPrompt(taskDelivery.state, action)
+      sendMessage(prompt)
+    },
+    [sendMessage, taskDelivery.state],
+  )
+
+  const handleTaskDeliveryOpenArtifact = useCallback(
+    (artifact: TaskDeliveryArtifactState) => {
+      if (!artifact.path || !currentProject?.id) return
+      filePreview.openPreview({
+        kind: "workspace",
+        scope: "project",
+        scopeId: currentProject.id,
+        relPath: artifact.path.replace(/\\/g, "/"),
+        name: artifact.name,
+        sizeBytes: artifact.sizeBytes,
+      })
+    },
+    [currentProject?.id, filePreview.openPreview],
+  )
+
+  const handleTaskDeliveryRepairArtifact = useCallback(
+    (artifact: TaskDeliveryArtifactState) => {
+      const prompt = buildTaskDeliveryArtifactRepairPrompt(taskDelivery.state, artifact)
+      sendMessage(prompt)
+    },
+    [sendMessage, taskDelivery.state],
+  )
+
+  const handleTaskDeliveryPhaseAction = useCallback(
+    (phase: TaskDeliveryPhaseState, action: TaskDeliveryPhaseActionKind) => {
+      const prompt = buildTaskDeliveryPhaseActionPrompt(taskDelivery.state, phase, action)
+      sendMessage(prompt)
+    },
+    [sendMessage, taskDelivery.state],
+  )
+
+  const handleTaskDeliveryVerificationAction = useCallback(
+    (verification: TaskDeliveryVerificationState, action: TaskDeliveryVerificationActionKind) => {
+      const prompt = buildTaskDeliveryVerificationActionPrompt(taskDelivery.state, verification, action)
+      sendMessage(prompt)
+    },
+    [sendMessage, taskDelivery.state],
+  )
 
   useEffect(() => {
     if (session.currentSessionId) {
@@ -3210,6 +3283,7 @@ export default function ChatScreen({
   const rightPanelVisibility = useMemo<ExclusiveRightPanelVisibility>(
     () => ({
       workspace: showWorkspacePanel,
+      "task-delivery": showTaskDeliveryPanel,
       "pull-request": showPullRequestPanel && !!session.currentSessionId,
       diff: isDiffPanelVisible,
       plan: shouldShowPlanPanel,
@@ -3236,6 +3310,7 @@ export default function ChatScreen({
       showFilesPanel,
       showMacControlPanel,
       showPullRequestPanel,
+      showTaskDeliveryPanel,
       showTeamPanel,
       showWorkspacePanel,
       session.currentSessionId,
@@ -3583,6 +3658,7 @@ export default function ChatScreen({
     closeFloatingPanel("browser")
     closeFloatingPanel("mac-control")
     setShowWorkspacePanel(preserveWorkspace)
+    setShowTaskDeliveryPanel(false)
     setShowPullRequestPanel(false)
     setPullRequestExpectedUrl(null)
     setShowBackgroundJobsPanel(false)
@@ -3990,6 +4066,11 @@ export default function ChatScreen({
         openWorkspacePanel()
         return
       }
+      if (panel === "task-delivery") {
+        setShowTaskDeliveryPanel(true)
+        showRightPanelByUser("task-delivery")
+        return
+      }
       if (panel === "files") {
         setShowFilesPanel(true)
         showRightPanelByUser("files")
@@ -4014,6 +4095,7 @@ export default function ChatScreen({
       openWorkspacePanel,
       renderedExclusiveRightPanel,
       rightPanelCollapsed,
+      setShowTaskDeliveryPanel,
       showRightPanelByUser,
     ],
   )
@@ -4866,6 +4948,37 @@ export default function ChatScreen({
                   setWorkspaceFocusRequest(null)
                   setShowWorkspacePanel(false)
                 }}
+              />
+            </RightPanelShell>
+          )}
+
+          {/* Task Delivery 面板 — 通用任务交付契约 / 阶段 / 产物 / 验证视图。
+              .agent-workflows 只是其中一种数据来源；无项目契约时展示内置 fallback。 */}
+          {shouldRenderRightPanelContent && renderedExclusiveRightPanel === "task-delivery" && (
+            <RightPanelShell
+              width={rightPanelWidth}
+              onWidthChange={setRightPanelWidth}
+              resizeLabel={t("taskDelivery.resizePanel", "Resize task delivery panel")}
+              maxWidth={860}
+              reservedMainWidth={rightPanelReservedMainWidth}
+              collapsed={rightPanelCollapsed}
+              overlay={rightPanelOverlay}
+              animateOnMount={animateRightPanelOnMount}
+              contentKey="task-delivery"
+            >
+              <TaskDeliveryPanel
+                state={taskDelivery.state}
+                loading={taskDelivery.loading}
+                taskCandidates={taskDelivery.taskCandidates}
+                selectedTaskDir={taskDelivery.selectedTaskDir}
+                onSelectTaskDir={taskDelivery.selectTaskDir}
+                onAction={handleTaskDeliveryAction}
+                onPhaseAction={handleTaskDeliveryPhaseAction}
+                onOpenArtifact={handleTaskDeliveryOpenArtifact}
+                onRepairArtifact={handleTaskDeliveryRepairArtifact}
+                onVerificationAction={handleTaskDeliveryVerificationAction}
+                onRefresh={taskDelivery.refresh}
+                onClose={() => setShowTaskDeliveryPanel(false)}
               />
             </RightPanelShell>
           )}

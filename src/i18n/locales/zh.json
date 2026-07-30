@@ -6329,6 +6329,11 @@
     "sandboxDesc": "配置 Docker 容器沙箱隔离，用于安全执行命令",
     "sandboxDockerAvailable": "Docker 可用",
     "sandboxDockerChecking": "检测中…",
+    "sandboxDockerBackend": "Docker 后端",
+    "sandboxDockerBackendAuto": "自动：Windows 优先，失败后 WSL",
+    "sandboxDockerBackendDesc": "Windows 下可选择本机 Docker、WSL Docker，或自动 fallback；不会扩大挂载范围。",
+    "sandboxDockerBackendWindows": "仅 Windows Docker",
+    "sandboxDockerBackendWsl": "仅 WSL Docker",
     "sandboxDockerInstall": "获取 Docker Desktop",
     "sandboxDockerNotInstalled": "未检测到 Docker，请先安装 Docker Desktop",
     "sandboxDockerNotRunning": "Docker 已安装但未启动，请先启动 Docker Desktop",
@@ -6350,6 +6355,9 @@
     "sandboxSectionContainer": "容器",
     "sandboxSectionResources": "资源限制",
     "sandboxSectionSecurity": "安全加固",
+    "sandboxWslDistro": "WSL 发行版",
+    "sandboxWslDistroDesc": "可选。留空使用默认 WSL 发行版；仅影响 WSL Docker 后端。",
+    "sandboxWslDistroPlaceholder": "默认 WSL 发行版",
     "seconds": "秒",
     "security": "安全策略",
     "selectDefaultModel": "选择默认模型",
@@ -11439,6 +11447,10 @@
     "exportReviewBlocked": "导出复核仍有阻塞项",
     "guardStatus": "门禁",
     "defaultName": "产物"
+  },
+  "taskDelivery": {
+    "panelTitle": "任务交付",
+    "resizePanel": "调整任务交付面板"
   },
   "backgroundJobs": {
     "panelTitle": "后台任务",

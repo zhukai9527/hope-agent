@@ -270,7 +270,7 @@ pub(super) fn hide_console(_cmd: &mut Command) {}
 #[allow(clippy::needless_pass_by_ref_mut)]
 pub(super) fn hide_console_tokio(_cmd: &mut tokio::process::Command) {}
 
-pub(super) fn wsl_command() -> Option<tokio::process::Command> {
+pub(super) fn wsl_command(_distro: Option<&str>) -> Option<tokio::process::Command> {
     None
 }
 
@@ -278,7 +278,11 @@ pub(super) async fn wsl_status() -> super::WslStatus {
     super::WslStatus::default()
 }
 
-pub(super) async fn path_to_wsl(_path: &Path) -> io::Result<Option<String>> {
+pub(super) async fn wsl_distributions() -> Vec<String> {
+    Vec::new()
+}
+
+pub(super) async fn path_to_wsl(_path: &Path, _distro: Option<&str>) -> io::Result<Option<String>> {
     Ok(None)
 }
 

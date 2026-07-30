@@ -42,6 +42,8 @@ pub struct ProjectWorkflowDiscovery {
     pub fixed_artifacts: Vec<ProjectWorkflowFixedArtifact>,
     #[serde(default)]
     pub verification_commands: Vec<ProjectWorkflowVerificationCommand>,
+    #[serde(default)]
+    pub gate_contracts: Vec<ProjectWorkflowGateContract>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,6 +78,10 @@ pub struct ProjectWorkflowFixedArtifact {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(default)]
+    pub required_terms: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
     pub source_files: Vec<String>,
 }
 
@@ -84,6 +90,29 @@ pub struct ProjectWorkflowFixedArtifact {
 pub struct ProjectWorkflowVerificationCommand {
     pub id: String,
     pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(default)]
+    pub source_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWorkflowGateContract {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase_id: Option<String>,
+    #[serde(default)]
+    pub required_artifacts: Vec<String>,
+    #[serde(default)]
+    pub required_terms: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default)]
     pub source_files: Vec<String>,
 }
@@ -117,6 +146,8 @@ pub struct ProjectWorkflowPreview {
     #[serde(default)]
     pub verification_commands: Vec<ProjectWorkflowVerificationCommand>,
     #[serde(default)]
+    pub gate_contracts: Vec<ProjectWorkflowGateContract>,
+    #[serde(default)]
     pub source_files: Vec<String>,
 }
 
@@ -131,6 +162,8 @@ pub struct ProjectWorkflowPhasePreview {
     pub fixed_artifacts: Vec<ProjectWorkflowFixedArtifact>,
     #[serde(default)]
     pub verification_commands: Vec<ProjectWorkflowVerificationCommand>,
+    #[serde(default)]
+    pub gate_contracts: Vec<ProjectWorkflowGateContract>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -146,6 +179,7 @@ struct ParsedWorkflowFile {
     modes: Vec<ProjectWorkflowModeSummary>,
     fixed_artifacts: Vec<ProjectWorkflowFixedArtifact>,
     verification_commands: Vec<ProjectWorkflowVerificationCommand>,
+    gate_contracts: Vec<ProjectWorkflowGateContract>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -155,6 +189,7 @@ struct ParsedTemplate {
     fixed_artifacts: Vec<ProjectWorkflowFixedArtifact>,
     verification_commands: Vec<ProjectWorkflowVerificationCommand>,
     required_interactions: Vec<ProjectWorkflowRequiredInteraction>,
+    gate_contracts: Vec<ProjectWorkflowGateContract>,
 }
 
 pub fn discover_project_workflows(
@@ -175,6 +210,7 @@ pub fn discover_project_workflows(
             modes: Vec::new(),
             fixed_artifacts: Vec::new(),
             verification_commands: Vec::new(),
+            gate_contracts: Vec::new(),
         });
     };
 
@@ -191,6 +227,7 @@ pub fn discover_project_workflows(
             modes: Vec::new(),
             fixed_artifacts: Vec::new(),
             verification_commands: Vec::new(),
+            gate_contracts: Vec::new(),
         });
     }
 
@@ -210,6 +247,7 @@ pub fn discover_project_workflows(
         modes: parsed.modes,
         fixed_artifacts: parsed.fixed_artifacts,
         verification_commands: parsed.verification_commands,
+        gate_contracts: parsed.gate_contracts,
     })
 }
 
@@ -286,6 +324,11 @@ pub fn preview_project_workflow(
                 source_files.insert(file.clone());
             }
         }
+        for gate in &phase.gate_contracts {
+            for file in &gate.source_files {
+                source_files.insert(file.clone());
+            }
+        }
     }
     for artifact in &template.fixed_artifacts {
         for file in &artifact.source_files {
@@ -294,6 +337,11 @@ pub fn preview_project_workflow(
     }
     for command in &template.verification_commands {
         for file in &command.source_files {
+            source_files.insert(file.clone());
+        }
+    }
+    for gate in &template.gate_contracts {
+        for file in &gate.source_files {
             source_files.insert(file.clone());
         }
     }
@@ -326,6 +374,17 @@ pub fn preview_project_workflow(
         .flat_map(|phase| phase.required_interactions.clone())
         .chain(template.required_interactions.clone())
         .collect::<Vec<_>>();
+    let gate_contracts = template
+        .gate_contracts
+        .iter()
+        .cloned()
+        .chain(
+            template
+                .phases
+                .iter()
+                .flat_map(|phase| phase.gate_contracts.clone()),
+        )
+        .collect::<Vec<_>>();
 
     Ok(ProjectWorkflowPreview {
         project_id: input.project_id,
@@ -336,6 +395,7 @@ pub fn preview_project_workflow(
         fixed_artifacts,
         required_interactions,
         verification_commands,
+        gate_contracts,
         source_files: source_files.into_iter().collect(),
     })
 }
@@ -356,6 +416,9 @@ fn parse_workflow_dir(root: &Path) -> Result<ParsedWorkflowFile> {
         merged
             .verification_commands
             .extend(parsed.verification_commands);
+        merged
+            .gate_contracts
+            .extend(parsed.gate_contracts);
     }
 
     let global_modes = merged
@@ -372,6 +435,9 @@ fn parse_workflow_dir(root: &Path) -> Result<ParsedWorkflowFile> {
         }
         if template.verification_commands.is_empty() {
             template.verification_commands = merged.verification_commands.clone();
+        }
+        if template.gate_contracts.is_empty() {
+            template.gate_contracts = merged.gate_contracts.clone();
         }
         if template.summary.fixed_artifacts_count == 0 {
             let phase_artifact_count = template
@@ -424,6 +490,7 @@ fn parse_workflow_text(content: &str, source_file: &str) -> ParsedWorkflowFile {
             modes: Vec::new(),
             fixed_artifacts: Vec::new(),
             verification_commands: Vec::new(),
+            gate_contracts: Vec::new(),
         };
     }
     if source_file.starts_with("modes/") {
@@ -432,6 +499,7 @@ fn parse_workflow_text(content: &str, source_file: &str) -> ParsedWorkflowFile {
             modes: parse_mode_file(&lines, source_file),
             fixed_artifacts: Vec::new(),
             verification_commands: Vec::new(),
+            gate_contracts: Vec::new(),
         };
     }
     if source_file == "project.yaml" {
@@ -439,7 +507,8 @@ fn parse_workflow_text(content: &str, source_file: &str) -> ParsedWorkflowFile {
             templates: Vec::new(),
             modes: Vec::new(),
             fixed_artifacts: parse_fixed_artifacts(&lines, source_file),
-            verification_commands: Vec::new(),
+            verification_commands: parse_verification_commands(&lines, source_file),
+            gate_contracts: parse_gate_contracts(&lines, source_file),
         };
     }
     if source_file == "verification.yaml" {
@@ -448,6 +517,7 @@ fn parse_workflow_text(content: &str, source_file: &str) -> ParsedWorkflowFile {
             modes: Vec::new(),
             fixed_artifacts: Vec::new(),
             verification_commands: parse_verification_commands(&lines, source_file),
+            gate_contracts: Vec::new(),
         };
     }
     ParsedWorkflowFile {
@@ -455,6 +525,7 @@ fn parse_workflow_text(content: &str, source_file: &str) -> ParsedWorkflowFile {
         modes: parse_named_items(&lines, "modes", source_file),
         fixed_artifacts: parse_fixed_artifacts(&lines, source_file),
         verification_commands: parse_verification_commands(&lines, source_file),
+        gate_contracts: parse_gate_contracts(&lines, source_file),
     }
 }
 
@@ -505,6 +576,7 @@ fn parse_template_file(lines: &[&str], source_file: &str) -> Vec<ParsedTemplate>
     let fixed_artifacts = parse_fixed_artifacts(lines, source_file);
     let verification_commands = parse_verification_commands(lines, source_file);
     let required_interactions = parse_interactions(lines, source_file);
+    let gate_contracts = parse_gate_contracts(lines, source_file);
     templates.push(ParsedTemplate {
         summary: ProjectWorkflowTemplateSummary {
             id,
@@ -521,6 +593,7 @@ fn parse_template_file(lines: &[&str], source_file: &str) -> Vec<ParsedTemplate>
         fixed_artifacts,
         verification_commands,
         required_interactions,
+        gate_contracts,
     });
     templates
 }
@@ -566,6 +639,7 @@ fn parse_templates(lines: &[&str], source_file: &str) -> Vec<ParsedTemplate> {
             .len()
             .max(phases.iter().map(|phase| phase.fixed_artifacts.len()).sum());
         let required_interactions = parse_interactions(item, source_file);
+        let gate_contracts = parse_gate_contracts(item, source_file);
         templates.push(ParsedTemplate {
             summary: ProjectWorkflowTemplateSummary {
                 id,
@@ -580,6 +654,7 @@ fn parse_templates(lines: &[&str], source_file: &str) -> Vec<ParsedTemplate> {
             fixed_artifacts,
             verification_commands,
             required_interactions,
+            gate_contracts,
         });
     }
     templates
@@ -599,6 +674,7 @@ fn parse_phases(lines: &[&str], source_file: &str) -> Vec<ProjectWorkflowPhasePr
             required_interactions: parse_interactions(item, source_file),
             fixed_artifacts: parse_fixed_artifacts(item, source_file),
             verification_commands: parse_verification_commands(item, source_file),
+            gate_contracts: parse_gate_contracts(item, source_file),
         });
     }
     phases
@@ -627,7 +703,7 @@ fn parse_named_items(
 
 fn parse_fixed_artifacts(lines: &[&str], source_file: &str) -> Vec<ProjectWorkflowFixedArtifact> {
     let mut items: Vec<ProjectWorkflowFixedArtifact> = Vec::new();
-    for key in ["fixed_artifacts", "fixedArtifacts"] {
+    for key in ["fixed_artifacts", "fixedArtifacts", "artifacts"] {
         if let Some(values) = array_in_item(lines, key) {
             for value in values {
                 if items.iter().any(|item| item.id.as_str() == value) {
@@ -637,6 +713,8 @@ fn parse_fixed_artifacts(lines: &[&str], source_file: &str) -> Vec<ProjectWorkfl
                     id: value.clone(),
                     name: value,
                     path: None,
+                    description: None,
+                    required_terms: Vec::new(),
                     source_files: vec![source_file.to_string()],
                 });
             }
@@ -652,10 +730,16 @@ fn parse_fixed_artifacts(lines: &[&str], source_file: &str) -> Vec<ProjectWorkfl
                 .or_else(|| scalar_in_item(item, "title"))
                 .unwrap_or_else(|| id.clone());
             let path = scalar_in_item(item, "path");
+            let description = scalar_in_item(item, "description");
+            let required_terms = array_in_item(item, "required_terms")
+                .or_else(|| array_in_item(item, "requiredTerms"))
+                .unwrap_or_default();
             items.push(ProjectWorkflowFixedArtifact {
                 id,
                 name,
                 path,
+                description,
+                required_terms,
                 source_files: vec![source_file.to_string()],
             });
         }
@@ -683,9 +767,16 @@ fn parse_verification_commands(
             if let Some(command) = command {
                 let id = scalar_in_item(item, "id")
                     .unwrap_or_else(|| fallback_id("verify", commands.len()));
+                let label = scalar_in_item(item, "label");
+                let report_path = scalar_in_item(item, "report_path")
+                    .or_else(|| scalar_in_item(item, "reportPath"));
+                let required = scalar_in_item(item, "required").map(|v| v == "true");
                 commands.push(ProjectWorkflowVerificationCommand {
                     id,
                     command,
+                    label,
+                    report_path,
+                    required,
                     source_files: vec![source_file.to_string()],
                 });
             }
@@ -696,11 +787,52 @@ fn parse_verification_commands(
             commands.push(ProjectWorkflowVerificationCommand {
                 id: key.replace('_', "-"),
                 command,
+                label: None,
+                report_path: None,
+                required: None,
                 source_files: vec![source_file.to_string()],
             });
         }
     }
     commands
+}
+
+fn parse_gate_contracts(
+    lines: &[&str],
+    source_file: &str,
+) -> Vec<ProjectWorkflowGateContract> {
+    let mut contracts = Vec::new();
+    for key in ["gate_contracts", "gateContracts", "gates"] {
+        for (start, end) in list_item_ranges(lines, key) {
+            let item = &lines[start..end];
+            let id = scalar_in_item(item, "id")
+                .unwrap_or_else(|| fallback_id("gate", contracts.len()));
+            let label = scalar_in_item(item, "label")
+                .or_else(|| scalar_in_item(item, "name"))
+                .unwrap_or_else(|| id.clone());
+            let phase_id = scalar_in_item(item, "phase_id")
+                .or_else(|| scalar_in_item(item, "phaseId"))
+                .or_else(|| scalar_in_item(item, "phase"));
+            let required_artifacts = array_in_item(item, "required_artifacts")
+                .or_else(|| array_in_item(item, "requiredArtifacts"))
+                .or_else(|| array_in_item(item, "artifacts"))
+                .unwrap_or_default();
+            let required_terms = array_in_item(item, "required_terms")
+                .or_else(|| array_in_item(item, "requiredTerms"))
+                .unwrap_or_default();
+            let kind = scalar_in_item(item, "kind");
+            contracts.push(ProjectWorkflowGateContract {
+                id,
+                label,
+                phase_id,
+                required_artifacts,
+                required_terms,
+                kind,
+                source_files: vec![source_file.to_string()],
+            });
+        }
+    }
+    contracts
 }
 
 fn parse_interactions(

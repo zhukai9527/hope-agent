@@ -75,6 +75,7 @@ export interface ProjectWorkflowDiscovery {
   modes: ProjectWorkflowModeSummary[]
   fixedArtifacts: ProjectWorkflowFixedArtifact[]
   verificationCommands: ProjectWorkflowVerificationCommand[]
+  gateContracts: ProjectWorkflowGateContract[]
 }
 
 export interface ProjectWorkflowTemplateSummary {
@@ -97,12 +98,27 @@ export interface ProjectWorkflowFixedArtifact {
   id: string
   name: string
   path?: string | null
+  requiredTerms: string[]
+  description?: string | null
   sourceFiles: string[]
 }
 
 export interface ProjectWorkflowVerificationCommand {
   id: string
   command: string
+  label?: string | null
+  reportPath?: string | null
+  required?: boolean | null
+  sourceFiles: string[]
+}
+
+export interface ProjectWorkflowGateContract {
+  id: string
+  label: string
+  phaseId?: string | null
+  requiredArtifacts: string[]
+  requiredTerms: string[]
+  kind?: string | null
   sourceFiles: string[]
 }
 
@@ -122,6 +138,7 @@ export interface ProjectWorkflowPreview {
   fixedArtifacts: ProjectWorkflowFixedArtifact[]
   requiredInteractions: ProjectWorkflowRequiredInteraction[]
   verificationCommands: ProjectWorkflowVerificationCommand[]
+  gateContracts: ProjectWorkflowGateContract[]
   sourceFiles: string[]
 }
 
@@ -131,6 +148,7 @@ export interface ProjectWorkflowPhasePreview {
   requiredInteractions: ProjectWorkflowRequiredInteraction[]
   fixedArtifacts: ProjectWorkflowFixedArtifact[]
   verificationCommands: ProjectWorkflowVerificationCommand[]
+  gateContracts: ProjectWorkflowGateContract[]
 }
 
 export interface ProjectWorkflowRequiredInteraction {

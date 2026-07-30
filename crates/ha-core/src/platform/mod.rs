@@ -176,18 +176,23 @@ pub async fn wsl_status() -> WslStatus {
     imp::wsl_status().await
 }
 
+/// List available WSL distributions without opening a console window.
+pub async fn wsl_distributions() -> Vec<String> {
+    imp::wsl_distributions().await
+}
+
 /// Build a hidden async `wsl.exe` command on Windows.
 ///
 /// Returns `None` on non-Windows platforms so shared callers can keep their
 /// platform branching in this module.
-pub fn wsl_command() -> Option<tokio::process::Command> {
-    imp::wsl_command()
+pub fn wsl_command(distro: Option<&str>) -> Option<tokio::process::Command> {
+    imp::wsl_command(distro)
 }
 
 /// Convert a host path into the default WSL distribution's Linux path.
 /// Returns `None` where WSL is not available.
-pub async fn path_to_wsl(path: &Path) -> std::io::Result<Option<String>> {
-    imp::path_to_wsl(path).await
+pub async fn path_to_wsl(path: &Path, distro: Option<&str>) -> std::io::Result<Option<String>> {
+    imp::path_to_wsl(path, distro).await
 }
 
 /// Return a short, human-readable OS version string for diagnostic /

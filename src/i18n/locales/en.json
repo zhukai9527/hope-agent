@@ -6329,6 +6329,11 @@
     "sandboxDesc": "Configure Docker container sandbox isolation for secure command execution",
     "sandboxDockerAvailable": "Docker available",
     "sandboxDockerChecking": "Checking...",
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Get Docker Desktop",
     "sandboxDockerNotInstalled": "Docker not detected, please install Docker Desktop first",
     "sandboxDockerNotRunning": "Docker is installed but not running, please start Docker Desktop",
@@ -6350,6 +6355,9 @@
     "sandboxSectionContainer": "Container",
     "sandboxSectionResources": "Resource Limits",
     "sandboxSectionSecurity": "Security Hardening",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "sec",
     "security": "Security Policy",
     "selectDefaultModel": "Select default model",
@@ -11439,6 +11447,10 @@
     "exportReviewBlocked": "Export review still has blockers",
     "guardStatus": "Guard",
     "defaultName": "Artifact"
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "backgroundJobs": {
     "panelTitle": "Background Tasks",
