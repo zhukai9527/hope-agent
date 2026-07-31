@@ -416,9 +416,7 @@ fn parse_workflow_dir(root: &Path) -> Result<ParsedWorkflowFile> {
         merged
             .verification_commands
             .extend(parsed.verification_commands);
-        merged
-            .gate_contracts
-            .extend(parsed.gate_contracts);
+        merged.gate_contracts.extend(parsed.gate_contracts);
     }
 
     let global_modes = merged
@@ -797,16 +795,13 @@ fn parse_verification_commands(
     commands
 }
 
-fn parse_gate_contracts(
-    lines: &[&str],
-    source_file: &str,
-) -> Vec<ProjectWorkflowGateContract> {
+fn parse_gate_contracts(lines: &[&str], source_file: &str) -> Vec<ProjectWorkflowGateContract> {
     let mut contracts = Vec::new();
     for key in ["gate_contracts", "gateContracts", "gates"] {
         for (start, end) in list_item_ranges(lines, key) {
             let item = &lines[start..end];
-            let id = scalar_in_item(item, "id")
-                .unwrap_or_else(|| fallback_id("gate", contracts.len()));
+            let id =
+                scalar_in_item(item, "id").unwrap_or_else(|| fallback_id("gate", contracts.len()));
             let label = scalar_in_item(item, "label")
                 .or_else(|| scalar_in_item(item, "name"))
                 .unwrap_or_else(|| id.clone());

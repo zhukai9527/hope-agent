@@ -15,6 +15,256 @@ pub async fn get_skills(
 }
 
 #[tauri::command]
+pub async fn reload_skills(
+    _state: State<'_, AppState>,
+) -> Result<Vec<skills::SkillSummary>, CmdError> {
+    Ok(core::reload_skills())
+}
+
+#[tauri::command]
+pub async fn get_skill_dock_snapshot(
+    _state: State<'_, AppState>,
+) -> Result<core::SkillDockSnapshot, CmdError> {
+    Ok(core::get_skill_dock_snapshot())
+}
+
+#[tauri::command]
+pub async fn get_skill_registry_snapshot(
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRegistrySnapshot, CmdError> {
+    Ok(core::get_skill_registry_snapshot())
+}
+
+#[tauri::command]
+pub async fn get_default_skill_market_snapshot(
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRemoteMarketSnapshot, CmdError> {
+    core::get_default_skill_market_snapshot()
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_skill_market_snapshot(
+    source_urls: Option<Vec<String>>,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRemoteMarketSnapshot, CmdError> {
+    core::get_skill_market_snapshot(source_urls)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_skill_market_sources(
+    _state: State<'_, AppState>,
+) -> Result<Vec<String>, CmdError> {
+    Ok(core::get_skill_market_sources())
+}
+
+#[tauri::command]
+pub async fn set_skill_market_sources(
+    source_urls: Vec<String>,
+    _state: State<'_, AppState>,
+) -> Result<Vec<String>, CmdError> {
+    core::set_skill_market_sources(source_urls, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_skill_market_hub_config(
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::get_skill_market_hub_config().map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn upsert_skill_market_hub(
+    request: core::SkillMarketHubUpsertRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::upsert_skill_market_hub(request, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn delete_skill_market_hub(
+    hub_id: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::delete_skill_market_hub(hub_id, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_skill_market_hub_enabled(
+    hub_id: String,
+    enabled: bool,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::set_skill_market_hub_enabled(hub_id, enabled, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_skill_market_hub_token_status(
+    hub_id: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubTokenStatus, CmdError> {
+    core::get_skill_market_hub_token_status(hub_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_skill_market_hub_token(
+    hub_id: String,
+    token: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubTokenStatus, CmdError> {
+    core::set_skill_market_hub_token(hub_id, token, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn clear_skill_market_hub_token(
+    hub_id: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubTokenStatus, CmdError> {
+    core::clear_skill_market_hub_token(hub_id, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn upsert_skill_market_registry(
+    request: core::SkillMarketRegistryUpsertRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::upsert_skill_market_registry(request, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn delete_skill_market_registry(
+    registry_id: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillMarketHubConfigFile, CmdError> {
+    core::delete_skill_market_registry(registry_id, SOURCE).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_skill_publish_draft(
+    request: core::SkillPublishDraftRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillPublishDraft, CmdError> {
+    core::create_skill_publish_draft(request).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn push_skill_to_market_hub(
+    request: core::SkillPublishPushRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillPublishPushResult, CmdError> {
+    core::push_skill_to_market_hub(request)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn install_remote_market_skill(
+    request: core::SkillRemoteMarketInstallRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRemoteMarketInstallReport, CmdError> {
+    core::install_remote_market_skill(request)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn update_remote_market_skill(
+    request: core::SkillRemoteMarketInstallRequest,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRemoteMarketInstallReport, CmdError> {
+    core::update_remote_market_skill(request)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn install_registry_skill(
+    skill_path: String,
+    name: Option<String>,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRegistryInstallReport, CmdError> {
+    core::install_registry_skill(skill_path, name).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn update_registry_skill(
+    skill_path: String,
+    name: Option<String>,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillRegistryInstallReport, CmdError> {
+    core::update_registry_skill(skill_path, name).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn install_skill_to_app(
+    name: String,
+    app: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillAppInstallReport, CmdError> {
+    core::install_skill_to_app(name, app).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn uninstall_managed_skill(
+    name: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillUninstallReport, CmdError> {
+    core::uninstall_managed_skill(name).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn uninstall_skill_from_app(
+    name: String,
+    app: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillUninstallReport, CmdError> {
+    core::uninstall_skill_from_app(name, app).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn scan_skill_usage(
+    state: State<'_, AppState>,
+) -> Result<core::SkillUsageScanReport, CmdError> {
+    core::scan_skill_usage(&state.session_db).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn dry_run_import_skill_zip(
+    path: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillZipDryRunReport, CmdError> {
+    core::dry_run_import_skill_zip(path).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn import_skill_zip(
+    path: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillZipImportReport, CmdError> {
+    core::import_skill_zip(path).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn import_skill_zip_renamed(
+    path: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillZipImportReport, CmdError> {
+    core::import_skill_zip_renamed(path).map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn export_skill_zip(
+    name: String,
+    output_path: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillZipExportReport, CmdError> {
+    core::export_skill_zip(name, output_path).map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn get_skill_detail(
     name: String,
     _state: State<'_, AppState>,

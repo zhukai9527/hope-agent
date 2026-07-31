@@ -5480,6 +5480,34 @@ impl SessionDB {
         Ok(out)
     }
 
+    /// Aggregate persisted conditional skill activations across all sessions.
+    /// Used by the skills management UI as a real local usage signal; it only
+    /// reads the compact activation table and never inspects message content.
+    pub fn aggregate_skill_activations(&self) -> Result<Vec<(String, i64, Option<String>)>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT skill_name, COUNT(*) AS usage_count, MAX(activated_at) AS last_used_at
+             FROM session_skill_activation
+             GROUP BY skill_name
+             ORDER BY usage_count DESC, skill_name ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Persist deferred tools activated through `tool_search`. This is not an
     /// authorization grant: every request and execution re-applies the live
     /// dispatcher/permission filters before exposing or calling the tool.

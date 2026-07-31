@@ -16,6 +16,355 @@ pub async fn list_skills() -> Result<Json<Vec<skills::SkillSummary>>, AppError> 
     Ok(Json(core::list_skills()))
 }
 
+/// `POST /api/skills/reload`
+pub async fn reload_skills() -> Result<Json<Vec<skills::SkillSummary>>, AppError> {
+    Ok(Json(core::reload_skills()))
+}
+
+/// `GET /api/skills/dock-snapshot`
+pub async fn get_skill_dock_snapshot() -> Result<Json<core::SkillDockSnapshot>, AppError> {
+    Ok(Json(core::get_skill_dock_snapshot()))
+}
+
+/// `GET /api/skills/registry` — local marketplace-style snapshot from known skill catalogs.
+pub async fn get_skill_registry_snapshot() -> Result<Json<core::SkillRegistrySnapshot>, AppError> {
+    Ok(Json(core::get_skill_registry_snapshot()))
+}
+
+/// `GET /api/skills/market/default` — read-only ClawHub official remote skill market index.
+pub async fn get_default_skill_market_snapshot(
+) -> Result<Json<core::SkillRemoteMarketSnapshot>, AppError> {
+    let snapshot = core::get_default_skill_market_snapshot()
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(snapshot))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMarketSnapshotBody {
+    pub source_urls: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMarketSourcesBody {
+    pub source_urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteMarketInstallBody {
+    pub request: core::SkillRemoteMarketInstallRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubIdBody {
+    pub hub_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubEnabledBody {
+    pub hub_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubTokenBody {
+    pub hub_id: String,
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryIdBody {
+    pub registry_id: String,
+}
+
+/// `POST /api/skills/market/snapshot` — read-only multi-source skill market index.
+pub async fn get_skill_market_snapshot(
+    Json(body): Json<SkillMarketSnapshotBody>,
+) -> Result<Json<core::SkillRemoteMarketSnapshot>, AppError> {
+    let snapshot = core::get_skill_market_snapshot(body.source_urls)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(snapshot))
+}
+
+/// `GET /api/skills/market/sources` �� persisted custom remote market sources.
+pub async fn get_skill_market_sources() -> Result<Json<Vec<String>>, AppError> {
+    Ok(Json(core::get_skill_market_sources()))
+}
+
+/// `POST /api/skills/market/sources` �� replace persisted custom remote market sources.
+pub async fn set_skill_market_sources(
+    Json(body): Json<SkillMarketSourcesBody>,
+) -> Result<Json<Vec<String>>, AppError> {
+    let sources = run_blocking(move || core::set_skill_market_sources(body.source_urls, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(sources))
+}
+
+/// `GET /api/skills/market/hubs` — persisted market hub/registry config.
+pub async fn get_skill_market_hub_config() -> Result<Json<core::SkillMarketHubConfigFile>, AppError>
+{
+    let config = run_blocking(core::get_skill_market_hub_config)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+/// `POST /api/skills/market/hubs/upsert` — create or update one market hub.
+pub async fn upsert_skill_market_hub(
+    Json(request): Json<core::SkillMarketHubUpsertRequest>,
+) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
+    let config = run_blocking(move || core::upsert_skill_market_hub(request, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+pub async fn delete_skill_market_hub(
+    Json(body): Json<HubIdBody>,
+) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
+    let config = run_blocking(move || core::delete_skill_market_hub(body.hub_id, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+pub async fn set_skill_market_hub_enabled(
+    Json(body): Json<HubEnabledBody>,
+) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
+    let config =
+        run_blocking(move || core::set_skill_market_hub_enabled(body.hub_id, body.enabled, SOURCE))
+            .await
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+pub async fn get_skill_market_hub_token_status(
+    Json(body): Json<HubIdBody>,
+) -> Result<Json<core::SkillMarketHubTokenStatus>, AppError> {
+    let status = run_blocking(move || core::get_skill_market_hub_token_status(body.hub_id))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(status))
+}
+
+pub async fn set_skill_market_hub_token(
+    Json(body): Json<HubTokenBody>,
+) -> Result<Json<core::SkillMarketHubTokenStatus>, AppError> {
+    let status =
+        run_blocking(move || core::set_skill_market_hub_token(body.hub_id, body.token, SOURCE))
+            .await
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(status))
+}
+
+pub async fn clear_skill_market_hub_token(
+    Json(body): Json<HubIdBody>,
+) -> Result<Json<core::SkillMarketHubTokenStatus>, AppError> {
+    let status = run_blocking(move || core::clear_skill_market_hub_token(body.hub_id, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(status))
+}
+
+pub async fn upsert_skill_market_registry(
+    Json(request): Json<core::SkillMarketRegistryUpsertRequest>,
+) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
+    let config = run_blocking(move || core::upsert_skill_market_registry(request, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+pub async fn delete_skill_market_registry(
+    Json(body): Json<RegistryIdBody>,
+) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
+    let config = run_blocking(move || core::delete_skill_market_registry(body.registry_id, SOURCE))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(config))
+}
+
+pub async fn create_skill_publish_draft(
+    Json(request): Json<core::SkillPublishDraftRequest>,
+) -> Result<Json<core::SkillPublishDraft>, AppError> {
+    let draft = run_blocking(move || core::create_skill_publish_draft(request))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(draft))
+}
+
+pub async fn push_skill_to_market_hub(
+    Json(request): Json<core::SkillPublishPushRequest>,
+) -> Result<Json<core::SkillPublishPushResult>, AppError> {
+    let result = core::push_skill_to_market_hub(request)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(result))
+}
+
+/// `POST /api/skills/market/install` �� download, verify, and install one GitHub market skill.
+pub async fn install_remote_market_skill(
+    Json(body): Json<RemoteMarketInstallBody>,
+) -> Result<Json<core::SkillRemoteMarketInstallReport>, AppError> {
+    let report = core::install_remote_market_skill(body.request)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/market/update` �� download, verify, and replace one managed market skill with backup.
+pub async fn update_remote_market_skill(
+    Json(body): Json<RemoteMarketInstallBody>,
+) -> Result<Json<core::SkillRemoteMarketInstallReport>, AppError> {
+    let report = core::update_remote_market_skill(body.request)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryInstallBody {
+    pub skill_path: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInstallBody {
+    pub name: String,
+    pub app: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillNameBody {
+    pub name: String,
+}
+
+/// `POST /api/skills/registry/install` — copy a discovered registry skill into Hope managed skills.
+pub async fn install_registry_skill(
+    Json(body): Json<RegistryInstallBody>,
+) -> Result<Json<core::SkillRegistryInstallReport>, AppError> {
+    let report = run_blocking(move || core::install_registry_skill(body.skill_path, body.name))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/registry/update` — replace a managed skill from a discovered registry source with backup.
+pub async fn update_registry_skill(
+    Json(body): Json<RegistryInstallBody>,
+) -> Result<Json<core::SkillRegistryInstallReport>, AppError> {
+    let report = run_blocking(move || core::update_registry_skill(body.skill_path, body.name))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/app/install` — copy one Hope skill into a supported external app skills directory.
+pub async fn install_skill_to_app(
+    Json(body): Json<AppInstallBody>,
+) -> Result<Json<core::SkillAppInstallReport>, AppError> {
+    let report = run_blocking(move || core::install_skill_to_app(body.name, body.app))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/managed/uninstall` — remove one managed Hope skill directory after safety checks.
+pub async fn uninstall_managed_skill(
+    Json(body): Json<SkillNameBody>,
+) -> Result<Json<core::SkillUninstallReport>, AppError> {
+    let report = run_blocking(move || core::uninstall_managed_skill(body.name))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/app/uninstall` — remove one skill from a supported external app skills directory after safety checks.
+pub async fn uninstall_skill_from_app(
+    Json(body): Json<AppInstallBody>,
+) -> Result<Json<core::SkillUninstallReport>, AppError> {
+    let report = run_blocking(move || core::uninstall_skill_from_app(body.name, body.app))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `GET /api/skills/usage/scan` — aggregate persisted skill activation usage.
+pub async fn scan_skill_usage(
+    axum::extract::State(ctx): axum::extract::State<std::sync::Arc<crate::AppContext>>,
+) -> Result<Json<core::SkillUsageScanReport>, AppError> {
+    let db = ctx.session_db.clone();
+    let report = run_blocking(move || core::scan_skill_usage(&db))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillZipDryRunBody {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillZipExportBody {
+    pub name: String,
+    pub output_path: String,
+}
+
+/// `POST /api/skills/zip/dry-run` — inspect a ZIP package without extraction.
+pub async fn dry_run_import_skill_zip(
+    Json(body): Json<SkillZipDryRunBody>,
+) -> Result<Json<core::SkillZipDryRunReport>, AppError> {
+    let report = run_blocking(move || core::dry_run_import_skill_zip(body.path))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/zip/import` — import a dry-run-safe ZIP package without overwriting existing skills.
+pub async fn import_skill_zip(
+    Json(body): Json<SkillZipDryRunBody>,
+) -> Result<Json<core::SkillZipImportReport>, AppError> {
+    let report = run_blocking(move || core::import_skill_zip(body.path))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/zip/import-renamed` — import a ZIP package and rename conflicting skills instead of overwriting.
+pub async fn import_skill_zip_renamed(
+    Json(body): Json<SkillZipDryRunBody>,
+) -> Result<Json<core::SkillZipImportReport>, AppError> {
+    let report = run_blocking(move || core::import_skill_zip_renamed(body.path))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/zip/export` — export one skill directory to a new ZIP file.
+pub async fn export_skill_zip(
+    Json(body): Json<SkillZipExportBody>,
+) -> Result<Json<core::SkillZipExportReport>, AppError> {
+    let report = run_blocking(move || core::export_skill_zip(body.name, body.output_path))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
 /// `GET /api/skills/mentionable` — curated, fixed allowlist of built-in skills
 /// offered by the composer's `@skill` menu, filtered to what's invocable on
 /// this host. Registered before `/api/skills/{name}` (static wins over param).

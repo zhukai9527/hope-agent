@@ -454,7 +454,10 @@ async fn command_output_summary(command: &mut Command) -> Option<(bool, String)>
         text.push_str(&String::from_utf8_lossy(&output.stderr));
     }
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some((output.status.success(), crate::truncate_utf8(&text, 500).to_string()))
+    Some((
+        output.status.success(),
+        crate::truncate_utf8(&text, 500).to_string(),
+    ))
 }
 
 async fn configured_wsl_local_docker_endpoint(distro: Option<&str>) -> Option<String> {
@@ -564,9 +567,7 @@ async fn wsl_docker_probe(distro: Option<&str>) -> WslDockerProbe {
     probe
 }
 
-async fn find_wsl_docker_backend(
-    distro: Option<&str>,
-) -> Option<(WslDockerProbe, Option<String>)> {
+async fn find_wsl_docker_backend(distro: Option<&str>) -> Option<(WslDockerProbe, Option<String>)> {
     if let Some(distro) = distro.filter(|value| !value.trim().is_empty()) {
         let probe = wsl_docker_probe(Some(distro)).await;
         return probe
@@ -620,7 +621,8 @@ async fn available_sandbox_backend(config: &SandboxConfig) -> Option<AvailableSa
         return find_wsl_docker_backend(wsl_distro)
             .await
             .and_then(|(probe, distro)| {
-                probe.local_endpoint
+                probe
+                    .local_endpoint
                     .map(|endpoint| AvailableSandboxBackend::Wsl { endpoint, distro })
             });
     }
@@ -1849,11 +1851,18 @@ pub async fn ensure_sandbox_available() -> Result<()> {
         "Windows Docker is unavailable and WSL fallback is disabled by dockerBackend=windows. Install/start Windows Docker, or switch dockerBackend to auto/wsl.".to_string()
     } else if config.docker_backend == DockerBackendPreference::Windows {
         "Windows Docker CLI is installed but its daemon is unavailable, and WSL fallback is disabled by dockerBackend=windows. Start Windows Docker or switch dockerBackend to auto/wsl.".to_string()
-    } else if config.docker_backend == DockerBackendPreference::Wsl && status.wsl_installed != Some(true) {
+    } else if config.docker_backend == DockerBackendPreference::Wsl
+        && status.wsl_installed != Some(true)
+    {
         "WSL is unavailable on this Windows host. Install/enable WSL before using dockerBackend=wsl.".to_string()
-    } else if config.docker_backend == DockerBackendPreference::Wsl && status.wsl_distribution_installed != Some(true) {
-        "WSL is installed but no usable Linux distribution is available for dockerBackend=wsl.".to_string()
-    } else if config.docker_backend == DockerBackendPreference::Wsl && status.wsl_docker_installed != Some(true) {
+    } else if config.docker_backend == DockerBackendPreference::Wsl
+        && status.wsl_distribution_installed != Some(true)
+    {
+        "WSL is installed but no usable Linux distribution is available for dockerBackend=wsl."
+            .to_string()
+    } else if config.docker_backend == DockerBackendPreference::Wsl
+        && status.wsl_docker_installed != Some(true)
+    {
         "WSL Docker CLI is missing in the selected distribution. Install Docker Engine in WSL before using dockerBackend=wsl.".to_string()
     } else if config.docker_backend == DockerBackendPreference::Wsl {
         match status.wsl_docker_error.as_deref() {
@@ -1866,7 +1875,8 @@ pub async fn ensure_sandbox_available() -> Result<()> {
                     .unwrap_or_default(),
                 error
             ),
-            _ => "WSL Docker daemon is unavailable. Start Docker Engine in WSL and retry.".to_string(),
+            _ => "WSL Docker daemon is unavailable. Start Docker Engine in WSL and retry."
+                .to_string(),
         }
     } else if !status.installed
         && status.host_os == "windows"

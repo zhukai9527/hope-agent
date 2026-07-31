@@ -165,7 +165,10 @@ pub(super) async fn wsl_distributions() -> Vec<String> {
             .take(16)
             .any(|chunk| chunk[1] == 0);
     let text = if utf16le {
-        let bytes = output.stdout.strip_prefix(&[0xff, 0xfe]).unwrap_or(&output.stdout);
+        let bytes = output
+            .stdout
+            .strip_prefix(&[0xff, 0xfe])
+            .unwrap_or(&output.stdout);
         let words: Vec<u16> = bytes
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
