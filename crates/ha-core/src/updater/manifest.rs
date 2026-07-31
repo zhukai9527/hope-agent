@@ -16,7 +16,7 @@ use std::time::Duration;
 /// Endpoint matching `src-tauri/tauri.conf.json#updater.endpoints[0]` so the
 /// desktop + headless paths read the same manifest.
 pub const UPDATE_MANIFEST_URL: &str =
-    "https://github.com/shiwenwen/hope-agent/releases/latest/download/latest.json";
+    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {

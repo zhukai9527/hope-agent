@@ -19,7 +19,7 @@ use minisign_verify::PublicKey;
 /// Sync the literal in `src-tauri/tauri.conf.json#updater.pubkey` whenever
 /// this changes. `scripts/verify-updater-pubkey.mjs` (run in CI) diffs the
 /// two so a drift can't ship.
-pub const MINISIGN_PUBKEY_BASE64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNkQxQTlGNDUyOUQ5NjVERApSV1RkWmRrcFJaOGFiV0NYQXR6K3FwYWZMT0FqWkJ3RklXOEFyRDhjeld0RlZCVWYvZ0ErY1hQVwo=";
+pub const MINISIGN_PUBKEY_BASE64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNkQxQTlGNDUyOUQ5NjVERA0KUldUZFpka3BSWjhhYldDWEF0eitxcGFmTE9BalpCd0ZJVzhBckQ4Y3pXdEZWQlVmL2dBK2NYUFcNCg==";
 
 /// Parse [`MINISIGN_PUBKEY_BASE64`] into the verifier used by every
 /// signature check in this crate. Each call re-parses (cheap, ~64 bytes)

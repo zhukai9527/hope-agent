@@ -103,9 +103,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNkQxQTlGNDUyOUQ5NjVERApSV1RkWmRrcFJaOGFiV0NYQXR6K3FwYWZMT0FqWkJ3RklXOEFyRDhjeld0RlZCVWYvZ0ErY1hQVwo=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNkQxQTlGNDUyOUQ5NjVERA0KUldUZFpka3BSWjhhYldDWEF0eitxcGFmTE9BalpCd0ZJVzhBckQ4Y3pXdEZWQlVmL2dBK2NYUFcNCg==",
       "endpoints": [
-        "https://github.com/shiwenwen/hope-agent/releases/latest/download/latest.json"
+        "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
