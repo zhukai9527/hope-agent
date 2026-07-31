@@ -1635,7 +1635,7 @@ pub fn create_skill_publish_draft(request: SkillPublishDraftRequest) -> Result<S
         manifest: serde_json::json!({
             "name": detail.name,
             "version": detail.display.version,
-            "description": detail.display.description,
+            "description": detail.description,
             "hash": hash,
             "skillMd": manifest_text,
         }),
