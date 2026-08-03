@@ -36,7 +36,7 @@ jobs:
   update-tap:
     runs-on: ubuntu-latest
     env:
-      TAP_REPO: shiwenwen/homebrew-hope-agent
+      TAP_REPO: zhukai9527/homebrew-hope-agent
       TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.tag_name }}
 
     steps:

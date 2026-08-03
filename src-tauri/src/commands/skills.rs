@@ -23,9 +23,9 @@ pub async fn reload_skills(
 
 #[tauri::command]
 pub async fn get_skill_dock_snapshot(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<core::SkillDockSnapshot, CmdError> {
-    Ok(core::get_skill_dock_snapshot())
+    core::get_skill_dock_snapshot_with_usage(&state.session_db).map_err(Into::into)
 }
 
 #[tauri::command]

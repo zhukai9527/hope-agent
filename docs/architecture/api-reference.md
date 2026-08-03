@@ -1422,6 +1422,36 @@ Agent 执行准入采用两层 guard：Desktop / HTTP / Channel / Cron 等调用
 | Tauri Command | HTTP | 状态 |
 |---|---|---|
 | `get_skills` | `GET /api/skills` | ✅ |
+| `reload_skills` | `POST /api/skills/reload` | ✅ |
+| `get_skill_dock_snapshot` | `GET /api/skills/dock-snapshot` | ✅ |
+| `get_skill_registry_snapshot` | `GET /api/skills/registry` | ✅ |
+| `get_default_skill_market_snapshot` | `GET /api/skills/market/default` | ✅ |
+| `get_skill_market_snapshot` | `POST /api/skills/market/snapshot` | ✅ |
+| `get_skill_market_sources` | `GET /api/skills/market/sources` | ✅ |
+| `set_skill_market_sources` | `POST /api/skills/market/sources` | ✅ |
+| `get_skill_market_hub_config` | `GET /api/skills/market/hubs` | ✅ |
+| `upsert_skill_market_hub` | `POST /api/skills/market/hubs/upsert` | ✅ |
+| `delete_skill_market_hub` | `POST /api/skills/market/hubs/delete` | ✅ |
+| `set_skill_market_hub_enabled` | `POST /api/skills/market/hubs/enabled` | ✅ |
+| `get_skill_market_hub_token_status` | `POST /api/skills/market/hubs/token/status` | ✅ |
+| `set_skill_market_hub_token` | `POST /api/skills/market/hubs/token/set` | ✅ |
+| `clear_skill_market_hub_token` | `POST /api/skills/market/hubs/token/clear` | ✅ |
+| `upsert_skill_market_registry` | `POST /api/skills/market/registries/upsert` | ✅ |
+| `delete_skill_market_registry` | `POST /api/skills/market/registries/delete` | ✅ |
+| `create_skill_publish_draft` | `POST /api/skills/market/publish/draft` | ✅ |
+| `push_skill_to_market_hub` | `POST /api/skills/market/publish/push` | ✅ |
+| `install_remote_market_skill` | `POST /api/skills/market/install` | ✅ |
+| `update_remote_market_skill` | `POST /api/skills/market/update` | ✅ |
+| `install_registry_skill` | `POST /api/skills/registry/install` | ✅ |
+| `update_registry_skill` | `POST /api/skills/registry/update` | ✅ |
+| `install_skill_to_app` | `POST /api/skills/app/install` | ✅ |
+| `uninstall_skill_from_app` | `POST /api/skills/app/uninstall` | ✅ |
+| `uninstall_managed_skill` | `POST /api/skills/managed/uninstall` | ✅ |
+| `scan_skill_usage` | `GET /api/skills/usage/scan` | ✅ |
+| `dry_run_import_skill_zip` | `POST /api/skills/zip/dry-run` | ✅ |
+| `import_skill_zip` | `POST /api/skills/zip/import` | ✅ |
+| `import_skill_zip_renamed` | `POST /api/skills/zip/import-renamed` | ✅ |
+| `export_skill_zip` | `POST /api/skills/zip/export` | ✅ |
 | `list_mentionable_skills` | `GET /api/skills/mentionable` | ✅ |
 | `get_skill_detail` | `GET /api/skills/{name}` | ✅ |
 | `toggle_skill` | `POST /api/skills/{name}/toggle` | ✅ |
@@ -1451,6 +1481,8 @@ Agent 执行准入采用两层 guard：Desktop / HTTP / Channel / Cron 等调用
 | `get_skills_auto_review_recent_rejects` | `GET /api/skills/auto-review/recent-rejects` | ✅ |
 | `run_skills_curator_now` | `POST /api/skills/curator/run` | ✅ |
 | `apply_skills_curator_merge` | `POST /api/skills/curator/apply` | ✅ |
+
+Skill Dock UI contract: `get_skill_dock_snapshot` returns session-DB aggregated `usage` when called through Desktop / HTTP. Market snapshots include real remote metadata when the source can provide it (`name`, `description`, `author`, `license`, `version`, `category`, `tags`, `source`, `sourceId`, `sourceName`, `sourceType`, `rawUrl`, `marketVersion`, `installed`, `updateAvailable`, `compatibleApps`). Fields without a trustworthy remote source stay neutral (`rating = 0`, `downloadCount = 0`, `featured = false`). Source-level rollups (`categoryCounts`, `installedCount`, `updateCount`) are computed from the real entry set so the Skills market page does not fabricate ranking/category/stat cards client-side. `scan_skill_usage` merges Hope session activations with installed external app usage scans and returns only aggregated counts / timestamps / synthetic session ids, never chat正文.
 
 ### Slash commands
 

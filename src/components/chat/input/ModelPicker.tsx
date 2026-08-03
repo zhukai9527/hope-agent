@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import { Check, ChevronDown, ChevronRight } from "lucide-react"
 import { Slider } from "@/components/ui/slider"
 import { FloatingMenu } from "@/components/ui/floating-menu"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { IconTip } from "@/components/ui/tooltip"
 import { Switch } from "@/components/ui/switch"
 import ProviderIcon from "@/components/common/ProviderIcon"
 import ModelCapabilityBadges from "@/components/chat/ModelCapabilityBadges"
@@ -215,54 +215,48 @@ export default function ModelPicker({
 
   return (
     <div className="relative shrink-0" ref={menuRef}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => {
-              const nextOpen = !showMenu
-              setShowMenu(nextOpen)
-              if (nextOpen) {
-                setApplyToAgentDefault(false)
-                setTemperatureDraft(null)
-              }
-              setOpenPanel(null)
-            }}
-            className="flex max-w-[220px] items-center gap-1 overflow-hidden bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground rounded-lg cursor-pointer"
-          >
-            {currentModelInfo && (
-              <ProviderIcon
-                providerKey={currentModelInfo.providerId}
-                providerName={currentModelInfo.providerName}
-                size={14}
-                className="shrink-0"
-                color
-              />
-            )}
-            <span className="min-w-0 truncate">{modelLabel}</span>
-            {supportsThinking && (
-              <span
-                className={cn(
-                  "shrink-0 whitespace-nowrap",
-                  reasoningEffort !== "none" && "text-foreground/80",
-                )}
-              >
-                {effortLabel}
-              </span>
-            )}
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
-          </button>
-        </TooltipTrigger>
-        {/* Full, untruncated model name on hover — the trigger caps at
-            max-w-[220px] and truncates, so this is the only way to read a
-            long name without opening the menu. */}
-        <TooltipContent side="top">
-          {currentModelInfo?.providerName
-            ? `${currentModelInfo.providerName} · ${modelLabel}`
-            : modelLabel}
-          {supportsThinking && reasoningEffort !== "none" ? ` · ${effortLabel}` : ""}
-        </TooltipContent>
-      </Tooltip>
+      {/* Full, untruncated model name on hover — the trigger caps at
+          max-w-[220px] and truncates, so this is the only way to read a
+          long name without opening the menu. */}
+      <IconTip
+        label={`${currentModelInfo?.providerName ? `${currentModelInfo.providerName} · ` : ""}${modelLabel}${supportsThinking && reasoningEffort !== "none" ? ` · ${effortLabel}` : ""}`}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            const nextOpen = !showMenu
+            setShowMenu(nextOpen)
+            if (nextOpen) {
+              setApplyToAgentDefault(false)
+              setTemperatureDraft(null)
+            }
+            setOpenPanel(null)
+          }}
+          className="flex max-w-[220px] items-center gap-1 overflow-hidden bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground rounded-lg cursor-pointer"
+        >
+          {currentModelInfo && (
+            <ProviderIcon
+              providerKey={currentModelInfo.providerId}
+              providerName={currentModelInfo.providerName}
+              size={14}
+              className="shrink-0"
+              color
+            />
+          )}
+          <span className="min-w-0 truncate">{modelLabel}</span>
+          {supportsThinking && (
+            <span
+              className={cn(
+                "shrink-0 whitespace-nowrap",
+                reasoningEffort !== "none" && "text-foreground/80",
+              )}
+            >
+              {effortLabel}
+            </span>
+          )}
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        </button>
+      </IconTip>
 
       <FloatingMenu
         open={showMenu}

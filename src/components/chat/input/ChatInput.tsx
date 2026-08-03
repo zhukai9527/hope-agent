@@ -389,21 +389,18 @@ function ContextUsageBottomBar({ usage }: { usage: ContextUsageInfo }) {
   const fill = contextUsageBarClass(usage.pct)
   const width = Math.min(usage.pct, 100)
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="absolute inset-x-4 bottom-0 z-10 flex h-2 items-end">
-          <div className="h-[2px] w-full overflow-hidden rounded-full">
-            <div
-              className={cn("h-full rounded-full transition-[width] duration-500", fill)}
-              style={{ width: `${width}%` }}
-            />
-          </div>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        {t("chat.statusContext")} · {usage.usedK}k/{usage.ctxK}k ({usage.pct}%)
-      </TooltipContent>
-    </Tooltip>
+    <div
+      className="absolute inset-x-4 bottom-0 z-10 flex h-2 items-end"
+      data-ha-tip={`${t("chat.statusContext")} · ${usage.usedK}k/${usage.ctxK}k (${usage.pct}%)`}
+      data-ha-tip-side="top"
+    >
+      <div className="h-[2px] w-full overflow-hidden rounded-full">
+        <div
+          className={cn("h-full rounded-full transition-[width] duration-500", fill)}
+          style={{ width: `${width}%` }}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -2864,22 +2861,19 @@ export default function ChatInput({
                       : CHAT_INPUT_OVERFLOW_MENU_CLASS
                   }
                 >
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t("chat.moreActions")}
-                        aria-expanded={showOverflowMenu}
-                        aria-haspopup="menu"
-                        onClick={() => setShowOverflowMenu((open) => !open)}
-                        className="h-8 w-8 rounded-lg bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("chat.moreActions")}</TooltipContent>
-                  </Tooltip>
+                  <IconTip label={t("chat.moreActions")}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("chat.moreActions")}
+                      aria-expanded={showOverflowMenu}
+                      aria-haspopup="menu"
+                      onClick={() => setShowOverflowMenu((open) => !open)}
+                      className="h-8 w-8 rounded-lg bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </IconTip>
                   <FloatingMenu
                     open={showOverflowMenu}
                     className="min-w-[180px] overflow-hidden p-1.5"

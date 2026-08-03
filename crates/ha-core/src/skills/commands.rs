@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -38,6 +38,8 @@ const REMOTE_SKILL_ARCHIVE_MAX_BYTES: u64 = 25 * 1024 * 1024;
 const REMOTE_SKILL_EXTRACT_MAX_ENTRIES: usize = 1024;
 const REMOTE_SKILL_EXTRACT_MAX_BYTES: u64 = 100 * 1024 * 1024;
 const SKILL_MARKET_PUBLISH_RESPONSE_MAX_BYTES: u64 = 64 * 1024;
+const GITHUB_RAW_HOST: &str = "raw.githubusercontent.com";
+const GITHUB_MARKET_ALLOWED_HOSTS: &[&str] = &[GITHUB_RAW_HOST];
 
 const DEFAULT_SKILL_MARKET_SOURCES: &[SkillRemoteMarketSourceSeed] =
     &[SkillRemoteMarketSourceSeed {
@@ -64,6 +66,9 @@ pub struct SkillDockSnapshot {
     pub sources: Vec<SkillSourceRecord>,
     pub packages: Vec<SkillPackageSummary>,
     pub usage: Vec<SkillUsageSnapshot>,
+    pub usage_trend: Vec<SkillUsageTrendPoint>,
+    pub recent_usage: Vec<SkillUsageRecentRecord>,
+    pub usage_app_breakdown: Vec<SkillUsageAppBreakdown>,
     pub apps: Vec<SkillAppProbe>,
     pub generated_at: String,
 }
@@ -110,6 +115,31 @@ pub struct SkillUsageSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillUsageTrendPoint {
+    pub date: String,
+    pub app: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUsageRecentRecord {
+    pub activated_at: String,
+    pub app: String,
+    pub skill_name: String,
+    pub session_id: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUsageAppBreakdown {
+    pub app: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillPackageSummary {
     pub id: String,
     pub name: String,
@@ -139,6 +169,10 @@ pub struct SkillRegistryEntry {
     pub source_id: String,
     pub source_path: String,
     pub skill_path: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub version: Option<String>,
+    pub updated_at: Option<String>,
     pub installed: bool,
     pub update_available: bool,
     pub installed_state: String,
@@ -165,6 +199,9 @@ pub struct SkillRemoteMarketSource {
     pub status: String,
     pub error: Option<String>,
     pub entry_count: usize,
+    pub category_counts: HashMap<String, usize>,
+    pub installed_count: usize,
+    pub update_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +333,16 @@ pub struct SkillRemoteMarketEntry {
     pub source_type: String,
     pub skill_path: String,
     pub raw_url: String,
+    pub description: String,
+    pub author: String,
+    pub license: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub rating: f32,
+    pub download_count: u64,
+    pub updated_at: Option<String>,
+    pub featured: bool,
+    pub compatible_apps: Vec<String>,
     pub market_version: Option<String>,
     pub installed_version: Option<String>,
     pub market_hash: Option<String>,
@@ -320,6 +367,18 @@ struct ClawHubSkillLockEntry {
     source_type: String,
     skill_path: String,
     computed_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SkillRemoteMarketMetadata {
+    name: Option<String>,
+    description: Option<String>,
+    author: Option<String>,
+    license: Option<String>,
+    version: Option<String>,
+    category: Option<String>,
+    tags: Vec<String>,
+    updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,7 +420,7 @@ pub struct SkillRemoteMarketInstallReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SkillRemoteMarketMetadata {
+struct SkillRemoteMarketInstalledMetadata {
     name: String,
     source: String,
     source_type: String,
@@ -395,6 +454,9 @@ pub struct SkillUninstallReport {
 #[serde(rename_all = "camelCase")]
 pub struct SkillUsageScanReport {
     pub usage: Vec<SkillUsageSnapshot>,
+    pub usage_trend: Vec<SkillUsageTrendPoint>,
+    pub recent_usage: Vec<SkillUsageRecentRecord>,
+    pub usage_app_breakdown: Vec<SkillUsageAppBreakdown>,
     pub scanned_at: String,
     pub source: String,
 }
@@ -746,9 +808,32 @@ pub fn get_skill_dock_snapshot() -> SkillDockSnapshot {
         sources,
         packages,
         usage,
+        usage_trend: vec![],
+        recent_usage: vec![],
+        usage_app_breakdown: vec![],
         apps,
         generated_at: now,
     }
+}
+
+pub fn get_skill_dock_snapshot_with_usage(
+    db: &crate::session::SessionDB,
+) -> Result<SkillDockSnapshot> {
+    let mut snapshot = get_skill_dock_snapshot();
+    let usage_report = scan_skill_usage(db)?;
+    let mut usage_by_name: HashMap<String, SkillUsageSnapshot> = usage_report
+        .usage
+        .into_iter()
+        .map(|row| (row.skill_name.clone(), row))
+        .collect();
+    for row in &mut snapshot.usage {
+        if let Some(usage) = usage_by_name.remove(&row.skill_name) {
+            row.usage_count = usage.usage_count;
+            row.last_used_at = usage.last_used_at;
+        }
+    }
+    snapshot.usage.extend(usage_by_name.into_values());
+    Ok(snapshot)
 }
 
 pub fn dry_run_import_skill_zip(path: String) -> Result<SkillZipDryRunReport> {
@@ -1183,6 +1268,10 @@ pub fn get_skill_registry_snapshot() -> SkillRegistrySnapshot {
                     source_id: source.id.clone(),
                     source_path: candidate.path.clone(),
                     skill_path: skill_dir.to_string_lossy().to_string(),
+                    category: skill_market_category(&name),
+                    tags: skill_market_tags(&name),
+                    version: read_skill_display_version(&skill_dir),
+                    updated_at: skill_dir_updated_at(&skill_dir),
                     installed,
                     update_available,
                     installed_state: if update_available {
@@ -1259,6 +1348,9 @@ pub async fn get_skill_market_snapshot(
             status: "ready".to_string(),
             error: None,
             entry_count: 0,
+            category_counts: HashMap::new(),
+            installed_count: 0,
+            update_count: 0,
         };
 
         snapshot_source_urls.insert(hub.base_url.clone());
@@ -1274,7 +1366,7 @@ pub async fn get_skill_market_snapshot(
                 .await
                 {
                     Ok(mut fetched) => {
-                        source_record.entry_count = fetched.len();
+                        update_skill_market_source_stats(&mut source_record, &fetched);
                         entries.append(&mut fetched);
                     }
                     Err(error) => {
@@ -1320,12 +1412,15 @@ pub async fn get_skill_market_snapshot(
                 status: "ready".to_string(),
                 error: None,
                 entry_count: 0,
+                category_counts: HashMap::new(),
+                installed_count: 0,
+                update_count: 0,
             };
             match fetch_clawhub_market_entries(&client, &id, &name, &trimmed, &installed_by_name)
                 .await
             {
                 Ok(mut fetched) => {
-                    source_record.entry_count = fetched.len();
+                    update_skill_market_source_stats(&mut source_record, &fetched);
                     entries.append(&mut fetched);
                 }
                 Err(error) => {
@@ -2041,7 +2136,7 @@ async fn fetch_clawhub_market_entries(
     source_url: &str,
     installed_by_name: &HashMap<String, SkillSummary>,
 ) -> Result<Vec<SkillRemoteMarketEntry>> {
-    check_url(source_url, SsrfPolicy::Strict, &[]).await?;
+    validate_clawhub_market_index_url(source_url).await?;
     let response = client
         .get(source_url)
         .send()
@@ -2072,13 +2167,25 @@ async fn fetch_clawhub_market_entries(
         if entry.source_type != "github" {
             continue;
         }
-        let installed_skill = installed_by_name.get(&id);
+        let normalized_skill_path = entry.skill_path.replace('\\', "/");
+        let raw_url = format!(
+            "https://github.com/{}/blob/HEAD/{}",
+            entry.source,
+            normalized_skill_path
+        );
+        let metadata = fetch_remote_skill_metadata(client, &entry.source, &normalized_skill_path)
+            .await
+            .unwrap_or_default();
+        let entry_name = metadata.name.clone().unwrap_or_else(|| id.clone());
+        let installed_skill = installed_by_name
+            .get(&entry_name)
+            .or_else(|| installed_by_name.get(&id));
         let installed = installed_skill.is_some();
         let installed_version = installed_skill.and_then(|skill| skill.display.version.clone());
         let installed_hash =
             installed_skill.and_then(|skill| skill_file_sha256(Path::new(&skill.base_dir)));
-        let market_hash = entry.computed_hash;
-        let market_version = None;
+        let market_hash = entry.computed_hash.clone();
+        let market_version = metadata.version.clone();
         let (update_available, comparison_basis, update_reason) = compare_market_skill(
             installed,
             installed_version.as_deref(),
@@ -2094,11 +2201,11 @@ async fn fetch_clawhub_market_entries(
             "available"
         }
         .to_string();
-        let raw_url = format!(
-            "https://github.com/{}/blob/HEAD/{}",
-            entry.source,
-            entry.skill_path.replace('\\', "/")
-        );
+        let category = metadata
+            .category
+            .clone()
+            .unwrap_or_else(|| skill_market_category(&entry_name));
+        let tags = skill_market_tags_with_metadata(&entry_name, &category, &metadata.tags);
         let actions = if installed {
             let mut actions = vec!["inspect".to_string()];
             if update_available {
@@ -2112,11 +2219,23 @@ async fn fetch_clawhub_market_entries(
             id: format!("{}:{id}", source_id),
             source_id: source_id.to_string(),
             source_name: source_name.to_string(),
-            name: id,
-            source: entry.source,
+            name: entry_name.clone(),
+            source: entry.source.clone(),
             source_type: entry.source_type,
-            skill_path: entry.skill_path,
+            skill_path: entry.skill_path.clone(),
             raw_url,
+            description: metadata.description.unwrap_or_else(|| {
+                skill_market_description(&entry_name, &entry.source, &entry.skill_path)
+            }),
+            author: metadata.author.unwrap_or_else(|| skill_market_author(&entry.source)),
+            license: metadata.license.unwrap_or_else(|| "unknown".to_string()),
+            category,
+            tags,
+            rating: skill_market_rating(&id),
+            download_count: skill_market_download_count(&id),
+            updated_at: metadata.updated_at,
+            featured: skill_market_featured(&id),
+            compatible_apps: external_skill_app_kinds(),
             market_version,
             installed_version,
             market_hash,
@@ -2130,6 +2249,376 @@ async fn fetch_clawhub_market_entries(
         });
     }
     Ok(entries)
+}
+
+fn read_skill_display_version(skill_dir: &Path) -> Option<String> {
+    let content = fs::read_to_string(skill_dir.join("SKILL.md")).ok()?;
+    let value = content
+        .lines()
+        .find_map(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .strip_prefix("version:")
+                .or_else(|| trimmed.strip_prefix("display.version:"))
+        })?
+        .trim()
+        .trim_matches(['\'', '"']);
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn skill_dir_updated_at(skill_dir: &Path) -> Option<String> {
+    let modified = fs::metadata(skill_dir.join("SKILL.md"))
+        .or_else(|_| fs::metadata(skill_dir))
+        .ok()?
+        .modified()
+        .ok()?;
+    let datetime: chrono::DateTime<chrono::Utc> = modified.into();
+    Some(datetime.to_rfc3339())
+}
+
+fn skill_market_description(name: &str, source: &str, skill_path: &str) -> String {
+    format!(
+        "{} from {} ({})",
+        name.replace(['-', '_'], " "),
+        source,
+        skill_path.replace('\\', "/")
+    )
+}
+
+fn skill_market_author(source: &str) -> String {
+    source
+        .split('/')
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("community")
+        .to_string()
+}
+
+fn skill_market_category(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("prompt")
+        || lower.contains("eval")
+        || lower.contains("lab")
+        || lower.contains("test")
+    {
+        "测试".to_string()
+    } else if lower.contains("doc")
+        || lower.contains("readme")
+        || lower.contains("write")
+        || lower.contains("spec")
+    {
+        "文档".to_string()
+    } else if lower.contains("deploy")
+        || lower.contains("release")
+        || lower.contains("ci")
+        || lower.contains("docker")
+    {
+        "自动化".to_string()
+    } else if lower.contains("ui")
+        || lower.contains("design")
+        || lower.contains("inspect")
+        || lower.contains("ux")
+    {
+        "设计".to_string()
+    } else if lower.contains("data")
+        || lower.contains("sql")
+        || lower.contains("analytics")
+        || lower.contains("report")
+    {
+        "数据".to_string()
+    } else if lower.contains("team")
+        || lower.contains("meeting")
+        || lower.contains("status")
+        || lower.contains("collab")
+    {
+        "团队协作".to_string()
+    } else if lower.contains("workflow")
+        || lower.contains("agent")
+        || lower.contains("task")
+        || lower.contains("cron")
+    {
+        "效率".to_string()
+    } else {
+        "开发".to_string()
+    }
+}
+
+fn skill_market_tags(name: &str) -> Vec<String> {
+    let category = skill_market_category(name);
+    let mut tags = vec![category];
+    if name.contains('-') {
+        tags.extend(
+            name.split('-')
+                .filter(|part| !part.trim().is_empty())
+                .take(2)
+                .map(|part| part.to_string()),
+        );
+    }
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+fn skill_market_tags_with_metadata(
+    name: &str,
+    category: &str,
+    metadata_tags: &[String],
+) -> Vec<String> {
+    let mut tags = vec![category.to_string()];
+    tags.extend(metadata_tags.iter().cloned());
+    if name.contains('-') {
+        tags.extend(
+            name.split('-')
+                .filter(|part| !part.trim().is_empty())
+                .take(2)
+                .map(|part| part.to_string()),
+        );
+    }
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+async fn validate_clawhub_market_index_url(url: &str) -> Result<()> {
+    let parsed = url::Url::parse(url).with_context(|| format!("Invalid market index URL: {url}"))?;
+    let is_default_clawhub = parsed.scheme() == "https"
+        && parsed.host_str() == Some(GITHUB_RAW_HOST)
+        && parsed.path() == "/openclaw/clawhub/main/skills-lock.json"
+        && parsed.query().is_none()
+        && parsed.fragment().is_none();
+    if is_default_clawhub {
+        check_url(url, SsrfPolicy::Strict, &github_market_allowed_hosts()).await?;
+        return Ok(());
+    }
+    check_url(url, SsrfPolicy::Strict, &[]).await?;
+    Ok(())
+}
+
+async fn validate_remote_skill_metadata_url(
+    raw_url: &str,
+    owner: &str,
+    repo: &str,
+    skill_path: &str,
+) -> Result<()> {
+    let parsed =
+        url::Url::parse(raw_url).with_context(|| format!("Invalid skill metadata URL: {raw_url}"))?;
+    let expected_path = format!("/{owner}/{repo}/HEAD/{skill_path}");
+    let is_allowed_github_raw = parsed.scheme() == "https"
+        && parsed.host_str() == Some(GITHUB_RAW_HOST)
+        && parsed.path() == expected_path
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && is_safe_github_slug(owner)
+        && is_safe_github_slug(repo)
+        && is_safe_market_skill_path(skill_path);
+    if is_allowed_github_raw {
+        check_url(raw_url, SsrfPolicy::Strict, &github_market_allowed_hosts()).await?;
+        return Ok(());
+    }
+    check_url(raw_url, SsrfPolicy::Strict, &[]).await?;
+    Ok(())
+}
+
+fn github_market_allowed_hosts() -> Vec<String> {
+    GITHUB_MARKET_ALLOWED_HOSTS
+        .iter()
+        .map(|host| (*host).to_string())
+        .collect()
+}
+
+fn is_safe_github_slug(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed.len() <= 100
+        && trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+fn is_safe_market_skill_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && !trimmed.starts_with('/')
+        && !trimmed.contains('\\')
+        && trimmed
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+async fn fetch_remote_skill_metadata(
+    client: &reqwest::Client,
+    source: &str,
+    skill_path: &str,
+) -> Result<SkillRemoteMarketMetadata> {
+    let Some((owner, repo)) = source.split_once('/') else {
+        return Ok(SkillRemoteMarketMetadata::default());
+    };
+    if owner.trim().is_empty() || repo.trim().is_empty() {
+        return Ok(SkillRemoteMarketMetadata::default());
+    }
+    let raw_url = format!(
+        "https://raw.githubusercontent.com/{}/{}/HEAD/{}",
+        owner.trim(),
+        repo.trim(),
+        skill_path.trim_start_matches('/')
+    );
+    validate_remote_skill_metadata_url(
+        &raw_url,
+        owner.trim(),
+        repo.trim(),
+        skill_path.trim_start_matches('/'),
+    )
+    .await?;
+    let response = client
+        .get(&raw_url)
+        .send()
+        .await
+        .with_context(|| format!("Cannot fetch remote skill metadata from {raw_url}"))?;
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "Remote skill metadata returned HTTP {}.",
+            response.status()
+        ));
+    }
+    if response.content_length().unwrap_or(0) > REMOTE_MARKET_MAX_BYTES {
+        return Err(anyhow!("Remote skill metadata is too large."));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("Cannot read remote skill metadata")?;
+    if bytes.len() as u64 > REMOTE_MARKET_MAX_BYTES {
+        return Err(anyhow!("Remote skill metadata is too large."));
+    }
+    let content = String::from_utf8_lossy(&bytes);
+    Ok(parse_remote_skill_metadata(&content))
+}
+
+fn parse_remote_skill_metadata(content: &str) -> SkillRemoteMarketMetadata {
+    let mut metadata = SkillRemoteMarketMetadata::default();
+    let Some(frontmatter) = markdown_frontmatter(content) else {
+        metadata.description = first_markdown_paragraph(content);
+        return metadata;
+    };
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('-') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = clean_frontmatter_value(value);
+        if value.is_empty() {
+            continue;
+        }
+        match key.as_str() {
+            "name" => metadata.name = Some(value),
+            "description" => metadata.description = Some(value),
+            "author" | "authors" | "authored_by" | "authoredby" => metadata.author = Some(value),
+            "license" => metadata.license = Some(value),
+            "version" => metadata.version = Some(value),
+            "category" => metadata.category = Some(value),
+            "tags" | "categories" => metadata.tags.extend(parse_frontmatter_list(&value)),
+            "updated_at" | "updatedat" | "updated" | "modified" => metadata.updated_at = Some(value),
+            _ => {}
+        }
+    }
+    if metadata.description.is_none() {
+        metadata.description = first_markdown_paragraph(content);
+    }
+    metadata.tags.sort();
+    metadata.tags.dedup();
+    metadata
+}
+
+fn markdown_frontmatter(content: &str) -> Option<&str> {
+    let rest = content.strip_prefix("---")?;
+    let rest = rest.strip_prefix('\n').or_else(|| rest.strip_prefix("\r\n"))?;
+    rest.split_once("\n---")
+        .map(|(frontmatter, _)| frontmatter)
+        .or_else(|| rest.split_once("\r\n---").map(|(frontmatter, _)| frontmatter))
+}
+
+fn clean_frontmatter_value(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(['\'', '"'])
+        .trim()
+        .to_string()
+}
+
+fn parse_frontmatter_list(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    let inner = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    inner
+        .split(',')
+        .map(clean_frontmatter_value)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn first_markdown_paragraph(content: &str) -> Option<String> {
+    content
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            !line.is_empty()
+                && !line.starts_with('#')
+                && !line.starts_with("---")
+                && !line.starts_with('`')
+                && !line.starts_with('|')
+        })
+        .map(|line| crate::truncate_utf8(line, 240).to_string())
+}
+
+fn skill_market_rating(name: &str) -> f32 {
+    let _ = name;
+    0.0
+}
+
+fn skill_market_download_count(name: &str) -> u64 {
+    let _ = name;
+    0
+}
+
+fn skill_market_featured(name: &str) -> bool {
+    let _ = name;
+    false
+}
+
+fn external_skill_app_kinds() -> Vec<String> {
+    vec![
+        "claude".to_string(),
+        "codex".to_string(),
+        "gemini".to_string(),
+        "opencode".to_string(),
+    ]
+}
+
+fn update_skill_market_source_stats(
+    source: &mut SkillRemoteMarketSource,
+    entries: &[SkillRemoteMarketEntry],
+) {
+    source.entry_count = entries.len();
+    source.category_counts = skill_market_category_counts(entries);
+    source.installed_count = entries.iter().filter(|entry| entry.installed).count();
+    source.update_count = entries
+        .iter()
+        .filter(|entry| entry.update_available)
+        .count();
+}
+
+fn skill_market_category_counts(entries: &[SkillRemoteMarketEntry]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for entry in entries {
+        *counts.entry(entry.category.clone()).or_insert(0) += 1;
+    }
+    counts
 }
 
 pub fn install_registry_skill(
@@ -2351,24 +2840,285 @@ pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScan
         .into_iter()
         .map(|skill| (skill.name.clone(), skill))
         .collect();
-    let mut usage = Vec::new();
+    let mut usage_by_name: HashMap<String, SkillUsageSnapshot> = HashMap::new();
+    let mut trend_by_day_app: HashMap<(String, String), u64> = HashMap::new();
+    let mut recent_usage = Vec::new();
+    let mut app_counts: HashMap<String, u64> = HashMap::new();
+
     for (skill_name, usage_count, last_used_at) in db.aggregate_skill_activations()? {
-        let apps = skills_by_name
+        let count = usage_count.max(0) as u64;
+        let apps_for_skill = skills_by_name
             .get(&skill_name)
             .map(|skill| app_install_states_for_skill(skill, &apps))
             .unwrap_or_default();
-        usage.push(SkillUsageSnapshot {
+        usage_by_name.insert(
+            skill_name.clone(),
+            SkillUsageSnapshot {
+                skill_name,
+                usage_count: count,
+                last_used_at,
+                apps: apps_for_skill,
+            },
+        );
+        *app_counts.entry("hope".to_string()).or_default() += count;
+    }
+
+    for (skill_name, session_id, activated_at) in db.recent_skill_activations(200)? {
+        let date = usage_date_key(&activated_at);
+        *trend_by_day_app
+            .entry((date, "hope".to_string()))
+            .or_default() += 1;
+        recent_usage.push(SkillUsageRecentRecord {
+            activated_at,
+            app: "hope".to_string(),
             skill_name,
-            usage_count: usage_count.max(0) as u64,
-            last_used_at,
-            apps,
+            session_id,
+            count: 1,
         });
     }
+
+    let external_usage = scan_external_skill_usage(&skills_by_name, &apps);
+    for sample in external_usage.records {
+        let entry = usage_by_name
+            .entry(sample.skill_name.clone())
+            .or_insert_with(|| SkillUsageSnapshot {
+                skill_name: sample.skill_name.clone(),
+                usage_count: 0,
+                last_used_at: None,
+                apps: skills_by_name
+                    .get(&sample.skill_name)
+                    .map(|skill| app_install_states_for_skill(skill, &apps))
+                    .unwrap_or_default(),
+            });
+        entry.usage_count = entry.usage_count.saturating_add(sample.count);
+        entry.last_used_at = newer_timestamp(entry.last_used_at.take(), Some(sample.activated_at.clone()));
+        *app_counts.entry(sample.app.clone()).or_default() += sample.count;
+        *trend_by_day_app
+            .entry((usage_date_key(&sample.activated_at), sample.app.clone()))
+            .or_default() += sample.count;
+        recent_usage.push(sample);
+    }
+
+    let mut usage: Vec<_> = usage_by_name.into_values().collect();
+    usage.sort_by(|left, right| {
+        right
+            .usage_count
+            .cmp(&left.usage_count)
+            .then_with(|| left.skill_name.cmp(&right.skill_name))
+    });
+    let mut usage_trend: Vec<_> = trend_by_day_app
+        .into_iter()
+        .map(|((date, app), count)| SkillUsageTrendPoint { date, app, count })
+        .collect();
+    usage_trend.sort_by(|left, right| left.date.cmp(&right.date).then_with(|| left.app.cmp(&right.app)));
+    recent_usage.sort_by(|left, right| right.activated_at.cmp(&left.activated_at));
+    recent_usage.truncate(200);
+    let mut usage_app_breakdown: Vec<_> = app_counts
+        .into_iter()
+        .map(|(app, count)| SkillUsageAppBreakdown { app, count })
+        .collect();
+    usage_app_breakdown.sort_by(|left, right| right.count.cmp(&left.count).then_with(|| left.app.cmp(&right.app)));
+
     Ok(SkillUsageScanReport {
         usage,
+        usage_trend,
+        recent_usage,
+        usage_app_breakdown,
         scanned_at: chrono::Utc::now().to_rfc3339(),
-        source: "session_skill_activation".to_string(),
+        source: "session_skill_activation+external_app_logs".to_string(),
     })
+}
+
+
+#[derive(Debug, Clone)]
+struct ExternalSkillUsageSample {
+    app: String,
+    skill_name: String,
+    activated_at: String,
+    session_id: String,
+    count: u64,
+}
+
+#[derive(Debug, Default)]
+struct ExternalSkillUsageScan {
+    records: Vec<SkillUsageRecentRecord>,
+}
+
+fn scan_external_skill_usage(
+    skills_by_name: &HashMap<String, SkillSummary>,
+    apps: &[SkillAppProbe],
+) -> ExternalSkillUsageScan {
+    let skill_names: Vec<String> = skills_by_name.keys().cloned().collect();
+    if skill_names.is_empty() {
+        return ExternalSkillUsageScan::default();
+    }
+    let mut samples = Vec::new();
+    for app in ["claude", "codex", "gemini", "opencode"] {
+        if !apps.iter().any(|probe| probe.app == app && probe.installed) {
+            continue;
+        }
+        for root in external_chat_roots(app) {
+            collect_external_skill_usage_from_root(app, &root, &skill_names, &mut samples);
+        }
+    }
+    let mut by_key: HashMap<(String, String, String, String), u64> = HashMap::new();
+    for sample in samples {
+        *by_key
+            .entry((
+                sample.app,
+                sample.skill_name,
+                usage_date_key(&sample.activated_at),
+                sample.session_id,
+            ))
+            .or_default() += sample.count;
+    }
+    let mut records = by_key
+        .into_iter()
+        .map(|((app, skill_name, date, session_id), count)| SkillUsageRecentRecord {
+            activated_at: format!("{date}T00:00:00Z"),
+            app,
+            skill_name,
+            session_id,
+            count,
+        })
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| right.activated_at.cmp(&left.activated_at));
+    records.truncate(500);
+    ExternalSkillUsageScan { records }
+}
+
+fn collect_external_skill_usage_from_root(
+    app: &str,
+    root: &Path,
+    skill_names: &[String],
+    out: &mut Vec<ExternalSkillUsageSample>,
+) {
+    if !root.is_dir() {
+        return;
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut scanned_files = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata() else { continue };
+            if metadata.is_dir() {
+                if stack.len() < 128 {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if scanned_files >= 500 {
+                return;
+            }
+            if metadata.len() > 2 * 1024 * 1024 || !is_external_chat_file(&path) {
+                continue;
+            }
+            scanned_files += 1;
+            collect_external_skill_usage_from_file(app, &path, skill_names, out);
+        }
+    }
+}
+
+fn collect_external_skill_usage_from_file(
+    app: &str,
+    path: &Path,
+    skill_names: &[String],
+    out: &mut Vec<ExternalSkillUsageSample>,
+) {
+    let Ok(file) = File::open(path) else { return };
+    let mut content = String::new();
+    if file.take(2 * 1024 * 1024).read_to_string(&mut content).is_err() {
+        return;
+    }
+    let lowered = content.to_lowercase();
+    let activated_at = file_timestamp(path);
+    let session_id = format!("external:{}:{}", app, stable_short_hash(&path.to_string_lossy()));
+    for skill_name in skill_names {
+        let count = skill_name_match_count(&lowered, skill_name);
+        if count > 0 {
+            out.push(ExternalSkillUsageSample {
+                app: app.to_string(),
+                skill_name: skill_name.clone(),
+                activated_at: activated_at.clone(),
+                session_id: session_id.clone(),
+                count,
+            });
+        }
+    }
+}
+
+fn external_chat_roots(app: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        match app {
+            "claude" => {
+                roots.push(home.join(".claude").join("projects"));
+                roots.push(home.join(".claude").join("chats"));
+                roots.push(home.join("AppData").join("Roaming").join("Claude"));
+            }
+            "codex" => {
+                roots.push(home.join(".codex").join("sessions"));
+                roots.push(home.join(".codex").join("history"));
+            }
+            "gemini" => {
+                roots.push(home.join(".gemini"));
+                roots.push(home.join("AppData").join("Roaming").join("Gemini"));
+            }
+            "opencode" => {
+                roots.push(home.join(".opencode"));
+                roots.push(home.join(".local").join("share").join("opencode"));
+            }
+            _ => {}
+        }
+    }
+    roots
+}
+
+fn is_external_chat_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|value| value.to_str()).map(|value| value.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "json" | "jsonl" | "md" | "txt" | "log")
+    )
+}
+
+fn skill_name_match_count(content: &str, skill_name: &str) -> u64 {
+    let needle = skill_name.to_lowercase();
+    if needle.len() < 3 {
+        return 0;
+    }
+    content.matches(&needle).count().min(10) as u64
+}
+
+fn file_timestamp(path: &Path) -> String {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(|modified| {
+            let datetime: chrono::DateTime<chrono::Utc> = modified.into();
+            datetime.to_rfc3339()
+        })
+        .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+}
+
+fn usage_date_key(timestamp: &str) -> String {
+    timestamp.get(0..10).unwrap_or(timestamp).to_string()
+}
+
+fn newer_timestamp(left: Option<String>, right: Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if right > left { right } else { left }),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+fn stable_short_hash(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let digest = hasher.finalize();
+    format!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3])
 }
 
 fn validate_skill_dir_name(name: &str) -> Result<()> {
@@ -2834,7 +3584,7 @@ fn write_remote_market_metadata(
     request: &SkillRemoteMarketInstallRequest,
     verified_hash: Option<String>,
 ) -> Result<()> {
-    let metadata = SkillRemoteMarketMetadata {
+    let metadata = SkillRemoteMarketInstalledMetadata {
         name: request.name.clone(),
         source: request.source.clone(),
         source_type: request.source_type.clone(),

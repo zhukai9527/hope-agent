@@ -14,16 +14,43 @@ import ServerDirectoryBrowser from "@/components/chat/input/ServerDirectoryBrows
 import { useDirectoryPicker } from "@/components/chat/input/useDirectoryPicker"
 import type { SkillStatusEntry, SkillSummary } from "../types"
 import type { SkillDetail } from "./types"
+import {
+  addSkillsDirectory,
+  getSkillEnv,
+  getSkillsEnvStatus,
+  getSkillsStatus,
+  loadSkillDetail,
+  loadSkillMarketSources,
+  loadSkillMarketSnapshot,
+  loadSkillDockSnapshot,
+  loadSkillRegistrySnapshot,
+  reloadSkillsManagerSnapshot,
+  loadSkillsManagerSnapshot,
+  removeSkillEnvVar,
+  saveSkillMarketSources,
+  setSkillEnabled,
+  setSkillEnvVar,
+} from "./api"
 import SkillListView from "./SkillListView"
 import SkillEvolutionView from "./SkillEvolutionView"
 import SkillDetailView from "./SkillDetailView"
+import SkillDockExtensionsView from "./SkillDockExtensionsView"
 import QuickImportDialog from "./QuickImportDialog"
+import type { SkillDockSnapshot, SkillRegistrySnapshot, SkillRemoteMarketSnapshot } from "./types"
+
+type SkillsPanelTab = "skills" | "market" | "evolution" | "settings"
 
 export default function SkillsPanel() {
   const { t } = useTranslation()
   const { drafts } = useDraftSkillsStore()
-  const [activeTab, setActiveTab] = useState<"manage" | "evolution">("manage")
+  const [activeTab, setActiveTab] = useState<SkillsPanelTab>("skills")
   const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [search, setSearch] = useState("")
+  const [sourceFilter, setSourceFilter] = useState<"all" | "bundled" | "user">("all")
+  const [stateFilter, setStateFilter] = useState<"all" | "enabled" | "disabled" | "attention">(
+    "all",
+  )
+  const [sortKey, setSortKey] = useState<"name" | "source" | "status">("name")
   const [draftPending, setDraftPending] = useState<
     Record<string, "activate" | "discard" | undefined>
   >({})
@@ -31,12 +58,21 @@ export default function SkillsPanel() {
   const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [quickImportOpen, setQuickImportOpen] = useState(false)
-  const [skillEnvCheck, setSkillEnvCheck] = useState(true)
   const [autoReviewEnabled, setAutoReviewEnabled] = useState(true)
   const [autoReviewPromotion, setAutoReviewPromotion] = useState(false)
   // Per-skill env status: skill_name -> { env_var -> is_configured }
   const [envStatus, setEnvStatus] = useState<Record<string, Record<string, boolean>>>({})
   const [skillStatuses, setSkillStatuses] = useState<SkillStatusEntry[]>([])
+  const [skillDockSnapshot, setSkillDockSnapshot] = useState<SkillDockSnapshot | null>(null)
+  const [skillRegistrySnapshot, setSkillRegistrySnapshot] = useState<SkillRegistrySnapshot | null>(
+    null,
+  )
+  const [skillMarketSnapshot, setSkillMarketSnapshot] = useState<SkillRemoteMarketSnapshot | null>(
+    null,
+  )
+  const [skillMarketLoading, setSkillMarketLoading] = useState(false)
+  const [skillMarketError, setSkillMarketError] = useState<string | null>(null)
+  const [skillMarketSourceUrls, setSkillMarketSourceUrls] = useState<string[]>([])
   // Env var values for the currently selected skill detail (masked from backend)
   const [envValues, setEnvValues] = useState<Record<string, string>>({})
   // Tracks which env vars the user has edited (dirty state)
@@ -46,20 +82,76 @@ export default function SkillsPanel() {
 
   const reload = useCallback(async () => {
     try {
-      const [list, dirs, envCheck, envStatusSnapshot, statusSnapshot] = await Promise.all([
-        getTransport().call<SkillSummary[]>("get_skills"),
-        getTransport().call<string[]>("get_extra_skills_dirs"),
-        getTransport().call<boolean>("get_skill_env_check"),
-        getTransport().call<Record<string, Record<string, boolean>>>("get_skills_env_status"),
-        getTransport().call<SkillStatusEntry[]>("get_skills_status"),
+      const [snapshot, dockSnapshot, registrySnapshot] = await Promise.all([
+        loadSkillsManagerSnapshot(),
+        loadSkillDockSnapshot(),
+        loadSkillRegistrySnapshot(),
       ])
-      setSkills(list)
-      setExtraDirs(dirs)
-      setSkillEnvCheck(envCheck)
-      setEnvStatus(envStatusSnapshot)
-      setSkillStatuses(statusSnapshot)
+      setSkills(snapshot.skills)
+      setExtraDirs(snapshot.extraDirs)
+      setEnvStatus(snapshot.envStatus)
+      setSkillStatuses(snapshot.skillStatuses)
+      setSkillDockSnapshot(dockSnapshot)
+      setSkillRegistrySnapshot(registrySnapshot)
     } catch (e) {
       logger.error("settings", "SkillsPanel::load", "Failed to load skills", e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadMarket = useCallback(
+    async (sourceUrls = skillMarketSourceUrls) => {
+      try {
+        setSkillMarketLoading(true)
+        setSkillMarketError(null)
+        setSkillMarketSnapshot(await loadSkillMarketSnapshot(sourceUrls))
+      } catch (e) {
+        logger.error("settings", "SkillsPanel::loadMarket", "Failed to load skill market", e)
+        setSkillMarketError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setSkillMarketLoading(false)
+      }
+    },
+    [skillMarketSourceUrls],
+  )
+
+  const updateMarketSources = useCallback(
+    async (sourceUrls: string[]) => {
+      setSkillMarketSourceUrls(sourceUrls)
+      try {
+        const saved = await saveSkillMarketSources(sourceUrls)
+        setSkillMarketSourceUrls(saved)
+        await loadMarket(saved)
+      } catch (e) {
+        logger.error(
+          "settings",
+          "SkillsPanel::saveMarketSources",
+          "Failed to save skill market sources",
+          e,
+        )
+        setSkillMarketError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [loadMarket],
+  )
+
+  const rescan = useCallback(async () => {
+    try {
+      setLoading(true)
+      const [snapshot, dockSnapshot, registrySnapshot] = await Promise.all([
+        reloadSkillsManagerSnapshot(),
+        loadSkillDockSnapshot(),
+        loadSkillRegistrySnapshot(),
+      ])
+      setSkills(snapshot.skills)
+      setExtraDirs(snapshot.extraDirs)
+      setEnvStatus(snapshot.envStatus)
+      setSkillStatuses(snapshot.skillStatuses)
+      setSkillDockSnapshot(dockSnapshot)
+      setSkillRegistrySnapshot(registrySnapshot)
+    } catch (e) {
+      logger.error("settings", "SkillsPanel::rescan", "Failed to rescan skills", e)
     } finally {
       setLoading(false)
     }
@@ -72,6 +164,36 @@ export default function SkillsPanel() {
     })
     return unlisten
   }, [reload])
+
+  useEffect(() => {
+    let cancelled = false
+    loadSkillMarketSources()
+      .then((sources) => {
+        if (!cancelled) setSkillMarketSourceUrls(sources)
+      })
+      .catch((e) => {
+        logger.error(
+          "settings",
+          "SkillsPanel::loadMarketSources",
+          "Failed to load skill market sources",
+          e,
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (
+      activeTab === "market" &&
+      !skillMarketSnapshot &&
+      !skillMarketLoading &&
+      !skillMarketError
+    ) {
+      void loadMarket()
+    }
+  }, [activeTab, loadMarket, skillMarketError, skillMarketLoading, skillMarketSnapshot])
 
   // Drafts now live inside the Evolution tab — only mark them seen when the
   // user actually lands on (or is already on) that tab. Doing it on panel
@@ -155,7 +277,7 @@ export default function SkillsPanel() {
   const addExtraDir = useCallback(
     async (dir: string) => {
       try {
-        await getTransport().call("add_extra_skills_dir", { dir })
+        await addSkillsDirectory(dir)
         await reload()
       } catch (e) {
         logger.error("settings", "SkillsPanel::addDir", "Failed to add skills directory", e)
@@ -177,18 +299,9 @@ export default function SkillsPanel() {
     loggerSource: "SkillsPanel::pickExtraDir",
   })
 
-  async function handleRemoveDir(dir: string) {
-    try {
-      await getTransport().call("remove_extra_skills_dir", { dir })
-      await reload()
-    } catch (e) {
-      logger.error("settings", "SkillsPanel::removeDir", "Failed to remove skills directory", e)
-    }
-  }
-
   async function handleToggleSkill(name: string, enabled: boolean) {
     try {
-      await getTransport().call("toggle_skill", { name, enabled })
+      await setSkillEnabled(name, enabled)
       // Update local state immediately
       setSkills((prev) => prev.map((s) => (s.name === name ? { ...s, enabled } : s)))
       setSkillStatuses((prev) =>
@@ -212,10 +325,7 @@ export default function SkillsPanel() {
 
   async function handleSelectSkill(name: string) {
     try {
-      const [detail, maskedEnv] = await Promise.all([
-        getTransport().call<SkillDetail>("get_skill_detail", { name }),
-        getTransport().call<Record<string, string>>("get_skill_env", { name }),
-      ])
+      const { detail, maskedEnv } = await loadSkillDetail(name)
       setSelectedSkill(detail)
       setEnvValues(maskedEnv)
       setEnvDirty({})
@@ -230,17 +340,15 @@ export default function SkillsPanel() {
     const value = envValues[key] ?? ""
     setEnvSaving((prev) => ({ ...prev, [key]: true }))
     try {
-      await getTransport().call("set_skill_env_var", { skill: selectedSkill.name, key, value })
+      await setSkillEnvVar(selectedSkill.name, key, value)
       // Re-fetch the masked value
-      const maskedEnv = await getTransport().call<Record<string, string>>("get_skill_env", {
-        name: selectedSkill.name,
-      })
+      const maskedEnv = await getSkillEnv(selectedSkill.name)
       setEnvValues(maskedEnv)
       setEnvDirty((prev) => ({ ...prev, [key]: false }))
       // Refresh env status
       const [nextEnvStatus, nextSkillStatuses] = await Promise.all([
-        getTransport().call<Record<string, Record<string, boolean>>>("get_skills_env_status"),
-        getTransport().call<SkillStatusEntry[]>("get_skills_status"),
+        getSkillsEnvStatus(),
+        getSkillsStatus(),
       ])
       setEnvStatus(nextEnvStatus)
       setSkillStatuses(nextSkillStatuses)
@@ -254,7 +362,7 @@ export default function SkillsPanel() {
   async function handleRemoveEnvVar(key: string) {
     if (!selectedSkill) return
     try {
-      await getTransport().call("remove_skill_env_var", { skill: selectedSkill.name, key })
+      await removeSkillEnvVar(selectedSkill.name, key)
       setEnvValues((prev) => {
         const next = { ...prev }
         delete next[key]
@@ -263,8 +371,8 @@ export default function SkillsPanel() {
       setEnvDirty((prev) => ({ ...prev, [key]: false }))
       // Refresh env status
       const [nextEnvStatus, nextSkillStatuses] = await Promise.all([
-        getTransport().call<Record<string, Record<string, boolean>>>("get_skills_env_status"),
-        getTransport().call<SkillStatusEntry[]>("get_skills_status"),
+        getSkillsEnvStatus(),
+        getSkillsStatus(),
       ])
       setEnvStatus(nextEnvStatus)
       setSkillStatuses(nextSkillStatuses)
@@ -276,22 +384,6 @@ export default function SkillsPanel() {
   function handleEnvValueChange(key: string, value: string) {
     setEnvValues((prev) => ({ ...prev, [key]: value }))
     setEnvDirty((prev) => ({ ...prev, [key]: true }))
-  }
-
-  async function handleSetSkillEnvCheck(v: boolean) {
-    const previous = skillEnvCheck
-    setSkillEnvCheck(v)
-    try {
-      await getTransport().call("set_skill_env_check", { enabled: v })
-    } catch (e) {
-      logger.error(
-        "settings",
-        "SkillsPanel::setSkillEnvCheck",
-        "Failed to update skill environment check",
-        e,
-      )
-      setSkillEnvCheck(previous)
-    }
   }
 
   async function handleSetAutoReviewPromotion(v: boolean) {
@@ -333,6 +425,7 @@ export default function SkillsPanel() {
         skill={selectedSkill}
         envStatus={envStatus}
         status={skillStatusByName[selectedSkill.name]}
+        dockSnapshot={skillDockSnapshot}
         envValues={envValues}
         envDirty={envDirty}
         envSaving={envSaving}
@@ -351,12 +444,13 @@ export default function SkillsPanel() {
     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
       <Tabs
         value={activeTab}
-        onValueChange={(v) => setActiveTab(v as "manage" | "evolution")}
+        onValueChange={(v) => setActiveTab(v as SkillsPanelTab)}
         className="flex-1 flex flex-col min-h-0"
       >
         <div className="px-6 pt-4 shrink-0">
           <TabsList>
-            <TabsTrigger value="manage">{t("settings.skillsTab.manage")}</TabsTrigger>
+            <TabsTrigger value="skills">{t("settings.skillsTab.skills")}</TabsTrigger>
+            <TabsTrigger value="market">{t("settings.skillsTab.market")}</TabsTrigger>
             <TabsTrigger value="evolution" className="gap-1.5">
               {t("settings.skillsTab.evolution")}
               {drafts.length > 0 && (
@@ -365,23 +459,88 @@ export default function SkillsPanel() {
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="settings">{t("settings.skillsTab.settings")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="manage" className="flex-1 min-h-0 outline-none">
-          <SkillListView
+        <TabsContent value="skills" className="flex-1 min-h-0 outline-none">
+          <SkillDockExtensionsView
             skills={visibleSkills}
             extraDirs={extraDirs}
-            loading={loading}
-            skillEnvCheck={skillEnvCheck}
-            envStatus={envStatus}
-            skillStatusByName={skillStatusByName}
-            onToggleSkill={handleToggleSkill}
-            onSelectSkill={handleSelectSkill}
-            onOpenDir={handleOpenDir}
-            onAddDir={handleAddDir}
-            onRemoveDir={handleRemoveDir}
-            onSetSkillEnvCheck={handleSetSkillEnvCheck}
+            localSkillsContent={
+              <SkillListView
+                skills={visibleSkills}
+                loading={loading}
+                envStatus={envStatus}
+                skillStatusByName={skillStatusByName}
+                dockSnapshot={skillDockSnapshot}
+                onToggleSkill={handleToggleSkill}
+                onSelectSkill={handleSelectSkill}
+                onOpenDir={handleOpenDir}
+                onAddDir={handleAddDir}
+                search={search}
+                sourceFilter={sourceFilter}
+                stateFilter={stateFilter}
+                sortKey={sortKey}
+                onSearchChange={setSearch}
+                onSourceFilterChange={setSourceFilter}
+                onStateFilterChange={setStateFilter}
+                onSortKeyChange={setSortKey}
+                onReload={() => void rescan()}
+              />
+            }
+            initialSection="overview"
+            snapshot={skillDockSnapshot}
+            registry={skillRegistrySnapshot}
+            market={skillMarketSnapshot}
+            marketLoading={skillMarketLoading}
+            marketError={skillMarketError}
+            marketSourceUrls={skillMarketSourceUrls}
+            onMarketSourceUrlsChange={(urls) => void updateMarketSources(urls)}
+            onRefreshMarket={() => void loadMarket()}
             onQuickImport={() => setQuickImportOpen(true)}
+            onAddDir={handleAddDir}
+            onImported={reload}
+            onRefresh={reload}
+          />
+        </TabsContent>
+        <TabsContent value="market" className="flex-1 min-h-0 outline-none">
+          <SkillDockExtensionsView
+            skills={visibleSkills}
+            extraDirs={extraDirs}
+            initialSection="market"
+            lockedSection="market"
+            snapshot={skillDockSnapshot}
+            registry={skillRegistrySnapshot}
+            market={skillMarketSnapshot}
+            marketLoading={skillMarketLoading}
+            marketError={skillMarketError}
+            marketSourceUrls={skillMarketSourceUrls}
+            onMarketSourceUrlsChange={(urls) => void updateMarketSources(urls)}
+            onRefreshMarket={() => void loadMarket()}
+            onQuickImport={() => setQuickImportOpen(true)}
+            onAddDir={handleAddDir}
+            onImported={reload}
+            onRefresh={reload}
+          />
+        </TabsContent>
+        <TabsContent value="settings" className="flex-1 min-h-0 outline-none">
+          <SkillDockExtensionsView
+            skills={visibleSkills}
+            extraDirs={extraDirs}
+            initialSection="settings"
+            lockedSection="settings"
+            snapshot={skillDockSnapshot}
+            registry={skillRegistrySnapshot}
+            market={skillMarketSnapshot}
+            marketLoading={skillMarketLoading}
+            marketError={skillMarketError}
+            marketSourceUrls={skillMarketSourceUrls}
+            onMarketSourceUrlsChange={(urls) => void updateMarketSources(urls)}
+            onRefreshMarket={() => void loadMarket()}
+            onQuickImport={() => setQuickImportOpen(true)}
+            onAddDir={handleAddDir}
+            onImported={reload}
+            onRefresh={reload}
           />
         </TabsContent>
         <TabsContent value="evolution" className="flex-1 min-h-0 outline-none">

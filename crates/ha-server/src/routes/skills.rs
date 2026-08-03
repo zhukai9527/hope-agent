@@ -22,8 +22,14 @@ pub async fn reload_skills() -> Result<Json<Vec<skills::SkillSummary>>, AppError
 }
 
 /// `GET /api/skills/dock-snapshot`
-pub async fn get_skill_dock_snapshot() -> Result<Json<core::SkillDockSnapshot>, AppError> {
-    Ok(Json(core::get_skill_dock_snapshot()))
+pub async fn get_skill_dock_snapshot(
+    axum::extract::State(ctx): axum::extract::State<std::sync::Arc<crate::AppContext>>,
+) -> Result<Json<core::SkillDockSnapshot>, AppError> {
+    let db = ctx.session_db.clone();
+    let snapshot = run_blocking(move || core::get_skill_dock_snapshot_with_usage(&db))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(snapshot))
 }
 
 /// `GET /api/skills/registry` — local marketplace-style snapshot from known skill catalogs.
@@ -84,6 +90,30 @@ pub struct RegistryIdBody {
     pub registry_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubUpsertBody {
+    pub request: core::SkillMarketHubUpsertRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryUpsertBody {
+    pub request: core::SkillMarketRegistryUpsertRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishDraftBody {
+    pub request: core::SkillPublishDraftRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishPushBody {
+    pub request: core::SkillPublishPushRequest,
+}
+
 /// `POST /api/skills/market/snapshot` — read-only multi-source skill market index.
 pub async fn get_skill_market_snapshot(
     Json(body): Json<SkillMarketSnapshotBody>,
@@ -120,9 +150,9 @@ pub async fn get_skill_market_hub_config() -> Result<Json<core::SkillMarketHubCo
 
 /// `POST /api/skills/market/hubs/upsert` — create or update one market hub.
 pub async fn upsert_skill_market_hub(
-    Json(request): Json<core::SkillMarketHubUpsertRequest>,
+    Json(body): Json<HubUpsertBody>,
 ) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
-    let config = run_blocking(move || core::upsert_skill_market_hub(request, SOURCE))
+    let config = run_blocking(move || core::upsert_skill_market_hub(body.request, SOURCE))
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(config))
@@ -176,9 +206,9 @@ pub async fn clear_skill_market_hub_token(
 }
 
 pub async fn upsert_skill_market_registry(
-    Json(request): Json<core::SkillMarketRegistryUpsertRequest>,
+    Json(body): Json<RegistryUpsertBody>,
 ) -> Result<Json<core::SkillMarketHubConfigFile>, AppError> {
-    let config = run_blocking(move || core::upsert_skill_market_registry(request, SOURCE))
+    let config = run_blocking(move || core::upsert_skill_market_registry(body.request, SOURCE))
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(config))
@@ -194,18 +224,18 @@ pub async fn delete_skill_market_registry(
 }
 
 pub async fn create_skill_publish_draft(
-    Json(request): Json<core::SkillPublishDraftRequest>,
+    Json(body): Json<PublishDraftBody>,
 ) -> Result<Json<core::SkillPublishDraft>, AppError> {
-    let draft = run_blocking(move || core::create_skill_publish_draft(request))
+    let draft = run_blocking(move || core::create_skill_publish_draft(body.request))
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(draft))
 }
 
 pub async fn push_skill_to_market_hub(
-    Json(request): Json<core::SkillPublishPushRequest>,
+    Json(body): Json<PublishPushBody>,
 ) -> Result<Json<core::SkillPublishPushResult>, AppError> {
-    let result = core::push_skill_to_market_hub(request)
+    let result = core::push_skill_to_market_hub(body.request)
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Json(result))

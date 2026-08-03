@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **技能设置升级为完整管理视图**：新增技能统计、搜索、来源/状态筛选、排序、详情元信息与手动重新扫描入口，便于按 Skills-Dock 式工作流管理内置与本地导入技能。 (#TODO)
+- **技能 ZIP 包支持安全导入导出**：Skills-Dock 扩展页新增 ZIP dry-run 校验、拒绝覆盖的导入和单技能 ZIP 导出，便于迁移本地技能包。 (#TODO)
+- **技能管理补齐本地市场与跨应用安装**：Skills-Dock 扩展页可默认读取 ClawHub 官方只读市场索引，并支持额外 ClawHub-compatible 市场源与本地/市场版本或 hash 待升级比较；同时可从本地技能目录发现、安装和安全更新技能，安装到 Claude/Codex/Gemini/OpenCode 技能目录，卸载 Hope 托管技能或已校验的外部 app 技能，并显示真实会话技能激活用量。 (#TODO)
+- **技能市场支持发布闭环**：设置页新增 Market Hub、按源 token、registry 管理和发布草稿/推送入口，支持将本地 skill 显式确认后推送到已配置授权的 SkillHub/ClawHub-compatible hub。 (#TODO)
+
 ## [0.24.0] - 2026-07-27
 
 ### Added
