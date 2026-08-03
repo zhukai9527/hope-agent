@@ -13,10 +13,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-/// Endpoint matching `src-tauri/tauri.conf.json#updater.endpoints[0]` so the
-/// desktop + headless paths read the same manifest.
-pub const UPDATE_MANIFEST_URL: &str =
-    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json";
+/// Manifest endpoints, tried in order, mirroring
+/// `src-tauri/tauri.conf.json#plugins.updater.endpoints` so the desktop and
+/// headless paths agree on which manifest is authoritative.
+pub const UPDATE_MANIFEST_URLS: &[&str] = &[
+    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -79,7 +81,38 @@ pub enum ArchiveKind {
 const MANIFEST_FETCH_TIMEOUT_SECS: u64 = 20;
 
 pub async fn fetch_manifest() -> Result<Manifest> {
-    fetch_manifest_from(UPDATE_MANIFEST_URL).await
+    let mut last_err: Option<anyhow::Error> = None;
+    for (idx, url) in UPDATE_MANIFEST_URLS.iter().enumerate() {
+        match fetch_manifest_from(url).await {
+            Ok(manifest) => {
+                if idx > 0 {
+                    // Worth a breadcrumb: reaching the fallback means the R2
+                    // mirror is down or unreachable from this host, which is
+                    // exactly the state that leaves GitHub-blocked users with
+                    // no update path at all.
+                    app_warn!(
+                        "self_update",
+                        "manifest",
+                        "manifest served by fallback endpoint {} (index {})",
+                        url,
+                        idx
+                    );
+                }
+                return Ok(manifest);
+            }
+            Err(e) => {
+                app_warn!(
+                    "self_update",
+                    "manifest",
+                    "manifest endpoint {} failed ({}); trying next",
+                    url,
+                    e
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no update manifest endpoints configured")))
 }
 
 pub async fn fetch_manifest_from(url: &str) -> Result<Manifest> {
