@@ -4,6 +4,7 @@ import {
   hasSendableChatPayload,
   nextDispatchablePending,
   shouldApplyPendingQueueSnapshot,
+  shouldReplayNextPending,
 } from "./pendingQueue"
 
 describe("durable pending queue projection", () => {
@@ -22,8 +23,43 @@ describe("durable pending queue projection", () => {
     expect(nextDispatchablePending(items)?.id).toBe("first")
   })
 
+  test("never lets the GUI claim a backend-managed Channel row", () => {
+    const items = [
+      {
+        id: "channel-first",
+        sessionId: "s",
+        status: "queued" as const,
+        managedBy: "channel" as const,
+      },
+      { id: "desktop-next", sessionId: "s", status: "queued" as const },
+    ]
+    expect(nextDispatchablePending(items)?.id).toBe("desktop-next")
+  })
+
   test("allows a durable attachment-only row to reach the backend", () => {
     expect(hasSendableChatPayload("", false, false, "queued-request")).toBe(true)
     expect(hasSendableChatPayload("", false, false)).toBe(false)
+  })
+
+  test("does not replay after a user Stop from another surface", () => {
+    expect(
+      shouldReplayNextPending(false, {
+        status: "interrupted",
+        interruptReason: "user_stop",
+      }),
+    ).toBe(false)
+    expect(
+      shouldReplayNextPending(false, {
+        status: "cancelling",
+        interruptReason: "user_stop",
+      }),
+    ).toBe(false)
+    expect(shouldReplayNextPending(true, { status: "completed" })).toBe(false)
+    expect(
+      shouldReplayNextPending(false, {
+        status: "interrupted",
+        interruptReason: "runtime_cancel",
+      }),
+    ).toBe(true)
   })
 })

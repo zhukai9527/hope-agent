@@ -41,7 +41,12 @@ import type {
 import { normalizeHttpBaseUrl } from "@/lib/httpUrl"
 import { uploadFileInChunks } from "@/lib/fileUpload"
 import { TRANSPORT_EVENT_RESYNC_REQUIRED } from "@/lib/transport"
-import type { FileChangesMetadata, MediaItem } from "@/types/chat"
+import type {
+  ChatTurnInterruptReason,
+  ChatTurnStatus,
+  FileChangesMetadata,
+  MediaItem,
+} from "@/types/chat"
 import { clearStoredApiKey, dispatchAuthRequired } from "@/lib/api-key-storage"
 import { downloadBlob } from "@/lib/fileDownload"
 
@@ -60,6 +65,26 @@ interface EndpointDef {
   path: string
 }
 
+function generateHttpChatRequestId(): string {
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
+    return cryptoApi.randomUUID()
+  }
+  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(16))
+    // RFC 4122 version 4 + variant bits. `getRandomValues` remains available
+    // on plain-HTTP LAN origins where the secure-context-only randomUUID API
+    // is intentionally hidden by browsers.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+  // Test/legacy-WebView fallback. The server still verifies payload reuse and
+  // persists the identity; this only needs to avoid collisions for one client.
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 /**
  * Lookup table mapping Tauri command names to REST endpoints.
  *
@@ -72,8 +97,6 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   list_projects_cmd: { method: "GET", path: "/api/projects" },
   get_project_overview_cmd: { method: "GET", path: "/api/projects/{id}/overview" },
   get_project_cmd: { method: "GET", path: "/api/projects/{id}" },
-  discover_project_workflows_cmd: { method: "GET", path: "/api/projects/{id}/workflows" },
-  preview_project_workflow_cmd: { method: "POST", path: "/api/projects/{projectId}/workflows/preview" },
   create_project_cmd: { method: "POST", path: "/api/projects" },
   update_project_cmd: { method: "PATCH", path: "/api/projects/{id}" },
   inspect_project_instructions_cmd: {
@@ -436,6 +459,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   // Bundled web UI route. The public owner API remains POST /api/chat and
   // clears uiSurface server-side; both routes share the same chat engine.
   chat: { method: "POST", path: "/api/chat/ui" },
+  get_chat_turn: { method: "GET", path: "/api/chat/turns/{turnId}" },
   queue_turn_user_message: { method: "POST", path: "/api/chat/turn-message" },
   list_queued_turn_user_messages: {
     method: "GET",
@@ -1502,36 +1526,6 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Skills --
   get_skills: { method: "GET", path: "/api/skills" },
-  reload_skills: { method: "POST", path: "/api/skills/reload" },
-  get_skill_dock_snapshot: { method: "GET", path: "/api/skills/dock-snapshot" },
-  get_skill_registry_snapshot: { method: "GET", path: "/api/skills/registry" },
-  get_default_skill_market_snapshot: { method: "GET", path: "/api/skills/market/default" },
-  get_skill_market_snapshot: { method: "POST", path: "/api/skills/market/snapshot" },
-  get_skill_market_sources: { method: "GET", path: "/api/skills/market/sources" },
-  set_skill_market_sources: { method: "POST", path: "/api/skills/market/sources" },
-  get_skill_market_hub_config: { method: "GET", path: "/api/skills/market/hubs" },
-  upsert_skill_market_hub: { method: "POST", path: "/api/skills/market/hubs/upsert" },
-  delete_skill_market_hub: { method: "POST", path: "/api/skills/market/hubs/delete" },
-  set_skill_market_hub_enabled: { method: "POST", path: "/api/skills/market/hubs/enabled" },
-  get_skill_market_hub_token_status: { method: "POST", path: "/api/skills/market/hubs/token/status" },
-  set_skill_market_hub_token: { method: "POST", path: "/api/skills/market/hubs/token/set" },
-  clear_skill_market_hub_token: { method: "POST", path: "/api/skills/market/hubs/token/clear" },
-  upsert_skill_market_registry: { method: "POST", path: "/api/skills/market/registries/upsert" },
-  delete_skill_market_registry: { method: "POST", path: "/api/skills/market/registries/delete" },
-  create_skill_publish_draft: { method: "POST", path: "/api/skills/market/publish/draft" },
-  push_skill_to_market_hub: { method: "POST", path: "/api/skills/market/publish/push" },
-  install_remote_market_skill: { method: "POST", path: "/api/skills/market/install" },
-  update_remote_market_skill: { method: "POST", path: "/api/skills/market/update" },
-  install_registry_skill: { method: "POST", path: "/api/skills/registry/install" },
-  update_registry_skill: { method: "POST", path: "/api/skills/registry/update" },
-  install_skill_to_app: { method: "POST", path: "/api/skills/app/install" },
-  uninstall_skill_from_app: { method: "POST", path: "/api/skills/app/uninstall" },
-  uninstall_managed_skill: { method: "POST", path: "/api/skills/managed/uninstall" },
-  scan_skill_usage: { method: "GET", path: "/api/skills/usage/scan" },
-  dry_run_import_skill_zip: { method: "POST", path: "/api/skills/zip/dry-run" },
-  import_skill_zip: { method: "POST", path: "/api/skills/zip/import" },
-  import_skill_zip_renamed: { method: "POST", path: "/api/skills/zip/import-renamed" },
-  export_skill_zip: { method: "POST", path: "/api/skills/zip/export" },
   list_mentionable_skills: { method: "GET", path: "/api/skills/mentionable" },
   get_skill_detail: { method: "GET", path: "/api/skills/{name}" },
   toggle_skill: { method: "POST", path: "/api/skills/{name}/toggle" },
@@ -1885,6 +1879,16 @@ function normalizeCommandResponse(command: string, value: unknown): unknown {
     const paginated = value as { sessions: unknown; total: unknown }
     return [paginated.sessions, paginated.total]
   }
+  if (command === "test_provider" || command === "test_model") {
+    // HTTP parses the core JSON string before returning it; Tauri passes that
+    // JSON string through. A non-JSON core error becomes a JSON string scalar
+    // over HTTP, which must reject just like the Tauri command instead of being
+    // interpreted as a successful plain-text result by parseTestResult().
+    if (typeof value === "string") throw new Error(value)
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return JSON.stringify(value)
+    }
+  }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = value as Record<string, unknown>
     switch (command) {
@@ -1893,6 +1897,43 @@ function normalizeCommandResponse(command: string, value: unknown): unknown {
       case "get_plan_content":
       case "load_plan_version_content":
         return record.content
+      case "get_agent_markdown":
+      case "get_agent_memory_md":
+      case "get_global_memory_md":
+        // HTTP wraps the optional file contents as `{ content }`, while the
+        // Tauri command returns `Option<String>` directly. Preserve `null` so
+        // callers can distinguish a missing file from an intentionally empty one.
+        return record.content ?? null
+      case "get_agent_template":
+      case "render_persona_to_soul_md":
+      case "read_log_file_cmd":
+        // HTTP wraps required text responses as `{ content }`; Tauri returns
+        // the string directly.
+        return record.content ?? ""
+      case "get_system_prompt":
+        return record.system_prompt ?? ""
+      case "get_log_file_path_cmd":
+        return record.path ?? ""
+      case "export_logs_cmd":
+        return record.data ?? ""
+      case "install_skill_dependency":
+        return record.output ?? ""
+      case "channel_validate_credentials":
+        return record.info ?? ""
+      case "create_backup_cmd":
+        return record.name ?? ""
+      case "get_skill_env_check":
+      case "get_skills_auto_review_enabled":
+        return record.enabled ?? false
+      case "get_skills_auto_review_promotion":
+        return record.auto ?? false
+      case "test_proxy":
+        // The HTTP route reports probe failures in a 200 response, whereas the
+        // Tauri command rejects. Keep callers' success/error branches aligned.
+        if (record.success === false) {
+          throw new Error(String(record.message ?? "Proxy test failed"))
+        }
+        return record.message ?? ""
       case "get_plan_file_path":
         return record.filePath
       case "get_plan_checkpoint":
@@ -1956,12 +1997,6 @@ function normalizeHttpCommandArgs(
     const request = args?.request
     return request && typeof request === "object" && !Array.isArray(request)
       ? (request as Record<string, unknown>)
-      : args
-  }
-  if (command === "preview_project_workflow_cmd") {
-    const input = args?.input
-    return input && typeof input === "object" && !Array.isArray(input)
-      ? (input as Record<string, unknown>)
       : args
   }
   if (command === "add_provider" || command === "test_provider") {
@@ -2036,6 +2071,16 @@ interface CachedPreviewTicket {
 // ---------------------------------------------------------------------------
 // HttpTransport
 // ---------------------------------------------------------------------------
+
+class HttpTransportResponseError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = "HttpTransportResponseError"
+    this.status = status
+  }
+}
 
 export class HttpTransport implements Transport {
   private readonly baseUrl: string
@@ -2467,7 +2512,10 @@ export class HttpTransport implements Transport {
     if (!response.ok) {
       const text = await response.text().catch(() => "")
       this.handleAuthFailure(response.status, auth.revision)
-      throw new Error(`[HttpTransport] ${def.method} ${url} returned ${response.status}: ${text}`)
+      throw new HttpTransportResponseError(
+        response.status,
+        `[HttpTransport] ${def.method} ${url} returned ${response.status}: ${text}`,
+      )
     }
 
     // Some endpoints return no body (204, or empty 200).
@@ -2532,23 +2580,26 @@ export class HttpTransport implements Transport {
   // ----- startChat -----
 
   async startChat(args: ChatStartArgs, onEvent: (event: string) => void): Promise<string> {
-    // Stream deltas and turn lifecycle events arrive via /ws/events →
-    // useChatStreamReattach. We only bridge `session_created` so the in-hook
-    // __pending__ cache key gets renamed in place. Do not synthesize
-    // `turn_started` here: POST /api/chat resolves after the engine finishes,
-    // so a late local start event can incorrectly overwrite a terminal state.
+    const requestArgs: ChatStartArgs = {
+      ...args,
+      // The server persists the dispatch identity with the turn. If the ACK is
+      // lost and the same POST is retried—even after restart—it returns the
+      // original session/turn instead of persisting a duplicate user message.
+      clientRequestId: args.clientRequestId ?? generateHttpChatRequestId(),
+    }
     const resp = await this.call<{
       sessionId: string
       response: string
-      turnId?: string
+      turnId: string
       blockedReason?: string
       sessionDeleted?: boolean
-    }>("chat", args)
+      accepted?: boolean
+    }>("chat", requestArgs)
     // `sessionDeleted` is set when a blocked first message on a design/knowledge
     // lazy-created session dropped that session before returning. Suppress the
     // synthesized `session_created` so the UI does not switch to a session id
     // that no longer exists (subsequent sends / history loads would fail).
-    if (!args.sessionId && !resp.sessionDeleted) {
+    if (!requestArgs.sessionId && !resp.sessionDeleted) {
       onEvent(
         JSON.stringify({
           type: "session_created",
@@ -2570,7 +2621,111 @@ export class HttpTransport implements Transport {
         }),
       )
     }
-    return resp.response
+    if (!resp.accepted) return resp.response
+
+    // The HTTP response is now only an ownership-transfer ACK. Synthesize the
+    // exact turn identity because the EventBus start frame may have raced the
+    // response, then wait client-side for the durable terminal state. Losing
+    // this page or Promise no longer owns/cancels the server task.
+    onEvent(
+      JSON.stringify({
+        type: "turn_started",
+        session_id: resp.sessionId,
+        turn_id: resp.turnId,
+      }),
+    )
+    return this.waitForDetachedChatTurn(resp.sessionId, resp.turnId, resp.response)
+  }
+
+  private waitForDetachedChatTurn(
+    sessionId: string,
+    turnId: string,
+    response: string,
+  ): Promise<string> {
+    type TurnState = {
+      id: string
+      status: ChatTurnStatus
+      interruptReason?: ChatTurnInterruptReason | null
+      streamId?: string | null
+      error?: string | null
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      let settled = false
+      let checking = false
+      let unlistenEnd: () => void = () => undefined
+      let unlistenResync: () => void = () => undefined
+      let reconcileTimer: ReturnType<typeof setInterval> | null = null
+
+      const cleanup = () => {
+        unlistenEnd()
+        unlistenResync()
+        if (reconcileTimer) clearInterval(reconcileTimer)
+      }
+      const finish = (
+        status: ChatTurnStatus,
+        interruptReason?: ChatTurnInterruptReason | null,
+        error?: string | null,
+      ) => {
+        if (settled || status === "running" || status === "cancelling") return
+        settled = true
+        cleanup()
+        if (status === "completed" || interruptReason === "user_stop") {
+          resolve(response)
+          return
+        }
+        reject(new Error(error || `Chat turn ${turnId} ended with status ${status}`))
+      }
+      const reconcile = async () => {
+        if (settled || checking) return
+        checking = true
+        try {
+          const turn = await this.call<TurnState>("get_chat_turn", { turnId })
+          if (turn.id === turnId && turn.status !== "running" && turn.status !== "cancelling") {
+            // Re-emit a terminal event locally so every UI consumer—not only
+            // this Promise—converges after an ACK/end race or WebSocket gap.
+            this.dispatchEvent("chat:stream_end", {
+              sessionId,
+              turnId,
+              streamId: turn.streamId ?? null,
+              status: turn.status,
+              interruptReason: turn.interruptReason ?? null,
+              error: turn.error ?? null,
+              persistenceStatus: "recovered",
+            })
+          }
+        } catch (error) {
+          if (error instanceof HttpTransportResponseError && error.status === 404) {
+            settled = true
+            cleanup()
+            reject(new Error(`Chat turn ${turnId} no longer exists; its session may be deleted`))
+            return
+          }
+          // A temporary HTTP/auth/server outage must not convert observation
+          // loss into task cancellation. Reconnect events and the bounded poll
+          // below retry until the durable turn reaches a terminal state.
+        } finally {
+          checking = false
+        }
+      }
+
+      unlistenEnd = this.listen("chat:stream_end", (raw) => {
+        const payload = raw as {
+          sessionId?: string | null
+          turnId?: string | null
+          status?: ChatTurnStatus | null
+          interruptReason?: ChatTurnInterruptReason | null
+          error?: string | null
+        } | null
+        if (payload?.sessionId !== sessionId || payload.turnId !== turnId || !payload.status) return
+        finish(payload.status, payload.interruptReason, payload.error)
+      })
+      unlistenResync = this.listen(TRANSPORT_EVENT_RESYNC_REQUIRED, () => {
+        void reconcile()
+      })
+      reconcileTimer = setInterval(() => void reconcile(), 15_000)
+      void reconcile()
+    })
   }
 
   // ----- media -----

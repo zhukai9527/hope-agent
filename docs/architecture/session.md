@@ -1,6 +1,6 @@
 # Session 会话系统架构
 
-> 返回 [文档索引](../README.md) | 更新时间：2026-04-28
+> 返回 [文档索引](../README.md) | 更新时间：2026-08-03
 
 ## 目录
 
@@ -272,8 +272,10 @@ CREATE TABLE queued_turn_user_messages (
     goal_trigger             INTEGER NOT NULL DEFAULT 0,
     plan_comment_json        TEXT,
     options_json             TEXT,                            -- planMode / workflowMode 等重放参数
+    source                   TEXT NOT NULL DEFAULT 'desktop', -- desktop / http / channel
+    channel_origin_json      TEXT,                            -- IM 最小无凭据路由信封；非 Channel 为 NULL
     mode                     TEXT NOT NULL DEFAULT 'queue',
-    status                   TEXT NOT NULL DEFAULT 'queued',
+    status                   TEXT NOT NULL DEFAULT 'queued',  -- 另含 held_after_stop
     created_at               TEXT NOT NULL,
     updated_at               TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -533,7 +535,7 @@ pub fn load_session_messages_around(session_id, target_message_id, before_count,
 | `list_subagent_runs(parent_session_id)` | 列出父会话的全部运行 |
 | `list_active_subagent_runs(parent_session_id)` | 列出活跃运行（spawning/running） |
 | `count_active_subagent_runs(parent_session_id)` | 计数活跃运行 |
-| `cleanup_orphan_subagent_runs()` | 启动时清理孤儿运行（标记为 error） |
+| `cleanup_orphan_subagent_runs()` | Primary 启动时把当前 epoch 的 queued/spawning/running attempt 收敛为 `Interrupted(process_interrupted)`，同步投影 / Workflow，并为符合条件的普通 parent 补 durable delivery |
 
 ### ACP 运行记录
 

@@ -35,8 +35,8 @@
 //!   parked entry for the session (the entry is the only place an incognito
 //!   spawn's sensitive `SpawnParams` live — dropping it IS the burn).
 //! - **Restart**: the in-memory queue is lost; `Queued` rows are swept to
-//!   Orphaned by `cleanup_orphan_subagent_runs` (mirrors tool-job
-//!   Queued→Interrupted).
+//!   `Interrupted(process_interrupted)` by `cleanup_orphan_subagent_runs`
+//!   (mirrors tool-job Queued→Interrupted).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +65,9 @@ pub struct PendingSubagentSpawn {
     /// Registered when the child is admitted, not when it is promoted, so a
     /// queued child keeps the parent trial open for its full queue+run life.
     pub eval_guard: Option<crate::eval_context::EvalSessionGuard>,
+    /// Retains the verified first-party UI approval surface while this child is
+    /// queued. Promotion moves the same lease into the running task.
+    pub reattachable_ui_guard: Option<crate::permission::ReattachableUiSessionGuard>,
 }
 
 static QUEUE: LazyLock<Mutex<VecDeque<PendingSubagentSpawn>>> =
@@ -278,6 +281,7 @@ async fn promote(
         pending.child_session_id,
         pending.effective_group_id,
         pending.eval_guard,
+        pending.reattachable_ui_guard,
         pending
             .enqueued_at
             .elapsed()
@@ -331,6 +335,7 @@ mod tests {
             effective_group_id: None,
             enqueued_at: std::time::Instant::now(),
             eval_guard: None,
+            reattachable_ui_guard: None,
         }
     }
 

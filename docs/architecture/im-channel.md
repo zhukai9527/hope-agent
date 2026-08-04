@@ -380,32 +380,40 @@ flowchart TD
     WORKER["Worker Dispatcher（worker.rs）"]
     S1["1. 查找 ChannelAccountConfig"]
     S2["2. check_access() 权限校验"]
-    S2c["2c. gating 通过 → materialize_pending_media()<br/>支持媒体的 11 个渠道走 deferred 下载（详见下文）"]
     S3["3. resolve_or_create_session() 查找/创建会话"]
-    S4["4. send_typing() 输入中指示器"]
-    D5{"5. is_slash_command?"}
+    D5{"4. approval / ask_user / slash 控制消息?"}
     SLASH["dispatch_slash_for_channel()"]
     REPLY["Reply 类（help/status/clear/model/...）<br/>command/result 落 event，直接回复，跳过 LLM → return"]
-    S5b["5b. append_message(user_msg) 保存真实用户消息"]
-    D5c{"5c. active_turn::try_acquire<br/>单飞闸 I8"}
-    BUSY["同会话已有活动回合（含被 GUI/HTTP 接管）<br/>回「正在处理上一条」→ return"]
-    ENGINE["6. chat_engine::run_chat_engine()<br/>构建 Agent（model chain + failover）/ 恢复历史<br/>chat → Tool Loop / 工具事件持久化 / 流式推送<br/>Context compaction / 保存助手回复 / 异步记忆提取"]
+    D5c{"5. active_turn::try_acquire<br/>单飞闸 I8"}
+    BUSY["同会话已有活动回合<br/>媒体落 session-owned 文件 + 持久 FIFO 入队"]
+    INSERT["请求绑定当前 turn<br/>下一安全工具边界插入；否则 fallback_after_reply"]
+    ACK["回执：已排队，将在安全边界插入或当前回复后继续"]
+    PUMP["后端 per-session FIFO pump<br/>回复结束 / worker 重启后自动续跑"]
+    S4["6. send_typing + deferred media + UserPromptSubmit preflight"]
+    S5b["7. append_message(user_msg) 保存真实用户消息"]
+    ENGINE["8. chat_engine::run_chat_engine()<br/>构建 Agent（model chain + failover）/ 恢复历史<br/>chat → Tool Loop / 工具事件持久化 / 流式推送<br/>Context compaction / 保存助手回复 / 异步记忆提取"]
     S8["8. markdown_to_native() 格式转换"]
     S9["9. chunk_message() 分块（4096 字符）"]
     S10["10. send_message() 逐块发送"]
 
-    IM --> PLUG --> MPSC --> WORKER --> S1 --> S2 --> S2c --> S3 --> S4 --> D5
+    IM --> PLUG --> MPSC --> WORKER --> S1 --> S2 --> S3 --> D5
     D5 -->|"YES"| SLASH
     SLASH -->|"Reply 类"| REPLY
-    SLASH -->|"PassThrough 类（技能/search）：替换指令"| S5b
-    D5 -->|"NO"| S5b
-    S5b --> D5c
-    D5c -->|"Err"| BUSY
-    D5c -->|"Ok：持守 guard 至投递结束（RAII）"| ENGINE
+    SLASH -->|"PassThrough 类（技能/search）：只做一次变换"| D5c
+    D5 -->|"NO"| D5c
+    D5c -->|"Err"| BUSY --> INSERT --> ACK
+    INSERT -->|"无工具边界 / 当前回复结束"| PUMP --> D5c
+    D5c -->|"Ok：持守 guard 至投递结束（RAII）"| S4 --> S5b --> ENGINE
     ENGINE --> S8 --> S9 --> S10
 ```
 
-> **入站单飞（I8 / MISC-2 修复）**：dispatcher 用 `MAX_CONCURRENT_INBOUND` semaphore 限**全局**并发，但不串行化**同一会话**——两条快速到达的消息会并发 spawn 两个 `handle_inbound_message`，后到者在引擎深处输给 `stream_seq::begin` 竞争（此时 pipeline 已 spawn），以「active stream」错误回复收场。步骤 5c 接上 GUI/HTTP 同款 `active_turn::try_acquire` 单飞守卫：在持久化用户消息**之后**、引擎启动**之前**加闸，故每条入站照常入库 + 过 `UserPromptSubmit` preflight，仅「引擎回合」被单飞。守卫跨 IM/GUI/HTTP 在同一（1:1 attach）会话上互斥。用**合成 turn_id** 仅作单飞锁、引擎仍 `turn_id: None`（Channel 走 `channel:*` 总线，给它 seq-tracked turn_id 会改变 stream 接受 / 广播语义）；cancel `Arc` 一处创建供 `try_acquire` / `engine_params` / channel 取消注册表共用，使跨端取消能真正中止该引擎回合。被拒的消息已入库、搭下一回合上下文（无自动出队）。
+> **入站单飞、FIFO 与停止（I8 / #608）**：fresh dispatcher 与恢复泵共用一个 `MAX_CONCURRENT_INBOUND` semaphore 限**全局**模型并发，但同一 session 的模型回合仍由 `active_turn` 严格单飞。approval / `ask_user` 回复和 Reply-only 控制命令先走控制面，不进入普通消息队列；普通消息只有在该 session 没有任何 Channel backlog 时才尝试直接 acquire，否则先下载/固化附件并写入 `queued_turn_user_messages(source=channel)`，保证新 webhook 不会越过已被泵 claim 的 FIFO 队首。request id 由 channel/account/chat/thread/provider-message-id 稳定哈希，重复 webhook 与崩溃重放用 `messages.queue_request_id` 收敛。
+>
+> 安全插入严格同源：只有正在执行的 **Channel turn** 能接收 Channel FIFO 队首；Desktop / HTTP turn 的权限、KB access 与审批上下文在回合开始时已经固定，IM 消息不得借用，因此必须等 owner turn 收尾后由泵启动独立的最小权限 Channel turn。即使同为 Channel turn，turn-level context 也只属于发起该回合的 sender；每条插入消息必须把其 `channel_origin` 的 sender/chat allowlist 作为 `<untrusted_external_data source="im_channel_origin">` 元数据随该 user content 发送，禁止把群聊中后续发送者误归给原 sender，也禁止透传 `raw` webhook。在 Channel turn 的完整 `tool_result` 边界插入后，engine 保证至少再调用模型一轮；即使边界已经位于配置的最后一轮，也会增加一个只用于继续回答的终轮。该行成为 durable user message 后才允许下一行绑定未来边界，避免同一 burst 被批量插入后只得到一份合并回复；查询与绑定下一队首须经 `SessionDB::run`，不得在 streaming async worker 内直接执行 SQLite。未命中边界则由 backend pump 在当前回复结束后按 FIFO 启动独立 Channel turn。
+>
+> worker 重启会扫描未提交行；泵领取共享并发 permit 后才 claim，处理完成后的队列 reconciliation 持续重试直到成功，避免进程未重启时把 `dispatching` 行永久搁置。路由已被 1:1 attach 接管、账号/插件已删除、权限/mention 策略已收紧或路由信封损坏时 fail closed 丢弃该行并在会话留下可见错误，不让毒行永久阻塞 FIFO。
+>
+> Desktop、HTTP 与 IM `/stop` 都进入共享 Stop 服务：它同步取消 active/preflight token，并把该 session 的所有 Channel queued / waiting / inserting / dispatching 行转为 `held_after_stop`。这些行不会被启动恢复或 pump 自动消费；下一条普通 IM 模型消息恢复旧批次，并把自己排在其后。Stop 与恢复/dispatch claim 共用 Channel cancel-registration 临界区，queued replay 在取得 active turn 后还须再次校验精确 claim；Stop 与安全边界插入另共用 active-turn gate。因此 Stop 要么发生在状态迁移前并阻止迁移，要么发生在迁移后并把该行 hold，不会返回后又悄悄插入或执行。Channel 的合成 `turn_id` 仍只用于单飞、插入绑定和队列 claim；engine 保持 `turn_id: None`，不改变 `channel:*` 流事件语义。
 
 ### 出站流程
 
@@ -870,6 +878,7 @@ mirror 与入站共享同一份 chunk 管道(`send_text_chunks` → `markdown_to
 | `/projects` | 列所有未归档项目 | inline buttons,callback `slash:project <id>` |
 | `/project <name>` | 模糊匹配后切项目 | 发 `AssignProject` —— UPDATE `sessions.project_id`,**不创建新 session**;GUI 模式发 `EnterProject` 创建新 session 进入 |
 | `/handover <ch:acc:chat[:thread]>` | GUI 把当前 session 推到 IM chat | 不下发菜单;实际入口 GUI Handover dialog,slash 给 power user / 脚本 |
+| `/stop` | 停止当前 session 的前台回合 | 与 GUI / HTTP Stop 共用 `chat_engine::stop::stop_session`：取消 Channel slash/preflight/active turn、拒绝待审批、撤销 `ask_user`、取消 session-owned runtime；`/stop` 是控制面输入，不得被自由输入型 `ask_user` 当作答案；仅回执与流事件走 Channel 自己的 transport |
 | `/kb [on\|off]` | 知识空间访问 per-chat 确认(WS8)。无参 / `status` 报生效态;群聊 `on`/`off` 写 `kbAccessChats`;DM 仅报状态(账号级 opt-in 在桌面 Settings) | 群聊确认入口;**账号级 `kbAccessOptIn` 仍为 owner GUI-only**,`/kb` 只翻 per-chat 确认位,且需账号已 opt-in 才生效 |
 
 `/status` 末尾追加 **Attached IM Channel** 段,显示该 session 的 IM attach 行(1:1,0 或 1 行) —— channel / chat 标识 + `attached_at`。
@@ -967,6 +976,7 @@ pub fn spawn_dispatcher(
 - **入站事件枚举**：分发器收 `InboundEvent`（`Message` / `Reaction` / `MessageEdited` / `MessageRecalled` / `Membership` / `ReadReceipt` 多变体），仅 `Message` 触发完整 chat round，其余变体当前仅 log
 - **并发处理 + 全局上限**：每条 `Message` 在独立 `tokio::spawn` 中处理，不阻塞其他消息；`Semaphore::new(MAX_CONCURRENT_INBOUND=20)` 的 owned permit 限全局在飞消息并发上限。整个 dispatcher 跑在专用线程自建的 tokio runtime 上
 - **斜杠命令拦截**：在调用 LLM 和写入 user turn 之前，`dispatch_slash_for_channel()` 检测以 `/` 开头的消息并转发给 `slash_commands::handlers::dispatch()`。`Reply` 类命令（`/help`、`/clear`、`/model`、`/status` 等）把原始 slash 与结果落为 `messages.role="event"`（command event 带 `displayAs="user"` 供 GUI 渲染成用户气泡），直接回复并跳过 LLM；`PassThrough` 类命令（技能调用、`/search`）将转换后的指令作为 `engine_message` 交给 LLM，并按真实对话 user turn 落库（详见 [斜杠命令系统](slash-commands.md)）
+- **Stop 只分入口、不分语义**：IM `/stop`、GUI 与 HTTP 都进入同一个 session-stop 编排，由共享服务统一翻转 Channel slash/preflight token 与 active-turn cancel，并清理审批、结构化问答及 runtime；不得只停 Channel preview，也不得在入口另写清理分支。Channel cancel registration 必须早于通用 slash dispatch，使 `/compact` 等尚未进入 Chat Engine 的长命令也可停止；`/stop` 自身不注册 token，且在审批/`ask_user` 文本回复解析前被识别为控制面消息，避免被吞作答案。Channel 只保留「如何定位当前 attach session、如何发送回执和流事件」的 transport 差异
 - **共享 ChatEngine**：调用 `chat_engine::run_chat_engine()` — 与 UI 聊天使用完全相同的 Agent 执行引擎，拥有相同的能力：流式输出、会话历史恢复、工具事件持久化、Failover 降级、Context compaction、Token 跟踪、异步记忆提取
 - **EventSink 抽象**：UI 聊天在桌面通过 `ChannelSink`（Tauri Channel）推流，在 HTTP 模式通过 `chat:stream_delta` EventBus 推到 `/ws/events`；IM 聊天通过 `ChannelStreamSink`（EventBus）推流到前端 + 累积 text_delta 发送 `channel:stream_delta` 事件
 - **每个渠道可绑定独立 Agent**：`ChannelAccountConfig.agent_id` 字段支持每个渠道账户绑定不同 Agent，未设置时回退到全局默认
@@ -1128,6 +1138,10 @@ stream task 是真正的"按 round 切"执行者。`spawn_channel_stream_task` �
 #### 消息分段（chunking）契约
 
 **统一管道**：所有 IM 出站文本（含入站回复、GUI mirror、catch-up、slash handler 直回、错误回复、media URL fallback）必须走 [`send_text_chunks`](../../crates/ha-core/src/channel/worker/dispatcher.rs)：`markdown_to_native(markdown)` → `chunk_message(native_text)` → 逐块 `plugin.send_message(chunk)`，第 0 块带 `reply_to_message_id`、最后一块挂 `buttons`（如有）。**禁止直接 `plugin.send_message(text=...)`** —— 新出站点必须复用 `send_text_chunks` 入口，否则长文本（model 在 tool 调用之间的解说、附件 URL 列表、`/recap` 输出等）会被平台拒绝 / 截断。
+
+**送达判定不是 HTTP 成功判定**：最终文本、inline-finalized split round 与媒体 fan-out 都汇总到 `DeliveryReport { attempted, succeeded, failures }`。`DeliveryResult.success=false`、edit 被业务拒绝、native media 失败或 transport `Err` 都不能记录成「Reply delivered」；edit 失败会回退发送完整新消息，媒体失败会回退下载链接，但仍保留 partial-failure 诊断。模型回复已成功落会话、最终 IM 投递却不完整时，dispatcher 写 `category=delivery_failed` 并向会话追加可见错误事件，避免 GUI 只看到日志里的假成功。这里刻意不做无幂等键的自动重试：超时后平台可能其实已经收件，盲重试会产生重复消息。
+
+WeChat `sendMessage` 还必须解析 HTTP 200 的 JSON 响应：只有 `ret`（以及兼容返回的 `errcode`）为 `0` 才算成功，非零码或非 JSON body 作为 delivery error 向上返回。其它 iLink POST 保持各自 response decoder，不能因为 `sendTyping` 等接口的响应形状不同而套一个全局 JSON success validator。
 
 **三模式 × 路径覆盖**：
 

@@ -2240,6 +2240,7 @@ pub async fn check_sandbox_available() -> DockerStatus {
     // Do not wake a stopped WSL VM merely to enrich status when the preferred
     // native backend is already healthy. WSL probing is the Windows fallback.
     let wsl: Option<WslDockerProbe> = if native.daemon_running {
+    let wsl = if native.daemon_running {
         None
     } else {
         Some(best_wsl_docker_probe(None).await)

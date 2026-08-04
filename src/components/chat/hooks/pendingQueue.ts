@@ -1,9 +1,10 @@
-import type { PendingSendStatus } from "@/types/chat"
+import type { ChatTurnInterruptReason, ChatTurnStatus, PendingSendStatus } from "@/types/chat"
 
 export interface PendingQueueItemLike {
   id: string
   sessionId: string
   status: PendingSendStatus
+  managedBy?: "channel"
 }
 
 export function shouldApplyPendingQueueSnapshot(
@@ -16,7 +17,21 @@ export function shouldApplyPendingQueueSnapshot(
 export function nextDispatchablePending<T extends PendingQueueItemLike>(
   items: readonly T[],
 ): T | undefined {
-  return items.find((item) => item.status === "queued" || item.status === "fallback_after_reply")
+  return items.find(
+    (item) =>
+      item.managedBy !== "channel" &&
+      (item.status === "queued" || item.status === "fallback_after_reply"),
+  )
+}
+
+export function shouldReplayNextPending(
+  wasLocallyStopped: boolean,
+  turnState?: {
+    status: ChatTurnStatus
+    interruptReason?: ChatTurnInterruptReason | null
+  },
+): boolean {
+  return !wasLocallyStopped && turnState?.interruptReason !== "user_stop"
 }
 
 export function hasSendableChatPayload(

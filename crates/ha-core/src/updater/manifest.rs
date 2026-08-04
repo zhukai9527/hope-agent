@@ -15,9 +15,26 @@ use std::time::Duration;
 
 /// Manifest endpoints, tried in order, mirroring
 /// `src-tauri/tauri.conf.json#plugins.updater.endpoints` so the desktop and
-/// headless paths agree on which manifest is authoritative.
+/// headless paths agree on which manifest is authoritative. Drift between
+/// the two lists means one path updates and the other doesn't;
+/// `scripts/verify-updater-endpoints.mjs` refuses the PR if they diverge.
+///
+/// R2 mirror FIRST, and not as a latency tweak: a real population of users
+/// cannot reach github.com at all, and for them the manifest is the whole
+/// question — a manifest that never loads means the installer URLs inside
+/// it are never read. GitHub second so a total Cloudflare / R2 outage still
+/// resolves for everyone else.
+///
+/// First success wins, matching `tauri-plugin-updater`'s own behaviour, so
+/// the two paths cannot disagree about which release is current. The
+/// consequence — a stale-but-200 mirror manifest reports "no update"
+/// instead of falling through — is bounded by the short Cache-Control the
+/// mirror workflow sets and by that workflow writing the manifest only
+/// after every referenced URL verified. See docs/architecture/self-update.md.
 pub const UPDATE_MANIFEST_URLS: &[&str] = &[
     "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json",
+    "https://repo.hopeagent.ai/download/latest.json",
+    "https://github.com/shiwenwen/hope-agent/releases/latest/download/latest.json",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

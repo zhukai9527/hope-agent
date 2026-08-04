@@ -4,6 +4,7 @@
 //! await, drain, and `ImReplyMode`-driven fan-out in one place keeps the
 //! two paths from drifting.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
@@ -151,7 +152,64 @@ pub(crate) async fn await_stream_pipeline(pipeline: StreamPipeline) -> PipelineO
     } = pipeline;
     drop(event_sink);
 
-    let stream_outcome = match stream_task.await {
+    pipeline_outcome(
+        stream_task.await,
+        round_texts,
+        reply_mode,
+        capabilities,
+        preview_active,
+    )
+}
+
+/// Await an inbound pipeline while the owning Channel turn remains live.
+/// A provider/tool cancellation can otherwise finish while the preview task is
+/// still blocked in an IM API request, keeping the session single-flight guard
+/// occupied indefinitely. Aborting leaves the already-rendered partial preview
+/// in place, which is the Channel visual contract for a stopped turn.
+pub(crate) async fn await_stream_pipeline_until_cancel(
+    pipeline: StreamPipeline,
+    cancel: &AtomicBool,
+) -> Option<PipelineOutcome> {
+    let StreamPipeline {
+        event_sink,
+        mut stream_task,
+        round_texts,
+        reply_mode,
+        capabilities,
+        preview_active,
+    } = pipeline;
+    drop(event_sink);
+
+    let join_result = tokio::select! {
+        biased;
+        _ = async {
+            while !cancel.load(Ordering::Acquire) {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        } => {
+            stream_task.abort();
+            return None;
+        }
+        result = &mut stream_task => result,
+    };
+
+    Some(pipeline_outcome(
+        join_result,
+        round_texts,
+        reply_mode,
+        capabilities,
+        preview_active,
+    ))
+}
+
+fn pipeline_outcome(
+    join_result: Result<StreamPreviewOutcome, tokio::task::JoinError>,
+    round_texts: Arc<Mutex<RoundTextAccumulator>>,
+    reply_mode: ImReplyMode,
+    capabilities: ChannelCapabilities,
+    preview_active: bool,
+) -> PipelineOutcome {
+    let stream_outcome = match join_result {
         Ok(outcome) => outcome,
         Err(e) => {
             crate::app_warn!("channel", "worker", "Streaming preview task failed: {}", e);
@@ -183,7 +241,7 @@ pub(crate) async fn deliver_rounds(
     outcome: &PipelineOutcome,
     response: &str,
 ) -> DeliveryMetrics {
-    match outcome.reply_mode {
+    let mut metrics = match outcome.reply_mode {
         ImReplyMode::Split => {
             deliver_split(
                 plugin,
@@ -217,7 +275,11 @@ pub(crate) async fn deliver_rounds(
             )
             .await
         }
-    }
+    };
+    metrics
+        .report
+        .merge(outcome.stream_outcome.delivery_report.clone());
+    metrics
 }
 
 /// Deliver a complete final response through a pipeline that may have
@@ -233,7 +295,7 @@ pub(crate) async fn deliver_full_response(
     response: &str,
     media: &[crate::attachments::MediaItem],
 ) -> DeliveryMetrics {
-    if response.trim().is_empty() {
+    let report = if response.trim().is_empty() {
         deliver_media_to_chat(
             plugin,
             target.account_id,
@@ -242,7 +304,7 @@ pub(crate) async fn deliver_full_response(
             media,
             &outcome.capabilities,
         )
-        .await;
+        .await
     } else {
         send_final_reply(
             plugin,
@@ -252,10 +314,59 @@ pub(crate) async fn deliver_full_response(
             media,
             &outcome.capabilities,
         )
-        .await;
-    }
-    DeliveryMetrics {
+        .await
+    };
+    let mut metrics = DeliveryMetrics {
         text_chars: response.chars().count(),
         media_count: media.len(),
+        report,
+    };
+    metrics
+        .report
+        .merge(outcome.stream_outcome.delivery_report.clone());
+    metrics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_pipeline_does_not_wait_for_a_stuck_preview_task() {
+        let pipeline = StreamPipeline {
+            event_sink: Arc::new(crate::chat_engine::NoopEventSink),
+            stream_task: tokio::spawn(async {
+                std::future::pending::<()>().await;
+                StreamPreviewOutcome::default()
+            }),
+            round_texts: Arc::new(Mutex::new(RoundTextAccumulator::default())),
+            reply_mode: ImReplyMode::Final,
+            capabilities: ChannelCapabilities {
+                chat_types: Vec::new(),
+                supports_polls: false,
+                supports_reactions: false,
+                supports_draft: false,
+                supports_edit: false,
+                supports_unsend: false,
+                supports_reply: false,
+                supports_threads: false,
+                supports_media: Vec::new(),
+                supports_typing: false,
+                supports_buttons: false,
+                streaming_preview_max_bytes: None,
+                supports_card_stream: false,
+            },
+            preview_active: false,
+        };
+        let cancel = AtomicBool::new(true);
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            await_stream_pipeline_until_cancel(pipeline, &cancel),
+        )
+        .await
+        .expect("cancelled pipeline must return promptly");
+
+        assert!(outcome.is_none());
     }
 }

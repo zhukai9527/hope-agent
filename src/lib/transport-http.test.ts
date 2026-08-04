@@ -182,10 +182,10 @@ test("HttpTransport mints a path-bound ticket for session file previews", async 
 
 test("HttpTransport uses the protected direct session route when authentication is disabled", async () => {
   fetchMock.mockResolvedValueOnce(
-    new Response(
-      JSON.stringify({ authRequired: false, ticket: null, expiresInSecs: null }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    ),
+    new Response(JSON.stringify({ authRequired: false, ticket: null, expiresInSecs: null }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
   )
   const transport = new HttpTransport("http://localhost:8420")
 
@@ -523,7 +523,7 @@ test("HttpTransport keeps provisional remote-auth failures local to the connecti
   expect(dispatchEvent).not.toHaveBeenCalled()
 })
 
-test("HttpTransport.startChat only bridges session_created and not late turn_started", async () => {
+test("HttpTransport.startChat bridges session_created for a synchronous response", async () => {
   const transport = new HttpTransport("http://localhost:8420")
   const events: string[] = []
 
@@ -558,6 +558,219 @@ test("HttpTransport.startChat only bridges session_created and not late turn_sta
       session_id: "session-123",
     }),
   ])
+})
+
+test("HttpTransport.startChat generates a request id without crypto.randomUUID", async () => {
+  vi.stubGlobal("crypto", {
+    getRandomValues(bytes: Uint8Array) {
+      bytes.set(Array.from({ length: 16 }, (_, index) => index))
+      return bytes
+    },
+  })
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        sessionId: "session-lan",
+        response: "ok",
+        turnId: "turn-lan",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ),
+  )
+
+  const transport = new HttpTransport("http://192.168.1.20:8420")
+  await expect(
+    transport.startChat(
+      { message: "hello", attachments: [], sessionId: "session-lan" },
+      () => undefined,
+    ),
+  ).resolves.toBe("ok")
+
+  const request = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+  expect(JSON.parse(String(request?.body)).clientRequestId).toBe(
+    "00010203-0405-4607-8809-0a0b0c0d0e0f",
+  )
+})
+
+test("HttpTransport.startChat treats a 202 ACK as detached and waits for the exact turn", async () => {
+  class MockWebSocket {
+    static instances: MockWebSocket[] = []
+    readyState = 0
+    onopen: (() => void) | null = null
+    onmessage: ((event: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    onclose: (() => void) | null = null
+
+    constructor() {
+      MockWebSocket.instances.push(this)
+    }
+
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+
+    open() {
+      this.readyState = 1
+      this.onopen?.()
+    }
+
+    message(value: unknown) {
+      this.onmessage?.({ data: JSON.stringify(value) })
+    }
+  }
+
+  vi.stubGlobal("WebSocket", MockWebSocket)
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          sessionId: "session-123",
+          response: "",
+          turnId: "turn-456",
+          accepted: true,
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: "turn-456", status: "running" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+  const transport = new HttpTransport("http://localhost:8420")
+  const events: string[] = []
+  let resolved = false
+  const start = transport
+    .startChat({ message: "hello", attachments: [], sessionId: null }, (event) =>
+      events.push(event),
+    )
+    .then((value) => {
+      resolved = true
+      return value
+    })
+
+  await vi.waitFor(() => expect(MockWebSocket.instances).toHaveLength(1))
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+  expect(resolved).toBe(false)
+  expect(events).toEqual([
+    JSON.stringify({ type: "session_created", session_id: "session-123" }),
+    JSON.stringify({ type: "turn_started", session_id: "session-123", turn_id: "turn-456" }),
+  ])
+  const request = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+  expect(JSON.parse(String(request?.body)).clientRequestId).toEqual(expect.any(String))
+
+  const socket = MockWebSocket.instances[0]
+  socket.open()
+  socket.message({
+    name: "chat:stream_end",
+    payload: { sessionId: "session-123", turnId: "turn-456", status: "completed" },
+  })
+
+  await expect(start).resolves.toBe("")
+})
+
+test("HttpTransport.startChat reconciles a terminal turn whose end event raced the ACK", async () => {
+  class MockWebSocket {
+    readyState = 0
+    onopen: (() => void) | null = null
+    onmessage: ((event: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    onclose: (() => void) | null = null
+
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+  }
+
+  vi.stubGlobal("WebSocket", MockWebSocket)
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          sessionId: "session-123",
+          response: "",
+          turnId: "turn-456",
+          accepted: true,
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: "turn-456", status: "completed" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+  const transport = new HttpTransport("http://localhost:8420")
+  const terminalEvents: unknown[] = []
+  const unsubscribe = transport.listen("chat:stream_end", (event) => terminalEvents.push(event))
+  await expect(
+    transport.startChat(
+      { message: "hello", attachments: [], sessionId: "session-123" },
+      () => undefined,
+    ),
+  ).resolves.toBe("")
+  expect(terminalEvents).toEqual([
+    expect.objectContaining({
+      sessionId: "session-123",
+      turnId: "turn-456",
+      status: "completed",
+      persistenceStatus: "recovered",
+    }),
+  ])
+  unsubscribe()
+})
+
+test("HttpTransport.startChat settles a detached wait when its session was deleted", async () => {
+  vi.useFakeTimers()
+
+  class MockWebSocket {
+    readyState = 0
+    onopen: (() => void) | null = null
+    onmessage: ((event: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    onclose: (() => void) | null = null
+
+    close() {
+      this.readyState = 3
+      this.onclose?.()
+    }
+  }
+
+  vi.stubGlobal("WebSocket", MockWebSocket)
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          sessionId: "session-deleted",
+          response: "",
+          turnId: "turn-deleted",
+          accepted: true,
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      ),
+    )
+    .mockResolvedValueOnce(new Response("chat turn not found", { status: 404 }))
+
+  const transport = new HttpTransport("http://localhost:8420")
+  await expect(
+    transport.startChat(
+      { message: "hello", attachments: [], sessionId: "session-deleted" },
+      () => undefined,
+    ),
+  ).rejects.toThrow("Chat turn turn-deleted no longer exists")
+
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
 test.each(["knowledge_chat", "pet_chat"] as const)(
@@ -708,6 +921,223 @@ test("HttpTransport.try_restore_session unwraps HTTP restored payload", async ()
   const restored = await transport.call<boolean>("try_restore_session")
 
   expect(restored).toBe(true)
+})
+
+test("HttpTransport unwraps Agent markdown and template content like Tauri", async () => {
+  const transport = new HttpTransport("http://localhost:8420")
+
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ content: "# Agent instructions" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ content: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ content: "# Built-in template" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+  await expect(
+    transport.call<string | null>("get_agent_markdown", {
+      id: "agent-1",
+      file: "agent.md",
+    }),
+  ).resolves.toBe("# Agent instructions")
+  await expect(
+    transport.call<string | null>("get_agent_markdown", {
+      id: "agent-1",
+      file: "persona.md",
+    }),
+  ).resolves.toBeNull()
+  await expect(
+    transport.call<string>("get_agent_template", { name: "agent", locale: "zh" }),
+  ).resolves.toBe("# Built-in template")
+
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "http://localhost:8420/api/agents/agent-1/markdown?file=agent.md",
+    "http://localhost:8420/api/agents/agent-1/markdown?file=persona.md",
+    "http://localhost:8420/api/agents/template?name=agent&locale=zh",
+  ])
+})
+
+test.each([
+  {
+    command: "get_system_prompt",
+    args: { agentId: "agent-1" },
+    payload: { system_prompt: "# System prompt" },
+    expected: "# System prompt",
+  },
+  {
+    command: "render_persona_to_soul_md",
+    args: { id: "agent-1", persona: {} },
+    payload: { content: "# Soul" },
+    expected: "# Soul",
+  },
+  {
+    command: "read_log_file_cmd",
+    args: { filename: "app.log" },
+    payload: { content: "log line" },
+    expected: "log line",
+  },
+  {
+    command: "get_log_file_path_cmd",
+    args: undefined,
+    payload: { path: "/tmp/app.log" },
+    expected: "/tmp/app.log",
+  },
+  {
+    command: "export_logs_cmd",
+    args: { filter: {}, format: "json" },
+    payload: { data: "[]" },
+    expected: "[]",
+  },
+  {
+    command: "install_skill_dependency",
+    args: { skillName: "demo", specIndex: 0 },
+    payload: { ok: true, output: "installed" },
+    expected: "installed",
+  },
+  {
+    command: "channel_validate_credentials",
+    args: { channelId: "telegram", credentials: {}, settings: {} },
+    payload: { info: "Hope Bot" },
+    expected: "Hope Bot",
+  },
+  {
+    command: "create_backup_cmd",
+    args: undefined,
+    payload: { name: "backup.zip" },
+    expected: "backup.zip",
+  },
+])(
+  "HttpTransport unwraps $command string payload like Tauri",
+  async ({ command, args, payload, expected }) => {
+    const transport = new HttpTransport("http://localhost:8420")
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+    await expect(
+      transport.call<string>(command, args as Record<string, unknown> | undefined),
+    ).resolves.toBe(expected)
+  },
+)
+
+test.each([
+  {
+    command: "get_agent_memory_md",
+    args: { id: "agent-1" },
+    payload: { content: "# Agent memory" },
+    expected: "# Agent memory",
+  },
+  {
+    command: "get_global_memory_md",
+    args: undefined,
+    payload: { content: null },
+    expected: null,
+  },
+])(
+  "HttpTransport unwraps $command optional content like Tauri",
+  async ({ command, args, payload, expected }) => {
+    const transport = new HttpTransport("http://localhost:8420")
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+    await expect(
+      transport.call<string | null>(command, args as Record<string, unknown> | undefined),
+    ).resolves.toBe(expected)
+  },
+)
+
+test.each([
+  ["get_skill_env_check", { enabled: false }, false],
+  ["get_skills_auto_review_enabled", { enabled: true }, true],
+  ["get_skills_auto_review_promotion", { auto: false }, false],
+])("HttpTransport unwraps %s boolean payload like Tauri", async (command, payload, expected) => {
+  const transport = new HttpTransport("http://localhost:8420")
+  fetchMock.mockResolvedValue(
+    new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  )
+
+  await expect(transport.call<boolean>(command)).resolves.toBe(expected)
+})
+
+test.each(["test_provider", "test_model"])(
+  "HttpTransport preserves the %s JSON-string contract",
+  async (command) => {
+    const transport = new HttpTransport("http://localhost:8420")
+    const payload = { success: false, message: "connection failed", latencyMs: 12 }
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+    const args = command === "test_provider" ? { config: {} } : { config: {}, modelId: "m1" }
+    await expect(transport.call<string>(command, args)).resolves.toBe(JSON.stringify(payload))
+  },
+)
+
+test.each(["test_provider", "test_model"])(
+  "HttpTransport rejects a scalar %s error like Tauri",
+  async (command) => {
+    const transport = new HttpTransport("http://localhost:8420")
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify("Client error: invalid user agent"), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+    const args = command === "test_provider" ? { config: {} } : { config: {}, modelId: "m1" }
+    await expect(transport.call<string>(command, args)).rejects.toThrow(
+      "Client error: invalid user agent",
+    )
+  },
+)
+
+test("HttpTransport aligns proxy probe success and failure with Tauri", async () => {
+  const transport = new HttpTransport("http://localhost:8420")
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true, message: "Proxy connected" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false, message: "Proxy unavailable" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+
+  await expect(transport.call<string>("test_proxy", { config: {} })).resolves.toBe(
+    "Proxy connected",
+  )
+  await expect(transport.call<string>("test_proxy", { config: {} })).rejects.toThrow(
+    "Proxy unavailable",
+  )
 })
 
 test("HttpTransport unwraps the Git auto-merge input for the HTTP owner API", async () => {
