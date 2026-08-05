@@ -42,16 +42,17 @@ All of this is done in the Cloudflare dashboard + `gh` CLI; none of it is in cod
 1. **Create the bucket.** R2 → Create bucket, name it `hope-agent-linux-repo` (any name; it becomes the `R2_BUCKET` secret). Location: Automatic.
 2. **Connect the custom domain.** Bucket → Settings → Public access → **Custom Domains** → Connect `repo.hopeagent.ai`. This requires `hopeagent.ai`'s DNS to be on Cloudflare; Cloudflare auto-creates the CNAME. (Do **not** enable the `r2.dev` public URL for production — it is rate-limited.) Wait until `https://repo.hopeagent.ai/` resolves before running the seed.
 3. **Create an R2 API token.** R2 → Manage R2 API Tokens → Create → **Object Read & Write**, scoped to this one bucket. Note the **Access Key ID**, **Secret Access Key**, and your **Account ID** (shown on the R2 overview page / in the S3 endpoint `https://<account_id>.r2.cloudflarestorage.com`).
-4. **Add the four GitHub secrets** on `shiwenwen/hope-agent`:
+4. **Add the four GitHub secrets** on the repository that owns these workflows (replace `OWNER/REPO` with the value from `gh repo view --json nameWithOwner -q .nameWithOwner`):
    ```bash
-   gh secret set R2_ACCOUNT_ID        --repo shiwenwen/hope-agent   # Cloudflare account id
-   gh secret set R2_ACCESS_KEY_ID     --repo shiwenwen/hope-agent   # from the API token
-   gh secret set R2_SECRET_ACCESS_KEY --repo shiwenwen/hope-agent   # from the API token
-   gh secret set R2_BUCKET            --repo shiwenwen/hope-agent   # e.g. hope-agent-linux-repo
+   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+   gh secret set R2_ACCOUNT_ID        --repo "$REPO"   # Cloudflare account id
+   gh secret set R2_ACCESS_KEY_ID     --repo "$REPO"   # from the API token
+   gh secret set R2_SECRET_ACCESS_KEY --repo "$REPO"   # from the API token
+   gh secret set R2_BUCKET            --repo "$REPO"   # e.g. hope-agent-linux-repo
    ```
    `GPG_SIGNING_KEY` is unchanged and stays. `LINUX_REPO_TOKEN` and the old
-   `shiwenwen/hope-agent-linux-repo` Pages repo are **retired** — you may leave
-   the old repo up (its stale packages don't hurt) or archive it.
+   Pages repo are retired — you may leave the old repo up (its stale packages
+   don't hurt) or archive it.
 5. **Seed the repo.** With the domain live, run the workflow once against the current release:
    ```bash
    gh workflow run update-linux-repo.yml --repo shiwenwen/hope-agent -f tag=v0.21.0
