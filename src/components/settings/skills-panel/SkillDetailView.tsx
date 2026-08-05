@@ -156,7 +156,7 @@ export default function SkillDetailView({
     [skill.name, usage?.apps],
   )
   const installedApps = installStates.filter((state) => state.installed)
-  const defaultApp = installedApps[0]?.app ?? "claude"
+  const defaultApp = DETAIL_APPS.find((app) => installedApps.some((state) => state.app === app)) ?? "claude"
   useEffect(() => {
     setSelectedApp(defaultApp)
   }, [defaultApp])
@@ -616,6 +616,7 @@ function InstallLocationRow({
   state: SkillAppInstallState
   skillName: string
 }) {
+  const { t } = useTranslation()
   const app = state.app as DetailAppKind
   return (
     <div className="flex items-center gap-3 border-b border-[#f0f0f0] py-2.5 last:border-0">
