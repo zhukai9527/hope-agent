@@ -657,6 +657,7 @@ async fn ensure_gh_authenticated(cfg: &IssueReportingConfig) -> Result<()> {
 async fn run_gh(args: Vec<String>, stdin: Option<String>) -> Result<std::process::Output> {
     let gh = which::which("gh").context("`gh` CLI was not found on PATH")?;
     let mut cmd = tokio::process::Command::new(gh);
+    crate::platform::hide_console_tokio(&mut cmd);
     cmd.args(args)
         .stdin(if stdin.is_some() {
             Stdio::piped()

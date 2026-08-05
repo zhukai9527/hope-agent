@@ -110,6 +110,16 @@ pub(super) fn hide_console_tokio(cmd: &mut tokio::process::Command) {
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::CREATE_NO_WINDOW;
+
+    #[test]
+    fn console_creation_flag_is_hidden_window_flag() {
+        assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
+    }
+}
+
 pub(super) fn wsl_command(distro: Option<&str>) -> Option<tokio::process::Command> {
     let mut cmd = tokio::process::Command::new("wsl.exe");
     cmd.creation_flags(CREATE_NO_WINDOW).kill_on_drop(true);

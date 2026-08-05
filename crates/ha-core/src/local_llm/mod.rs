@@ -211,6 +211,7 @@ async fn ollama_binary_responds(path: &Path) -> bool {
     use std::process::Stdio;
 
     let mut cmd = tokio::process::Command::new(path);
+    crate::platform::hide_console_tokio(&mut cmd);
     cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())

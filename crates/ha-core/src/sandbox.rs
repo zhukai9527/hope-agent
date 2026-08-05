@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
+use std::env;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -434,25 +435,65 @@ fn classify_docker_connection_error(error: &(dyn StdError + 'static)) -> DockerC
 }
 
 async fn native_docker_probe() -> NativeDockerProbe {
-    let docker = match Docker::connect_with_local_defaults() {
-        Ok(docker) => docker,
-        Err(error) => {
-            return NativeDockerProbe {
-                daemon_running: false,
-                connection_error: Some(classify_docker_connection_error(&error)),
-            };
-        }
-    };
-    match docker.ping().await {
-        Ok(_) => NativeDockerProbe {
-            daemon_running: true,
-            connection_error: None,
-        },
-        Err(error) => NativeDockerProbe {
-            daemon_running: false,
-            connection_error: Some(classify_docker_connection_error(&error)),
-        },
+    let mut last_error = None;
+    let mut candidates = Vec::new();
+    if let Ok(host) = env::var("DOCKER_HOST") {
+        candidates.push(host);
     }
+    if let Ok(host) = system_docker_context_endpoint().await {
+        if !candidates.contains(&host) {
+            candidates.push(host);
+        }
+    }
+    candidates.push(default_native_docker_endpoint().to_string());
+
+    for host in candidates {
+        let docker = if host.starts_with("npipe://") || host.starts_with("unix://")
+            || host.starts_with("tcp://") || host.starts_with("http://")
+            || host.starts_with("https://")
+        {
+            Docker::connect_with_host(&host)
+        } else {
+            continue;
+        };
+        let docker = match docker {
+            Ok(docker) => docker,
+            Err(error) => {
+                last_error = Some(classify_docker_connection_error(&error));
+                continue;
+            }
+        };
+        match docker.ping().await {
+            Ok(_) => return NativeDockerProbe { daemon_running: true, connection_error: None },
+            Err(error) => last_error = Some(classify_docker_connection_error(&error)),
+        }
+    }
+    NativeDockerProbe { daemon_running: false, connection_error: last_error }
+}
+
+/// Platform-specific default Docker endpoint used when neither `DOCKER_HOST`
+/// nor Docker Context provides one. On Windows this is the default named
+/// pipe; on Unix it is the conventional Docker daemon socket.
+fn default_native_docker_endpoint() -> &'static str {
+    #[cfg(windows)]
+    { "npipe:////./pipe/docker_engine" }
+    #[cfg(not(windows))]
+    { "unix:///var/run/docker.sock" }
+}
+
+async fn system_docker_context_endpoint() -> Result<String, ()> {
+    let mut command = Command::new("docker");
+    command.args(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
+    command_succeeds_with_stdout(&mut command).await.ok_or(())
+}
+
+async fn command_succeeds_with_stdout(command: &mut Command) -> Option<String> {
+    crate::platform::hide_console_tokio(command);
+    command.stderr(Stdio::null()).kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await.ok()?.ok()?;
+    if !output.status.success() { return None; }
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Check if Docker is available and running.

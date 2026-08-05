@@ -85,6 +85,17 @@ Each IM chat (channel + account + chat + thread) is associated with only **one**
 - **Messages sent while busy are not lost**: if you send another ordinary message while the previous IM message is still being answered, Hope acknowledges it as queued and processes messages in send order. The FIFO head is inserted into the current IM turn at a safe tool-completion boundary when possible, with another model reply guaranteed afterward; otherwise it automatically starts the next turn after the current reply. If the running turn came from desktop or web, the IM message waits and then runs as a separate IM turn so it cannot inherit owner tool or Knowledge Space permissions. The queue survives app restarts. After an explicit `/stop` or a Stop from desktop, pending IM messages do not restart themselves; send another ordinary IM message to resume the original order, with the new message appended last.
 - Results from completed background jobs, Sub-Agents, and scheduled tasks are also posted back to the associated IM chat, or to the scheduled task's delivery targets.
 
+### Binding a QQ chat to a desktop task
+
+In the QQ chat with your bot:
+
+1. Send `/sessions` to list recent desktop sessions.
+2. Copy the session's **full id** (or a unique prefix shown in the list).
+3. Send `/session <id>`.
+4. Send `/session` to verify the bound session and Agent.
+
+After binding, desktop streaming output, approval requests, and completed background-task notifications for that session are mirrored to QQ. The QQ account's configured Agent determines the model chain; it does not bind QQ directly to the global model. Send `/session exit` to unbind.
+
 ---
 
 ## 10.5 Slash commands in IM

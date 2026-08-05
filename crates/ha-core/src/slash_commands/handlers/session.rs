@@ -192,13 +192,13 @@ fn apply_query_filter(
 fn render_picker_content(items: &[SessionPickerItem], query: &str, total: usize) -> String {
     if items.is_empty() {
         return if query.is_empty() {
-            "No active sessions.".to_string()
+            "No active sessions. Send `/new` first, then `/sessions` again.".to_string()
         } else {
             format!("No sessions match `{}`.", query)
         };
     }
     let header = if query.is_empty() {
-        format!("**Sessions** ({})", total)
+        format!("**Sessions** ({})\nCopy the full id (or a unique prefix), then send `/session <id>` to bind this QQ chat to that task.", total)
     } else {
         format!("**Sessions** matching `{}` ({})", query, total)
     };
@@ -320,7 +320,7 @@ pub fn handle_session(
     // where users see the 8-char short id from the picker and type that.
     let resolved = resolve_session_id_or_prefix(session_db, trimmed)?;
     Ok(CommandResult {
-        content: format!("Attaching to session `{}`...", resolved),
+        content: format!("Binding this QQ chat to session `{}`... Send `/session` afterward to verify; send `/session exit` to unbind.", resolved),
         action: Some(CommandAction::AttachToSession {
             session_id: resolved,
         }),
@@ -366,8 +366,9 @@ fn handle_session_info(
 
     let mut lines = vec![
         format!(
-            "**Session** `{}`",
-            meta.id.chars().take(8).collect::<String>()
+            "**Session** `{}` (full: `{}`)",
+            meta.id.chars().take(8).collect::<String>(),
+            meta.id
         ),
         format!("- Title: {}", meta.title.as_deref().unwrap_or("(untitled)")),
         format!("- Agent: `{}`", meta.agent_id),

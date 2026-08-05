@@ -4106,6 +4106,7 @@ pub async fn install_skill_dependency(skill_name: &str, spec_index: usize) -> Re
 
 async fn run_install_command(program: &str, args: &[&str]) -> Result<String> {
     let mut cmd = tokio::process::Command::new(program);
+    crate::platform::hide_console_tokio(&mut cmd);
     cmd.args(args);
     crate::platform::hide_console_tokio(&mut cmd);
     let output = cmd
