@@ -5,11 +5,7 @@ name: Update AUR
 # whenever a release is published.
 #
 # Triggers:
-#   - release.published — auto-fires after a draft Release is manually
-#     published (see docs/release-process.md §1.4).
-#   - workflow_dispatch — manual re-run against an existing tag, for when
-#     the PKGBUILD template itself changes and you want to backfill an
-#     already-published release without cutting a new version.
+#   - workflow_dispatch — manual sync against an existing tag.
 #
 # Required repo secrets:
 #   AUR_SSH_PRIVATE_KEY — ed25519 private key whose public half is
@@ -23,8 +19,6 @@ name: Update AUR
 run-name: AUR ${{ inputs.tag || github.event.release.tag_name }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

@@ -410,6 +410,7 @@ export default function App() {
 
   const handleMemoryFocusDeepLink = useCallback(() => {
     if (typeof window === "undefined") return false
+    if (view !== "chat" && view !== "settings" && view !== "memory") return false
     const target = parseMemoryFocusFromLocation()
     if (!target) {
       lastMemoryFocusHashRef.current = null
@@ -1108,7 +1109,11 @@ export default function App() {
                 }}
                 onOpenModelConfig={() => setView("modelConfig")}
                 onOpenSkills={() => setView("skills")}
-                onOpenMemory={() => setView("memory")}
+                onOpenMemory={() => {
+                  clearMemoryFocusUrl()
+                  lastMemoryFocusHashRef.current = null
+                  setView("memory")
+                }}
                 onOpenChannels={() => setView("channels")}
                 onOpenProfile={() => {
                   setView("profile")

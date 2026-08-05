@@ -5,11 +5,7 @@ name: Update Scoop Bucket
 # whenever a release is published.
 #
 # Triggers:
-#   - release.published — auto-fires after a draft Release is manually
-#     published (see docs/release-process.md §1.4).
-#   - workflow_dispatch — manual re-run against an existing tag, for when
-#     the manifest template itself changes and you want to backfill an
-#     already-published release without cutting a new version.
+#   - workflow_dispatch — manual sync against an existing tag.
 #
 # Required repo secrets:
 #   SCOOP_BUCKET_TOKEN — fine-grained PAT with `Contents: Read and write`
@@ -22,8 +18,6 @@ name: Update Scoop Bucket
 run-name: Scoop bucket ${{ inputs.tag || github.event.release.tag_name }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

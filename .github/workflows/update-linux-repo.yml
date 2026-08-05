@@ -14,9 +14,7 @@ name: Update Linux Repo
 # publish target moved from `git commit + push` to `rclone` against R2.
 #
 # Triggers:
-#   - release.published — auto-fires after a draft Release is manually
-#     published (see docs/release-process.md §1.4).
-#   - workflow_dispatch — manual re-run / initial seed against a tag.
+#   - workflow_dispatch — manual sync / initial seed against a tag.
 #
 # Required repo secrets:
 #   GPG_SIGNING_KEY       — ASCII-armored ed25519 private key for repo
@@ -39,8 +37,6 @@ name: Update Linux Repo
 run-name: Linux repo ${{ inputs.tag || github.event.release.tag_name }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

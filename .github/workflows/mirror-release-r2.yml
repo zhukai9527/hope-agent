@@ -42,9 +42,7 @@ name: Mirror Release to R2
 # See docs/architecture/self-update.md.
 #
 # Triggers:
-#   - release.published — auto-fires after a draft Release is manually
-#     published (see docs/release-process.md §1.4).
-#   - workflow_dispatch — manual re-run against a tag (idempotent).
+#   - workflow_dispatch — manual sync against an existing tag (idempotent).
 #
 # Required repo secrets: R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
 # R2_SECRET_ACCESS_KEY / R2_BUCKET. Cloudflare-side setup (bucket, custom
@@ -58,8 +56,6 @@ name: Mirror Release to R2
 run-name: Mirror ${{ inputs.tag || github.event.release.tag_name }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
