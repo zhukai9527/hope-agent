@@ -1,7 +1,7 @@
 name: Update Scoop Bucket
 
 # Sync the manifest template in `scoop/hope-agent.json.tmpl` into the
-# bucket repo (shiwenwen/scoop-hope-agent → bucket/hope-agent.json)
+# bucket repo (zhukai9527/scoop-hope-agent → bucket/hope-agent.json)
 # whenever a release is published.
 #
 # Triggers:
@@ -13,7 +13,7 @@ name: Update Scoop Bucket
 #
 # Required repo secrets:
 #   SCOOP_BUCKET_TOKEN — fine-grained PAT with `Contents: Read and write`
-#                        on shiwenwen/scoop-hope-agent only.
+#                        on zhukai9527/scoop-hope-agent only.
 
 # run-name puts the tag in the run's display title. Without it every run
 # is called "Update Scoop Bucket" and `gh run list` cannot tell which release a run
@@ -42,7 +42,7 @@ jobs:
   update-bucket:
     runs-on: ubuntu-latest
     env:
-      BUCKET_REPO: shiwenwen/scoop-hope-agent
+      BUCKET_REPO: zhukai9527/scoop-hope-agent
       TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.tag_name }}
 
     steps:

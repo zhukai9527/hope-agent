@@ -638,14 +638,6 @@ pub struct RecoveryControlRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecoveryControlRequest {
-    pub session_id: String,
-    pub recovery_id: String,
-    pub action: ha_core::recovery_control::RecoveryAction,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ApprovalRequest {
     pub response: String,
 }

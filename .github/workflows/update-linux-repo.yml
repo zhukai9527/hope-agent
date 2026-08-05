@@ -230,7 +230,7 @@ jobs:
           Components: main
           Architectures: amd64 arm64
           SignWith: ${GPG_KEY_ID}
-          Description: Hope Agent apt repository (auto-published, see https://github.com/shiwenwen/hope-agent)
+          Description: Hope Agent apt repository (auto-published, see https://github.com/zhukai9527/hope-agent)
           EOF
 
           # Idempotent re-add: reprepro refuses to replace an existing

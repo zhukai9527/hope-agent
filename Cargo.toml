@@ -15,7 +15,7 @@ resolver = "2"
 [workspace.package]
 license = "MIT"
 authors = ["shiwenwen"]
-repository = "https://github.com/shiwenwen/hope-agent"
+repository = "https://github.com/zhukai9527/hope-agent"
 edition = "2021"
 # MSRV 不显式声明：rust-toolchain.toml 已经锁 1.95 作为构建工具链；
 # 这三个 crate 不发布到 crates.io，没有作为下游依赖被消费的场景。

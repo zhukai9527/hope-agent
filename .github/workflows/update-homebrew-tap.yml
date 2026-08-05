@@ -1,7 +1,7 @@
 name: Update Homebrew Tap
 
 # Sync the cask template in `homebrew/hope-agent.rb.tmpl` into the public
-# tap repo (shiwenwen/homebrew-hope-agent → Casks/hope-agent.rb) whenever
+# tap repo (zhukai9527/homebrew-hope-agent → Casks/hope-agent.rb) whenever
 # a release is published.
 #
 # Triggers:
@@ -13,7 +13,7 @@ name: Update Homebrew Tap
 #
 # Required repo secrets:
 #   HOMEBREW_TAP_TOKEN — fine-grained PAT with `Contents: Read and write`
-#                       on shiwenwen/homebrew-hope-agent only.
+#                       on zhukai9527/homebrew-hope-agent only.
 
 # run-name puts the tag in the run's display title. Without it every run
 # is called "Update Homebrew Tap" and `gh run list` cannot tell which release a run
