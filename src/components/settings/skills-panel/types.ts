@@ -48,14 +48,27 @@ export interface SkillDetail {
   display?: import("../types").SkillDisplay
 }
 
-export type ToolKind = "hope" | "claude" | "codex" | "gemini" | "opencode" | "generic"
+export type ToolKind = "hope" | "claude" | "codex" | "opencode" | "generic"
 export type AppKind = Exclude<ToolKind, "generic">
 export type SkillSourceType = "bundled" | "user" | "custom" | "registry"
 export type SkillSourceStatus = "ready" | "empty" | "warning" | "missing" | "unavailable"
 export type SkillValidationStatus = "valid" | "warning" | "invalid"
 export type SkillIssueSeverity = "warning" | "error"
 export type SkillPathKind = "directory" | "symlink" | "archive" | "registry"
-export type InstallationState = "ready" | "attention" | "conflict" | "linked" | "external"
+export type InstallationState =
+  | "available"
+  | "installing"
+  | "ready"
+  | "updating"
+  | "uninstalling"
+  | "attention"
+  | "conflict"
+  | "dependencyMissing"
+  | "permissionDenied"
+  | "sourceUnavailable"
+  | "corrupted"
+  | "linked"
+  | "external"
 export type SkillPackageChannel = "local" | "zip" | "registry"
 
 export interface SkillValidationIssue {
@@ -137,6 +150,8 @@ export interface SkillDockSnapshot {
   usageAppBreakdown: SkillUsageAppBreakdown[]
   apps: SkillAppProbe[]
   generatedAt: string
+  usageStatus: "loading" | "stale" | "ready" | "error" | string
+  usageGeneratedAt: string | null
 }
 
 export interface SkillRegistryEntry {
@@ -341,6 +356,43 @@ export interface SkillAppInstallReport {
   sourcePath: string
   targetPath: string
   installed: boolean
+}
+
+export interface SkillDiagnosticReport {
+  skillName: string
+  baseDir: string
+  skillMdFound: boolean
+  frontmatterValid: boolean
+  missingBins: string[]
+  missingEnv: string[]
+  appStates: SkillAppInstallState[]
+  issues: SkillValidationIssue[]
+  overallStatus: "ok" | "warning" | "error" | "not_found" | string
+}
+
+export interface SkillBackupEntry {
+  timestamp: string
+  path: string
+  createdAt: string
+}
+
+export interface SkillDiffReport {
+  skillName: string
+  hasDraft: boolean
+  hasActive: boolean
+  addedLines: string[]
+  removedLines: string[]
+  unchangedCount: number
+  summary: string
+}
+
+export interface SkillAppInstallDryRunReport {
+  skillName: string
+  app: AppKind
+  sourcePath: string | null
+  targetPath: string | null
+  canInstall: boolean
+  issues: SkillValidationIssue[]
 }
 
 export interface SkillUninstallReport {

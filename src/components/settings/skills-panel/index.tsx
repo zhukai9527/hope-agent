@@ -23,6 +23,7 @@ import {
   loadSkillMarketSources,
   loadSkillMarketSnapshot,
   loadSkillDockSnapshot,
+  scanSkillUsage,
   loadSkillRegistrySnapshot,
   reloadSkillsManagerSnapshot,
   loadSkillsManagerSnapshot,
@@ -162,7 +163,21 @@ export default function SkillsPanel() {
     const unlisten = getTransport().listen(SKILLS_EVENTS.autoReviewComplete, () => {
       reload()
     })
-    return unlisten
+    const unlistenUsage = getTransport().listen(SKILLS_EVENTS.usageScanComplete, () => {
+      void loadSkillDockSnapshot().then(setSkillDockSnapshot).catch((e) => {
+        logger.error("settings", "SkillsPanel::usageComplete", "Failed to refresh usage", e)
+      })
+    })
+    void scanSkillUsage()
+      .then(() => loadSkillDockSnapshot())
+      .then(setSkillDockSnapshot)
+      .catch((e) => {
+        logger.warn("settings", "SkillsPanel::usageBackground", "Background usage scan failed", e)
+      })
+    return () => {
+      unlisten()
+      unlistenUsage()
+    }
   }, [reload])
 
   useEffect(() => {

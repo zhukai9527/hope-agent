@@ -1496,7 +1496,13 @@ Agent 执行准入采用两层 guard：Desktop / HTTP / Channel / Cron 等调用
 | `update_registry_skill` | `POST /api/skills/registry/update` | ✅ |
 | `install_skill_to_app` | `POST /api/skills/app/install` | ✅ |
 | `uninstall_skill_from_app` | `POST /api/skills/app/uninstall` | ✅ |
+| `dry_run_install_skill_to_app` | `POST /api/skills/app/install-dry-run` | ✅ |
+| `install_skill_to_apps` | `POST /api/skills/app/install-multi` | ✅ |
 | `uninstall_managed_skill` | `POST /api/skills/managed/uninstall` | ✅ |
+| `diagnose_skill` | `POST /api/skills/diagnose` | ✅ |
+| `list_skill_backups` | `GET /api/skills/backups` | ✅ |
+| `rollback_skill` | `POST /api/skills/rollback` | ✅ |
+| `get_skill_diff` | `GET /api/skills/diff` | ✅ |
 | `scan_skill_usage` | `GET /api/skills/usage/scan` | ✅ |
 | `dry_run_import_skill_zip` | `POST /api/skills/zip/dry-run` | ✅ |
 | `import_skill_zip` | `POST /api/skills/zip/import` | ✅ |

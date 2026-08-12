@@ -29,19 +29,24 @@ import type {
   AppKind,
   SkillAppInstallState,
   SkillDetail,
+  SkillDiagnosticReport,
+  SkillBackupEntry,
   SkillDockSnapshot,
   SkillStatusEntry,
 } from "./types"
 import {
+  diagnoseSkill,
   exportSkillZip,
   installSkillDependency,
   installSkillToApp,
+  listSkillBackups,
+  rollbackSkill,
   uninstallSkillFromApp,
 } from "./api"
 
-const DETAIL_APPS = ["claude", "codex", "gemini", "opencode"] as const
+const DETAIL_APPS = ["claude", "codex", "opencode"] as const
 type DetailAppKind = Extract<AppKind, (typeof DETAIL_APPS)[number]>
-type DetailTab = "overview" | "skill" | "validation" | "install" | "diff"
+type DetailTab = "overview" | "skill" | "validation" | "install" | "diff" | "diagnose" | "rollback"
 
 function InstallSpecRow({
   spec,
@@ -360,6 +365,8 @@ export default function SkillDetailView({
             ["validation", t("settings.skillValidationTab")],
             ["install", t("settings.skillInstallTab")],
             ["diff", t("settings.skillDiffTab")],
+            ["diagnose", "诊断"],
+            ["rollback", "回滚"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -556,6 +563,9 @@ export default function SkillDetailView({
             )}
           </aside>
         </div>
+
+        {activeTab === "diagnose" && <DiagnoseSection skillName={skill.name} />}
+        {activeTab === "rollback" && <RollbackSection skillName={skill.name} onBack={onBack} />}
       </div>
     </div>
   )
@@ -656,7 +666,6 @@ function AppBadge({ app }: { app: DetailAppKind }) {
   const palette: Record<DetailAppKind, string> = {
     claude: "bg-[#ffedd5] text-[#f97316]",
     codex: "bg-[#f3f4f6] text-[#6b7280]",
-    gemini: "bg-[#dcfce7] text-[#22c55e]",
     opencode: "bg-[#dbeafe] text-[#2563eb]",
   }
   return (
@@ -683,7 +692,6 @@ function defaultInstallState(app: DetailAppKind, skillName: string): SkillAppIns
 function defaultSkillPath(app: DetailAppKind): string {
   if (app === "claude") return "~/Library/Application Support/Claude/skills"
   if (app === "codex") return "~/.codex/skills"
-  if (app === "gemini") return "~/Library/Application Support/Google/Gemini/skills"
   return "~/.opencode/skills"
 }
 
@@ -694,10 +702,198 @@ function appName(app: DetailAppKind): string {
 
 function appIcon(app: DetailAppKind): string {
   if (app === "claude") return "☀"
-  if (app === "gemini") return "✦"
   return "⬡"
 }
 
 function compactPath(path: string): string {
   return path.replace(/^C:\\Users\\[^\\]+/i, "~").replace(/^\/Users\/[^/]+/i, "~")
+}
+
+function DiagnoseSection({ skillName }: { skillName: string }) {
+  const [report, setReport] = useState<SkillDiagnosticReport | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function runDiagnose() {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await diagnoseSkill(skillName)
+      setReport(r)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <section className="mt-4 rounded-[10px] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.05)] dark:bg-card">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">诊断</h3>
+        <Button
+          variant="secondary"
+          className="h-8 gap-1 border-[#e5e7eb] bg-white px-2.5 text-xs text-[#666]"
+          onClick={runDiagnose}
+          disabled={loading}
+        >
+          {loading ? "检查中..." : "运行诊断"}
+        </Button>
+      </div>
+      {error && <p className="text-xs text-[#ef4444]">{error}</p>}
+      {report && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={
+                report.overallStatus === "ok"
+                  ? "rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
+                  : report.overallStatus === "warning"
+                    ? "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                    : "rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+              }
+            >
+              {report.overallStatus === "ok" ? "正常" : report.overallStatus === "warning" ? "警告" : "错误"}
+            </span>
+            <span className="text-xs text-[#888]">SKILL.md: {report.skillMdFound ? "✓" : "✗"}</span>
+            <span className="text-xs text-[#888]">Frontmatter: {report.frontmatterValid ? "✓" : "✗"}</span>
+          </div>
+          {report.missingBins.length > 0 && (
+            <div>
+              <h4 className="mb-1 text-xs font-semibold text-[#666]">缺失命令</h4>
+              <p className="text-xs text-[#f59e0b]">{report.missingBins.join(", ")}</p>
+            </div>
+          )}
+          {report.missingEnv.length > 0 && (
+            <div>
+              <h4 className="mb-1 text-xs font-semibold text-[#666]">缺失环境变量</h4>
+              <p className="text-xs text-[#f59e0b]">{report.missingEnv.join(", ")}</p>
+            </div>
+          )}
+          {report.issues.length > 0 && (
+            <div>
+              <h4 className="mb-1 text-xs font-semibold text-[#666]">问题列表</h4>
+              <div className="space-y-1">
+                {report.issues.map((issue, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-xs">
+                    <span
+                      className={
+                        issue.severity === "error"
+                          ? "text-[#ef4444]"
+                          : issue.severity === "warning"
+                            ? "text-[#f59e0b]"
+                            : "text-[#888]"
+                      }
+                    >
+                      {issue.severity === "error" ? "✗" : issue.severity === "warning" ? "⚠" : "ℹ"}
+                    </span>
+                    <span className="text-[#374151]">{issue.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {report.appStates.length > 0 && (
+            <div>
+              <h4 className="mb-1 text-xs font-semibold text-[#666]">部署状态</h4>
+              <div className="space-y-1">
+                {report.appStates.map((app) => (
+                  <div key={app.app} className="flex items-center gap-2 text-xs">
+                    <span className="font-medium text-[#374151]">{app.app}</span>
+                    <span className={app.installed ? "text-green-600" : "text-[#888]"}>
+                      {app.installed ? "已安装" : "未安装"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function RollbackSection({ skillName, onBack }: { skillName: string; onBack: () => void }) {
+  const [backups, setBackups] = useState<SkillBackupEntry[]>([])
+  const [selected, setSelected] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function loadBackups() {
+    setLoading(true)
+    try {
+      const list = await listSkillBackups(skillName)
+      setBackups(list)
+      if (list.length === 0) setMessage("没有可用的备份版本。")
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadBackups()
+  }, [skillName])
+
+  async function handleRollback() {
+    if (!selected) return
+    if (!window.confirm(`确定回滚到版本 ${selected} ？当前版本将保留为 rollback 备份。`)) return
+    setLoading(true)
+    setMessage(null)
+    try {
+      await rollbackSkill(skillName, selected)
+      setMessage("回滚成功。")
+      onBack()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <section className="mt-4 rounded-[10px] bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.05)] dark:bg-card">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">版本回滚</h3>
+        <Button
+          variant="secondary"
+          className="h-8 gap-1 border-[#e5e7eb] bg-white px-2.5 text-xs text-[#666]"
+          onClick={loadBackups}
+          disabled={loading}
+        >
+          刷新
+        </Button>
+      </div>
+      {message && <p className="mb-2 text-xs text-[#888]">{message}</p>}
+      {backups.length > 0 && (
+        <div className="space-y-2">
+          <div className="max-h-48 overflow-y-auto rounded-md border border-[#f0f0f0]">
+            {backups.map((backup) => (
+              <button
+                key={backup.timestamp}
+                type="button"
+                className={`flex w-full items-center justify-between gap-2 border-b border-[#f0f0f0] px-3 py-2 text-xs last:border-b-0 ${
+                  selected === backup.timestamp ? "bg-[#eff6ff]" : "bg-[#fafafa] hover:bg-[#f5f5f5]"
+                }`}
+                onClick={() => setSelected(backup.timestamp)}
+              >
+                <span className="font-mono text-[#374151]">{backup.timestamp}</span>
+                <span className="text-[#888]">{backup.path}</span>
+              </button>
+            ))}
+          </div>
+          <Button
+            variant="default"
+            className="h-8 gap-1 px-3 text-xs"
+            onClick={handleRollback}
+            disabled={!selected || loading}
+          >
+            {loading ? "回滚中..." : "回滚到选中版本"}
+          </Button>
+        </div>
+      )}
+    </section>
+  )
 }

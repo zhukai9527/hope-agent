@@ -78,27 +78,24 @@ interface SkillDockExtensionsViewProps {
   onRefresh: () => void
 }
 
-const APP_KINDS: AppKind[] = ["hope", "claude", "codex", "gemini", "opencode"]
-const EXTERNAL_APPS = ["claude", "codex", "gemini", "opencode"] as const
+const APP_KINDS: AppKind[] = ["hope", "claude", "codex", "opencode"]
+const EXTERNAL_APPS = ["claude", "codex", "opencode"] as const
 const APP_BAR_COLORS: Partial<Record<AppKind, string>> = {
   hope: "#64748b",
   claude: "#f97316",
   codex: "#9ca3af",
-  gemini: "#22c55e",
   opencode: "#3b82f6",
 }
 const APP_BAR_CLASS_NAMES: Partial<Record<AppKind, string>> = {
   hope: "bg-slate-500",
   claude: "bg-orange-500",
   codex: "bg-zinc-400",
-  gemini: "bg-green-500",
   opencode: "bg-blue-500",
 }
 const APP_TEXT_CLASS_NAMES: Partial<Record<AppKind, string>> = {
   hope: "text-slate-500",
   claude: "text-orange-500",
   codex: "text-zinc-400",
-  gemini: "text-green-500",
   opencode: "text-blue-500",
 }
 
@@ -191,6 +188,7 @@ export default function SkillDockExtensionsView({
     () => snapshot?.usageAppBreakdown ?? [],
     [snapshot?.usageAppBreakdown],
   )
+  const usageStatus = snapshot?.usageStatus ?? "loading"
   const marketEntries = market?.entries ?? []
   const registryEntries = registry?.entries ?? []
   const hubs = hubConfig?.hubs ?? []
@@ -625,10 +623,15 @@ export default function SkillDockExtensionsView({
         .filter((row) => daysBetween(row.activatedAt, new Date()) <= 7)
         .map((row) => row.skillName),
     )
-    const logStatus = rawUsageAppRows.length
+    const usagePending = usageStatus === "loading"
+    const logStatus = usagePending
+      ? t("settings.skillsDockExtensions.usageStatusPending")
+      : rawUsageAppRows.length
       ? t("settings.skillsDockExtensions.usageStatusReady")
       : t("settings.skillsDockExtensions.usageStatusPending")
-    const logStatusText = rawUsageAppRows.length
+    const logStatusText = usagePending
+      ? t("settings.skillsDockExtensions.usageStatusPendingDesc")
+      : rawUsageAppRows.length
       ? t("settings.skillsDockExtensions.usageStatusReadyDesc")
       : t("settings.skillsDockExtensions.usageStatusPendingDesc")
     const sourceOptions = Array.from(
@@ -696,9 +699,9 @@ export default function SkillDockExtensionsView({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <UsageMetricCard icon="📈" iconClassName="bg-[#dbeafe] text-[#2563eb]" title={t("settings.skillsDockExtensions.totalUsageTitle")} value={formatNumber(totalUsage)} delta={t("settings.skillsDockExtensions.totalUsageDelta", { count: rawUsageAppRows.length || 1 })} />
-          <UsageMetricCard icon="📅" iconClassName="bg-[#dcfce7] text-[#16a34a]" title={t("settings.skillsDockExtensions.todayUsageTitle")} value={formatNumber(todayUsage)} delta={t("settings.skillsDockExtensions.todayUsageDelta")} />
-          <UsageMetricCard icon="📦" iconClassName="bg-[#f3e8ff] text-[#9333ea]" title={t("settings.skillsDockExtensions.activeSkillTitle")} value={activeSkillNames.size} delta={t("settings.skillsDockExtensions.activeSkillDelta", { count: filteredUsageRows.length })} />
+          <UsageMetricCard icon="📈" iconClassName="bg-[#dbeafe] text-[#2563eb]" title={t("settings.skillsDockExtensions.totalUsageTitle")} value={usagePending ? "—" : formatNumber(totalUsage)} delta={t("settings.skillsDockExtensions.totalUsageDelta", { count: rawUsageAppRows.length || 1 })} />
+          <UsageMetricCard icon="📅" iconClassName="bg-[#dcfce7] text-[#16a34a]" title={t("settings.skillsDockExtensions.todayUsageTitle")} value={usagePending ? "—" : formatNumber(todayUsage)} delta={t("settings.skillsDockExtensions.todayUsageDelta")} />
+          <UsageMetricCard icon="📦" iconClassName="bg-[#f3e8ff] text-[#9333ea]" title={t("settings.skillsDockExtensions.activeSkillTitle")} value={usagePending ? "—" : activeSkillNames.size} delta={t("settings.skillsDockExtensions.activeSkillDelta", { count: filteredUsageRows.length })} />
           <UsageMetricCard icon="🗄️" iconClassName="bg-[#fef3c7] text-[#d97706]" title={t("settings.skillsDockExtensions.logSourceStatusTitle")} value={logStatus} delta={logStatusText} />
         </div>
 
@@ -1946,7 +1949,7 @@ function buildUsageTrendSeries(rows: SkillUsageTrendPoint[]): UsageTrendSeries {
   }
   for (const row of rows) labelSet.add(row.date)
   const labels = Array.from(labelSet).sort().slice(-7)
-  const apps = (["claude", "codex", "gemini", "opencode", "hope"] as AppKind[])
+  const apps = (["claude", "codex", "opencode", "hope"] as AppKind[])
     .filter((app) => rows.some((row) => row.app === app) || app !== "hope")
     .map((app) => ({
       app,
@@ -1967,7 +1970,7 @@ function buildUsageAppDistribution(
   probes: SkillDockSnapshot["apps"],
 ): Array<{ app: AppKind; count: number }> {
   const byApp = new Map(rows.map((row) => [row.app, row.count]))
-  return (["claude", "codex", "gemini", "opencode", "hope"] as AppKind[])
+  return (["claude", "codex", "opencode", "hope"] as AppKind[])
     .filter((app) => byApp.has(app) || probes.some((probe) => probe.app === app && probe.installed))
     .map((app) => ({ app, count: byApp.get(app) ?? 0 }))
 }
@@ -1991,7 +1994,6 @@ function daysBetween(value: string, now: Date): number {
 function appLabel(app: AppKind): string {
   if (app === "claude") return "Claude"
   if (app === "codex") return "Codex"
-  if (app === "gemini") return "Gemini"
   if (app === "opencode") return "OpenCode"
   return "Hope"
 }
@@ -3213,20 +3215,17 @@ function buildUsageTimelineRows(rows: SkillUsageSnapshot[], fallbackTime: string
 function defaultSkillPath(app: Exclude<AppKind, "hope">): string {
   if (app === "claude") return "~/Library/Application Support/Claude/skills"
   if (app === "codex") return "~/.codex/skills"
-  if (app === "gemini") return "~/Library/Application Support/Google/Gemini/skills"
   return "~/.opencode/skills"
 }
 
 function defaultLogPath(app: Exclude<AppKind, "hope">): string {
   if (app === "claude") return "~/Library/Application Support/Claude/logs"
   if (app === "codex") return "~/.codex/logs"
-  if (app === "gemini") return "~/Library/Application Support/Google/Gemini/logs"
   return "~/.opencode/logs"
 }
 
 function appSymbol(app: AppKind): string {
   if (app === "claude") return "☀️"
-  if (app === "gemini") return "✦"
   return "⬡"
 }
 

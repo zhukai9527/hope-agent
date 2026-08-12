@@ -572,6 +572,33 @@ pub struct SkillDetail {
     pub display: SkillDisplay,
 }
 
+impl SkillDetail {
+    /// Build the lightweight summary used by app-install projections.
+    pub fn to_summary(&self, enabled: bool) -> SkillSummary {
+        SkillSummary {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            source: self.source.clone(),
+            base_dir: self.base_dir.clone(),
+            enabled,
+            requires_env: self.requires.env.clone(),
+            skill_key: self.skill_key.clone(),
+            user_invocable: self.user_invocable,
+            disable_model_invocation: self.disable_model_invocation,
+            has_install: !self.install.is_empty(),
+            any_bins: self.requires.any_bins.clone(),
+            always: self.requires.always,
+            allowed_tools: self.allowed_tools.clone(),
+            context_mode: self.context_mode.clone(),
+            agent: self.agent.clone(),
+            effort: self.effort.clone(),
+            status: self.status,
+            authored_by: self.authored_by.clone(),
+            display: self.display.clone(),
+        }
+    }
+}
+
 /// Skill health status for diagnostics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillStatusEntry {

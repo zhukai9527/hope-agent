@@ -23,12 +23,9 @@ pub async fn reload_skills() -> Result<Json<Vec<skills::SkillSummary>>, AppError
 
 /// `GET /api/skills/dock-snapshot`
 pub async fn get_skill_dock_snapshot(
-    axum::extract::State(ctx): axum::extract::State<std::sync::Arc<crate::AppContext>>,
+    axum::extract::State(_ctx): axum::extract::State<std::sync::Arc<crate::AppContext>>,
 ) -> Result<Json<core::SkillDockSnapshot>, AppError> {
-    let db = ctx.session_db.clone();
-    let snapshot = run_blocking(move || core::get_skill_dock_snapshot_with_usage(&db))
-        .await
-        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    let snapshot = run_blocking(core::get_skill_dock_snapshot).await;
     Ok(Json(snapshot))
 }
 
@@ -308,6 +305,85 @@ pub async fn install_skill_to_app(
     let report = run_blocking(move || core::install_skill_to_app(body.name, body.app))
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+/// `POST /api/skills/app/install-dry-run` — validate a deployment without writing files.
+pub async fn dry_run_install_skill_to_app(
+    Json(body): Json<AppInstallBody>,
+) -> Result<Json<core::SkillAppInstallDryRunReport>, AppError> {
+    let report = run_blocking(move || core::dry_run_install_skill_to_app(body.name, body.app))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(report))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SkillBackupQuery {
+    pub name: String,
+}
+
+/// `GET /api/skills/backups` — list skill backups by name.
+pub async fn list_skill_backups(
+    axum::extract::Query(query): axum::extract::Query<SkillBackupQuery>,
+) -> Result<Json<Vec<core::SkillBackupEntry>>, AppError> {
+    let entries = run_blocking(move || core::list_skill_backups(&query.name)).await;
+    Ok(Json(entries))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RollbackBody {
+    pub name: String,
+    pub backup_timestamp: String,
+}
+
+/// `POST /api/skills/rollback` — rollback skill to a backup version.
+pub async fn rollback_skill(
+    Json(body): Json<RollbackBody>,
+) -> Result<Json<()>, AppError> {
+    run_blocking(move || core::rollback_skill(&body.name, &body.backup_timestamp))
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Json(()))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SkillDiffQuery {
+    pub name: String,
+}
+
+/// `GET /api/skills/diff` — get diff between draft and active skill.
+pub async fn get_skill_diff(
+    axum::extract::Query(query): axum::extract::Query<SkillDiffQuery>,
+) -> Result<Json<core::SkillDiffReport>, AppError> {
+    let report = run_blocking(move || core::get_skill_diff(&query.name)).await;
+    Ok(Json(report))
+}
+
+#[derive(serde::Deserialize)]
+pub struct InstallMultiBody {
+    pub name: String,
+    pub apps: Vec<String>,
+}
+
+/// `POST /api/skills/app/install-multi` — install skill to multiple apps.
+pub async fn install_skill_to_apps(
+    Json(body): Json<InstallMultiBody>,
+) -> Result<Json<Vec<core::SkillAppInstallReport>>, AppError> {
+    let reports = run_blocking(move || core::install_skill_to_apps(body.name, body.apps)).await;
+    Ok(Json(reports))
+}
+
+#[derive(serde::Deserialize)]
+pub struct DiagnoseSkillBody {
+    pub name: String,
+}
+
+/// `POST /api/skills/diagnose` — run a diagnostic check on a skill.
+pub async fn diagnose_skill(
+    Json(body): Json<DiagnoseSkillBody>,
+) -> Result<Json<core::SkillDiagnosticReport>, AppError> {
+    let report = run_blocking(move || core::diagnose_skill(&body.name)).await;
     Ok(Json(report))
 }
 

@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::redirect::Policy;
@@ -40,6 +41,24 @@ const REMOTE_SKILL_EXTRACT_MAX_BYTES: u64 = 100 * 1024 * 1024;
 const SKILL_MARKET_PUBLISH_RESPONSE_MAX_BYTES: u64 = 64 * 1024;
 const GITHUB_RAW_HOST: &str = "raw.githubusercontent.com";
 const GITHUB_MARKET_ALLOWED_HOSTS: &[&str] = &[GITHUB_RAW_HOST];
+const SKILL_USAGE_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Debug, Clone)]
+struct SkillUsageCache {
+    report: SkillUsageScanReport,
+    stored_at: Instant,
+}
+
+static SKILL_USAGE_CACHE: OnceLock<RwLock<Option<SkillUsageCache>>> = OnceLock::new();
+static SKILL_USAGE_SCAN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn skill_usage_cache() -> &'static RwLock<Option<SkillUsageCache>> {
+    SKILL_USAGE_CACHE.get_or_init(|| RwLock::new(None))
+}
+
+fn skill_usage_scan_lock() -> &'static Mutex<()> {
+    SKILL_USAGE_SCAN_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 const DEFAULT_SKILL_MARKET_SOURCES: &[SkillRemoteMarketSourceSeed] =
     &[SkillRemoteMarketSourceSeed {
@@ -71,6 +90,10 @@ pub struct SkillDockSnapshot {
     pub usage_app_breakdown: Vec<SkillUsageAppBreakdown>,
     pub apps: Vec<SkillAppProbe>,
     pub generated_at: String,
+    /// `loading` means no scan has completed yet; `stale` means cached data is
+    /// available but past its refresh TTL; `ready` means the cache is fresh.
+    pub usage_status: String,
+    pub usage_generated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,12 +467,124 @@ pub struct SkillAppInstallReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillAppInstallDryRunReport {
+    pub skill_name: String,
+    pub app: String,
+    pub source_path: Option<String>,
+    pub target_path: Option<String>,
+    pub can_install: bool,
+    pub issues: Vec<SkillValidationIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiagnosticReport {
+    pub skill_name: String,
+    pub base_dir: String,
+    pub skill_md_found: bool,
+    pub frontmatter_valid: bool,
+    pub missing_bins: Vec<String>,
+    pub missing_env: Vec<String>,
+    pub app_states: Vec<SkillAppInstallState>,
+    pub issues: Vec<SkillValidationIssue>,
+    pub overall_status: String,
+}
+
+pub fn diagnose_skill(name: &str) -> SkillDiagnosticReport {
+    let detail = get_skill_detail(name);
+    let mut issues = Vec::new();
+    let Some(detail) = detail else {
+        return SkillDiagnosticReport {
+            skill_name: name.to_string(),
+            base_dir: String::new(),
+            skill_md_found: false,
+            frontmatter_valid: false,
+            missing_bins: vec![],
+            missing_env: vec![],
+            app_states: vec![],
+            issues: vec![zip_issue("skill_not_found", "Skill was not found.".to_string(), "error")],
+            overall_status: "not_found".to_string(),
+        };
+    };
+    let skill_path = Path::new(&detail.base_dir);
+    let skill_md = skill_path.join("SKILL.md");
+    let skill_md_found = skill_md.is_file();
+    if !skill_md_found {
+        issues.push(zip_issue("missing_skill_md", "SKILL.md is missing.".to_string(), "error"));
+    }
+    let frontmatter_valid = skill_md_found && std::fs::read_to_string(&skill_md)
+        .map(|content| content.starts_with("---"))
+        .unwrap_or(false);
+    if skill_md_found && !frontmatter_valid {
+        issues.push(zip_issue("invalid_frontmatter", "SKILL.md frontmatter is missing or invalid.".to_string(), "warning"));
+    }
+    let missing_bins: Vec<String> = detail
+        .requires
+        .bins
+        .iter()
+        .filter(|bin| !binary_in_path_public(bin))
+        .cloned()
+        .collect();
+    if !missing_bins.is_empty() {
+        issues.push(zip_issue(
+            "missing_bins",
+            format!("Missing binaries: {}", missing_bins.join(", ")),
+            "warning",
+        ));
+    }
+    let missing_env: Vec<String> = detail
+        .requires
+        .env
+        .iter()
+        .filter(|env| std::env::var(env).is_err())
+        .cloned()
+        .collect();
+    if !missing_env.is_empty() {
+        issues.push(zip_issue(
+            "missing_env",
+            format!("Missing env vars: {}", missing_env.join(", ")),
+            "warning",
+        ));
+    }
+    let apps = probe_skill_apps();
+    let app_states = app_install_states_for_skill(&detail.clone().to_summary(detail.enabled), &apps);
+    let overall_status = if issues.iter().any(|i| i.severity == "error") {
+        "error"
+    } else if issues.iter().any(|i| i.severity == "warning") {
+        "warning"
+    } else {
+        "ok"
+    };
+    SkillDiagnosticReport {
+        skill_name: detail.name,
+        base_dir: detail.base_dir,
+        skill_md_found,
+        frontmatter_valid,
+        missing_bins,
+        missing_env,
+        app_states,
+        issues,
+        overall_status: overall_status.to_string(),
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillUninstallReport {
     pub skill_name: String,
     pub removed_path: String,
     pub removed: bool,
 }
 
+/// Return which agents (Hope, Claude, Codex, OpenCode) have the skill
+/// installed and their deployment status.
+pub fn get_skill_agent_associations(name: &str) -> Vec<SkillAppInstallState> {
+    let detail = match get_skill_detail(name) {
+        Some(d) => d,
+        None => return vec![],
+    };
+    let apps = probe_skill_apps();
+    app_install_states_for_skill(&detail.to_summary(detail.enabled), &apps)
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillUsageScanReport {
@@ -529,10 +664,6 @@ fn probe_skill_apps() -> Vec<SkillAppProbe> {
             Some(home.join(".claude").join("skills")),
         ));
         probes.push(app_probe("codex", Some(home.join(".codex").join("skills"))));
-        probes.push(app_probe(
-            "gemini",
-            Some(home.join(".gemini").join("skills")),
-        ));
         probes.push(app_probe(
             "opencode",
             Some(home.join(".opencode").join("skills")),
@@ -794,7 +925,7 @@ pub fn get_skill_dock_snapshot() -> SkillDockSnapshot {
             ],
         })
         .collect();
-    let usage = skills
+    let empty_usage = skills
         .iter()
         .map(|skill| SkillUsageSnapshot {
             skill_name: skill.name.clone(),
@@ -804,15 +935,37 @@ pub fn get_skill_dock_snapshot() -> SkillDockSnapshot {
         })
         .collect();
 
+    let (usage, usage_trend, recent_usage, usage_app_breakdown, usage_status, usage_generated_at) =
+        match skill_usage_cache().read().ok().and_then(|guard| guard.clone()) {
+            Some(cache) => {
+                let status = if cache.stored_at.elapsed() <= SKILL_USAGE_CACHE_TTL {
+                    "ready"
+                } else {
+                    "stale"
+                };
+                (
+                    cache.report.usage,
+                    cache.report.usage_trend,
+                    cache.report.recent_usage,
+                    cache.report.usage_app_breakdown,
+                    status.to_string(),
+                    Some(cache.report.scanned_at),
+                )
+            }
+            None => (empty_usage, vec![], vec![], vec![], "loading".to_string(), None),
+        };
+
     SkillDockSnapshot {
         sources,
         packages,
         usage,
-        usage_trend: vec![],
-        recent_usage: vec![],
-        usage_app_breakdown: vec![],
+        usage_trend,
+        recent_usage,
+        usage_app_breakdown,
         apps,
         generated_at: now,
+        usage_status,
+        usage_generated_at,
     }
 }
 
@@ -821,19 +974,28 @@ pub fn get_skill_dock_snapshot_with_usage(
 ) -> Result<SkillDockSnapshot> {
     let mut snapshot = get_skill_dock_snapshot();
     let usage_report = scan_skill_usage(db)?;
+    merge_skill_usage_report(&mut snapshot, usage_report);
+    Ok(snapshot)
+}
+
+fn merge_skill_usage_report(snapshot: &mut SkillDockSnapshot, usage_report: SkillUsageScanReport) {
     let mut usage_by_name: HashMap<String, SkillUsageSnapshot> = usage_report
         .usage
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|row| (row.skill_name.clone(), row))
         .collect();
     for row in &mut snapshot.usage {
         if let Some(usage) = usage_by_name.remove(&row.skill_name) {
-            row.usage_count = usage.usage_count;
-            row.last_used_at = usage.last_used_at;
+            *row = usage;
         }
     }
     snapshot.usage.extend(usage_by_name.into_values());
-    Ok(snapshot)
+    snapshot.usage_trend = usage_report.usage_trend;
+    snapshot.recent_usage = usage_report.recent_usage;
+    snapshot.usage_app_breakdown = usage_report.usage_app_breakdown;
+    snapshot.usage_status = "ready".to_string();
+    snapshot.usage_generated_at = Some(usage_report.scanned_at);
 }
 
 pub fn dry_run_import_skill_zip(path: String) -> Result<SkillZipDryRunReport> {
@@ -2595,7 +2757,6 @@ fn external_skill_app_kinds() -> Vec<String> {
     vec![
         "claude".to_string(),
         "codex".to_string(),
-        "gemini".to_string(),
         "opencode".to_string(),
     ]
 }
@@ -2740,6 +2901,16 @@ pub fn update_registry_skill(
 }
 
 pub fn install_skill_to_app(name: String, app: String) -> Result<SkillAppInstallReport> {
+    let preflight = dry_run_install_skill_to_app(name.clone(), app.clone())?;
+    if !preflight.can_install {
+        let reason = preflight
+            .issues
+            .iter()
+            .map(|issue| issue.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(anyhow!("Skill installation preflight failed: {reason}"));
+    }
     let detail = get_skill_detail(&name).ok_or_else(|| anyhow!("Skill not found: {name}"))?;
     let source = PathBuf::from(&detail.base_dir)
         .canonicalize()
@@ -2772,6 +2943,201 @@ pub fn install_skill_to_app(name: String, app: String) -> Result<SkillAppInstall
         source_path: source.to_string_lossy().to_string(),
         target_path: target.to_string_lossy().to_string(),
         installed: true,
+    })
+}
+
+pub fn install_skill_to_apps(name: String, apps: Vec<String>) -> Vec<SkillAppInstallReport> {
+    apps.into_iter()
+        .filter_map(|app| install_skill_to_app(name.clone(), app).ok())
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillBackupEntry {
+    pub timestamp: String,
+    pub path: String,
+    pub created_at: String,
+}
+
+pub fn list_skill_backups(name: &str) -> Vec<SkillBackupEntry> {
+    let root = match crate::paths::skills_dir() {
+        Ok(dir) => dir,
+        Err(_) => return vec![],
+    };
+    let parent = match root.parent() {
+        Some(p) => p,
+        None => return vec![],
+    };
+    let prefix = format!(".{name}.backup.");
+    let mut entries = Vec::new();
+    if let Ok(reader) = fs::read_dir(parent) {
+        for entry in reader.flatten() {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+            if file_name_str.starts_with(&prefix) {
+                let timestamp = file_name_str[prefix.len()..].to_string();
+                let path = entry.path().to_string_lossy().to_string();
+                let created_at = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs().to_string())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                entries.push(SkillBackupEntry {
+                    timestamp,
+                    path,
+                    created_at,
+                });
+            }
+        }
+    }
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    entries
+}
+
+pub fn rollback_skill(name: &str, backup_timestamp: &str) -> Result<()> {
+    validate_skill_dir_name(name)?;
+    let root = crate::paths::skills_dir()
+        .context("Cannot access managed skills directory")?
+        .canonicalize()
+        .context("Cannot canonicalize managed skills directory")?;
+    let current = root.join(name);
+    if !current.exists() {
+        return Err(anyhow!("Current skill directory does not exist: {}", current.display()));
+    }
+    let parent = current
+        .parent()
+        .context("Cannot get parent of skills directory")?;
+    let backup = parent.join(format!(".{name}.backup.{backup_timestamp}"));
+    if !backup.exists() {
+        return Err(anyhow!("Backup not found: {}", backup.display()));
+    }
+    let rollback_name = format!(".{name}.rollback.{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    let rollback_path = parent.join(&rollback_name);
+    fs::rename(&current, &rollback_path).with_context(|| {
+        format!("Cannot move current skill to rollback path {}", rollback_path.display())
+    })?;
+    if let Err(err) = fs::rename(&backup, &current) {
+        let _ = fs::rename(&rollback_path, &current);
+        return Err(anyhow!(err).context("Failed to restore backup; rolled back to current version if possible."));
+    }
+    if !current.join("SKILL.md").is_file() {
+        let _ = fs::rename(&current, &backup);
+        let _ = fs::rename(&rollback_path, &current);
+        return Err(anyhow!("Restored skill is missing SKILL.md; rolled back to current version if possible."));
+    }
+    bump_skill_version();
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiffReport {
+    pub skill_name: String,
+    pub has_draft: bool,
+    pub has_active: bool,
+    pub added_lines: Vec<String>,
+    pub removed_lines: Vec<String>,
+    pub unchanged_count: usize,
+    pub summary: String,
+}
+
+pub fn get_skill_diff(name: &str) -> SkillDiffReport {
+    let store = crate::config::cached_config();
+    let drafts = author::list_drafts(&store.extra_skills_dirs);
+    let draft_entry = drafts.iter().find(|d| d.name == name);
+    let active_entry = get_skill_detail(name);
+    let has_draft = draft_entry.is_some();
+    let has_active = active_entry.is_some();
+    if !has_draft || !has_active {
+        return SkillDiffReport {
+            skill_name: name.to_string(),
+            has_draft,
+            has_active,
+            added_lines: vec![],
+            removed_lines: vec![],
+            unchanged_count: 0,
+            summary: if !has_draft {
+                "No draft found for this skill.".to_string()
+            } else {
+                "No active version found for this skill.".to_string()
+            },
+        };
+    }
+    let draft_content = std::fs::read_to_string(Path::new(&draft_entry.unwrap().base_dir).join("SKILL.md"))
+        .unwrap_or_default();
+    let active_content = std::fs::read_to_string(Path::new(&active_entry.unwrap().base_dir).join("SKILL.md"))
+        .unwrap_or_default();
+    let draft_lines: Vec<&str> = draft_content.lines().collect();
+    let active_lines: Vec<&str> = active_content.lines().collect();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut unchanged = 0;
+    let max_len = draft_lines.len().max(active_lines.len());
+    for i in 0..max_len {
+        match (draft_lines.get(i), active_lines.get(i)) {
+            (Some(d), Some(a)) => {
+                if d == a {
+                    unchanged += 1;
+                } else {
+                    added.push(format!("+ {d}"));
+                    removed.push(format!("- {a}"));
+                }
+            }
+            (Some(d), None) => added.push(format!("+ {d}")),
+            (None, Some(a)) => removed.push(format!("- {a}")),
+            (None, None) => {}
+        }
+    }
+    let summary = format!("{} added, {} removed, {} unchanged", added.len(), removed.len(), unchanged);
+    SkillDiffReport {
+        skill_name: name.to_string(),
+        has_draft,
+        has_active,
+        added_lines: added,
+        removed_lines: removed,
+        unchanged_count: unchanged,
+        summary,
+    }
+}
+
+pub fn dry_run_install_skill_to_app(name: String, app: String) -> Result<SkillAppInstallDryRunReport> {
+    let detail = get_skill_detail(&name);
+    let Some(detail) = detail else {
+        return Ok(SkillAppInstallDryRunReport {
+            skill_name: name,
+            app,
+            source_path: None,
+            target_path: None,
+            can_install: false,
+            issues: vec![zip_issue("skill_not_found", "Skill was not found.".to_string(), "error")],
+        });
+    };
+    let source = PathBuf::from(&detail.base_dir).canonicalize().ok();
+    let target_root = external_app_skills_root(&app);
+    let target = target_root.as_ref().map(|root| root.join(&detail.name));
+    let mut issues = Vec::new();
+    if source.as_ref().map(|path| !path.join("SKILL.md").is_file()).unwrap_or(true) {
+        issues.push(zip_issue("missing_skill_file", "SKILL.md is missing.".to_string(), "error"));
+    }
+    if target_root.is_none() {
+        issues.push(zip_issue("unsupported_app", format!("Unsupported external skills app: {app}"), "error"));
+    }
+    if target.as_ref().map(|path| path.exists()).unwrap_or(false) {
+        issues.push(zip_issue("target_exists", "Target skill already exists; installation will not overwrite it.".to_string(), "error"));
+    }
+    Ok(SkillAppInstallDryRunReport {
+        skill_name: detail.name,
+        app,
+        source_path: source.map(|path| path.to_string_lossy().to_string()),
+        target_path: target.map(|path| path.to_string_lossy().to_string()),
+        can_install: issues.iter().all(|issue| issue.severity != "error"),
+        issues,
     })
 }
 
@@ -2835,6 +3201,9 @@ pub fn uninstall_skill_from_app(name: String, app: String) -> Result<SkillUninst
 }
 
 pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScanReport> {
+    let _scan_guard = skill_usage_scan_lock()
+        .lock()
+        .map_err(|_| anyhow!("skill usage scan lock poisoned"))?;
     let apps = probe_skill_apps();
     let skills_by_name: HashMap<String, SkillSummary> = list_skills()
         .into_iter()
@@ -2919,14 +3288,21 @@ pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScan
         .collect();
     usage_app_breakdown.sort_by(|left, right| right.count.cmp(&left.count).then_with(|| left.app.cmp(&right.app)));
 
-    Ok(SkillUsageScanReport {
+    let report = SkillUsageScanReport {
         usage,
         usage_trend,
         recent_usage,
         usage_app_breakdown,
         scanned_at: chrono::Utc::now().to_rfc3339(),
         source: "session_skill_activation+external_app_logs".to_string(),
-    })
+    };
+    if let Ok(mut cache) = skill_usage_cache().write() {
+        *cache = Some(SkillUsageCache {
+            report: report.clone(),
+            stored_at: Instant::now(),
+        });
+    }
+    Ok(report)
 }
 
 
@@ -2953,7 +3329,7 @@ fn scan_external_skill_usage(
         return ExternalSkillUsageScan::default();
     }
     let mut samples = Vec::new();
-    for app in ["claude", "codex", "gemini", "opencode"] {
+    for app in ["claude", "codex", "opencode"] {
         if !apps.iter().any(|probe| probe.app == app && probe.installed) {
             continue;
         }
@@ -3036,6 +3412,9 @@ fn collect_external_skill_usage_from_file(
     let activated_at = file_timestamp(path);
     let session_id = format!("external:{}:{}", app, stable_short_hash(&path.to_string_lossy()));
     for skill_name in skill_names {
+        if !lowered.contains(skill_name.chars().next().unwrap_or('\0').to_ascii_lowercase()) {
+            continue;
+        }
         let count = skill_name_match_count(&lowered, skill_name);
         if count > 0 {
             out.push(ExternalSkillUsageSample {
@@ -3061,10 +3440,6 @@ fn external_chat_roots(app: &str) -> Vec<PathBuf> {
             "codex" => {
                 roots.push(home.join(".codex").join("sessions"));
                 roots.push(home.join(".codex").join("history"));
-            }
-            "gemini" => {
-                roots.push(home.join(".gemini"));
-                roots.push(home.join("AppData").join("Roaming").join("Gemini"));
             }
             "opencode" => {
                 roots.push(home.join(".opencode"));
@@ -3611,7 +3986,6 @@ fn external_app_skills_root(app: &str) -> Option<PathBuf> {
     match app {
         "claude" => Some(home.join(".claude").join("skills")),
         "codex" => Some(home.join(".codex").join("skills")),
-        "gemini" => Some(home.join(".gemini").join("skills")),
         "opencode" => Some(home.join(".opencode").join("skills")),
         "hope" => crate::paths::skills_dir().ok(),
         _ => None,

@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import { Check, Loader2, Sparkles, Trash2 } from "lucide-react"
+import { Check, FileDiff, Loader2, Sparkles, Trash2 } from "lucide-react"
 import type { SkillSummary } from "../types"
+import { getSkillDiff } from "./api"
 
 interface DraftReviewSectionProps {
   drafts: SkillSummary[]
@@ -62,6 +63,27 @@ export default function DraftReviewSection({
                     </div>
                   )}
                 </div>
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2"
+                onClick={async () => {
+                  try {
+                    const diff = await getSkillDiff(d.name)
+                    const lines = [
+                      diff.summary,
+                      ...diff.addedLines,
+                      ...diff.removedLines,
+                    ]
+                    window.alert(lines.join("\n"))
+                  } catch (e) {
+                    window.alert(e instanceof Error ? e.message : String(e))
+                  }
+                }}
+                title="查看差异"
+              >
+                <FileDiff className="h-3.5 w-3.5" />
               </Button>
               <Button
                 size="sm"

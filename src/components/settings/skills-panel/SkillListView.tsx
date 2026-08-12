@@ -16,13 +16,13 @@ import { Archive, Download, FolderOpen, RefreshCw, SendToBack, Trash2 } from "lu
 import { logger } from "@/lib/logger"
 import type { SkillStatusEntry, SkillSummary } from "../types"
 import type { AppKind, SkillAppInstallState, SkillDockSnapshot, SkillUsageSnapshot } from "./types"
-import { exportSkillZip, installSkillToApp, scanSkillUsage, uninstallManagedSkill } from "./api"
+import { dryRunInstallSkillToApp, exportSkillZip, installSkillToApp, scanSkillUsage, uninstallManagedSkill } from "./api"
 
 type SkillSourceFilter = "all" | "bundled" | "user"
 type SkillStateFilter = "all" | "enabled" | "disabled" | "attention"
 type SkillSortKey = "name" | "source" | "status"
-type LocalSkillAppKind = Extract<AppKind, "claude" | "codex" | "opencode" | "gemini">
-const LOCAL_SKILL_APPS: LocalSkillAppKind[] = ["claude", "codex", "opencode", "gemini"]
+type LocalSkillAppKind = Extract<AppKind, "claude" | "codex" | "opencode">
+const LOCAL_SKILL_APPS: LocalSkillAppKind[] = ["claude", "codex", "opencode"]
 
 interface SkillListViewProps {
   skills: SkillSummary[]
@@ -287,16 +287,45 @@ export default function SkillListView({
 
   async function handleInstallSkills(names: string[], app: LocalSkillAppKind) {
     if (!names.length) return
-    const confirmed = window.confirm(
-      t("settings.skillsManager.installToAppConfirm", {
-        count: names.length,
-        app: t(`settings.skillsDockExtensions.app.${app}`),
-      }),
-    )
-    if (!confirmed) return
     setActionBusy("install")
     try {
-      for (const name of names) await installSkillToApp(name, app)
+      const preflightReports = await Promise.all(
+        names.map((name) => dryRunInstallSkillToApp(name, app).catch(() => null)),
+      )
+      const blocked = names.filter((_, index) => {
+        const report = preflightReports[index]
+        return report && !report.canInstall
+      })
+      const conflictText = blocked.length
+        ? `\n\n${blocked.length} 个技能安装检查未通过，将被跳过：${blocked.join(", ")}。`
+        : ""
+      const confirmed = window.confirm(
+        t("settings.skillsManager.installToAppConfirm", {
+          count: names.length,
+          app: t(`settings.skillsDockExtensions.app.${app}`),
+        }) + conflictText,
+      )
+      if (!confirmed) return
+      const installable = names.filter((_, index) => {
+        const report = preflightReports[index]
+        return !report || report.canInstall
+      })
+      if (!installable.length) {
+        window.alert("所有技能均未通过安装前检查，已取消安装。")
+        return
+      }
+      const results = await Promise.allSettled(installable.map((name) => installSkillToApp(name, app)))
+      const failedItems = results.flatMap((result, index) =>
+        result.status === "rejected"
+          ? [{ name: installable[index], reason: result.reason instanceof Error ? result.reason.message : String(result.reason) }]
+          : [],
+      )
+      const installed = results.length - failedItems.length
+      const summary = [`已安装 ${installed}/${results.length} 项。`]
+      if (failedItems.length) {
+        summary.push(`失败：${failedItems.map(({ name, reason }) => `${name}（${reason}）`).join("；")}`)
+      }
+      window.alert(summary.join("\n"))
       await refreshAfterAction()
     } catch (error) {
       logger.error("settings", "SkillListView::installToApp", "Failed to install skill", error)

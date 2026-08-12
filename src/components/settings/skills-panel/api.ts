@@ -3,7 +3,11 @@ import type { SkillStatusEntry, SkillSummary } from "../types"
 import type {
   SkillDetail,
   SkillDockSnapshot,
+  SkillAppInstallDryRunReport,
   SkillAppInstallReport,
+  SkillBackupEntry,
+  SkillDiagnosticReport,
+  SkillDiffReport,
   SkillMarketHubConfigFile,
   SkillMarketHubTokenStatus,
   SkillMarketHubUpsertRequest,
@@ -209,6 +213,10 @@ export function installSkillToApp(name: string, app: string): Promise<SkillAppIn
   return getTransport().call("install_skill_to_app", { name, app })
 }
 
+export function dryRunInstallSkillToApp(name: string, app: string): Promise<SkillAppInstallDryRunReport> {
+  return getTransport().call("dry_run_install_skill_to_app", { name, app })
+}
+
 export function uninstallSkillFromApp(name: string, app: string): Promise<SkillUninstallReport> {
   return getTransport().call("uninstall_skill_from_app", { name, app })
 }
@@ -219,6 +227,26 @@ export function uninstallManagedSkill(name: string): Promise<SkillUninstallRepor
 
 export function scanSkillUsage(): Promise<SkillUsageScanReport> {
   return getTransport().call("scan_skill_usage")
+}
+
+export function diagnoseSkill(name: string): Promise<SkillDiagnosticReport> {
+  return getTransport().call("diagnose_skill", { name })
+}
+
+export function listSkillBackups(name: string): Promise<SkillBackupEntry[]> {
+  return getTransport().call("list_skill_backups", { name })
+}
+
+export function rollbackSkill(name: string, backupTimestamp: string): Promise<void> {
+  return getTransport().call("rollback_skill", { name, backupTimestamp })
+}
+
+export function getSkillDiff(name: string): Promise<SkillDiffReport> {
+  return getTransport().call("get_skill_diff", { name })
+}
+
+export function installSkillToApps(name: string, apps: string[]): Promise<SkillAppInstallReport[]> {
+  return getTransport().call("install_skill_to_apps", { name, apps })
 }
 
 export function dryRunImportSkillZip(path: string): Promise<SkillZipDryRunReport> {

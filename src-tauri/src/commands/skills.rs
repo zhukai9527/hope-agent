@@ -8,6 +8,69 @@ use ha_core::skills::commands as core;
 const SOURCE: &str = "settings-ui";
 
 #[tauri::command]
+pub async fn list_skill_backups(
+    name: String,
+    _state: State<'_, AppState>,
+) -> Result<Vec<core::SkillBackupEntry>, CmdError> {
+    ha_core::blocking::run_blocking(move || core::list_skill_backups(&name))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn rollback_skill(
+    name: String,
+    backup_timestamp: String,
+    _state: State<'_, AppState>,
+) -> Result<(), CmdError> {
+    ha_core::blocking::run_blocking(move || core::rollback_skill(&name, &backup_timestamp))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_skill_diff(
+    name: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillDiffReport, CmdError> {
+    ha_core::blocking::run_blocking(move || core::get_skill_diff(&name))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn install_skill_to_apps(
+    name: String,
+    apps: Vec<String>,
+    _state: State<'_, AppState>,
+) -> Result<Vec<core::SkillAppInstallReport>, CmdError> {
+    ha_core::blocking::run_blocking(move || core::install_skill_to_apps(name, apps))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn diagnose_skill(
+    name: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillDiagnosticReport, CmdError> {
+    ha_core::blocking::run_blocking(move || core::diagnose_skill(&name))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn dry_run_install_skill_to_app(
+    name: String,
+    app: String,
+    _state: State<'_, AppState>,
+) -> Result<core::SkillAppInstallDryRunReport, CmdError> {
+    ha_core::blocking::run_blocking(move || core::dry_run_install_skill_to_app(name, app))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn get_skills(
     _state: State<'_, AppState>,
 ) -> Result<Vec<skills::SkillSummary>, CmdError> {
@@ -25,7 +88,10 @@ pub async fn reload_skills(
 pub async fn get_skill_dock_snapshot(
     state: State<'_, AppState>,
 ) -> Result<core::SkillDockSnapshot, CmdError> {
-    core::get_skill_dock_snapshot_with_usage(&state.session_db).map_err(Into::into)
+    let _ = state;
+    ha_core::blocking::run_blocking(core::get_skill_dock_snapshot)
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -228,7 +294,10 @@ pub async fn uninstall_skill_from_app(
 pub async fn scan_skill_usage(
     state: State<'_, AppState>,
 ) -> Result<core::SkillUsageScanReport, CmdError> {
-    core::scan_skill_usage(&state.session_db).map_err(Into::into)
+    let db = state.session_db.clone();
+    ha_core::blocking::run_blocking(move || core::scan_skill_usage(&db))
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
