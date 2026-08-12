@@ -32,9 +32,7 @@ use std::time::Duration;
 /// mirror workflow sets and by that workflow writing the manifest only
 /// after every referenced URL verified. See docs/architecture/self-update.md.
 pub const UPDATE_MANIFEST_URLS: &[&str] = &[
-    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json",
-    "https://repo.hopeagent.ai/download/latest.json",
-    "https://github.com/shiwenwen/hope-agent/releases/latest/download/latest.json",
+    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json"
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
