@@ -3889,9 +3889,7 @@ async fn install_or_update_remote_market_skill(
 
     let verified_hash = skill_file_sha256(&source_dir);
     if let (Some(expected), Some(actual)) = (&request.market_hash, &verified_hash) {
-        if !expected.trim().is_empty()
-            && !expected.trim().eq_ignore_ascii_case(actual.trim())
-        {
+        if !expected.trim().is_empty() && !expected.trim().eq_ignore_ascii_case(actual.trim()) {
             return Err(anyhow!(
                 "Remote skill hash mismatch for '{}': expected {}, got {}.",
                 request.name,
