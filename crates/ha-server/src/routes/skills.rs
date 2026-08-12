@@ -338,9 +338,7 @@ pub struct RollbackBody {
 }
 
 /// `POST /api/skills/rollback` — rollback skill to a backup version.
-pub async fn rollback_skill(
-    Json(body): Json<RollbackBody>,
-) -> Result<Json<()>, AppError> {
+pub async fn rollback_skill(Json(body): Json<RollbackBody>) -> Result<Json<()>, AppError> {
     run_blocking(move || core::rollback_skill(&body.name, &body.backup_timestamp))
         .await
         .map_err(|e| AppError::bad_request(e.to_string()))?;

@@ -502,7 +502,11 @@ pub fn diagnose_skill(name: &str) -> SkillDiagnosticReport {
             missing_bins: vec![],
             missing_env: vec![],
             app_states: vec![],
-            issues: vec![zip_issue("skill_not_found", "Skill was not found.".to_string(), "error")],
+            issues: vec![zip_issue(
+                "skill_not_found",
+                "Skill was not found.".to_string(),
+                "error",
+            )],
             overall_status: "not_found".to_string(),
         };
     };
@@ -510,13 +514,22 @@ pub fn diagnose_skill(name: &str) -> SkillDiagnosticReport {
     let skill_md = skill_path.join("SKILL.md");
     let skill_md_found = skill_md.is_file();
     if !skill_md_found {
-        issues.push(zip_issue("missing_skill_md", "SKILL.md is missing.".to_string(), "error"));
+        issues.push(zip_issue(
+            "missing_skill_md",
+            "SKILL.md is missing.".to_string(),
+            "error",
+        ));
     }
-    let frontmatter_valid = skill_md_found && std::fs::read_to_string(&skill_md)
-        .map(|content| content.starts_with("---"))
-        .unwrap_or(false);
+    let frontmatter_valid = skill_md_found
+        && std::fs::read_to_string(&skill_md)
+            .map(|content| content.starts_with("---"))
+            .unwrap_or(false);
     if skill_md_found && !frontmatter_valid {
-        issues.push(zip_issue("invalid_frontmatter", "SKILL.md frontmatter is missing or invalid.".to_string(), "warning"));
+        issues.push(zip_issue(
+            "invalid_frontmatter",
+            "SKILL.md frontmatter is missing or invalid.".to_string(),
+            "warning",
+        ));
     }
     let missing_bins: Vec<String> = detail
         .requires
@@ -547,7 +560,8 @@ pub fn diagnose_skill(name: &str) -> SkillDiagnosticReport {
         ));
     }
     let apps = probe_skill_apps();
-    let app_states = app_install_states_for_skill(&detail.clone().to_summary(detail.enabled), &apps);
+    let app_states =
+        app_install_states_for_skill(&detail.clone().to_summary(detail.enabled), &apps);
     let overall_status = if issues.iter().any(|i| i.severity == "error") {
         "error"
     } else if issues.iter().any(|i| i.severity == "warning") {
@@ -936,7 +950,11 @@ pub fn get_skill_dock_snapshot() -> SkillDockSnapshot {
         .collect();
 
     let (usage, usage_trend, recent_usage, usage_app_breakdown, usage_status, usage_generated_at) =
-        match skill_usage_cache().read().ok().and_then(|guard| guard.clone()) {
+        match skill_usage_cache()
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
             Some(cache) => {
                 let status = if cache.stored_at.elapsed() <= SKILL_USAGE_CACHE_TTL {
                     "ready"
@@ -952,7 +970,14 @@ pub fn get_skill_dock_snapshot() -> SkillDockSnapshot {
                     Some(cache.report.scanned_at),
                 )
             }
-            None => (empty_usage, vec![], vec![], vec![], "loading".to_string(), None),
+            None => (
+                empty_usage,
+                vec![],
+                vec![],
+                vec![],
+                "loading".to_string(),
+                None,
+            ),
         };
 
     SkillDockSnapshot {
@@ -2332,8 +2357,7 @@ async fn fetch_clawhub_market_entries(
         let normalized_skill_path = entry.skill_path.replace('\\', "/");
         let raw_url = format!(
             "https://github.com/{}/blob/HEAD/{}",
-            entry.source,
-            normalized_skill_path
+            entry.source, normalized_skill_path
         );
         let metadata = fetch_remote_skill_metadata(client, &entry.source, &normalized_skill_path)
             .await
@@ -2389,7 +2413,9 @@ async fn fetch_clawhub_market_entries(
             description: metadata.description.unwrap_or_else(|| {
                 skill_market_description(&entry_name, &entry.source, &entry.skill_path)
             }),
-            author: metadata.author.unwrap_or_else(|| skill_market_author(&entry.source)),
+            author: metadata
+                .author
+                .unwrap_or_else(|| skill_market_author(&entry.source)),
             license: metadata.license.unwrap_or_else(|| "unknown".to_string()),
             category,
             tags,
@@ -2542,7 +2568,8 @@ fn skill_market_tags_with_metadata(
 }
 
 async fn validate_clawhub_market_index_url(url: &str) -> Result<()> {
-    let parsed = url::Url::parse(url).with_context(|| format!("Invalid market index URL: {url}"))?;
+    let parsed =
+        url::Url::parse(url).with_context(|| format!("Invalid market index URL: {url}"))?;
     let is_default_clawhub = parsed.scheme() == "https"
         && parsed.host_str() == Some(GITHUB_RAW_HOST)
         && parsed.path() == "/openclaw/clawhub/main/skills-lock.json"
@@ -2562,8 +2589,8 @@ async fn validate_remote_skill_metadata_url(
     repo: &str,
     skill_path: &str,
 ) -> Result<()> {
-    let parsed =
-        url::Url::parse(raw_url).with_context(|| format!("Invalid skill metadata URL: {raw_url}"))?;
+    let parsed = url::Url::parse(raw_url)
+        .with_context(|| format!("Invalid skill metadata URL: {raw_url}"))?;
     let expected_path = format!("/{owner}/{repo}/HEAD/{skill_path}");
     let is_allowed_github_raw = parsed.scheme() == "https"
         && parsed.host_str() == Some(GITHUB_RAW_HOST)
@@ -2683,7 +2710,9 @@ fn parse_remote_skill_metadata(content: &str) -> SkillRemoteMarketMetadata {
             "version" => metadata.version = Some(value),
             "category" => metadata.category = Some(value),
             "tags" | "categories" => metadata.tags.extend(parse_frontmatter_list(&value)),
-            "updated_at" | "updatedat" | "updated" | "modified" => metadata.updated_at = Some(value),
+            "updated_at" | "updatedat" | "updated" | "modified" => {
+                metadata.updated_at = Some(value)
+            }
             _ => {}
         }
     }
@@ -2697,18 +2726,19 @@ fn parse_remote_skill_metadata(content: &str) -> SkillRemoteMarketMetadata {
 
 fn markdown_frontmatter(content: &str) -> Option<&str> {
     let rest = content.strip_prefix("---")?;
-    let rest = rest.strip_prefix('\n').or_else(|| rest.strip_prefix("\r\n"))?;
+    let rest = rest
+        .strip_prefix('\n')
+        .or_else(|| rest.strip_prefix("\r\n"))?;
     rest.split_once("\n---")
         .map(|(frontmatter, _)| frontmatter)
-        .or_else(|| rest.split_once("\r\n---").map(|(frontmatter, _)| frontmatter))
+        .or_else(|| {
+            rest.split_once("\r\n---")
+                .map(|(frontmatter, _)| frontmatter)
+        })
 }
 
 fn clean_frontmatter_value(value: &str) -> String {
-    value
-        .trim()
-        .trim_matches(['\'', '"'])
-        .trim()
-        .to_string()
+    value.trim().trim_matches(['\'', '"']).trim().to_string()
 }
 
 fn parse_frontmatter_list(value: &str) -> Vec<String> {
@@ -3008,7 +3038,10 @@ pub fn rollback_skill(name: &str, backup_timestamp: &str) -> Result<()> {
         .context("Cannot canonicalize managed skills directory")?;
     let current = root.join(name);
     if !current.exists() {
-        return Err(anyhow!("Current skill directory does not exist: {}", current.display()));
+        return Err(anyhow!(
+            "Current skill directory does not exist: {}",
+            current.display()
+        ));
     }
     let parent = current
         .parent()
@@ -3017,19 +3050,28 @@ pub fn rollback_skill(name: &str, backup_timestamp: &str) -> Result<()> {
     if !backup.exists() {
         return Err(anyhow!("Backup not found: {}", backup.display()));
     }
-    let rollback_name = format!(".{name}.rollback.{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    let rollback_name = format!(
+        ".{name}.rollback.{}",
+        chrono::Utc::now().format("%Y%m%d%H%M%S")
+    );
     let rollback_path = parent.join(&rollback_name);
     fs::rename(&current, &rollback_path).with_context(|| {
-        format!("Cannot move current skill to rollback path {}", rollback_path.display())
+        format!(
+            "Cannot move current skill to rollback path {}",
+            rollback_path.display()
+        )
     })?;
     if let Err(err) = fs::rename(&backup, &current) {
         let _ = fs::rename(&rollback_path, &current);
-        return Err(anyhow!(err).context("Failed to restore backup; rolled back to current version if possible."));
+        return Err(anyhow!(err)
+            .context("Failed to restore backup; rolled back to current version if possible."));
     }
     if !current.join("SKILL.md").is_file() {
         let _ = fs::rename(&current, &backup);
         let _ = fs::rename(&rollback_path, &current);
-        return Err(anyhow!("Restored skill is missing SKILL.md; rolled back to current version if possible."));
+        return Err(anyhow!(
+            "Restored skill is missing SKILL.md; rolled back to current version if possible."
+        ));
     }
     bump_skill_version();
     Ok(())
@@ -3069,10 +3111,12 @@ pub fn get_skill_diff(name: &str) -> SkillDiffReport {
             },
         };
     }
-    let draft_content = std::fs::read_to_string(Path::new(&draft_entry.unwrap().base_dir).join("SKILL.md"))
-        .unwrap_or_default();
-    let active_content = std::fs::read_to_string(Path::new(&active_entry.unwrap().base_dir).join("SKILL.md"))
-        .unwrap_or_default();
+    let draft_content =
+        std::fs::read_to_string(Path::new(&draft_entry.unwrap().base_dir).join("SKILL.md"))
+            .unwrap_or_default();
+    let active_content =
+        std::fs::read_to_string(Path::new(&active_entry.unwrap().base_dir).join("SKILL.md"))
+            .unwrap_or_default();
     let draft_lines: Vec<&str> = draft_content.lines().collect();
     let active_lines: Vec<&str> = active_content.lines().collect();
     let mut added = Vec::new();
@@ -3094,7 +3138,12 @@ pub fn get_skill_diff(name: &str) -> SkillDiffReport {
             (None, None) => {}
         }
     }
-    let summary = format!("{} added, {} removed, {} unchanged", added.len(), removed.len(), unchanged);
+    let summary = format!(
+        "{} added, {} removed, {} unchanged",
+        added.len(),
+        removed.len(),
+        unchanged
+    );
     SkillDiffReport {
         skill_name: name.to_string(),
         has_draft,
@@ -3106,7 +3155,10 @@ pub fn get_skill_diff(name: &str) -> SkillDiffReport {
     }
 }
 
-pub fn dry_run_install_skill_to_app(name: String, app: String) -> Result<SkillAppInstallDryRunReport> {
+pub fn dry_run_install_skill_to_app(
+    name: String,
+    app: String,
+) -> Result<SkillAppInstallDryRunReport> {
     let detail = get_skill_detail(&name);
     let Some(detail) = detail else {
         return Ok(SkillAppInstallDryRunReport {
@@ -3115,21 +3167,41 @@ pub fn dry_run_install_skill_to_app(name: String, app: String) -> Result<SkillAp
             source_path: None,
             target_path: None,
             can_install: false,
-            issues: vec![zip_issue("skill_not_found", "Skill was not found.".to_string(), "error")],
+            issues: vec![zip_issue(
+                "skill_not_found",
+                "Skill was not found.".to_string(),
+                "error",
+            )],
         });
     };
     let source = PathBuf::from(&detail.base_dir).canonicalize().ok();
     let target_root = external_app_skills_root(&app);
     let target = target_root.as_ref().map(|root| root.join(&detail.name));
     let mut issues = Vec::new();
-    if source.as_ref().map(|path| !path.join("SKILL.md").is_file()).unwrap_or(true) {
-        issues.push(zip_issue("missing_skill_file", "SKILL.md is missing.".to_string(), "error"));
+    if source
+        .as_ref()
+        .map(|path| !path.join("SKILL.md").is_file())
+        .unwrap_or(true)
+    {
+        issues.push(zip_issue(
+            "missing_skill_file",
+            "SKILL.md is missing.".to_string(),
+            "error",
+        ));
     }
     if target_root.is_none() {
-        issues.push(zip_issue("unsupported_app", format!("Unsupported external skills app: {app}"), "error"));
+        issues.push(zip_issue(
+            "unsupported_app",
+            format!("Unsupported external skills app: {app}"),
+            "error",
+        ));
     }
     if target.as_ref().map(|path| path.exists()).unwrap_or(false) {
-        issues.push(zip_issue("target_exists", "Target skill already exists; installation will not overwrite it.".to_string(), "error"));
+        issues.push(zip_issue(
+            "target_exists",
+            "Target skill already exists; installation will not overwrite it.".to_string(),
+            "error",
+        ));
     }
     Ok(SkillAppInstallDryRunReport {
         skill_name: detail.name,
@@ -3260,7 +3332,8 @@ pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScan
                     .unwrap_or_default(),
             });
         entry.usage_count = entry.usage_count.saturating_add(sample.count);
-        entry.last_used_at = newer_timestamp(entry.last_used_at.take(), Some(sample.activated_at.clone()));
+        entry.last_used_at =
+            newer_timestamp(entry.last_used_at.take(), Some(sample.activated_at.clone()));
         *app_counts.entry(sample.app.clone()).or_default() += sample.count;
         *trend_by_day_app
             .entry((usage_date_key(&sample.activated_at), sample.app.clone()))
@@ -3279,14 +3352,23 @@ pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScan
         .into_iter()
         .map(|((date, app), count)| SkillUsageTrendPoint { date, app, count })
         .collect();
-    usage_trend.sort_by(|left, right| left.date.cmp(&right.date).then_with(|| left.app.cmp(&right.app)));
+    usage_trend.sort_by(|left, right| {
+        left.date
+            .cmp(&right.date)
+            .then_with(|| left.app.cmp(&right.app))
+    });
     recent_usage.sort_by(|left, right| right.activated_at.cmp(&left.activated_at));
     recent_usage.truncate(200);
     let mut usage_app_breakdown: Vec<_> = app_counts
         .into_iter()
         .map(|(app, count)| SkillUsageAppBreakdown { app, count })
         .collect();
-    usage_app_breakdown.sort_by(|left, right| right.count.cmp(&left.count).then_with(|| left.app.cmp(&right.app)));
+    usage_app_breakdown.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.app.cmp(&right.app))
+    });
 
     let report = SkillUsageScanReport {
         usage,
@@ -3304,7 +3386,6 @@ pub fn scan_skill_usage(db: &crate::session::SessionDB) -> Result<SkillUsageScan
     }
     Ok(report)
 }
-
 
 #[derive(Debug, Clone)]
 struct ExternalSkillUsageSample {
@@ -3350,13 +3431,15 @@ fn scan_external_skill_usage(
     }
     let mut records = by_key
         .into_iter()
-        .map(|((app, skill_name, date, session_id), count)| SkillUsageRecentRecord {
-            activated_at: format!("{date}T00:00:00Z"),
-            app,
-            skill_name,
-            session_id,
-            count,
-        })
+        .map(
+            |((app, skill_name, date, session_id), count)| SkillUsageRecentRecord {
+                activated_at: format!("{date}T00:00:00Z"),
+                app,
+                skill_name,
+                session_id,
+                count,
+            },
+        )
         .collect::<Vec<_>>();
     records.sort_by(|left, right| right.activated_at.cmp(&left.activated_at));
     records.truncate(500);
@@ -3375,10 +3458,14 @@ fn collect_external_skill_usage_from_root(
     let mut stack = vec![root.to_path_buf()];
     let mut scanned_files = 0usize;
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(metadata) = entry.metadata() else { continue };
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
             if metadata.is_dir() {
                 if stack.len() < 128 {
                     stack.push(path);
@@ -3405,14 +3492,28 @@ fn collect_external_skill_usage_from_file(
 ) {
     let Ok(file) = File::open(path) else { return };
     let mut content = String::new();
-    if file.take(2 * 1024 * 1024).read_to_string(&mut content).is_err() {
+    if file
+        .take(2 * 1024 * 1024)
+        .read_to_string(&mut content)
+        .is_err()
+    {
         return;
     }
     let lowered = content.to_lowercase();
     let activated_at = file_timestamp(path);
-    let session_id = format!("external:{}:{}", app, stable_short_hash(&path.to_string_lossy()));
+    let session_id = format!(
+        "external:{}:{}",
+        app,
+        stable_short_hash(&path.to_string_lossy())
+    );
     for skill_name in skill_names {
-        if !lowered.contains(skill_name.chars().next().unwrap_or('\0').to_ascii_lowercase()) {
+        if !lowered.contains(
+            skill_name
+                .chars()
+                .next()
+                .unwrap_or('\0')
+                .to_ascii_lowercase(),
+        ) {
             continue;
         }
         let count = skill_name_match_count(&lowered, skill_name);
@@ -3493,7 +3594,10 @@ fn stable_short_hash(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     let digest = hasher.finalize();
-    format!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3])
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    )
 }
 
 fn validate_skill_dir_name(name: &str) -> Result<()> {
@@ -3786,7 +3890,7 @@ async fn install_or_update_remote_market_skill(
     let verified_hash = skill_file_sha256(&source_dir);
     if let (Some(expected), Some(actual)) = (&request.market_hash, &verified_hash) {
         if !expected.trim().is_empty()
-            && expected.trim().to_ascii_lowercase() != actual.trim().to_ascii_lowercase()
+            && !expected.trim().eq_ignore_ascii_case(actual.trim())
         {
             return Err(anyhow!(
                 "Remote skill hash mismatch for '{}': expected {}, got {}.",

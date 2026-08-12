@@ -2815,22 +2815,10 @@ fn build_router_with_cors(
             "/skills/app/install-dry-run",
             post(routes::skills::dry_run_install_skill_to_app),
         )
-        .route(
-            "/skills/diagnose",
-            post(routes::skills::diagnose_skill),
-        )
-        .route(
-            "/skills/backups",
-            get(routes::skills::list_skill_backups),
-        )
-        .route(
-            "/skills/rollback",
-            post(routes::skills::rollback_skill),
-        )
-        .route(
-            "/skills/diff",
-            get(routes::skills::get_skill_diff),
-        )
+        .route("/skills/diagnose", post(routes::skills::diagnose_skill))
+        .route("/skills/backups", get(routes::skills::list_skill_backups))
+        .route("/skills/rollback", post(routes::skills::rollback_skill))
+        .route("/skills/diff", get(routes::skills::get_skill_diff))
         .route(
             "/skills/app/install-multi",
             post(routes::skills::install_skill_to_apps),

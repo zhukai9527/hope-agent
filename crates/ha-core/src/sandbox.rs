@@ -9,12 +9,12 @@ use futures_util::StreamExt;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::error::Error as StdError;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::env;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -448,8 +448,10 @@ async fn native_docker_probe() -> NativeDockerProbe {
     candidates.push(default_native_docker_endpoint().to_string());
 
     for host in candidates {
-        let docker = if host.starts_with("npipe://") || host.starts_with("unix://")
-            || host.starts_with("tcp://") || host.starts_with("http://")
+        let docker = if host.starts_with("npipe://")
+            || host.starts_with("unix://")
+            || host.starts_with("tcp://")
+            || host.starts_with("http://")
             || host.starts_with("https://")
         {
             Docker::connect_with_host(&host)
@@ -464,11 +466,19 @@ async fn native_docker_probe() -> NativeDockerProbe {
             }
         };
         match docker.ping().await {
-            Ok(_) => return NativeDockerProbe { daemon_running: true, connection_error: None },
+            Ok(_) => {
+                return NativeDockerProbe {
+                    daemon_running: true,
+                    connection_error: None,
+                }
+            }
             Err(error) => last_error = Some(classify_docker_connection_error(&error)),
         }
     }
-    NativeDockerProbe { daemon_running: false, connection_error: last_error }
+    NativeDockerProbe {
+        daemon_running: false,
+        connection_error: last_error,
+    }
 }
 
 /// Platform-specific default Docker endpoint used when neither `DOCKER_HOST`
@@ -476,22 +486,36 @@ async fn native_docker_probe() -> NativeDockerProbe {
 /// pipe; on Unix it is the conventional Docker daemon socket.
 fn default_native_docker_endpoint() -> &'static str {
     #[cfg(windows)]
-    { "npipe:////./pipe/docker_engine" }
+    {
+        "npipe:////./pipe/docker_engine"
+    }
     #[cfg(not(windows))]
-    { "unix:///var/run/docker.sock" }
+    {
+        "unix:///var/run/docker.sock"
+    }
 }
 
 async fn system_docker_context_endpoint() -> Result<String, ()> {
     let mut command = Command::new("docker");
-    command.args(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
+    command.args([
+        "context",
+        "inspect",
+        "--format",
+        "{{.Endpoints.docker.Host}}",
+    ]);
     command_succeeds_with_stdout(&mut command).await.ok_or(())
 }
 
 async fn command_succeeds_with_stdout(command: &mut Command) -> Option<String> {
     crate::platform::hide_console_tokio(command);
     command.stderr(Stdio::null()).kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await.ok()?.ok()?;
-    if !output.status.success() { return None; }
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .ok()?
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
     let value = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!value.is_empty()).then_some(value)
 }
@@ -2588,6 +2612,8 @@ mod sandbox_tests {
             wsl_installed: None,
             wsl_distribution_installed: None,
             wsl_docker_installed: None,
+            wsl_distro: None,
+            wsl_docker_error: None,
             connection_error: Some(DockerConnectionErrorKind::PermissionDenied),
             containerized: true,
             isolated_mode_only: true,
