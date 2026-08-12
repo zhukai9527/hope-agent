@@ -31,9 +31,8 @@ use std::time::Duration;
 /// instead of falling through — is bounded by the short Cache-Control the
 /// mirror workflow sets and by that workflow writing the manifest only
 /// after every referenced URL verified. See docs/architecture/self-update.md.
-pub const UPDATE_MANIFEST_URLS: &[&str] = &[
-    "https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json"
-];
+pub const UPDATE_MANIFEST_URLS: &[&str] =
+    &["https://github.com/zhukai9527/hope-agent/releases/latest/download/latest.json"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
