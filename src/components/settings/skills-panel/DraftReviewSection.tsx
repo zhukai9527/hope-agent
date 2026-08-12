@@ -81,7 +81,7 @@ export default function DraftReviewSection({
                     window.alert(e instanceof Error ? e.message : String(e))
                   }
                 }}
-                title="查看差异"
+                aria-label="查看差异"
               >
                 <FileDiff className="h-3.5 w-3.5" />
               </Button>

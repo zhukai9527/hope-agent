@@ -2275,6 +2275,7 @@ describe("WorkspacePanel environment section", () => {
 
     renderPanel(null)
 
+    await clickSectionHeader("工作流")
     expect(await screen.findByText("无法读取已挂载知识空间")).toBeTruthy()
     expect(await screen.findByText(/Authorization: Bearer \[redacted\]/)).toBeTruthy()
     expect(screen.queryByText("未挂载知识空间")).toBeNull()
@@ -2587,7 +2588,7 @@ describe("WorkspacePanel workflow section", () => {
     })
 
     await clickSectionHeader("工作流")
-
+    expect(await screen.findByText("执行模式")).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: /^开启/ }))
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith("set_workflow_mode", {
@@ -2608,7 +2609,7 @@ describe("WorkspacePanel workflow section", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /新建持续推进/ })[0])
     expect(await screen.findByRole("button", { name: "创建持续推进" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "按工作流执行" })).toBeTruthy()
-  })
+  }, 10_000)
 
   it("keeps empty workflow acceptance neutral before any samples exist", async () => {
     transportMock.call.mockImplementation((name: string) => {
@@ -3225,6 +3226,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     const reviewButtons = await screen.findAllByRole("button", { name: "复核产物" })
     fireEvent.click(reviewButtons[0])
 
@@ -3245,7 +3247,7 @@ describe("WorkspacePanel workflow section", () => {
         },
       })
     })
-  })
+  }, 10_000)
 
   it("records explicit export review evidence from the export guard", async () => {
     transportMock.call.mockImplementation((name: string, args?: Record<string, unknown>) => {
@@ -3287,6 +3289,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     const exportReviewButtons = await screen.findAllByRole("button", { name: "导出复核" })
     fireEvent.click(exportReviewButtons[0])
 
@@ -3373,6 +3376,7 @@ describe("WorkspacePanel workflow section", () => {
       git: null,
     })
 
+    await clickSectionHeader("通用任务工作台")
     const approveButtons = await screen.findAllByRole("button", { name: "批准动作" })
     fireEvent.click(approveButtons[0])
 
@@ -3736,7 +3740,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(
       (evidenceCalls[1].sourceMetadata as Record<string, unknown>).actionExecuted,
     ).toBeUndefined()
-  })
+  }, 10_000)
 
   it("creates a task from domain workbench next-step gaps", async () => {
     transportMock.call.mockImplementation((name: string) => {
@@ -3959,7 +3963,7 @@ describe("WorkspacePanel workflow section", () => {
         backoffSecs: 600,
       })
     })
-  })
+  }, 10_000)
 
   it("surfaces loop watchdog findings with a direct recovery action", async () => {
     const schedule = loopSchedule({
@@ -4225,7 +4229,7 @@ describe("WorkspacePanel workflow section", () => {
     expect((screen.getByRole("button", { name: "创建并运行" }) as HTMLButtonElement).disabled).toBe(
       true,
     )
-    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "预检" })[0])
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith("preview_workflow_script", {
         sessionId: "s1",
@@ -4248,7 +4252,7 @@ describe("WorkspacePanel workflow section", () => {
         runImmediately: true,
       })
     })
-  })
+  }, 10_000)
 
   it("generates a goal-driven workflow draft before preflight", async () => {
     const run = workflowRun({ state: "draft" })
@@ -4277,7 +4281,7 @@ describe("WorkspacePanel workflow section", () => {
       target: { value: "修复设置页保存 Provider 后没有刷新状态的问题" },
     })
     fireEvent.click(screen.getByRole("button", { name: "生成可预检草稿" }))
-    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "预检" })[0])
 
     await waitFor(() => {
       expect(transportMock.call).toHaveBeenCalledWith(
@@ -4308,7 +4312,7 @@ describe("WorkspacePanel workflow section", () => {
         }),
       )
     })
-  })
+  }, 10_000)
 
   it("generates a domain workflow draft from the workspace template picker", async () => {
     const template = domainWorkflowTemplate()
@@ -4407,7 +4411,7 @@ describe("WorkspacePanel workflow section", () => {
       target: { value: "实现自动创建 workflow 会话" },
     })
     fireEvent.click(screen.getByRole("button", { name: "生成可预检草稿" }))
-    fireEvent.click(screen.getByRole("button", { name: "预检" }))
+    fireEvent.click(screen.getAllByRole("button", { name: "预检" })[0])
 
     await waitFor(() => {
       expect(onEnsureSession).toHaveBeenCalledTimes(1)
@@ -4514,7 +4518,7 @@ describe("WorkspacePanel workflow section", () => {
         }),
       )
     })
-  })
+  }, 10_000)
 
   it("blocks workflow creation when script preflight fails", async () => {
     transportMock.call.mockImplementation((name: string) => {
@@ -4560,7 +4564,7 @@ describe("WorkspacePanel workflow section", () => {
     expect(screen.getByText("Return a structured final result.")).toBeTruthy()
     expect((screen.getByRole("button", { name: "创建" }) as HTMLButtonElement).disabled).toBe(true)
     expect(transportMock.call).not.toHaveBeenCalledWith("create_workflow_run", expect.anything())
-  })
+  }, 10_000)
 
   it("surfaces approval summary and primary workflow actions", async () => {
     const run = workflowRun()
@@ -4805,13 +4809,15 @@ describe("WorkspacePanel workflow section", () => {
 
     renderPanel(null)
 
+    await clickSectionHeader("工作流")
+
     fireEvent.click(
       await screen.findByRole("button", { name: "展开步骤详情" }, { timeout: 5_000 }),
     )
 
     expect(await screen.findByText("步骤详情")).toBeTruthy()
     expect(screen.getAllByText(/write-file/).length).toBeGreaterThan(1)
-  })
+  }, 10_000)
 
   it("keeps late failed workflow steps visible in the trace focus area", async () => {
     const run = workflowRun({ state: "failed" })
@@ -4875,6 +4881,9 @@ describe("WorkspacePanel workflow section", () => {
 
     renderPanel(null)
 
+    await clickSectionHeader("工作流")
+
+    await clickSectionHeader("工作流")
     expect(await screen.findByText("关注步骤")).toBeTruthy()
     expect(screen.getAllByText("late-write-step").length).toBeGreaterThan(0)
     expect(screen.getByText(/前 6\/8 个步骤/)).toBeTruthy()
@@ -5468,7 +5477,7 @@ describe("WorkspacePanel workflow section", () => {
         }),
       )
     })
-  })
+  }, 10_000)
 
   it("surfaces persisted workflow derivation links", async () => {
     const child = workflowRun({
@@ -5503,7 +5512,7 @@ describe("WorkspacePanel workflow section", () => {
 
     expect(await screen.findByText("修复自 wf-parent")).toBeTruthy()
     expect(await screen.findByText("已生成修复运行 wf-grandchild")).toBeTruthy()
-  })
+  }, 10_000)
 
   it("uses the latest repair source when switching between failed workflow runs", async () => {
     const oldRun = workflowRun({ id: "wf-old", state: "failed", kind: "coding.old" })

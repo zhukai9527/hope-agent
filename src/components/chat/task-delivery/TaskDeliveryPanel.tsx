@@ -107,7 +107,14 @@ export default function TaskDeliveryPanel({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onRefresh && (
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onRefresh} disabled={loading} title="刷新交付状态">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={onRefresh}
+              disabled={loading}
+              aria-label="刷新交付状态"
+            >
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </Button>
           )}
@@ -148,7 +155,7 @@ export default function TaskDeliveryPanel({
                   className="min-w-0 max-w-[55%] rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground outline-none"
                   value={selectedTaskDir ?? state.taskDir ?? ""}
                   onChange={(event) => onSelectTaskDir(event.target.value || null)}
-                  title="选择任务目录"
+                  aria-label="选择任务目录"
                 >
                   {taskCandidates.map((candidate) => (
                     <option key={candidate.taskDir} value={candidate.taskDir}>
@@ -213,7 +220,7 @@ export default function TaskDeliveryPanel({
                 size="sm"
                 className="h-auto justify-start px-2 py-2 text-left"
                 disabled={!action.enabled || !onAction}
-                title={!onAction ? "当前面板未接入对话发送入口。" : action.disabledReason ?? action.description}
+                aria-label={!onAction ? "当前面板未接入对话发送入口。" : action.label}
                 onClick={() => onAction?.(action.id)}
               >
                 <span className="min-w-0">
@@ -269,7 +276,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onPhaseAction}
-                      title="继续此阶段"
+                      aria-label="继续此阶段"
                       onClick={() => onPhaseAction?.(phase, "continue")}
                     >
                       <Play className="h-3.5 w-3.5" />
@@ -279,7 +286,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onPhaseAction}
-                      title="补齐阶段证据"
+                      aria-label="补齐阶段证据"
                       onClick={() => onPhaseAction?.(phase, "evidence")}
                     >
                       <Wrench className="h-3.5 w-3.5" />
@@ -289,7 +296,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onPhaseAction}
-                      title="查看阶段阻塞"
+                      aria-label="查看阶段阻塞"
                       onClick={() => onPhaseAction?.(phase, "blockers")}
                     >
                       <Search className="h-3.5 w-3.5" />
@@ -332,7 +339,7 @@ export default function TaskDeliveryPanel({
                     size="icon"
                     className="h-7 w-7"
                     disabled={!artifact.path || !onOpenArtifact}
-                    title={artifact.path ? "打开产物" : "产物文件尚不存在"}
+                    aria-label={artifact.path ? "打开产物" : "产物文件尚不存在"}
                     onClick={() => onOpenArtifact?.(artifact)}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
@@ -342,7 +349,7 @@ export default function TaskDeliveryPanel({
                     size="icon"
                     className="h-7 w-7"
                     disabled={!onRepairArtifact}
-                    title="生成补齐/修复产物指令"
+                    aria-label="生成补齐/修复产物指令"
                     onClick={() => onRepairArtifact?.(artifact)}
                   >
                     <Wrench className="h-3.5 w-3.5" />
@@ -373,7 +380,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onVerificationAction}
-                      title="生成/执行验证指令"
+                      aria-label="生成/执行验证指令"
                       onClick={() => onVerificationAction?.(item, "run")}
                     >
                       <Play className="h-3.5 w-3.5" />
@@ -383,7 +390,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onVerificationAction}
-                      title="记录未执行原因"
+                      aria-label="记录未执行原因"
                       onClick={() => onVerificationAction?.(item, "skip")}
                     >
                       <AlertCircle className="h-3.5 w-3.5" />
@@ -393,7 +400,7 @@ export default function TaskDeliveryPanel({
                       size="icon"
                       className="h-7 w-7"
                       disabled={!onVerificationAction}
-                      title="解释失败/异常"
+                      aria-label="解释失败/异常"
                       onClick={() => onVerificationAction?.(item, "explain")}
                     >
                       <Search className="h-3.5 w-3.5" />

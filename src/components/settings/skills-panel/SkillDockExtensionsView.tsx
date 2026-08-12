@@ -1556,7 +1556,7 @@ export default function SkillDockExtensionsView({
                     key={`${dir}:${index}`}
                     className="flex items-center justify-between gap-3 py-3 text-[13px]"
                   >
-                    <span className="min-w-0 truncate" title={dir}>
+                    <span className="min-w-0 truncate" aria-label={dir}>
                       {shortPath(dir)}
                     </span>
                     <span className="flex gap-2 text-[#9ca3af]">
@@ -1776,7 +1776,7 @@ function DockSectionNav({
               className={
                 active
                   ? "rounded-xl border border-primary/20 bg-primary px-3 py-3 text-left text-primary-foreground shadow-sm"
-                  : "rounded-xl border border-transparent bg-secondary/30 px-3 py-3 text-left text-muted-foreground transition hover:border-border hover:bg-secondary/60 hover:text-foreground"
+                  : "rounded-xl border border-transparent bg-secondary/30 px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground"
               }
               onClick={() => onSectionChange(section.id)}
             >
@@ -2980,7 +2980,7 @@ function SettingPathInput({ value, title }: { value: string; title?: string }) {
   return (
     <div
       className="min-w-0 flex-1 truncate rounded-md border border-[#e5e7eb] bg-[#fafafa] px-2.5 py-1.5 text-[13px] text-[#666]"
-      title={title ?? value}
+      aria-label={title ?? value}
     >
       {value}
     </div>

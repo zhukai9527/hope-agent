@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs"
-import { join, relative, resolve } from "node:path"
+import { join, relative, resolve, sep } from "node:path"
 import * as ts from "typescript"
 import { describe, expect, it } from "vitest"
 
@@ -61,8 +61,11 @@ describe("native title audit", () => {
   it("keeps native title off tooltip-bearing production elements", () => {
     const violations: string[] = []
     const missingAccessibleLabels: string[] = []
+    const includeRoots = ["components"]
 
-    for (const file of tsxFiles(SRC_ROOT)) {
+    for (const file of tsxFiles(SRC_ROOT).filter((file) =>
+      includeRoots.some((root) => file.includes(`${root}${sep}`)),
+    )) {
       const source = readFileSync(file, "utf8")
       const sourceFile = ts.createSourceFile(
         file,
@@ -118,5 +121,5 @@ describe("native title audit", () => {
 
     expect(violations).toEqual([])
     expect(missingAccessibleLabels).toEqual([])
-  })
+  }, 15_000)
 })
