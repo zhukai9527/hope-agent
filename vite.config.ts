@@ -73,6 +73,9 @@ export default defineConfig({
     // Default to node — pure-logic tests don't need DOM. Component tests
     // opt in per-file with `// @vitest-environment jsdom` at the top.
     environment: "node",
+    // Windows forks workers can hang on startup in large suites; threads keeps
+    // Vitest stable without changing test semantics.
+    pool: "threads",
     globals: false,
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
