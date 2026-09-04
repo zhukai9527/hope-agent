@@ -816,8 +816,8 @@
       },
       "menuLabel": "沙箱",
       "off": {
-        "desc": "在宿主机执行，审批逻辑不变",
-        "label": "关闭沙箱"
+        "desc": "由程序自动选择主机、WSL 或隔离环境",
+        "label": "自动执行"
       },
       "setupTitle": "配置 Docker 后启用沙箱",
       "standard": {

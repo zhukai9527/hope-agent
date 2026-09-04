@@ -816,8 +816,8 @@
       },
       "menuLabel": "沙箱",
       "off": {
-        "desc": "在主機上運作；審核行為不變。",
-        "label": "沙盒關閉"
+        "desc": "由程式自動選擇主機、WSL 或隔離環境",
+        "label": "自動執行"
       },
       "setupTitle": "設定 Docker 以啟用沙箱",
       "standard": {

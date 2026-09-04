@@ -61,7 +61,16 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     },
                     "sandbox": {
                         "type": "boolean",
-                        "description": "Run command in a Docker sandbox container for isolation. Requires Docker to be installed and running. The working directory is mounted into the container."
+                        "description": "Legacy compatibility flag. true requests Docker; false does not override the session sandbox policy. Use target to select the execution environment."
+                    },
+                    "target": {
+                        "type": "string",
+                        "enum": ["auto", "host", "wsl", "docker"],
+                        "description": "Execution target. auto follows the session/UI sandbox default; host runs on the desktop host (Windows/macOS/Linux); wsl is Windows-only; docker runs in the configured Docker sandbox."
+                    },
+                    "distro": {
+                        "type": "string",
+                        "description": "Optional WSL distribution name; only used when target=wsl."
                     }
                 },
                 "required": ["command"],

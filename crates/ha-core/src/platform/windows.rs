@@ -132,6 +132,39 @@ async fn wsl_command_succeeds(args: &[&str]) -> bool {
     )
 }
 
+/// Convert a Windows working directory to its WSL (`/mnt/...`) form for use
+/// with `wsl.exe --cd`. Returns `None` when the path cannot be safely mapped
+/// (e.g. a plain relative name without a drive or leading slash).
+fn windows_cwd_to_wsl(cwd: &Path) -> Option<String> {
+    let raw = cwd.to_string_lossy();
+    let normalized = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    if normalized.len() >= 3
+        && normalized.as_bytes()[1] == b':'
+        && (normalized.as_bytes()[2] == b'\\' || normalized.as_bytes()[2] == b'/')
+    {
+        Some(format!(
+            "/mnt/{}/{}",
+            normalized[..1].to_ascii_lowercase(),
+            normalized[3..].replace('\\', "/")
+        ))
+    } else if normalized.starts_with('/') {
+        Some(normalized.to_string())
+    } else {
+        None
+    }
+}
+
+pub(super) fn wsl_shell_command(
+    command: &str,
+    cwd: &Path,
+    distro: Option<&str>,
+) -> Option<tokio::process::Command> {
+    let mut cmd = wsl_command(distro)?;
+    let wsl_cwd = windows_cwd_to_wsl(cwd)?;
+    cmd.args(["--cd", &wsl_cwd, "--exec", "sh", "-lc", command]);
+    Some(cmd)
+}
+
 pub(super) async fn wsl_status() -> super::WslStatus {
     // `wsl.exe --status` is not reliable enough as the sole availability probe:
     // older Windows builds, localized output, or restricted service contexts can
@@ -643,10 +676,41 @@ pub(super) fn atomic_replace_binary(target: &Path, source: &Path) -> io::Result<
 
 #[cfg(test)]
 mod tests {
-    use super::CREATE_NO_WINDOW;
+    use super::{windows_cwd_to_wsl, CREATE_NO_WINDOW};
+    use std::path::Path;
 
     #[test]
     fn console_creation_flag_is_hidden_window_flag() {
         assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
+    }
+
+    #[test]
+    fn windows_cwd_converts_drive_to_mnt() {
+        assert_eq!(
+            windows_cwd_to_wsl(Path::new(r"D:\develop\ai\hope-agent")),
+            Some("/mnt/d/develop/ai/hope-agent".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_cwd_strips_extended_length_prefix() {
+        assert_eq!(
+            windows_cwd_to_wsl(Path::new(r"\\?\D:\develop\ai")),
+            Some("/mnt/d/develop/ai".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_cwd_accepts_leading_slash() {
+        assert_eq!(
+            windows_cwd_to_wsl(Path::new("/mnt/d/develop/ai")),
+            Some("/mnt/d/develop/ai".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_cwd_rejects_unmappable_relative_path() {
+        assert_eq!(windows_cwd_to_wsl(Path::new("relative/dir")), None);
+        assert_eq!(windows_cwd_to_wsl(Path::new("")), None);
     }
 }

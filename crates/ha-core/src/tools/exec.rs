@@ -26,6 +26,56 @@ pub(crate) const MIN_MAX_OUTPUT_CHARS: usize = 8_000;
 pub(crate) const DEFAULT_YIELD_MS: u64 = 10_000;
 pub(crate) const MAX_YIELD_MS: u64 = 120_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutionTarget {
+    Auto,
+    Host,
+    Wsl,
+    Docker,
+}
+
+impl ExecutionTarget {
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value.unwrap_or("auto") {
+            "auto" => Ok(Self::Auto),
+            "host" => Ok(Self::Host),
+            "wsl" => Ok(Self::Wsl),
+            "docker" => Ok(Self::Docker),
+            other => Err(anyhow::anyhow!("Unsupported exec target '{}'; expected auto, host, wsl, or docker", other)),
+        }
+    }
+}
+
+/// Resolve the target for an automatic desktop execution.
+/// Explicit targets remain authoritative and sandbox modes remain Docker-only.
+fn resolve_auto_target(
+    cwd: &std::path::Path,
+    command: &str,
+    sandbox_mode: crate::permission::SandboxMode,
+    force_sandbox: bool,
+    requested_sandbox: bool,
+) -> ExecutionTarget {
+    if sandbox_mode.enabled() || force_sandbox || requested_sandbox {
+        return ExecutionTarget::Docker;
+    }
+
+    let command_lower = command.to_ascii_lowercase();
+    if command_lower.contains("docker compose") || command_lower.contains("docker-compose") {
+        return ExecutionTarget::Docker;
+    }
+
+    // Never hand a Linux/WSL working tree to the Windows shell. Native Windows
+    // paths stay on Host so node_modules and native toolchains are not mixed.
+    if cfg!(windows) {
+        let path = cwd.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+        if path.starts_with("/home/") || path.starts_with("/mnt/") {
+            return ExecutionTarget::Wsl;
+        }
+    }
+
+    ExecutionTarget::Host
+}
+
 // ── Shell Environment Resolution ──────────────────────────────────
 
 #[cfg(unix)]
@@ -746,14 +796,55 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         .get("sandbox")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let sandbox_mode = if ctx.sandbox_mode.enabled() {
-        ctx.sandbox_mode
-    } else if ctx.force_sandbox || requested_sandbox {
-        crate::permission::SandboxMode::Standard
+    let session_cwd = cwd.clone().unwrap_or_else(|| ctx.default_cwd());
+    let target = ExecutionTarget::parse(args.get("target").and_then(|v| v.as_str()))?;
+    let effective_target = match target {
+        ExecutionTarget::Auto => resolve_auto_target(
+            std::path::Path::new(&session_cwd),
+            command,
+            ctx.sandbox_mode,
+            ctx.force_sandbox,
+            requested_sandbox,
+        ),
+        explicit => explicit,
+    };
+    if matches!(effective_target, ExecutionTarget::Wsl) && !cfg!(windows) {
+        return Err(anyhow::anyhow!("exec target=wsl is only supported on Windows; use target=host on macOS/Linux"));
+    }
+    // GUI turns are represented as `Some(Gui)` in the execution context.
+    // Do not reject the attended desktop owner merely because the source is
+    // populated; only non-GUI sources must remain host/WSL-isolated.
+    let host_allowed_source = matches!(
+        ctx.chat_source,
+        None | Some(crate::knowledge::KbAccessSource::Gui)
+    );
+    if matches!(effective_target, ExecutionTarget::Host | ExecutionTarget::Wsl)
+        && (!crate::app_init::is_desktop()
+            || !host_allowed_source
+            || ctx.subagent_depth > 0)
+    {
+        return Err(anyhow::anyhow!(
+            "exec target={} is restricted to the attended desktop owner execution surface",
+            match effective_target { ExecutionTarget::Host => "host", ExecutionTarget::Wsl => "wsl", _ => "auto" }
+        ));
+    }
+    let sandbox_mode = if matches!(effective_target, ExecutionTarget::Docker) {
+        if ctx.sandbox_mode.enabled() {
+            ctx.sandbox_mode
+        } else {
+            crate::permission::SandboxMode::Standard
+        }
     } else {
         crate::permission::SandboxMode::Off
     };
-    let sandbox = sandbox_mode.enabled();
+    let sandbox = matches!(effective_target, ExecutionTarget::Docker);
+    let target_label = match effective_target {
+        ExecutionTarget::Auto => "auto",
+        ExecutionTarget::Host => "host",
+        ExecutionTarget::Wsl => "wsl",
+        ExecutionTarget::Docker => "docker",
+    };
+    let distro = args.get("distro").and_then(|v| v.as_str());
 
     let yield_ms = args
         .get("yield_ms")
@@ -762,8 +853,6 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         .min(MAX_YIELD_MS);
 
     let max_output = compute_max_output_chars(ctx.context_window_tokens);
-    let session_cwd = cwd.clone().unwrap_or_else(|| ctx.default_cwd());
-
     if sandbox {
         crate::sandbox::ensure_sandbox_available_for_mode(sandbox_mode).await?;
     }
@@ -795,7 +884,9 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
             Some(
                 serde_json::json!({
                     "cwd": &session_cwd, "explicitCwd": &cwd, "timeout": timeout_secs,
-                    "background": background, "pty": use_pty, "sandbox": sandbox, "sandboxMode": sandbox_mode.as_str(),
+                    "background": background, "pty": use_pty, "sandbox": sandbox,
+                    "sandboxMode": sandbox_mode.as_str(), "target": target_label,
+                    "requestedTarget": args.get("target"), "wslDistro": distro,
                 })
                 .to_string(),
             ),
@@ -804,10 +895,26 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         );
     }
 
-    // Build the command via the platform shell (sh -c on Unix, cmd /C on Windows)
-    let mut cmd = crate::platform::default_shell_command_tokio(command);
+    // Build the command through the selected runtime shell. Docker has its own
+    // command path below; host uses the native desktop shell, while WSL crosses
+    // the Windows boundary explicitly.
+    let mut cmd = match effective_target {
+        ExecutionTarget::Wsl => crate::platform::wsl_shell_command(
+            command,
+            std::path::Path::new(&session_cwd),
+            distro,
+        )
+        .ok_or_else(|| anyhow::anyhow!("exec target=wsl is unavailable on this platform"))?,
+        ExecutionTarget::Host | ExecutionTarget::Auto => {
+            crate::platform::default_shell_command_tokio(command)
+        }
+        ExecutionTarget::Docker => crate::platform::default_shell_command_tokio(command),
+    };
 
-    cmd.current_dir(&session_cwd);
+    // WSL receives its cwd through `--cd`; host commands use the native path.
+    if !matches!(effective_target, ExecutionTarget::Wsl | ExecutionTarget::Docker) {
+        cmd.current_dir(&session_cwd);
+    }
 
     // Inject the user's full login-shell environment (PATH plus everything they
     // export in .zprofile/.zshrc) so commands resolve like they do in a real
@@ -1544,5 +1651,84 @@ mod tests {
             "session_id": session_id
         }))
         .await;
+    }
+
+    #[test]
+    fn execution_target_parse_defaults_to_auto() {
+        assert_eq!(ExecutionTarget::parse(None).unwrap(), ExecutionTarget::Auto);
+        assert_eq!(
+            ExecutionTarget::parse(Some("auto")).unwrap(),
+            ExecutionTarget::Auto
+        );
+        assert_eq!(
+            ExecutionTarget::parse(Some("host")).unwrap(),
+            ExecutionTarget::Host
+        );
+        assert_eq!(
+            ExecutionTarget::parse(Some("wsl")).unwrap(),
+            ExecutionTarget::Wsl
+        );
+        assert_eq!(
+            ExecutionTarget::parse(Some("docker")).unwrap(),
+            ExecutionTarget::Docker
+        );
+    }
+
+    #[test]
+    fn execution_target_rejects_unknown() {
+        assert!(ExecutionTarget::parse(Some("remote")).is_err());
+        assert!(ExecutionTarget::parse(Some("")).is_err());
+    }
+
+    #[test]
+    fn automatic_target_keeps_isolation_authoritative() {
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"C:\workspace\app"),
+                "pnpm test",
+                crate::permission::SandboxMode::Standard,
+                false,
+                false,
+            ),
+            ExecutionTarget::Docker
+        );
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"C:\workspace\app"),
+                "pnpm test",
+                crate::permission::SandboxMode::Off,
+                true,
+                false,
+            ),
+            ExecutionTarget::Docker
+        );
+    }
+
+    #[test]
+    fn automatic_target_uses_docker_for_container_commands() {
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"C:\workspace\app"),
+                "docker compose up",
+                crate::permission::SandboxMode::Off,
+                false,
+                false,
+            ),
+            ExecutionTarget::Docker
+        );
+    }
+
+    #[test]
+    fn automatic_target_keeps_native_windows_workspace_on_host() {
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                "pnpm test",
+                crate::permission::SandboxMode::Off,
+                false,
+                false,
+            ),
+            ExecutionTarget::Host
+        );
     }
 }

@@ -242,7 +242,11 @@ pub(super) fn build_sandbox_mode_section(
          Current session sandbox mode: `{}`.\n\
          Current mode behavior: {}\n\n\
          `exec` routing:\n\
-         - You do not need to pass `sandbox=true`; the session policy routes `exec` automatically when sandbox mode is enabled.\n\
+         - `target=auto` (default) follows the session sandbox mode selected in the UI, including the agent default.\n\
+         - `target=host` runs on the desktop host: Win32 shell on Windows, native `sh` on macOS/Linux.\n\
+         - `target=wsl` is Windows-only and runs through `wsl.exe`; use `target=host` on macOS/Linux.\n\
+         - `target=docker` runs in Docker; explicit host/WSL targets do not bypass approval or unattended safety gates.\n\
+         - Legacy `sandbox=true` requests Docker; `sandbox=false` does not override the session sandbox policy.\n\
          - Sandboxed `exec` runs in Docker with the current sandbox configuration snapshot below.\n\n\
          Current Docker sandbox configuration:\n\
          - Container image: `{}`.\n\

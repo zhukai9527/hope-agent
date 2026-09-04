@@ -12,9 +12,7 @@ pub async fn list_skill_backups(
     name: String,
     _state: State<'_, AppState>,
 ) -> Result<Vec<core::SkillBackupEntry>, CmdError> {
-    ha_core::blocking::run_blocking(move || core::list_skill_backups(&name))
-        .await
-        .map_err(Into::into)
+    Ok(ha_core::blocking::run_blocking(move || core::list_skill_backups(&name)).await)
 }
 
 #[tauri::command]
@@ -33,9 +31,7 @@ pub async fn get_skill_diff(
     name: String,
     _state: State<'_, AppState>,
 ) -> Result<core::SkillDiffReport, CmdError> {
-    ha_core::blocking::run_blocking(move || core::get_skill_diff(&name))
-        .await
-        .map_err(Into::into)
+    Ok(ha_core::blocking::run_blocking(move || core::get_skill_diff(&name)).await)
 }
 
 #[tauri::command]
@@ -44,9 +40,7 @@ pub async fn install_skill_to_apps(
     apps: Vec<String>,
     _state: State<'_, AppState>,
 ) -> Result<Vec<core::SkillAppInstallReport>, CmdError> {
-    ha_core::blocking::run_blocking(move || core::install_skill_to_apps(name, apps))
-        .await
-        .map_err(Into::into)
+    Ok(ha_core::blocking::run_blocking(move || core::install_skill_to_apps(name, apps)).await)
 }
 
 #[tauri::command]
@@ -54,9 +48,7 @@ pub async fn diagnose_skill(
     name: String,
     _state: State<'_, AppState>,
 ) -> Result<core::SkillDiagnosticReport, CmdError> {
-    ha_core::blocking::run_blocking(move || core::diagnose_skill(&name))
-        .await
-        .map_err(Into::into)
+    Ok(ha_core::blocking::run_blocking(move || core::diagnose_skill(&name)).await)
 }
 
 #[tauri::command]
@@ -89,9 +81,7 @@ pub async fn get_skill_dock_snapshot(
     state: State<'_, AppState>,
 ) -> Result<core::SkillDockSnapshot, CmdError> {
     let _ = state;
-    ha_core::blocking::run_blocking(core::get_skill_dock_snapshot)
-        .await
-        .map_err(Into::into)
+    Ok(ha_core::blocking::run_blocking(core::get_skill_dock_snapshot).await)
 }
 
 #[tauri::command]

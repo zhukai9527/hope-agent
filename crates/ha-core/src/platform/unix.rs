@@ -6,6 +6,14 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub(super) fn wsl_shell_command(
+    _command: &str,
+    _cwd: &Path,
+    _distro: Option<&str>,
+) -> Option<tokio::process::Command> {
+    None
+}
+
 pub(super) fn terminate_process_tree(pid: u32) {
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);

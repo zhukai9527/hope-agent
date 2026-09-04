@@ -15,6 +15,12 @@ Hope Agent 的后台工作单元分四层。工程排查常见问题（"为什�
 
 ---
 
+## Exec 执行目标
+
+`exec` 的 `target=auto`（默认）继续遵守界面 SandboxModeSwitcher 与 Agent 默认沙箱配置；显式 `target=host` 才运行在桌面宿主。Windows 的 `host` 使用 Win32 shell，macOS/Linux 使用原生 Unix shell；Windows 的 `target=wsl` 使用 `wsl.exe`，macOS/Linux 不支持 WSL；`target=docker` 复用现有 Docker 沙箱。宿主与 WSL target 仍受统一审批和无人值守 fail-closed 门禁约束，server/cron/ACP/受限子代理不得借此绕过沙箱。
+
+---
+
 ## Layer A · 二进制运行模式
 
 `hope-agent` 是单一可执行文件，入口在 [`src-tauri/src/main.rs`](../../src-tauri/src/main.rs)。按首个 argv 分派：

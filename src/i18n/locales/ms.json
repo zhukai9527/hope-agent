@@ -816,8 +816,8 @@
       },
       "menuLabel": "Persekitaran terasing",
       "off": {
-        "desc": "Jalankan pada tuan rumah; tingkah laku kelulusan tidak berubah.",
-        "label": "Persekitaran terasing dimatikan"
+        "desc": "Pilih hos, WSL atau persekitaran terasing secara automatik.",
+        "label": "Automatik"
       },
       "setupTitle": "Sediakan Docker untuk mendayakan persekitaran terasing",
       "standard": {

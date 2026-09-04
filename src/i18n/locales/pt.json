@@ -816,8 +816,8 @@
       },
       "menuLabel": "Ambiente isolado",
       "off": {
-        "desc": "Execute no host; o comportamento de aprovação permanece inalterado.",
-        "label": "Ambiente isolado desativado"
+        "desc": "Escolha automaticamente entre o host, WSL ou um ambiente isolado.",
+        "label": "Automático"
       },
       "setupTitle": "Configure o Docker para ativar o ambiente isolado",
       "standard": {

@@ -198,6 +198,16 @@ pub async fn wsl_distributions() -> Vec<String> {
     imp::wsl_distributions().await
 }
 
+/// Build a WSL command for executing a shell command in the requested cwd.
+/// Non-Windows platforms return `None` and callers must fail closed.
+pub fn wsl_shell_command(
+    command: &str,
+    cwd: &std::path::Path,
+    distro: Option<&str>,
+) -> Option<tokio::process::Command> {
+    imp::wsl_shell_command(command, cwd, distro)
+}
+
 /// Build a hidden async `wsl.exe` command on Windows.
 ///
 /// Returns `None` on non-Windows platforms so shared callers can keep their

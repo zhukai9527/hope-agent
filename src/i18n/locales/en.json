@@ -816,8 +816,8 @@
       },
       "menuLabel": "Sandbox",
       "off": {
-        "desc": "Run on the host; approval behavior is unchanged.",
-        "label": "Sandbox Off"
+        "desc": "Automatically choose the host, WSL, or an isolated environment.",
+        "label": "Automatic"
       },
       "setupTitle": "Configure Docker to enable sandbox",
       "standard": {

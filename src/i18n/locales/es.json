@@ -816,8 +816,8 @@
       },
       "menuLabel": "Entorno aislado",
       "off": {
-        "desc": "Ejecutar en el host; el comportamiento de aprobación no cambia.",
-        "label": "Entorno aislado desactivado"
+        "desc": "Elegir automáticamente entre el host, WSL o un entorno aislado.",
+        "label": "Automático"
       },
       "setupTitle": "Configura Docker para activar el entorno aislado",
       "standard": {

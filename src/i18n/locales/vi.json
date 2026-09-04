@@ -816,8 +816,8 @@
       },
       "menuLabel": "Môi trường cách ly",
       "off": {
-        "desc": "Chạy trên máy chủ; hành vi phê duyệt không thay đổi.",
-        "label": "Tắt môi trường cách ly"
+        "desc": "Tự động chọn máy chủ, WSL hoặc môi trường cách ly.",
+        "label": "Tự động"
       },
       "setupTitle": "Thiết lập Docker để bật môi trường cách ly",
       "standard": {

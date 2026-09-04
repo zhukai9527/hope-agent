@@ -816,8 +816,8 @@
       },
       "menuLabel": "Yalıtılmış ortam",
       "off": {
-        "desc": "Ana bilgisayarda çalıştırın; Onay davranışı değişmez.",
-        "label": "Yalıtılmış ortam kapalı"
+        "desc": "Ana bilgisayar, WSL veya yalıtılmış ortamı otomatik seçin.",
+        "label": "Otomatik"
       },
       "setupTitle": "Yalıtılmış ortamı etkinleştirmek için Docker'ı kurun",
       "standard": {
