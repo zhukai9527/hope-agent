@@ -39,7 +39,7 @@ name: Mirror Release to R2
 # or a stale version advertisement. This says nothing about the manual
 # download links: those installers are run by OS tooling and never reach that
 # verifier, exactly as with manual downloads from GitHub.
-# See docs/architecture/self-update.md.
+# See docs/architecture/infra/self-update.md.
 #
 # Triggers:
 #   - workflow_dispatch — manual sync against an existing tag (idempotent).
@@ -95,8 +95,7 @@ env:
   RCLONE_CONFIG_R2_TYPE: s3
   RCLONE_CONFIG_R2_PROVIDER: Cloudflare
   RCLONE_CONFIG_R2_REGION: auto
-  RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-  RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  # Credentials are injected only into the three upload steps below.
   # RCLONE_CONFIG_R2_ENDPOINT is derived by scripts/r2-endpoint.sh.
   #
   # NAMING TRAP: rclone reads ANY `RCLONE_<FLAG>` environment variable as a
@@ -244,7 +243,7 @@ jobs:
         #
         # The DOCS we mirror still come from the tag — fetched explicitly
         # below — because those must be what the release actually shipped.
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
 
@@ -280,12 +279,15 @@ jobs:
           find "$WORK/docs" -type f | sort
 
       - name: Preflight — required R2 secrets present
+        env:
+          R2_ACCESS_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' }}
+          R2_SECRET_KEY_PRESENT: ${{ secrets.R2_SECRET_ACCESS_KEY != '' }}
         run: |
           set -euo pipefail
           missing=()
           [[ -n "${{ secrets.R2_ACCOUNT_ID }}"        ]] || missing+=(R2_ACCOUNT_ID)
-          [[ -n "${{ secrets.R2_ACCESS_KEY_ID }}"     ]] || missing+=(R2_ACCESS_KEY_ID)
-          [[ -n "${{ secrets.R2_SECRET_ACCESS_KEY }}" ]] || missing+=(R2_SECRET_ACCESS_KEY)
+          [[ "$R2_ACCESS_KEY_PRESENT" == "true" ]] || missing+=(R2_ACCESS_KEY_ID)
+          [[ "$R2_SECRET_KEY_PRESENT" == "true" ]] || missing+=(R2_SECRET_ACCESS_KEY)
           [[ -n "${{ secrets.R2_BUCKET }}"            ]] || missing+=(R2_BUCKET)
           if (( ${#missing[@]} )); then
             echo "::error::missing required R2 secret(s): ${missing[*]} — see linux-repo/README.md"
@@ -295,12 +297,12 @@ jobs:
       - name: Resolve R2 endpoint from account id
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_ACCOUNT_IS_ACCESS_KEY: ${{ secrets.R2_ACCOUNT_ID == secrets.R2_ACCESS_KEY_ID }}
         # Shared with update-linux-repo.yml — see that workflow's note.
         run: bash scripts/r2-endpoint.sh
 
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
 
@@ -312,6 +314,8 @@ jobs:
           # image. A release-critical publish path must not inherit its tool
           # version from the base image.
           R2_RCLONE_PIN: v1.74.4
+          # https://downloads.rclone.org/v1.74.4/SHA256SUMS (reviewed 2026-08-31)
+          R2_RCLONE_SHA256: fe435e0c36228e7c2f116a8701f01127bb1f694005fc11d1f27186c8bca4115d
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -319,6 +323,7 @@ jobs:
           tmp="$(mktemp -d)"
           curl -fsSL -o "$tmp/rclone.zip" \
             "https://downloads.rclone.org/${R2_RCLONE_PIN}/rclone-${R2_RCLONE_PIN}-linux-amd64.zip"
+          printf '%s  %s\n' "$R2_RCLONE_SHA256" "$tmp/rclone.zip" | sha256sum --check --status
           unzip -q "$tmp/rclone.zip" -d "$tmp"
           sudo install -m 755 "$tmp/rclone-${R2_RCLONE_PIN}-linux-amd64/rclone" /usr/local/bin/rclone
           rm -rf "$tmp"
@@ -363,6 +368,15 @@ jobs:
           # per-version prefix — so move it out of the asset set.
           test -f "$WORK/assets/latest.json" || { echo "::error::release $TAG has no latest.json"; exit 1; }
           mv "$WORK/assets/latest.json" "$WORK/manifest/latest.json"
+          # tauri-action v1 writes numeric GitHub asset API URLs into
+          # latest.json. Resolve those IDs to filenames from this exact tag's
+          # Release metadata, then let the offline rewrite script validate and
+          # consume the map. Never infer names from signatures or network
+          # redirects.
+          gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
+            --jq '[.assets[] | {key: .url, value: .name}] | from_entries' \
+            > "$WORK/manifest/asset-map.json"
+          jq -e 'type == "object" and length >= 20' "$WORK/manifest/asset-map.json" >/dev/null
           echo "--- assets to mirror ---"
           ls -la "$WORK/assets/"
           count=$(find "$WORK/assets" -type f | wc -l | tr -d ' ')
@@ -381,6 +395,7 @@ jobs:
           mkdir -p "$WORK/out"
           node scripts/rewrite-manifest-for-mirror.mjs \
             "$WORK/manifest/latest.json" "$TAG" "$PUBLIC_BASE" \
+            --asset-map="$WORK/manifest/asset-map.json" \
             --out="$WORK/out/latest.json" --docs-out="$WORK/out/notes-docs.txt"
 
       - name: Assert the notes link only mirrored docs
@@ -409,6 +424,8 @@ jobs:
 
       - name: Upload assets (immutable)
         env:
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
@@ -446,6 +463,8 @@ jobs:
       - name: Upload latest/ aliases (mutable, short TTL)
         if: env.PROMOTE == 'true'
         env:
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
@@ -623,6 +642,8 @@ jobs:
       - name: Publish download/latest.json (short TTL)
         if: env.PROMOTE == 'true'
         env:
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail

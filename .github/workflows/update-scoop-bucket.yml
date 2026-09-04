@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Checkout source repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve version from tag
         id: ver
@@ -98,7 +98,7 @@ jobs:
           cat rendered/bucket/hope-agent.json
 
       - name: Checkout bucket repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.BUCKET_REPO }}
           token: ${{ secrets.SCOOP_BUCKET_TOKEN }}

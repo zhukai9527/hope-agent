@@ -1,0 +1,243 @@
+use anyhow::{anyhow, Result};
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::auth::GoogleChatAuth;
+
+const CHAT_API_BASE: &str = "https://chat.googleapis.com/v1";
+
+fn build_message_body(
+    text: &str,
+    thread_key: Option<&str>,
+    cards_v2: Option<&[serde_json::Value]>,
+    standard_markdown: bool,
+) -> (serde_json::Value, &'static str) {
+    let mut body = serde_json::json!({ "text": text });
+    if standard_markdown {
+        body["markupSyntax"] = serde_json::json!("MARKUP_SYNTAX_MARKDOWN");
+    }
+    let mut reply_option_param = "";
+    if let Some(thread_key) = thread_key {
+        if thread_key.starts_with("spaces/") && thread_key.contains("/threads/") {
+            body["thread"] = serde_json::json!({ "name": thread_key });
+            reply_option_param = "?messageReplyOption=REPLY_MESSAGE_OR_FAIL";
+        } else {
+            body["thread"] = serde_json::json!({ "threadKey": thread_key });
+            reply_option_param = "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD";
+        }
+    }
+    if let Some(cards) = cards_v2 {
+        body["cardsV2"] = serde_json::Value::Array(cards.to_vec());
+    }
+    (body, reply_option_param)
+}
+
+/// Google Chat REST API client.
+pub struct GoogleChatApi {
+    auth: Arc<GoogleChatAuth>,
+    client: reqwest::Client,
+}
+
+impl GoogleChatApi {
+    /// Create a new API client with the given authenticator.
+    pub fn new(auth: Arc<GoogleChatAuth>) -> Self {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        Self { auth, client }
+    }
+
+    /// Get an authorization header value.
+    async fn auth_header(&self) -> Result<String> {
+        let token = self.auth.get_access_token().await?;
+        Ok(format!("Bearer {}", token))
+    }
+
+    /// Parse an error response into an anyhow error.
+    async fn parse_error(resp: reqwest::Response, context: &str) -> anyhow::Error {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow!(
+            "Google Chat API error {} ({}): {}",
+            status,
+            context,
+            ha_core::truncate_utf8(&body, 512)
+        )
+    }
+
+    // ── Spaces ─────────────────────────────────────────────────────
+
+    /// GET /spaces — list spaces the bot has access to.
+    /// Used for credential validation (probe).
+    pub async fn list_spaces(&self) -> Result<serde_json::Value> {
+        let auth = self.auth_header().await?;
+        let url = format!("{}?pageSize=1", CHAT_API_BASE.to_string() + "/spaces");
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .map_err(|e| anyhow!("list_spaces request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(Self::parse_error(resp, "list_spaces").await);
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| anyhow!("list_spaces parse failed: {}", e))
+    }
+
+    // ── Messages ───────────────────────────────────────────────────
+
+    /// POST /spaces/{space}/messages — send a text message.
+    ///
+    /// If `thread_key` is provided, the message is sent as a reply in that thread.
+    /// If `cards_v2` is provided, interactive card widgets (e.g. approval buttons)
+    /// are attached to the message.
+    pub async fn send_message(
+        &self,
+        space: &str,
+        text: &str,
+        thread_key: Option<&str>,
+        cards_v2: Option<&[serde_json::Value]>,
+        standard_markdown: bool,
+    ) -> Result<serde_json::Value> {
+        let auth = self.auth_header().await?;
+
+        // GA 2026-08-07. `markupSyntax` is a Message body field and applies
+        // only to creation. Thread resource names and custom keys keep their
+        // distinct reply-option contracts.
+        let (body, reply_option_param) =
+            build_message_body(text, thread_key, cards_v2, standard_markdown);
+
+        let url = format!("{}/{}/messages{}", CHAT_API_BASE, space, reply_option_param);
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("send_message request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(Self::parse_error(resp, "send_message").await);
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| anyhow!("send_message parse failed: {}", e))
+    }
+
+    // ── Update Message ─────────────────────────────────────────────
+
+    /// PATCH /{message_name}?updateMask=text — update a message's text.
+    pub async fn update_message(
+        &self,
+        message_name: &str,
+        text: &str,
+    ) -> Result<serde_json::Value> {
+        let auth = self.auth_header().await?;
+        let url = format!("{}/{}?updateMask=text", CHAT_API_BASE, message_name);
+
+        let body = serde_json::json!({ "text": text });
+
+        let resp = self
+            .client
+            .patch(&url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| anyhow!("update_message request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(Self::parse_error(resp, "update_message").await);
+        }
+
+        resp.json()
+            .await
+            .map_err(|e| anyhow!("update_message parse failed: {}", e))
+    }
+
+    // ── Delete Message ─────────────────────────────────────────────
+
+    /// DELETE /{message_name} — delete a message.
+    pub async fn delete_message(&self, message_name: &str) -> Result<()> {
+        let auth = self.auth_header().await?;
+        let url = format!("{}/{}", CHAT_API_BASE, message_name);
+
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .map_err(|e| anyhow!("delete_message request failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(Self::parse_error(resp, "delete_message").await);
+        }
+
+        Ok(())
+    }
+
+    /// Download an UPLOADED_CONTENT attachment to disk using the bot's
+    /// OAuth access token. `resource_name` is the value from
+    /// `attachment.attachmentDataRef.resourceName` (looks like
+    /// `spaces/AAAxxx/messages/zzz.zzz/attachments/yyy`). Drive-file
+    /// attachments (`source: DRIVE_FILE`) are not supported here —
+    /// callers should detect that case and skip materialization.
+    pub async fn download_attachment_to_disk(
+        &self,
+        resource_name: &str,
+        dest: &std::path::Path,
+        cap_bytes: u64,
+    ) -> Result<u64> {
+        if resource_name.is_empty() {
+            return Err(anyhow!("Empty Google Chat attachment resourceName"));
+        }
+        let auth = self.auth_header().await?;
+        // Endpoint per https://developers.google.com/chat/api/reference/rest/v1/media/download
+        let url = format!(
+            "https://chat.googleapis.com/v1/media/{}?alt=media",
+            urlencoding::encode(resource_name)
+        );
+
+        let builder = self.client.get(&url).header("Authorization", &auth);
+        crate::channel::inbound_media_common::stream_to_disk(builder, dest, cap_bytes).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_message_body;
+
+    #[test]
+    fn standard_markdown_is_a_create_body_field() {
+        let (body, query) = build_message_body(
+            "**bold** [link](https://example.com)\n1. one",
+            None,
+            None,
+            true,
+        );
+        assert_eq!(body["markupSyntax"], "MARKUP_SYNTAX_MARKDOWN");
+        assert_eq!(body["text"], "**bold** [link](https://example.com)\n1. one");
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn legacy_body_omits_markup_syntax() {
+        let (body, _) = build_message_body("legacy", None, None, false);
+        assert!(body.get("markupSyntax").is_none());
+    }
+}

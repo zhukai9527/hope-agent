@@ -16,11 +16,11 @@ jobs:
     name: Frontend lint + typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "pnpm"
@@ -38,11 +38,16 @@ jobs:
         run: pnpm test
 
       # Refuse the PR if the Minisign pubkey in `tauri.conf.json` drifts
-      # from the literal embedded in `ha-core/updater/keys.rs` — either
+      # from the literal embedded in `ha-updater/keys.rs` — either
       # one can be edited independently and the resulting self-update path
       # mismatch only surfaces at install time.
       - name: Updater pubkey sync check
         run: node scripts/verify-updater-pubkey.mjs
+
+      - name: Workflow supply-chain guards
+        run: |
+          node scripts/check-workflow-supply-chain.mjs
+          node --test scripts/__tests__/workflow-supply-chain.test.mjs
 
       # Same class of two-place contract as the pubkey above, for the manifest
       # endpoints: tauri.conf.json (desktop), manifest.rs (headless), and the
@@ -51,6 +56,16 @@ jobs:
       # client asks a host nothing is published to.
       - name: Updater endpoints sync check
         run: node scripts/verify-updater-endpoints.mjs
+
+      # The Tauri CLI refuses to build when the Rust `tauri` crate and the npm
+      # `@tauri-apps/api` package disagree on major.minor. Nothing else here
+      # catches that — clippy / cargo test / vitest never invoke `tauri build`
+      # — so it stays invisible until a tag is pushed and every release lane
+      # dies within minutes. v0.30.0 was lost that way: an incidental crate
+      # bump in #621 moved tauri 2.10.3 → 2.11.5 while the npm side stayed on
+      # 2.10.1, and four PRs merged green on top of it.
+      - name: Tauri crate ↔ npm api version sync
+        run: node scripts/verify-tauri-version-sync.mjs
 
       # Catch release.yml / update-*.yml path bugs at PR time instead of
       # at tag-push time. Covers the workspace target/ vs src-tauri/target/
@@ -65,6 +80,24 @@ jobs:
       # one language silently ships stale content.
       - name: User manual zh/en parity
         run: node scripts/check-docs-parity.mjs
+
+      # crate-split 阶段 4 红线：工具契约层 tool_defs 不得反向依赖分发层
+      # tools/（同 crate 内加回边照样编译，只有断言能守住）。脚本默认模式
+      # 零容忍，退出码非 0 即失败。
+      - name: Crate layering red line (tool_defs → tools)
+        run: node scripts/analyze-crate-deps.mjs > /dev/null
+
+      # 同一脚本 --tests 模式额外锁定 3 条登记的遗留测试边 + 测试图无环。
+      # 默认模式不扫 cfg(test) / #[test]，新增的测试回边会静默通过；这里
+      # 补上兜底。两个模式各约 0.2 秒。
+      - name: Crate layering red line (test edges)
+        run: node scripts/analyze-crate-deps.mjs --tests > /dev/null
+
+      # P0→P12 convergence guard: legacy entrypoints/implementations may only
+      # disappear; runtime ownership, production deps and DB boundaries are
+      # fail-closed.
+      - name: Agent kernel migration boundaries
+        run: node scripts/check-agent-kernel-boundaries.mjs
 
       # Informational only for now: the repo carries ~3.3k historical missing
       # keys across the 10 non-baseline locales (en/zh are the source of truth).

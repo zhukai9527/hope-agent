@@ -22,7 +22,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
     let mut tools = vec![
         ToolDefinition {
             name: TOOL_EXEC.into(),
-            description: "Execute a shell command. Returns stdout/stderr. For ordinary long-running commands, use `run_in_background: true` so the async job layer owns status, cancellation, output tail, and `<task-notification>` completion. The legacy exec-native `background`/`yield_ms` process session is reserved for cases that truly need the `process` tool's session surface; legacy flags are migrated to async jobs when async tools are enabled.".into(),
+            description: "Execute a shell command. Returns stdout/stderr. For ordinary long-running commands, use `run_in_background: true` so the async job layer owns status, cancellation, output tail, and `<task-notification>` completion. The legacy exec-native `background`/`yield_ms` process session is reserved for cases that truly need the `process` tool's session surface; legacy flags are migrated to async jobs when async tools are enabled. In desktop sessions `target=auto` (the default) auto-selects the environment: it probes the host PATH for the command's leading tool first (Windows host / native shell), falls back to WSL when the tool is missing, then to Docker; container-only commands and `Isolated` mode always use Docker, so you normally do not need to set `target`.".into(),
             tier: ToolTier::Core { subclass: CoreSubclass::FileSystem },
             internal: false,
             concurrent_safe: false,
@@ -66,7 +66,7 @@ pub fn get_available_tools() -> Vec<ToolDefinition> {
                     "target": {
                         "type": "string",
                         "enum": ["auto", "host", "wsl", "docker"],
-                        "description": "Execution target. auto follows the session/UI sandbox default; host runs on the desktop host (Windows/macOS/Linux); wsl is Windows-only; docker runs in the configured Docker sandbox."
+                        "description": "Execution target. auto (default) probes the desktop host PATH first for the command's leading tool and runs there; falls back to WSL then Docker when the tool is missing. host runs on the desktop host (Windows/macOS/Linux) regardless of host probe; wsl is Windows-only; docker forces the configured Docker sandbox. Container-only commands and Isolated mode always use docker."
                     },
                     "distro": {
                         "type": "string",

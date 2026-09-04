@@ -195,16 +195,16 @@ pub(super) fn build_sandbox_mode_section(
             "sandbox mode is off; tools run on the host and approval behavior is unchanged."
         }
         crate::permission::SandboxMode::Standard => {
-            "`exec` runs in Docker with the workspace mounted; approval behavior is unchanged."
+            "`exec` auto-probes the host first and only falls back to Docker when the command's tool is missing; approval behavior is unchanged."
         }
         crate::permission::SandboxMode::Isolated => {
             "`exec` runs in Docker against a temporary workspace copy; command-created file changes are discarded after the command finishes."
         }
         crate::permission::SandboxMode::Workspace => {
-            "`exec` runs in Docker with the real workspace mounted; routine edit commands inside the workspace may need fewer approvals."
+            "`exec` auto-probes the host first and only falls back to Docker; routine edit commands inside the workspace may need fewer approvals."
         }
         crate::permission::SandboxMode::Trusted => {
-            "`exec` runs in Docker with the real workspace mounted and maximum sandbox-side autonomy; strict risks still require approval."
+            "`exec` auto-probes the host first and only falls back to Docker; strict risks still always require approval."
         }
     };
     let rootfs = if config.read_only {
@@ -242,10 +242,10 @@ pub(super) fn build_sandbox_mode_section(
          Current session sandbox mode: `{}`.\n\
          Current mode behavior: {}\n\n\
          `exec` routing:\n\
-         - `target=auto` (default) follows the session sandbox mode selected in the UI, including the agent default.\n\
+         - `target=auto` (default) auto-selects the environment: it probes the desktop host's PATH for the command's leading tool first and runs there (Windows host / native shell); if the tool is missing it tries WSL (Windows), then falls back to Docker. Container-only commands (`docker compose`) and the `Isolated` mode always use Docker.\n\
          - `target=host` runs on the desktop host: Win32 shell on Windows, native `sh` on macOS/Linux.\n\
          - `target=wsl` is Windows-only and runs through `wsl.exe`; use `target=host` on macOS/Linux.\n\
-         - `target=docker` runs in Docker; explicit host/WSL targets do not bypass approval or unattended safety gates.\n\
+         - `target=docker` forces Docker; explicit host/WSL targets do not bypass approval or unattended safety gates.\n\
          - Legacy `sandbox=true` requests Docker; `sandbox=false` does not override the session sandbox policy.\n\
          - Sandboxed `exec` runs in Docker with the current sandbox configuration snapshot below.\n\n\
          Current Docker sandbox configuration:\n\
@@ -258,9 +258,9 @@ pub(super) fn build_sandbox_mode_section(
          - `/workspace` is the mounted working directory; durability depends on the selected sandbox mode.\n\
          - {}\n\n\
          Mode meanings:\n\
-         - `standard`: `exec` runs in Docker; approval behavior is unchanged.\n\
+         - `standard`: `exec` auto-probes the host first, Docker fallback; approval behavior is unchanged.\n\
          - `isolated`: `exec` runs in a temporary workspace copy; command-created file changes are not durable unless the app explicitly applies them back.\n\
-         - `workspace`: `exec` runs in Docker with the real workspace mounted; normal workspace edit commands may need fewer approvals.\n\
+         - `workspace`: `exec` auto-probes the host first, Docker fallback; normal workspace edit commands may need fewer approvals.\n\
          - `trusted`: like `workspace`, with maximum sandbox-side autonomy; strict risks still always require approval.\n\n\
          Safety and persistence rules:\n\
          - Sandbox mode is not a permission bypass. Protected paths, dangerous commands, secrets, Docker socket access, host escape attempts, raw browser/CDP access, privileged execution, and high-risk OS control can still require approval or be denied.\n\

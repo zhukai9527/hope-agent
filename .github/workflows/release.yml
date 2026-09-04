@@ -27,6 +27,9 @@ jobs:
     name: build (${{ matrix.platform }})
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+      # v0.35.0 的 macOS lane 在 beforeBuildCommand 的 `tsc -b` 碰到 Node
+      # 默认约 2 GiB old-space 上限；给前端构建留足堆，同时保持在 7 GiB runner 内。
+      NODE_OPTIONS: "--max-old-space-size=4096"
       # 仅 release-tag / dispatch 构建串行化 codegen，换取最小 / 最快二进制（叠加
       # 根 Cargo.toml 的 lto="thin" / strip）。Docker（docker.yml 走 Dockerfile，
       # 不读此 env）与日常 dev 不受影响。
@@ -99,15 +102,22 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
+<<<<<<< HEAD
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v6
+=======
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+>>>>>>> main
         with:
           node-version: 20
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       # 起始资源快照。arm64 lane 曾被 runner 杀掉两次且日志全丢，当时无从判断是
       # 磁盘还是内存——这一步就是为回答那个问题加的，并已给出答案：ubuntu-24.04-arm
@@ -122,11 +132,11 @@ jobs:
           echo "--- cpus ---"; (nproc || sysctl -n hw.ncpu || true)
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           targets: ${{ matrix.rust_target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ". -> target"
           # 本 workflow 一律不存缓存。GitHub 只允许 run 恢复「当前 ref」与
@@ -194,9 +204,9 @@ jobs:
         run: pnpm release:verify -- --tag "${{ env.RELEASE_TAG }}"
 
       # Refuse to ship if the desktop bundle (`tauri-plugin-updater`) and
-      # the headless self-update (`ha_core::updater`) point at different
+      # the headless self-update (`ha_updater`) point at different
       # Minisign pubkeys — one of the two would silently break.
-      - name: Verify updater pubkey sync (tauri.conf.json ↔ ha-core)
+      - name: Verify updater pubkey sync (tauri.conf.json ↔ ha-updater)
         run: node scripts/verify-updater-pubkey.mjs
 
       # Extract per-version release notes for both the GitHub Release body
@@ -287,9 +297,25 @@ jobs:
           rm -f "$cert" "$pem"
           security find-identity -v -p codesigning "$kc"
 
+      # ── Publish is racy across lanes; attempt 1 of 2 ──────────
+      # All four matrix lanes push assets to the SAME draft Release, and
+      # tauri-action's `uploadVersionJSON` is a read-modify-write on one
+      # shared `latest.json`: it lists assets, seeds `platforms` from the
+      # existing manifest, merges its own, deletes the old asset, uploads
+      # the new one. Two lanes that reach it together both see "no
+      # latest.json yet", both POST a create, and the loser dies on
+      # `422 already_exists` — v0.29.0's linux-arm64 lane, 87 min in, with
+      # every bundle already uploaded. Its `linux-aarch64*` entries were
+      # then simply absent from the shipped manifest.
+      #
+      # `continue-on-error` lets the retry below recover. A genuine build
+      # failure still fails the job: the gate step fails it outright when
+      # no bundles were produced, and otherwise the retry runs and fails.
       - name: Build & draft release
+        id: build_release
         if: github.event.inputs.dry_run != 'true'
-        uses: tauri-apps/tauri-action@v0.6.0
+        continue-on-error: true
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -301,6 +327,55 @@ jobs:
           # secret is unset → Tauri falls back to ad-hoc (no behavior change).
           # No APPLE_ID/APPLE_TEAM_ID ⇒ sign-only, no notarization. See
           # docs/macos-self-signing.md.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "Hope Agent ${{ env.RELEASE_TAG }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}
+
+      # Retry only when attempt 1 got far enough to produce bundles — i.e.
+      # the compile finished and only publishing broke. Retrying then is
+      # cheap: the target dir is warm, so tauri re-bundles rather than
+      # rebuilding, and tauri-action is idempotent on a second pass
+      # (`uploadAssets` deletes an existing asset before re-uploading, and
+      # `uploadVersionJSON` now finds `latest.json` and takes the merge
+      # path instead of racing to create it).
+      #
+      # Without this gate a blind retry would double the cost of a real
+      # build failure — and this arm64 lane has been OOM-killed before (see
+      # the CARGO_PROFILE_RELEASE_CODEGEN_UNITS note at the top of the job).
+      # Failing here is also what keeps `continue-on-error` above honest:
+      # attempt 1's failure would otherwise pass silently.
+      - name: Gate publish retry
+        id: retry_gate
+        if: ${{ github.event.inputs.dry_run != 'true' && steps.build_release.outcome == 'failure' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir=$(find target -type d -name bundle 2>/dev/null | head -1 || true)
+          if [ -n "$bundle_dir" ] && [ -n "$(find "$bundle_dir" -type f 2>/dev/null | head -1)" ]; then
+            echo "::notice::Bundles present in $bundle_dir — compile finished, so only the publish half failed (most likely the shared latest.json upload race). Retrying publish."
+          else
+            echo "::error::Build failed before producing any bundle — not retrying (a second attempt would just burn another full build). See the attempt-1 log above."
+            exit 1
+          fi
+
+      # ── Publish attempt 2 of 2 ────────────────────────────────
+      # Keep `env:` and `with:` byte-for-byte identical to attempt 1 above;
+      # they are duplicated only because a `uses:` step cannot be retried
+      # in place. Change one, change both.
+      - name: Build & draft release (publish retry)
+        if: ${{ steps.retry_gate.outcome == 'success' && steps.build_release.outcome == 'failure' && github.event.inputs.dry_run != 'true' }}
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # See attempt 1 for why this identity is set this way.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
@@ -335,8 +410,8 @@ jobs:
       # The desktop installers above cover GUI users; `hope-agent server`
       # / CLI deployments that can't run `tauri-plugin-updater` need a
       # signed tar.gz / zip with just the executable inside. Same
-      # Minisign keypair as the desktop installer — `ha_core::updater`
-      # verifies against the pubkey in `ha-core/updater/keys.rs` (which
+      # Minisign keypair as the desktop installer — `ha_updater`
+      # verifies against the pubkey in `ha-updater/keys.rs` (which
       # `verify-updater-pubkey.mjs` already proved matches
       # tauri.conf.json above).
       - name: Bundle + sign bare binary
@@ -401,7 +476,7 @@ jobs:
           gh release upload "${{ env.RELEASE_TAG }}" "${{ steps.bare_binary.outputs.archive }}" "${{ steps.bare_binary.outputs.sig }}" --clobber
 
       - name: Upload bare binary as workflow artifact (for manifest patch)
-        uses: actions/upload-artifact@v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bare-binary-${{ matrix.platform }}
           path: |
@@ -410,7 +485,7 @@ jobs:
 
   # Patch `latest.json` with bare_binary entries once every platform has
   # uploaded its archive + sig. tauri-action wrote `latest.json` with only
-  # the desktop `platforms` map — `ha_core::updater::self_contained`
+  # the desktop `platforms` map — `ha_updater::self_contained`
   # additionally reads `bare_binary.platforms.<key>` so headless installs
   # can self-update.
   patch-manifest:
@@ -427,14 +502,18 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
     steps:
+<<<<<<< HEAD
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+=======
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+>>>>>>> main
       - name: Install Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-      - uses: actions/download-artifact@v7.0.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
           pattern: bare-binary-*

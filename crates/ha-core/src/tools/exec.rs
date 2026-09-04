@@ -47,21 +47,40 @@ impl ExecutionTarget {
 }
 
 /// Resolve the target for an automatic desktop execution.
-/// Explicit targets remain authoritative and sandbox modes remain Docker-only.
+///
+/// Order of precedence (fallback Host → WSL → Docker):
+/// 1. Explicit isolation (`force_sandbox` / `requested_sandbox`) and the
+///    `Isolated` sandbox mode always win — the auto policy never bypasses an
+///    explicit isolation boundary.
+/// 2. Container-only commands (`docker compose` / `docker-compose`) run in Docker.
+/// 3. Otherwise probe the host's PATH for the command's leading executable; if
+///    found, run on Host. Windows native paths favor Host so `node_modules`,
+///    native toolchains, and build artifacts are not mixed across environments.
+/// 4. Host missing and WSL available with the tool present → WSL.
+/// 5. Fail closed to Docker (the sandbox availability check still applies).
+///
+/// `sandbox_mode` no longer decides the execution target on its own — only
+/// `Isolated` forces Docker here, and `Standard`/`Workspace`/`Trusted` only
+/// affect approval relaxation. The returned `probe_result` is a boolean-only
+/// record of tool hits for diagnostics; it never carries paths or secrets.
 fn resolve_auto_target(
     cwd: &std::path::Path,
     command: &str,
     sandbox_mode: crate::permission::SandboxMode,
     force_sandbox: bool,
     requested_sandbox: bool,
-) -> ExecutionTarget {
-    if sandbox_mode.enabled() || force_sandbox || requested_sandbox {
-        return ExecutionTarget::Docker;
+    probe: &dyn Fn(&str) -> bool,
+    wsl_ok: bool,
+    probe_wsl: &dyn Fn(&str) -> bool,
+) -> (ExecutionTarget, String) {
+    if force_sandbox || requested_sandbox || sandbox_mode == crate::permission::SandboxMode::Isolated
+    {
+        return (ExecutionTarget::Docker, String::from("forced-isolation"));
     }
 
     let command_lower = command.to_ascii_lowercase();
     if command_lower.contains("docker compose") || command_lower.contains("docker-compose") {
-        return ExecutionTarget::Docker;
+        return (ExecutionTarget::Docker, String::from("container-command"));
     }
 
     // Never hand a Linux/WSL working tree to the Windows shell. Native Windows
@@ -69,11 +88,47 @@ fn resolve_auto_target(
     if cfg!(windows) {
         let path = cwd.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
         if path.starts_with("/home/") || path.starts_with("/mnt/") {
-            return ExecutionTarget::Wsl;
+            // A WSL working tree cannot reach native Windows tools; prefer WSL
+            // when the leading command is available there, else Docker.
+            if let Some(tool) = leading_command(command) {
+                if wsl_ok && probe_wsl(&tool) {
+                    return (ExecutionTarget::Wsl, format!("wsl:{}true", tool));
+                }
+            }
+            return (ExecutionTarget::Wsl, String::from("wsl-linux-path"));
         }
     }
 
-    ExecutionTarget::Host
+    if let Some(tool) = leading_command(command) {
+        if probe(&tool) {
+            return (ExecutionTarget::Host, format!("host:{}true", tool));
+        }
+        if wsl_ok && probe_wsl(&tool) {
+            return (ExecutionTarget::Wsl, format!("wsl:{}true", tool));
+        }
+        return (
+            ExecutionTarget::Docker,
+            format!("fallback:{}false", tool),
+        );
+    }
+
+    (ExecutionTarget::Host, String::from("no-token"))
+}
+
+/// Extract the first executable token from a command line (strips a leading
+/// path and lowercases), or `None` for an empty / malformed command.
+fn leading_command(command: &str) -> Option<String> {
+    let first = command.split_whitespace().next()?;
+    let name = std::path::Path::new(first)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(first);
+    let name = name.to_ascii_lowercase();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 // ── Shell Environment Resolution ──────────────────────────────────
@@ -798,14 +853,22 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         .unwrap_or(false);
     let session_cwd = cwd.clone().unwrap_or_else(|| ctx.default_cwd());
     let target = ExecutionTarget::parse(args.get("target").and_then(|v| v.as_str()))?;
+    let mut probe_result = String::new();
     let effective_target = match target {
-        ExecutionTarget::Auto => resolve_auto_target(
-            std::path::Path::new(&session_cwd),
-            command,
-            ctx.sandbox_mode,
-            ctx.force_sandbox,
-            requested_sandbox,
-        ),
+        ExecutionTarget::Auto => {
+            let (elected, probe) = resolve_auto_target(
+                std::path::Path::new(&session_cwd),
+                command,
+                ctx.sandbox_mode,
+                ctx.force_sandbox,
+                requested_sandbox,
+                &|name| crate::platform::command_on_path(name),
+                crate::platform::wsl_available(),
+                &|name| crate::platform::wsl_tool_on_path(name),
+            );
+            probe_result = probe;
+            elected
+        }
         explicit => explicit,
     };
     if matches!(effective_target, ExecutionTarget::Wsl) && !cfg!(windows) {
@@ -887,6 +950,7 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
                     "background": background, "pty": use_pty, "sandbox": sandbox,
                     "sandboxMode": sandbox_mode.as_str(), "target": target_label,
                     "requestedTarget": args.get("target"), "wslDistro": distro,
+                    "probeResult": &probe_result,
                 })
                 .to_string(),
             ),
@@ -1680,26 +1744,63 @@ mod tests {
         assert!(ExecutionTarget::parse(Some("")).is_err());
     }
 
+    // ── resolve_auto_target (injected-probe) tests ────────────────
+    // Host probe hits dev tools (pnpm/node/cargo/git); WSL probe is empty.
+    fn no_probe(_tool: &str) -> bool {
+        false
+    }
+    fn host_probe(tool: &str) -> bool {
+        matches!(tool, "pnpm" | "node" | "cargo" | "git")
+    }
+    fn wsl_probe(tool: &str) -> bool {
+        matches!(tool, "pnpm" | "cargo")
+    }
+
     #[test]
-    fn automatic_target_keeps_isolation_authoritative() {
+    fn automatic_target_isolation_is_never_bypassed() {
+        // Isolated sandbox mode forces Docker even when host tools are present.
         assert_eq!(
             resolve_auto_target(
-                std::path::Path::new(r"C:\workspace\app"),
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
                 "pnpm test",
-                crate::permission::SandboxMode::Standard,
+                crate::permission::SandboxMode::Isolated,
                 false,
                 false,
-            ),
+                &host_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
             ExecutionTarget::Docker
         );
+        // force_sandbox always wins over auto probing.
         assert_eq!(
             resolve_auto_target(
-                std::path::Path::new(r"C:\workspace\app"),
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
                 "pnpm test",
                 crate::permission::SandboxMode::Off,
                 true,
                 false,
-            ),
+                &host_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
+            ExecutionTarget::Docker
+        );
+        // requested_sandbox always wins over auto probing.
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                "pnpm test",
+                crate::permission::SandboxMode::Off,
+                false,
+                true,
+                &host_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
             ExecutionTarget::Docker
         );
     }
@@ -1708,12 +1809,77 @@ mod tests {
     fn automatic_target_uses_docker_for_container_commands() {
         assert_eq!(
             resolve_auto_target(
-                std::path::Path::new(r"C:\workspace\app"),
-                "docker compose up",
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                "docker compose up -d",
                 crate::permission::SandboxMode::Off,
                 false,
                 false,
-            ),
+                &host_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
+            ExecutionTarget::Docker
+        );
+    }
+
+    #[test]
+    fn automatic_target_prefers_host_when_tool_present() {
+        // Host probe hits pnpm → Host, even in Standard/Workspace/Trusted modes.
+        for mode in [
+            crate::permission::SandboxMode::Off,
+            crate::permission::SandboxMode::Standard,
+            crate::permission::SandboxMode::Workspace,
+            crate::permission::SandboxMode::Trusted,
+        ] {
+            assert_eq!(
+                resolve_auto_target(
+                    std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                    "pnpm test",
+                    mode,
+                    false,
+                    false,
+                    &host_probe,
+                    true,
+                    &wsl_probe,
+                )
+                .0,
+                ExecutionTarget::Host,
+                "mode {mode:?} should prefer Host when pnpm is on PATH"
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_target_falls_back_to_wsl_then_docker() {
+        // Host probe misses (no cargo), WSL probe hits → WSL.
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                "cargo build",
+                crate::permission::SandboxMode::Off,
+                false,
+                false,
+                &no_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
+            ExecutionTarget::Wsl
+        );
+        // Neither host nor WSL has the tool → Docker (fail closed).
+        assert_eq!(
+            resolve_auto_target(
+                std::path::Path::new(r"D:\develop\ai\hope-agent"),
+                "adb devices",
+                crate::permission::SandboxMode::Off,
+                false,
+                false,
+                &no_probe,
+                false,
+                &wsl_probe,
+            )
+            .0,
             ExecutionTarget::Docker
         );
     }
@@ -1727,8 +1893,40 @@ mod tests {
                 crate::permission::SandboxMode::Off,
                 false,
                 false,
-            ),
+                &host_probe,
+                true,
+                &wsl_probe,
+            )
+            .0,
             ExecutionTarget::Host
         );
+    }
+
+    #[test]
+    fn automatic_target_reports_probe_result() {
+        // Host hit carries `host:<tool>true`.
+        let (_, probe) = resolve_auto_target(
+            std::path::Path::new(r"D:\develop\ai\hope-agent"),
+            "pnpm test",
+            crate::permission::SandboxMode::Off,
+            false,
+            false,
+            &host_probe,
+            true,
+            &wsl_probe,
+        );
+        assert_eq!(probe, "host:pnpmtrue");
+        // WSL fallback carries `wsl:<tool>true`.
+        let (_, probe) = resolve_auto_target(
+            std::path::Path::new(r"D:\develop\ai\hope-agent"),
+            "cargo build",
+            crate::permission::SandboxMode::Off,
+            false,
+            false,
+            &no_probe,
+            true,
+            &wsl_probe,
+        );
+        assert_eq!(probe, "wsl:cargotrue");
     }
 }
